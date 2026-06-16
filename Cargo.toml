@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-kube = { version = "0.84.0", features = ["derive", "runtime"] }
-k8s-openapi = { version = "0.18.0", default-features = false, features = ["v1_26"] }
-clap = { version = "4.1.6", features = ["derive"] }
-anyhow = "1.0"
-comfy-table = "6.0"
-tokio = { version = "1.28", features = ["full"] }
+kube = { version = "3", features = ["derive", "runtime"] }
+k8s-openapi = { version = "0.27", default-features = false, features = ["v1_35"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+comfy-table = "7"
+tokio = { version = "1", features = ["full"] }
 futures = "0.3"
+serde_json = "1"
