@@ -19,10 +19,16 @@ Deployment/my-app
 ## Install
 
 ```bash
+cargo install --git https://github.com/konono/oc-deps.git
+```
+
+Or from a local clone:
+
+```bash
 cargo install --path .
 ```
 
-Requires an active kubeconfig (`~/.kube/config`, `KUBECONFIG`, or in-cluster).
+Requires Rust toolchain and an active kubeconfig (`~/.kube/config`, `KUBECONFIG`, or in-cluster).
 
 ## Usage
 
