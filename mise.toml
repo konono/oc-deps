@@ -1,0 +1,4 @@
+[tools]
+kubectl = "latest"
+oc = "latest"
+rust = "latest"
