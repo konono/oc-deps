@@ -150,6 +150,7 @@ async fn main() -> Result<()> {
                         no_cache,
                         dry_run,
                         prune_apis,
+                        force,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -176,7 +177,8 @@ async fn main() -> Result<()> {
                         )
                         .await?;
 
-                        let result = execute_plan(&client, &plan, &kind_map, dry_run).await?;
+                        let result =
+                            execute_plan(&client, &plan, &kind_map, dry_run, force).await?;
 
                         print_execution_result(&result);
                     }

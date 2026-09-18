@@ -132,8 +132,9 @@ impl NamespaceIndex {
     }
 }
 
-/// Build a kube Api for a ResourceId, using its group/version when available,
-/// falling back to kind_map when ResourceId has empty group/version.
+// TODO: kind_map is keyed by Kind alone. If two groups define the same Kind
+// with different plural/scope, this picks whichever was inserted first.
+// A (group, kind) keyed index would be more correct.
 pub fn resolve_api(
     client: &kube::Client,
     resource: &ResourceId,

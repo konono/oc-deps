@@ -124,6 +124,7 @@ pub async fn execute_plan(
     plan: &TeardownPlan,
     kind_map: &KindMap,
     dry_run: bool,
+    force: bool,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -137,6 +138,27 @@ pub async fn execute_plan(
             );
         }
         bail!("Plan has blockers. Resolve external dependencies before applying.");
+    }
+
+    let review_count = plan
+        .phases
+        .iter()
+        .flat_map(|p| &p.actions)
+        .filter(|a| matches!(a, Action::Review { .. }))
+        .count();
+    if review_count > 0 && !dry_run && !force {
+        eprintln!(
+            "\x1b[1;33m⚠ Plan has {} REVIEW item(s) — resources with uncertain provenance:\x1b[0m",
+            review_count
+        );
+        for phase in &plan.phases {
+            for action in &phase.actions {
+                if let Action::Review { resource, reason } = action {
+                    eprintln!("  {}/{}: {}", resource.kind, resource.name, reason);
+                }
+            }
+        }
+        bail!("Cannot execute with unresolved REVIEW items. Use --force to override.");
     }
 
     if dry_run {

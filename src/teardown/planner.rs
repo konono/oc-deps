@@ -298,16 +298,12 @@ fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
         }
     }
 
-    // Operator-related labels → Managed
+    // Operator-related labels → LikelyManaged (not strong enough for DELETE)
     for key in cr.labels.keys() {
         for op in operators {
             let csv_prefix = op.csv.name.split('.').next().unwrap_or("");
-            if !csv_prefix.is_empty()
-                && (key.contains(csv_prefix)
-                    || key.contains("opendatahub")
-                    || key.contains("app.kubernetes.io/part-of"))
-            {
-                cr.provenance = Provenance::Managed;
+            if !csv_prefix.is_empty() && key.contains(csv_prefix) {
+                cr.provenance = Provenance::LikelyManaged;
                 return;
             }
         }
@@ -361,7 +357,7 @@ async fn run_preflight(
     kind_map: &KindMap,
     total_observations: usize,
     unique_count: usize,
-    unknown_provenance_count: usize,
+    review_provenance_count: usize,
 ) -> Preflight {
     let mut checks = Vec::new();
 
@@ -408,13 +404,13 @@ async fn run_preflight(
     }
 
     // 4. Uncertain provenance
-    if unknown_provenance_count > 0 {
+    if review_provenance_count > 0 {
         checks.push(PreflightCheck {
             name: "Provenance".to_string(),
             passed: false,
             detail: format!(
-                "{} CRs have uncertain provenance (marked as REVIEW)",
-                unknown_provenance_count
+                "{} CRs have uncertain provenance (will be marked REVIEW if independent)",
+                review_provenance_count
             ),
         });
     }
@@ -541,9 +537,14 @@ pub async fn generate_teardown_plan(
         classify_provenance(cr, target_operators);
     }
 
-    let unknown_provenance_count = cr_instances
+    let review_provenance_count = cr_instances
         .iter()
-        .filter(|cr| matches!(cr.provenance, Provenance::Unknown))
+        .filter(|cr| {
+            matches!(
+                cr.provenance,
+                Provenance::Unknown | Provenance::LikelyManaged
+            )
+        })
         .count();
 
     // Run preflight checks
@@ -554,7 +555,7 @@ pub async fn generate_teardown_plan(
         kind_map,
         total_observations,
         unique_count,
-        unknown_provenance_count,
+        review_provenance_count,
     )
     .await;
     eprintln!(" done");
@@ -654,11 +655,11 @@ pub async fn generate_teardown_plan(
         });
     }
 
-    if unknown_provenance_count > 0 {
+    if review_provenance_count > 0 {
         warnings.push(Warning {
             message: format!(
                 "{} CRs have uncertain provenance (owned API, but origin unknown)",
-                unknown_provenance_count
+                review_provenance_count
             ),
             resource: None,
         });
@@ -722,10 +723,17 @@ pub async fn generate_teardown_plan(
     // Handle independent CRs based on provenance
     for cr in &independent_crs {
         match cr.provenance {
-            Provenance::Managed | Provenance::LikelyManaged => {
+            Provenance::Managed => {
                 phase1_actions.push(Action::Delete {
                     resource: cr.id.clone(),
                     reason: format!("independent operand (provenance: {:?})", cr.provenance),
+                });
+            }
+            Provenance::LikelyManaged => {
+                phase1_actions.push(Action::Review {
+                    resource: cr.id.clone(),
+                    reason: "likely operator-managed but no ownerRef — verify before deleting"
+                        .to_string(),
                 });
             }
             Provenance::Unknown => {

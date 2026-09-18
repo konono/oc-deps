@@ -166,6 +166,10 @@ pub enum TeardownAction {
         /// Remove CRDs after teardown (default: keep)
         #[arg(long)]
         prune_apis: bool,
+
+        /// Execute even if REVIEW items remain in the plan
+        #[arg(long)]
+        force: bool,
     },
 
     /// Inspect all resources belonging to an operator
