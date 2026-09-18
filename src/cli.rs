@@ -79,6 +79,17 @@ pub enum Command {
         #[arg(long)]
         no_cache: bool,
     },
+
+    /// List all OLM-managed operators in the cluster
+    Operators {
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache (force fresh API discovery)
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]

@@ -10,7 +10,10 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use clap::Parser;
 
-use crate::analyzers::olm::{find_crd_origin, print_crd_origin};
+use crate::analyzers::olm::{
+    compute_operator_dependencies, discover_operators, find_crd_origin, print_crd_origin,
+    print_operators,
+};
 use crate::analyzers::selector::get_service_selected_pods;
 use crate::cli::{Args, Command, OutputFormat};
 use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
@@ -64,6 +67,24 @@ async fn main() -> Result<()> {
                     "✅ Snapshot saved to {} ({} resources, {} errors)",
                     output_file, resource_count, error_count
                 );
+                return Ok(());
+            }
+            Command::Operators { output, no_cache } => {
+                let t0 = Instant::now();
+                eprintln!("🔍 Discovering API resources...");
+                let (kind_map, _) = build_kind_lookup_cached(&client, &config, no_cache).await?;
+                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                eprint!("🔍 Discovering operators...");
+                let operators = discover_operators(&client, &kind_map).await?;
+                let deps = compute_operator_dependencies(&operators);
+                eprintln!(
+                    " found {} operators, {} dependencies",
+                    operators.len(),
+                    deps.len()
+                );
+
+                print_operators(&operators, &deps, &output);
                 return Ok(());
             }
         }
