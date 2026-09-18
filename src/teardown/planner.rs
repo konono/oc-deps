@@ -11,7 +11,7 @@ use kube::{
 use serde::{Deserialize, Serialize};
 
 use crate::analyzers::olm::{
-    OwnedApiServiceDef, OperatorDependency, OperatorInstance, compute_operator_dependencies,
+    OperatorDependency, OperatorInstance, OwnedApiServiceDef, compute_operator_dependencies,
 };
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
@@ -586,7 +586,10 @@ async fn run_preflight(
             Some(sub) => (
                 true,
                 PreflightSeverity::Warning,
-                format!("Subscription/{} found — will be deleted in Phase 0", sub.name),
+                format!(
+                    "Subscription/{} found — will be deleted in Phase 0",
+                    sub.name
+                ),
             ),
             None => (
                 true,
