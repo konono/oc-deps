@@ -160,6 +160,21 @@ pub enum TeardownAction {
         dry_run: bool,
     },
 
+    /// Inspect all resources belonging to an operator
+    Inspect {
+        /// Operator name (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operator: String,
+
+        /// Output format: tree, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+    },
+
     /// Explain why a resource is scheduled at its position in the plan
     Explain {
         /// Operator names to plan teardown for
