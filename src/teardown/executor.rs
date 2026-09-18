@@ -4,7 +4,7 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use kube::{Client, api::DeleteParams};
 
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, TeardownPlan};
 
@@ -123,6 +123,7 @@ pub async fn execute_plan(
     client: &Client,
     plan: &TeardownPlan,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
     dry_run: bool,
     force: bool,
 ) -> Result<ExecutionResult> {
@@ -249,7 +250,7 @@ pub async fn execute_plan(
                         eprintln!("             \x1b[2m{}\x1b[0m", reason);
                         phase_wait_targets.push(resource.clone());
                     } else {
-                        match delete_resource(client, resource, kind_map).await {
+                        match delete_resource(client, resource, kind_map, gk_map).await {
                             DeleteResult::Deleted => {
                                 eprintln!(
                                     "  \x1b[31mDELETED\x1b[0m  {}/{}{}",
@@ -338,7 +339,7 @@ pub async fn execute_plan(
                 eprintln!("\n  \x1b[1;33mBARRIER\x1b[0m (skipped in dry-run)");
             } else {
                 eprintln!();
-                match wait_for_barrier(client, &phase_wait_targets, kind_map, 300).await {
+                match wait_for_barrier(client, &phase_wait_targets, kind_map, gk_map, 300).await {
                     BarrierResult::Passed => {
                         eprintln!("  \x1b[32m✅ Barrier passed\x1b[0m");
                     }
@@ -380,6 +381,54 @@ pub async fn execute_plan(
             }
         }
 
+        // Before advancing to a controller-deletion phase, check REVIEW resources for finalizers
+        if !dry_run {
+            let next_phase = plan.phases.get(i + 1);
+            let next_deletes_controllers = next_phase.is_some_and(|p| {
+                p.actions.iter().any(|a| {
+                    matches!(a, Action::Delete { resource, .. } if resource.kind == "ClusterServiceVersion")
+                })
+            });
+            if next_deletes_controllers {
+                let review_resources: Vec<&ResourceId> = plan
+                    .phases
+                    .iter()
+                    .flat_map(|p| &p.actions)
+                    .filter_map(|a| match a {
+                        Action::Review { resource, .. } => Some(resource),
+                        _ => None,
+                    })
+                    .collect();
+                let mut stuck_reviews = Vec::new();
+                for res in &review_resources {
+                    let fins = get_finalizers(client, res, kind_map, gk_map).await;
+                    if !fins.is_empty() {
+                        stuck_reviews.push(((*res).clone(), fins));
+                    }
+                }
+                if !stuck_reviews.is_empty() {
+                    eprintln!(
+                        "\n  \x1b[1;31m⛔ {} REVIEW resource(s) have finalizers — cannot delete controller:\x1b[0m",
+                        stuck_reviews.len()
+                    );
+                    for (res, fins) in &stuck_reviews {
+                        eprintln!(
+                            "    {}/{} (finalizers: [{}])",
+                            res.kind,
+                            res.name,
+                            fins.join(", ")
+                        );
+                    }
+                    result.barrier_timeout = Some(BarrierTimeout {
+                        phase: "pre-controller safety check".to_string(),
+                        remaining: stuck_reviews.iter().map(|(r, _)| r.clone()).collect(),
+                        finalizers: stuck_reviews,
+                    });
+                    break;
+                }
+            }
+        }
+
         result.phases_completed += 1;
     }
 
@@ -390,8 +439,9 @@ async fn delete_resource(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
 ) -> DeleteResult {
-    let (api, _) = match resolve_api(client, resource, kind_map) {
+    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => {
             return DeleteResult::Failed(format!(
@@ -427,8 +477,9 @@ async fn check_resource_state(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
 ) -> ResourceState {
-    let (api, _) = match resolve_api(client, resource, kind_map) {
+    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => {
             return ResourceState {
@@ -471,6 +522,7 @@ async fn wait_for_barrier(
     client: &Client,
     resources: &[ResourceId],
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
     timeout_secs: u64,
 ) -> BarrierResult {
     let start = Instant::now();
@@ -491,7 +543,7 @@ async fn wait_for_barrier(
         let mut remaining_finalizers = Vec::new();
 
         for res in resources {
-            let state = check_resource_state(client, res, kind_map).await;
+            let state = check_resource_state(client, res, kind_map, gk_map).await;
             if state.gone {
                 gone_count += 1;
             } else {
@@ -501,7 +553,7 @@ async fn wait_for_barrier(
                     deleting_count += 1;
                 }
                 if state.finalizer_count > 0 {
-                    let fins = get_finalizers(client, res, kind_map).await;
+                    let fins = get_finalizers(client, res, kind_map, gk_map).await;
                     remaining_finalizers.push((res.clone(), fins));
                 }
             }
@@ -552,8 +604,13 @@ async fn wait_for_barrier(
     }
 }
 
-async fn get_finalizers(client: &Client, resource: &ResourceId, kind_map: &KindMap) -> Vec<String> {
-    let (api, _) = match resolve_api(client, resource, kind_map) {
+async fn get_finalizers(
+    client: &Client,
+    resource: &ResourceId,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+) -> Vec<String> {
+    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => return vec![],
     };

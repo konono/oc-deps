@@ -113,7 +113,11 @@ fn discovery_cache_path(config: &Config) -> PathBuf {
     dir.join(format!("{:016x}.json", hash))
 }
 
-fn serialize_discovery(kind_map: &KindMap, gvr_map: &GvrMap) -> serde_json::Value {
+fn serialize_discovery(
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
+) -> serde_json::Value {
     let km: serde_json::Map<String, serde_json::Value> = kind_map
         .iter()
         .map(|(k, v)| {
@@ -129,10 +133,21 @@ fn serialize_discovery(kind_map: &KindMap, gvr_map: &GvrMap) -> serde_json::Valu
         .map(|(k, v)| (k.clone(), serde_json::json!(v)))
         .collect();
 
-    serde_json::json!({ "kind_map": km, "gvr_map": gm })
+    let gk: serde_json::Map<String, serde_json::Value> = gk_map
+        .iter()
+        .map(|((group, kind), v)| {
+            let key = format!("{}/{}", group, kind);
+            (
+                key,
+                serde_json::json!([v.group, v.version, v.plural, v.namespaced]),
+            )
+        })
+        .collect();
+
+    serde_json::json!({ "kind_map": km, "gvr_map": gm, "gk_map": gk })
 }
 
-fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap)> {
+fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap, GroupKindMap)> {
     let km_val = value.get("kind_map")?.as_object()?;
     let gm_val = value.get("gvr_map")?.as_object()?;
 
@@ -155,7 +170,31 @@ fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap)>
         gvr_map.insert(k.clone(), v.as_str()?.to_string());
     }
 
-    Some((kind_map, gvr_map))
+    let mut gk_map = GroupKindMap::new();
+    if let Some(gk_val) = value.get("gk_map").and_then(|v| v.as_object()) {
+        for (k, v) in gk_val {
+            let (group, kind) = k.split_once('/').unwrap_or(("", k));
+            let arr = match v.as_array() {
+                Some(a) => a,
+                None => continue,
+            };
+            if arr.len() >= 4 {
+                gk_map.insert(
+                    (group.to_string(), kind.to_string()),
+                    KindInfo {
+                        group: arr[0].as_str().unwrap_or("").to_string(),
+                        version: arr[1].as_str().unwrap_or("").to_string(),
+                        plural: arr[2].as_str().unwrap_or("").to_string(),
+                        namespaced: arr[3].as_bool().unwrap_or(true),
+                    },
+                );
+            }
+        }
+    } else {
+        gk_map = gk_map_from_kind_map(&kind_map);
+    }
+
+    Some((kind_map, gvr_map, gk_map))
 }
 
 fn gk_map_from_kind_map(kind_map: &KindMap) -> GroupKindMap {
@@ -182,13 +221,12 @@ pub async fn build_kind_lookup_cached(
             .and_then(|v| deserialize_discovery(&v))
     {
         eprintln!("   (cached, {} types)", result.0.len());
-        let gk = gk_map_from_kind_map(&result.0);
-        return Ok((result.0, result.1, gk));
+        return Ok(result);
     }
 
     let (kind_map, gvr_map, gk_map) = build_kind_lookup(client).await?;
 
-    let json = serialize_discovery(&kind_map, &gvr_map);
+    let json = serialize_discovery(&kind_map, &gvr_map, &gk_map);
     if let Ok(data) = serde_json::to_string(&json) {
         std::fs::write(&path, data).ok();
     }

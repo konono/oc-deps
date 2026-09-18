@@ -138,19 +138,11 @@ pub fn resolve_api(
     client: &kube::Client,
     resource: &ResourceId,
     kind_map: &crate::kube::discovery::KindMap,
-) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
-    resolve_api_with_gk(client, resource, kind_map, None)
-}
-
-pub fn resolve_api_with_gk(
-    client: &kube::Client,
-    resource: &ResourceId,
-    kind_map: &crate::kube::discovery::KindMap,
-    gk_map: Option<&crate::kube::discovery::GroupKindMap>,
+    gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
     let kind_info = if !resource.group.is_empty() {
         gk_map
-            .and_then(|gk| gk.get(&(resource.group.clone(), resource.kind.clone())))
+            .get(&(resource.group.clone(), resource.kind.clone()))
             .or_else(|| kind_map.get(&resource.kind))?
     } else {
         kind_map.get(&resource.kind)?

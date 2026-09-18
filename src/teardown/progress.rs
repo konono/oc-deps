@@ -7,7 +7,7 @@ use kube::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, TeardownPlan};
 
@@ -34,6 +34,7 @@ pub async fn check_plan_status(
     client: &Client,
     plan: &TeardownPlan,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
 ) -> Vec<Vec<ResourceStatus>> {
     let mut phase_statuses = Vec::new();
 
@@ -63,7 +64,7 @@ pub async fn check_plan_status(
                 continue;
             }
 
-            let status = check_resource(client, resource, kind_map, is_keep).await;
+            let status = check_resource(client, resource, kind_map, gk_map, is_keep).await;
 
             let status = if matches!(status.state, ProgressState::Deleting)
                 && !status.finalizers.is_empty()
@@ -92,9 +93,10 @@ async fn check_resource(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
     is_keep: bool,
 ) -> ResourceStatus {
-    let (api, _) = match resolve_api(client, resource, kind_map) {
+    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => {
             return ResourceStatus {

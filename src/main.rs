@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map, _gk_map) =
+                        let (kind_map, gvr_map, gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -180,7 +180,8 @@ async fn main() -> Result<()> {
                         .await?;
 
                         let result =
-                            execute_plan(&client, &plan, &kind_map, dry_run, force).await?;
+                            execute_plan(&client, &plan, &kind_map, &gk_map, dry_run, force)
+                                .await?;
 
                         print_execution_result(&result);
                     }
@@ -190,7 +191,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map, _gk_map) =
+                        let (kind_map, gvr_map, gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -214,7 +215,7 @@ async fn main() -> Result<()> {
                         .await?;
 
                         eprint!("🔍 Checking resource status...");
-                        let statuses = check_plan_status(&client, &plan, &kind_map).await;
+                        let statuses = check_plan_status(&client, &plan, &kind_map, &gk_map).await;
                         eprintln!(" done");
 
                         print_plan_status(&plan, &statuses);
