@@ -34,27 +34,39 @@ pub struct BarrierTimeout {
     pub finalizers: Vec<(ResourceId, Vec<String>)>,
 }
 
-fn count_actions(plan: &TeardownPlan) -> (usize, usize) {
+fn count_actions(plan: &TeardownPlan) -> (usize, usize, usize, usize) {
     let mut delete_count = 0;
+    let mut expect_count = 0;
     let mut keep_count = 0;
+    let mut review_count = 0;
     for phase in &plan.phases {
         for action in &phase.actions {
             match action {
                 Action::Delete { .. } => delete_count += 1,
+                Action::ExpectGone { .. } => expect_count += 1,
                 Action::Keep { .. } => keep_count += 1,
+                Action::Review { .. } => review_count += 1,
                 Action::WaitGone { .. } => {}
             }
         }
     }
-    (delete_count, keep_count)
+    (delete_count, expect_count, keep_count, review_count)
+}
+
+fn scope_suffix(resource: &ResourceId) -> String {
+    match &resource.namespace {
+        Some(ns) => format!("  \x1b[2m(ns: {})\x1b[0m", ns),
+        None => "  \x1b[2m(cluster-scoped)\x1b[0m".to_string(),
+    }
 }
 
 fn confirm_execution(plan: &TeardownPlan) -> bool {
-    let (total_delete, _total_keep) = count_actions(plan);
+    let (total_delete, total_expect, _total_keep, _total_review) = count_actions(plan);
 
     eprintln!(
-        "\n\x1b[1;33m⚠ This will DELETE {} resources across {} phases.\x1b[0m\n",
+        "\n\x1b[1;33m⚠ This will DELETE {} resources ({} expected to auto-remove) across {} phases.\x1b[0m\n",
         total_delete,
+        total_expect,
         plan.phases.len()
     );
 
@@ -68,18 +80,34 @@ fn confirm_execution(plan: &TeardownPlan) -> bool {
             .iter()
             .filter(|a| matches!(a, Action::Delete { .. }))
             .count();
+        let expect = phase
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::ExpectGone { .. }))
+            .count();
         let keep = phase
             .actions
             .iter()
             .filter(|a| matches!(a, Action::Keep { .. }))
             .count();
-        if del > 0 || keep > 0 {
+        let review = phase
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::Review { .. }))
+            .count();
+        if del > 0 || expect > 0 || keep > 0 || review > 0 {
             let mut parts = Vec::new();
             if del > 0 {
                 parts.push(format!("{} DELETE", del));
             }
+            if expect > 0 {
+                parts.push(format!("{} EXPECT", expect));
+            }
             if keep > 0 {
                 parts.push(format!("{} KEEP", keep));
+            }
+            if review > 0 {
+                parts.push(format!("{} REVIEW", review));
             }
             eprintln!("  Phase {}: {}", i, parts.join(", "));
         }
@@ -133,75 +161,111 @@ pub async fn execute_plan(
             continue;
         }
 
-        let mut phase_delete_targets: Vec<ResourceId> = Vec::new();
+        let mut phase_wait_targets: Vec<ResourceId> = Vec::new();
 
         for action in &phase.actions {
             match action {
                 Action::Delete { resource, reason } => {
-                    let ns_suffix = resource
-                        .namespace
-                        .as_ref()
-                        .map(|ns| format!("  \x1b[2m(ns: {})\x1b[0m", ns))
-                        .unwrap_or_default();
-
                     if dry_run {
                         eprintln!(
                             "  \x1b[36mDRY-DELETE\x1b[0m {}/{}{}",
-                            resource.kind, resource.name, ns_suffix
+                            resource.kind,
+                            resource.name,
+                            scope_suffix(resource)
                         );
                         eprintln!("             \x1b[2m{}\x1b[0m", reason);
-                        phase_delete_targets.push(resource.clone());
+                        phase_wait_targets.push(resource.clone());
                     } else {
                         match delete_resource(client, resource, kind_map).await {
                             DeleteResult::Deleted => {
                                 eprintln!(
                                     "  \x1b[31mDELETED\x1b[0m  {}/{}{}",
-                                    resource.kind, resource.name, ns_suffix
+                                    resource.kind,
+                                    resource.name,
+                                    scope_suffix(resource)
                                 );
                                 result.deleted.push(resource.clone());
-                                phase_delete_targets.push(resource.clone());
+                                phase_wait_targets.push(resource.clone());
                             }
                             DeleteResult::AlreadyGone => {
                                 eprintln!(
                                     "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
-                                    resource.kind, resource.name, ns_suffix
+                                    resource.kind,
+                                    resource.name,
+                                    scope_suffix(resource)
                                 );
                                 result.already_gone.push(resource.clone());
                             }
                             DeleteResult::Failed(err) => {
                                 eprintln!(
                                     "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}",
-                                    resource.kind, resource.name, err, ns_suffix
+                                    resource.kind,
+                                    resource.name,
+                                    err,
+                                    scope_suffix(resource)
                                 );
                                 result.failed.push((resource.clone(), err));
-                                phase_delete_targets.push(resource.clone());
+                                phase_wait_targets.push(resource.clone());
                             }
                         }
                     }
                 }
+                Action::ExpectGone { resource, reason } => {
+                    if dry_run {
+                        eprintln!(
+                            "  \x1b[33mDRY-EXPECT\x1b[0m {}/{}{}",
+                            resource.kind,
+                            resource.name,
+                            scope_suffix(resource)
+                        );
+                        eprintln!("             \x1b[2m{}\x1b[0m", reason);
+                    } else {
+                        eprintln!(
+                            "  \x1b[33mEXPECT\x1b[0m   {}/{}{}",
+                            resource.kind,
+                            resource.name,
+                            scope_suffix(resource)
+                        );
+                        eprintln!("             \x1b[2m{}\x1b[0m", reason);
+                    }
+                    phase_wait_targets.push(resource.clone());
+                }
                 Action::Keep { resource, reason } => {
                     eprintln!(
-                        "  \x1b[32mKEEP\x1b[0m     {}/{}",
-                        resource.kind, resource.name
+                        "  \x1b[32mKEEP\x1b[0m     {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
+                    );
+                    eprintln!("             \x1b[2m{}\x1b[0m", reason);
+                }
+                Action::Review { resource, reason } => {
+                    eprintln!(
+                        "  \x1b[35mREVIEW\x1b[0m   {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
                     );
                     eprintln!("             \x1b[2m{}\x1b[0m", reason);
                 }
                 Action::WaitGone { resource } => {
                     eprintln!(
-                        "  \x1b[33mWAIT\x1b[0m     {}/{}",
-                        resource.kind, resource.name
+                        "  \x1b[33mWAIT\x1b[0m     {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
                     );
-                    phase_delete_targets.push(resource.clone());
+                    phase_wait_targets.push(resource.clone());
                 }
             }
         }
 
-        if phase.barrier.is_some() && !phase_delete_targets.is_empty() {
+        if phase.barrier.is_some() && !phase_wait_targets.is_empty() {
             if dry_run {
                 eprintln!("\n  \x1b[1;33mBARRIER\x1b[0m (skipped in dry-run)");
             } else {
                 eprintln!();
-                match wait_for_barrier(client, &phase_delete_targets, kind_map, 300).await {
+                match wait_for_barrier(client, &phase_wait_targets, kind_map, 300).await {
                     BarrierResult::Passed => {
                         eprintln!("  \x1b[32m✅ Barrier passed\x1b[0m");
                     }

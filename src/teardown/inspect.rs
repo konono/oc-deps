@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 use kube::{
     Client,
@@ -75,6 +77,17 @@ pub async fn inspect_operator(
             });
         }
     }
+
+    // UID-based dedup
+    let mut seen_uids = HashSet::new();
+    cr_instances.retain(|cr| {
+        if let Some(uid) = &cr.uid {
+            seen_uids.insert(uid.clone())
+        } else {
+            true
+        }
+    });
+
     eprintln!(" found {} instances", cr_instances.len());
 
     let mut controller_pods = Vec::new();

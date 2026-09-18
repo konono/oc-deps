@@ -187,8 +187,14 @@ pub fn explain_resource(
                     Action::Delete { resource, .. } => {
                         format!("{}/{}", resource.kind, resource.name)
                     }
+                    Action::ExpectGone { resource, .. } => {
+                        format!("{}/{} (expected)", resource.kind, resource.name)
+                    }
                     Action::Keep { resource, .. } => {
                         format!("{}/{} (kept)", resource.kind, resource.name)
+                    }
+                    Action::Review { resource, .. } => {
+                        format!("{}/{} (review)", resource.kind, resource.name)
                     }
                     Action::WaitGone { resource } => {
                         format!("{}/{} (wait)", resource.kind, resource.name)
@@ -215,7 +221,11 @@ fn find_in_plan(plan: &TeardownPlan, kind: &str, name: &str) -> Option<(usize, S
         for action in &phase.actions {
             let (resource, desc) = match action {
                 Action::Delete { resource, reason } => (resource, format!("DELETE — {}", reason)),
+                Action::ExpectGone { resource, reason } => {
+                    (resource, format!("EXPECT-GONE — {}", reason))
+                }
                 Action::Keep { resource, reason } => (resource, format!("KEEP — {}", reason)),
+                Action::Review { resource, reason } => (resource, format!("REVIEW — {}", reason)),
                 Action::WaitGone { resource } => (resource, "WAIT for deletion".to_string()),
             };
             if resource.kind.eq_ignore_ascii_case(kind) && resource.name == name {
@@ -280,7 +290,9 @@ fn format_evidence(evidence: &[Evidence], confidence: &Confidence) -> String {
 fn action_resource(action: &Action) -> &ResourceId {
     match action {
         Action::Delete { resource, .. } => resource,
+        Action::ExpectGone { resource, .. } => resource,
         Action::Keep { resource, .. } => resource,
+        Action::Review { resource, .. } => resource,
         Action::WaitGone { resource } => resource,
     }
 }

@@ -16,10 +16,23 @@ use crate::kube::resource::ResourceId;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeardownPlan {
     pub targets: Vec<OperatorTarget>,
+    pub preflight: Preflight,
     pub phases: Vec<PlanPhase>,
     pub blockers: Vec<Blocker>,
     pub warnings: Vec<Warning>,
     pub snapshot_taken_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Preflight {
+    pub checks: Vec<PreflightCheck>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PreflightCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -43,10 +56,18 @@ pub enum Action {
         resource: ResourceId,
         reason: String,
     },
+    ExpectGone {
+        resource: ResourceId,
+        reason: String,
+    },
     WaitGone {
         resource: ResourceId,
     },
     Keep {
+        resource: ResourceId,
+        reason: String,
+    },
+    Review {
         resource: ResourceId,
         reason: String,
     },
@@ -71,10 +92,21 @@ pub struct Warning {
     pub resource: Option<ResourceId>,
 }
 
+#[derive(Clone, Debug)]
+enum Provenance {
+    Managed,
+    LikelyManaged,
+    Unknown,
+}
+
 struct CrInstance {
     id: ResourceId,
     owner_refs: Vec<(String, String, String)>, // (kind, name, uid)
+    #[allow(dead_code)]
     crd_name: String,
+    labels: HashMap<String, String>,
+    managed_field_managers: Vec<String>,
+    provenance: Provenance,
 }
 
 pub fn resolve_operator_targets(
@@ -153,8 +185,9 @@ async fn discover_cr_instances(
     target_crds: &[String],
     kind_map: &KindMap,
     gvr_map: &GvrMap,
-) -> Vec<CrInstance> {
+) -> (Vec<CrInstance>, usize) {
     let mut instances = Vec::new();
+    let mut total_observations: usize = 0;
 
     for crd_name in target_crds {
         let (plural, group) = match crd_name.split_once('.') {
@@ -183,6 +216,7 @@ async fn discover_cr_instances(
         };
 
         for obj in items {
+            total_observations += 1;
             let uid = obj.metadata.uid.unwrap_or_default();
             let name = match obj.metadata.name {
                 Some(n) => n,
@@ -198,6 +232,21 @@ async fn discover_cr_instances(
                 .map(|r| (r.kind, r.name, r.uid))
                 .collect();
 
+            let labels: HashMap<String, String> = obj
+                .metadata
+                .labels
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+
+            let managed_field_managers: Vec<String> = obj
+                .metadata
+                .managed_fields
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|mf| mf.manager)
+                .collect();
+
             instances.push(CrInstance {
                 id: ResourceId {
                     group: kind_info.group.clone(),
@@ -209,11 +258,79 @@ async fn discover_cr_instances(
                 },
                 owner_refs,
                 crd_name: crd_name.clone(),
+                labels,
+                managed_field_managers,
+                provenance: Provenance::Unknown, // classified later
             });
         }
     }
 
-    instances
+    // UID-based dedup
+    let pre_dedup = instances.len();
+    let mut seen_uids = HashSet::new();
+    instances.retain(|cr| {
+        if let Some(uid) = &cr.id.uid {
+            seen_uids.insert(uid.clone())
+        } else {
+            true
+        }
+    });
+    let duplicates = pre_dedup - instances.len();
+    let _ = duplicates; // used in caller for warnings
+
+    (instances, total_observations)
+}
+
+fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
+    // ownerRef pointing to operator's CSV or Deployment → Managed
+    for (ref_kind, ref_name, _) in &cr.owner_refs {
+        for op in operators {
+            if ref_kind == "ClusterServiceVersion" && ref_name == &op.csv.name {
+                cr.provenance = Provenance::Managed;
+                return;
+            }
+            for deploy in &op.deployments {
+                if ref_kind == "Deployment" && ref_name == deploy {
+                    cr.provenance = Provenance::Managed;
+                    return;
+                }
+            }
+        }
+    }
+
+    // Operator-related labels → Managed
+    for key in cr.labels.keys() {
+        for op in operators {
+            let csv_prefix = op.csv.name.split('.').next().unwrap_or("");
+            if !csv_prefix.is_empty()
+                && (key.contains(csv_prefix)
+                    || key.contains("opendatahub")
+                    || key.contains("app.kubernetes.io/part-of"))
+            {
+                cr.provenance = Provenance::Managed;
+                return;
+            }
+        }
+    }
+
+    // managedFields manager matching operator name → LikelyManaged
+    for manager in &cr.managed_field_managers {
+        for op in operators {
+            for deploy in &op.deployments {
+                if manager.contains(deploy) {
+                    cr.provenance = Provenance::LikelyManaged;
+                    return;
+                }
+            }
+            let csv_prefix = op.csv.name.split('.').next().unwrap_or("");
+            if !csv_prefix.is_empty() && manager.contains(csv_prefix) {
+                cr.provenance = Provenance::LikelyManaged;
+                return;
+            }
+        }
+    }
+
+    // Remains Unknown
 }
 
 async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
@@ -238,12 +355,156 @@ async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> 
     Ok(all_items)
 }
 
+async fn run_preflight(
+    client: &Client,
+    target_operators: &[&OperatorInstance],
+    kind_map: &KindMap,
+    total_observations: usize,
+    unique_count: usize,
+    unknown_provenance_count: usize,
+) -> Preflight {
+    let mut checks = Vec::new();
+
+    // 1. Subscription resolved
+    for op in target_operators {
+        let (passed, detail) = match &op.subscription {
+            Some(sub) => (true, format!("Subscription/{} found", sub.name)),
+            None => (false, format!("No subscription for CSV/{}", op.csv.name)),
+        };
+        checks.push(PreflightCheck {
+            name: format!("Subscription resolved ({})", op.csv.name),
+            passed,
+            detail,
+        });
+    }
+
+    // 2. CSV status and controller health
+    for op in target_operators {
+        let csv_ok = check_csv_health(client, op, kind_map).await;
+        checks.push(PreflightCheck {
+            name: format!("CSV health ({})", op.csv.name),
+            passed: csv_ok.0,
+            detail: csv_ok.1,
+        });
+
+        let ctrl_ok = check_controller_health(client, op, kind_map).await;
+        checks.push(PreflightCheck {
+            name: format!("Controller available ({})", op.csv.name),
+            passed: ctrl_ok.0,
+            detail: ctrl_ok.1,
+        });
+    }
+
+    // 3. Dedup summary
+    if total_observations != unique_count {
+        checks.push(PreflightCheck {
+            name: "CR dedup".to_string(),
+            passed: true,
+            detail: format!(
+                "{} observations normalized to {} unique CRs",
+                total_observations, unique_count
+            ),
+        });
+    }
+
+    // 4. Uncertain provenance
+    if unknown_provenance_count > 0 {
+        checks.push(PreflightCheck {
+            name: "Provenance".to_string(),
+            passed: false,
+            detail: format!(
+                "{} CRs have uncertain provenance (marked as REVIEW)",
+                unknown_provenance_count
+            ),
+        });
+    }
+
+    Preflight { checks }
+}
+
+async fn check_csv_health(
+    client: &Client,
+    op: &OperatorInstance,
+    kind_map: &KindMap,
+) -> (bool, String) {
+    let csv_info = match kind_map.get("ClusterServiceVersion") {
+        Some(i) => i,
+        None => return (false, "ClusterServiceVersion kind not found".to_string()),
+    };
+
+    let gvk =
+        GroupVersion::gv(&csv_info.group, &csv_info.version).with_kind("ClusterServiceVersion");
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &csv_info.plural);
+    let ns = op.csv.namespace.as_deref().unwrap_or(&op.install_namespace);
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &ar);
+
+    match api.get(&op.csv.name).await {
+        Ok(obj) => {
+            let phase = obj
+                .data
+                .get("status")
+                .and_then(|s| s.get("phase"))
+                .and_then(|p| p.as_str())
+                .unwrap_or("Unknown");
+            let passed = phase == "Succeeded";
+            (passed, format!("phase={}", phase))
+        }
+        Err(e) => (false, format!("GET failed: {}", e)),
+    }
+}
+
+async fn check_controller_health(
+    client: &Client,
+    op: &OperatorInstance,
+    kind_map: &KindMap,
+) -> (bool, String) {
+    let deploy_info = match kind_map.get("Deployment") {
+        Some(i) => i,
+        None => return (false, "Deployment kind not found".to_string()),
+    };
+
+    let mut all_available = true;
+    let mut details = Vec::new();
+
+    for deploy_name in &op.deployments {
+        let gvk =
+            GroupVersion::gv(&deploy_info.group, &deploy_info.version).with_kind("Deployment");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &deploy_info.plural);
+        let api: Api<DynamicObject> =
+            Api::namespaced_with(client.clone(), &op.install_namespace, &ar);
+
+        match api.get(deploy_name).await {
+            Ok(obj) => {
+                let available = obj
+                    .data
+                    .get("status")
+                    .and_then(|s| s.get("availableReplicas"))
+                    .and_then(|r| r.as_i64())
+                    .unwrap_or(0);
+                if available > 0 {
+                    details.push(format!("{}: Available ({})", deploy_name, available));
+                } else {
+                    all_available = false;
+                    details.push(format!("{}: NOT Available", deploy_name));
+                }
+            }
+            Err(_) => {
+                all_available = false;
+                details.push(format!("{}: NOT FOUND", deploy_name));
+            }
+        }
+    }
+
+    (all_available, details.join("; "))
+}
+
 pub async fn generate_teardown_plan(
     client: &Client,
     target_operators: &[&OperatorInstance],
     all_operators: &[OperatorInstance],
     kind_map: &KindMap,
     gvr_map: &GvrMap,
+    prune_apis: bool,
 ) -> Result<TeardownPlan> {
     let target_csv_names: HashSet<&str> = target_operators
         .iter()
@@ -259,67 +520,83 @@ pub async fn generate_teardown_plan(
         })
         .collect();
 
-    // Collect all owned CRDs from targets
     let target_crds: Vec<String> = target_operators
         .iter()
         .flat_map(|op| op.owned_crds.iter().cloned())
         .collect();
     let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
 
-    // Discover CR instances across cluster
     eprint!("🔍 Discovering CR instances...");
-    let cr_instances = discover_cr_instances(client, &target_crds, kind_map, gvr_map).await;
-    eprintln!(" found {} instances", cr_instances.len());
+    let (mut cr_instances, total_observations) =
+        discover_cr_instances(client, &target_crds, kind_map, gvr_map).await;
+    let unique_count = cr_instances.len();
+    let duplicates = total_observations - unique_count;
+    eprintln!(
+        " found {} instances ({} observations)",
+        unique_count, total_observations
+    );
 
-    // Build uid set of all CRs to detect parent/leaf relationships
+    // Classify provenance
+    for cr in &mut cr_instances {
+        classify_provenance(cr, target_operators);
+    }
+
+    let unknown_provenance_count = cr_instances
+        .iter()
+        .filter(|cr| matches!(cr.provenance, Provenance::Unknown))
+        .count();
+
+    // Run preflight checks
+    eprint!("🔍 Running preflight checks...");
+    let preflight = run_preflight(
+        client,
+        target_operators,
+        kind_map,
+        total_observations,
+        unique_count,
+        unknown_provenance_count,
+    )
+    .await;
+    eprintln!(" done");
+
+    // Determine root vs managed CRs
+    // Root CRs: have no ownerRef pointing to another target CR, or are ownerRef targets of other CRs
     let cr_uids: HashSet<String> = cr_instances
         .iter()
         .filter_map(|cr| cr.id.uid.clone())
         .collect();
 
-    // Separate CRs into leaf (no CR children own them) and parent
-    // A CR is a "leaf" if no other CR has an ownerRef pointing to it
-    let cr_parent_uids: HashSet<String> = cr_instances
+    // UIDs that are referenced as owners by other CRs
+    let parent_uids: HashSet<String> = cr_instances
         .iter()
         .flat_map(|cr| cr.owner_refs.iter().map(|(_, _, uid)| uid.clone()))
         .filter(|uid| cr_uids.contains(uid))
         .collect();
 
-    let mut leaf_crs: Vec<&CrInstance> = Vec::new();
-    let mut parent_crs: Vec<&CrInstance> = Vec::new();
+    // Root CRs: those that ARE parents of other target CRs, or have no ownerRef to target CRs
+    // Managed descendants: those whose ownerRef points to a root CR
+    let mut root_crs: Vec<&CrInstance> = Vec::new();
+    let mut managed_descendants: Vec<&CrInstance> = Vec::new();
+    let mut independent_crs: Vec<&CrInstance> = Vec::new();
 
     for cr in &cr_instances {
-        if let Some(uid) = &cr.id.uid {
-            if cr_parent_uids.contains(uid) {
-                parent_crs.push(cr);
-            } else {
-                leaf_crs.push(cr);
-            }
+        let uid = cr.id.uid.as_deref().unwrap_or("");
+        let is_parent = parent_uids.contains(uid);
+        let has_parent_in_set = cr
+            .owner_refs
+            .iter()
+            .any(|(_, _, ouid)| cr_uids.contains(ouid));
+
+        if is_parent {
+            root_crs.push(cr);
+        } else if has_parent_in_set {
+            managed_descendants.push(cr);
         } else {
-            leaf_crs.push(cr);
+            independent_crs.push(cr);
         }
     }
 
-    // Sort parents topologically: children before parents
-    parent_crs.sort_by(|a, b| {
-        let a_is_parent_of_b = b
-            .owner_refs
-            .iter()
-            .any(|(_, _, uid)| a.id.uid.as_ref().is_some_and(|a_uid| a_uid == uid));
-        let b_is_parent_of_a = a
-            .owner_refs
-            .iter()
-            .any(|(_, _, uid)| b.id.uid.as_ref().is_some_and(|b_uid| b_uid == uid));
-        if a_is_parent_of_b {
-            std::cmp::Ordering::Greater // a after b (parent after child)
-        } else if b_is_parent_of_a {
-            std::cmp::Ordering::Less
-        } else {
-            a.id.kind.cmp(&b.id.kind).then(a.id.name.cmp(&b.id.name))
-        }
-    });
-
-    // Check for blockers: unselected operators that require target CRDs
+    // Check for blockers
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
 
@@ -346,7 +623,6 @@ pub async fn generate_teardown_plan(
                 });
             }
         }
-        // Also check if unselected operators own a target CRD
         for owned_crd in &op.owned_crds {
             if target_crd_set.contains(owned_crd.as_str()) {
                 warnings.push(Warning {
@@ -367,6 +643,27 @@ pub async fn generate_teardown_plan(
         }
     }
 
+    // Add warnings for dedup and provenance
+    if duplicates > 0 {
+        warnings.push(Warning {
+            message: format!(
+                "{} duplicate CR discoveries normalized (multi-version CRDs)",
+                duplicates
+            ),
+            resource: None,
+        });
+    }
+
+    if unknown_provenance_count > 0 {
+        warnings.push(Warning {
+            message: format!(
+                "{} CRs have uncertain provenance (owned API, but origin unknown)",
+                unknown_provenance_count
+            ),
+            resource: None,
+        });
+    }
+
     let blocked_crds: HashSet<&str> = blockers.iter().map(|b| b.resource.name.as_str()).collect();
     let warned_crds: HashSet<&str> = warnings
         .iter()
@@ -383,7 +680,6 @@ pub async fn generate_teardown_plan(
             });
         }
     }
-    // Keep CSVs alive during operand cleanup
     for op in target_operators {
         phase0_actions.push(Action::Keep {
             resource: op.csv.clone(),
@@ -396,7 +692,7 @@ pub async fn generate_teardown_plan(
         description: "Delete Subscriptions to prevent OLM from re-installing operators".to_string(),
         actions: phase0_actions,
         barrier: Some(Barrier {
-            description: "All Subscriptions deleted".to_string(),
+            description: "Subscriptions deleted, controllers verified available".to_string(),
             conditions: target_operators
                 .iter()
                 .filter_map(|op| op.subscription.as_ref().map(|s| format!("{} is gone", s)))
@@ -404,48 +700,73 @@ pub async fn generate_teardown_plan(
         }),
     };
 
-    // ── Phase 1: Remove leaf operands ──
-    let phase1_actions: Vec<Action> = leaf_crs
-        .iter()
-        .map(|cr| Action::Delete {
+    // ── Phase 1: Trigger operand cleanup ──
+    let mut phase1_actions: Vec<Action> = Vec::new();
+
+    // DELETE root CRs (these trigger controller cleanup of descendants)
+    for cr in &root_crs {
+        phase1_actions.push(Action::Delete {
             resource: cr.id.clone(),
-            reason: format!("leaf CR of CRD {}", cr.crd_name),
-        })
-        .collect();
+            reason: "root management CR".to_string(),
+        });
+    }
+
+    // EXPECT_GONE for managed descendants
+    for cr in &managed_descendants {
+        phase1_actions.push(Action::ExpectGone {
+            resource: cr.id.clone(),
+            reason: "managed descendant; controller expected to remove".to_string(),
+        });
+    }
+
+    // Handle independent CRs based on provenance
+    for cr in &independent_crs {
+        match cr.provenance {
+            Provenance::Managed | Provenance::LikelyManaged => {
+                phase1_actions.push(Action::Delete {
+                    resource: cr.id.clone(),
+                    reason: format!("independent operand (provenance: {:?})", cr.provenance),
+                });
+            }
+            Provenance::Unknown => {
+                phase1_actions.push(Action::Review {
+                    resource: cr.id.clone(),
+                    reason: "owned API, but provenance unknown".to_string(),
+                });
+            }
+        }
+    }
 
     let phase1 = PlanPhase {
-        name: "Remove leaf operands".to_string(),
-        description: "Delete CR instances that are not parents of other CRs".to_string(),
+        name: "Trigger operand cleanup".to_string(),
+        description:
+            "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish"
+                .to_string(),
         actions: phase1_actions,
         barrier: Some(Barrier {
-            description: "All leaf operands removed".to_string(),
-            conditions: leaf_crs
-                .iter()
-                .map(|cr| format!("{} is gone", cr.id))
-                .collect(),
+            description: "All operands removed (deleted + expected)".to_string(),
+            conditions: {
+                let mut conds: Vec<String> = root_crs
+                    .iter()
+                    .map(|cr| format!("{} is gone", cr.id))
+                    .collect();
+                conds.extend(
+                    managed_descendants
+                        .iter()
+                        .map(|cr| format!("{} is gone (expected)", cr.id)),
+                );
+                conds
+            },
         }),
     };
 
-    // ── Phase 2: Remove parent operands ──
-    let phase2_actions: Vec<Action> = parent_crs
-        .iter()
-        .map(|cr| Action::Delete {
-            resource: cr.id.clone(),
-            reason: format!("parent CR of CRD {}", cr.crd_name),
-        })
-        .collect();
-
+    // ── Phase 2: Remaining roots ──
+    // (empty by design — Phase 1 should handle everything, but this phase catches stragglers)
     let phase2 = PlanPhase {
-        name: "Remove parent operands".to_string(),
-        description: "Delete CRs that own other CRs (children first)".to_string(),
-        actions: phase2_actions,
-        barrier: Some(Barrier {
-            description: "All parent operands removed".to_string(),
-            conditions: parent_crs
-                .iter()
-                .map(|cr| format!("{} is gone", cr.id))
-                .collect(),
-        }),
+        name: "Remaining cleanup".to_string(),
+        description: "Delete any CRs that were not cleaned up by controller".to_string(),
+        actions: vec![],
+        barrier: None,
     };
 
     // ── Phase 3: Remove Operator controllers ──
@@ -471,15 +792,14 @@ pub async fn generate_teardown_plan(
     };
 
     // ── Phase 4: Remove unused APIs ──
-    // Count remaining CRs per CRD (after plan execution, should be 0)
-    let cr_counts: HashMap<&str, usize> =
-        cr_instances.iter().fold(HashMap::new(), |mut acc, cr| {
-            *acc.entry(cr.crd_name.as_str()).or_insert(0) += 1;
-            acc
-        });
-
     let mut phase4_actions = Vec::new();
+    let mut seen_crds = HashSet::new();
+
     for crd_name in &target_crds {
+        if !seen_crds.insert(crd_name.clone()) {
+            continue;
+        }
+
         let crd_id = ResourceId {
             group: "apiextensions.k8s.io".to_string(),
             version: "v1".to_string(),
@@ -500,34 +820,30 @@ pub async fn generate_teardown_plan(
                 reason: format!("required by unselected operator {}", blocker_op),
             });
         } else if warned_crds.contains(crd_name.as_str()) {
-            let _count = cr_counts.get(crd_name.as_str()).copied().unwrap_or(0);
             phase4_actions.push(Action::Keep {
                 resource: crd_id,
                 reason: "also owned by another operator".to_string(),
             });
-        } else {
+        } else if prune_apis {
             phase4_actions.push(Action::Delete {
                 resource: crd_id,
                 reason: "no remaining CRs, no external dependencies".to_string(),
             });
+        } else {
+            phase4_actions.push(Action::Keep {
+                resource: crd_id,
+                reason: "eligible for prune (use --prune-apis to remove)".to_string(),
+            });
         }
     }
 
-    // Dedup CRD actions (multiple operators may own the same CRD)
-    let mut seen_crds = HashSet::new();
-    phase4_actions.retain(|action| {
-        let name = match action {
-            Action::Delete { resource, .. } => &resource.name,
-            Action::Keep { resource, .. } => &resource.name,
-            Action::WaitGone { resource } => &resource.name,
-        };
-        seen_crds.insert(name.clone())
-    });
-
     let phase4 = PlanPhase {
-        name: "Remove unused APIs".to_string(),
-        description: "Delete CRDs with no remaining instances and no external dependencies"
-            .to_string(),
+        name: "APIs".to_string(),
+        description: if prune_apis {
+            "Delete CRDs with no remaining instances and no external dependencies".to_string()
+        } else {
+            "CRDs kept by default — use --prune-apis for complete API removal".to_string()
+        },
         actions: phase4_actions,
         barrier: None,
     };
@@ -554,14 +870,34 @@ pub async fn generate_teardown_plan(
         .collect();
 
     let phase5 = PlanPhase {
-        name: "Remove empty namespaces".to_string(),
+        name: "Namespaces".to_string(),
         description: "Namespaces are kept by default — verify manually before deleting".to_string(),
         actions: phase5_actions,
         barrier: None,
     };
 
+    if !prune_apis {
+        let eligible = phase4
+            .actions
+            .iter()
+            .filter(|a| {
+                matches!(a, Action::Keep { reason, .. } if reason.contains("eligible for prune"))
+            })
+            .count();
+        if eligible > 0 {
+            warnings.push(Warning {
+                message: format!(
+                    "{} CRDs eligible for removal but kept by default (use --prune-apis)",
+                    eligible
+                ),
+                resource: None,
+            });
+        }
+    }
+
     let plan = TeardownPlan {
         targets,
+        preflight,
         phases: vec![phase0, phase1, phase2, phase3, phase4, phase5],
         blockers,
         warnings,
@@ -571,10 +907,17 @@ pub async fn generate_teardown_plan(
     Ok(plan)
 }
 
+fn scope_suffix(resource: &ResourceId) -> String {
+    match &resource.namespace {
+        Some(ns) => format!("  \x1b[2m(ns: {})\x1b[0m", ns),
+        None => "  \x1b[2m(cluster-scoped)\x1b[0m".to_string(),
+    }
+}
+
 pub fn print_teardown_plan(plan: &TeardownPlan, output: &OutputFormat) {
     match output {
         OutputFormat::Tree => print_plan_tree(plan),
-        OutputFormat::Table => print_plan_tree(plan), // table not particularly useful for plans
+        OutputFormat::Table => print_plan_tree(plan),
         OutputFormat::Json => print_plan_json(plan),
     }
 }
@@ -599,6 +942,19 @@ fn print_plan_tree(plan: &TeardownPlan) {
         );
     }
 
+    // Preflight
+    if !plan.preflight.checks.is_empty() {
+        println!("\n\x1b[1mPreflight\x1b[0m");
+        for check in &plan.preflight.checks {
+            let icon = if check.passed { "✓" } else { "!" };
+            let color = if check.passed { "32" } else { "33" };
+            println!(
+                "  \x1b[{}m{}\x1b[0m {} — {}",
+                color, icon, check.name, check.detail
+            );
+        }
+    }
+
     for (i, phase) in plan.phases.iter().enumerate() {
         println!("\n\x1b[1mPhase {}  {}\x1b[0m", i, phase.name);
 
@@ -610,28 +966,47 @@ fn print_plan_tree(plan: &TeardownPlan) {
         for action in &phase.actions {
             match action {
                 Action::Delete { resource, reason } => {
-                    let ns_suffix = resource
-                        .namespace
-                        .as_ref()
-                        .map(|ns| format!("  \x1b[2m(ns: {})\x1b[0m", ns))
-                        .unwrap_or_default();
                     println!(
                         "  \x1b[31mDELETE\x1b[0m {}/{}{}",
-                        resource.kind, resource.name, ns_suffix
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
+                    );
+                    println!("         \x1b[2m{}\x1b[0m", reason);
+                }
+                Action::ExpectGone { resource, reason } => {
+                    println!(
+                        "  \x1b[33mEXPECT\x1b[0m {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
                 }
                 Action::Keep { resource, reason } => {
                     println!(
-                        "  \x1b[32mKEEP  \x1b[0m {}/{}",
-                        resource.kind, resource.name
+                        "  \x1b[32mKEEP  \x1b[0m {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
+                    );
+                    println!("         \x1b[2m{}\x1b[0m", reason);
+                }
+                Action::Review { resource, reason } => {
+                    println!(
+                        "  \x1b[35mREVIEW\x1b[0m {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
                 }
                 Action::WaitGone { resource } => {
                     println!(
-                        "  \x1b[33mWAIT  \x1b[0m {}/{}",
-                        resource.kind, resource.name
+                        "  \x1b[33mWAIT  \x1b[0m {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
                     );
                 }
             }
@@ -660,22 +1035,27 @@ fn print_plan_tree(plan: &TeardownPlan) {
     }
 
     // Summary
-    let delete_count = plan
-        .phases
-        .iter()
-        .flat_map(|p| &p.actions)
-        .filter(|a| matches!(a, Action::Delete { .. }))
-        .count();
-    let keep_count = plan
-        .phases
-        .iter()
-        .flat_map(|p| &p.actions)
-        .filter(|a| matches!(a, Action::Keep { .. }))
-        .count();
+    let mut delete_count = 0;
+    let mut expect_count = 0;
+    let mut keep_count = 0;
+    let mut review_count = 0;
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            match action {
+                Action::Delete { .. } => delete_count += 1,
+                Action::ExpectGone { .. } => expect_count += 1,
+                Action::Keep { .. } => keep_count += 1,
+                Action::Review { .. } => review_count += 1,
+                Action::WaitGone { .. } => {}
+            }
+        }
+    }
     println!(
-        "\n\x1b[1mSummary\x1b[0m: {} DELETE, {} KEEP, {} blockers, {} warnings",
-        delete_count,
-        keep_count,
+        "\n\x1b[1mSummary\x1b[0m: {} DELETE, {} EXPECT-GONE, {} KEEP, {} REVIEW",
+        delete_count, expect_count, keep_count, review_count
+    );
+    println!(
+        "  {} blockers, {} warnings",
         plan.blockers.len(),
         plan.warnings.len()
     );

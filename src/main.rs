@@ -116,6 +116,7 @@ async fn main() -> Result<()> {
                         operators: operator_queries,
                         output,
                         no_cache,
+                        prune_apis,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -138,6 +139,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            prune_apis,
                         )
                         .await?;
 
@@ -147,6 +149,7 @@ async fn main() -> Result<()> {
                         operators: operator_queries,
                         no_cache,
                         dry_run,
+                        prune_apis,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -169,6 +172,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            prune_apis,
                         )
                         .await?;
 
@@ -201,6 +205,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            false,
                         )
                         .await?;
 
@@ -260,6 +265,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            false,
                         )
                         .await?;
 

@@ -132,6 +132,10 @@ pub enum TeardownAction {
         /// Skip discovery cache
         #[arg(long)]
         no_cache: bool,
+
+        /// Remove CRDs after teardown (default: keep)
+        #[arg(long)]
+        prune_apis: bool,
     },
 
     /// Check current status of resources in a teardown plan
@@ -158,6 +162,10 @@ pub enum TeardownAction {
         /// Dry run — show what would be done without executing
         #[arg(long)]
         dry_run: bool,
+
+        /// Remove CRDs after teardown (default: keep)
+        #[arg(long)]
+        prune_apis: bool,
     },
 
     /// Inspect all resources belonging to an operator

@@ -47,7 +47,9 @@ pub async fn check_plan_status(
         for action in &phase.actions {
             let (resource, is_keep) = match action {
                 Action::Delete { resource, .. } => (resource, false),
+                Action::ExpectGone { resource, .. } => (resource, false),
                 Action::Keep { resource, .. } => (resource, true),
+                Action::Review { resource, .. } => (resource, true),
                 Action::WaitGone { resource } => (resource, false),
             };
 
