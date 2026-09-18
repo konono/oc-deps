@@ -272,3 +272,126 @@ pub fn resolve_kind(input: &str, kind_map: &KindMap, gvr_map: &GvrMap) -> Result
             .join(", ")
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_cache_version_rejected() {
+        let old_cache = serde_json::json!({
+            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "gvr_map": { "pods": "Pod" }
+        });
+        assert!(deserialize_discovery(&old_cache).is_none());
+    }
+
+    #[test]
+    fn explicit_v1_cache_rejected() {
+        let cache = serde_json::json!({
+            "version": 1,
+            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "gvr_map": { "pods": "Pod" }
+        });
+        assert!(deserialize_discovery(&cache).is_none());
+    }
+
+    #[test]
+    fn v2_cache_with_gk_map_accepted() {
+        let cache = serde_json::json!({
+            "version": 2,
+            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "gvr_map": { "pods": "Pod" },
+            "gk_map": { "/Pod": ["", "v1", "pods", true] }
+        });
+        let result = deserialize_discovery(&cache);
+        assert!(result.is_some());
+        let (km, gvr, gk) = result.unwrap();
+        assert_eq!(km.len(), 1);
+        assert_eq!(gvr.len(), 1);
+        assert!(gk.contains_key(&("".to_string(), "Pod".to_string())));
+    }
+
+    #[test]
+    fn v2_cache_without_gk_map_rejected() {
+        let cache = serde_json::json!({
+            "version": 2,
+            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "gvr_map": { "pods": "Pod" }
+        });
+        assert!(deserialize_discovery(&cache).is_none());
+    }
+
+    #[test]
+    fn v2_cache_with_multiple_groups() {
+        let cache = serde_json::json!({
+            "version": 2,
+            "kind_map": {
+                "Pod": ["", "v1", "pods", true],
+                "Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true]
+            },
+            "gvr_map": {
+                "pods": "Pod",
+                "subscriptions.operators.coreos.com": "Subscription"
+            },
+            "gk_map": {
+                "/Pod": ["", "v1", "pods", true],
+                "operators.coreos.com/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true],
+                "messaging.example.com/Subscription": ["messaging.example.com", "v1", "messagingsubs", true]
+            }
+        });
+        let result = deserialize_discovery(&cache);
+        assert!(result.is_some());
+        let (km, _, gk) = result.unwrap();
+        assert_eq!(km.len(), 2);
+        assert_eq!(gk.len(), 3);
+        let olm_sub = gk
+            .get(&(
+                "operators.coreos.com".to_string(),
+                "Subscription".to_string(),
+            ))
+            .unwrap();
+        assert_eq!(olm_sub.plural, "subscriptions");
+        let msg_sub = gk
+            .get(&(
+                "messaging.example.com".to_string(),
+                "Subscription".to_string(),
+            ))
+            .unwrap();
+        assert_eq!(msg_sub.plural, "messagingsubs");
+    }
+
+    #[test]
+    fn serialize_roundtrip() {
+        let mut km = KindMap::new();
+        km.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+            },
+        );
+        let mut gvr = GvrMap::new();
+        gvr.insert("pods".to_string(), "Pod".to_string());
+        let mut gk = GroupKindMap::new();
+        gk.insert(
+            ("".to_string(), "Pod".to_string()),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+            },
+        );
+
+        let json = serialize_discovery(&km, &gvr, &gk);
+        let result = deserialize_discovery(&json);
+        assert!(result.is_some());
+        let (km2, gvr2, gk2) = result.unwrap();
+        assert_eq!(km2.len(), km.len());
+        assert_eq!(gvr2.len(), gvr.len());
+        assert_eq!(gk2.len(), gk.len());
+    }
+}

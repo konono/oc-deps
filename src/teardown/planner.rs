@@ -1072,3 +1072,238 @@ fn print_plan_tree(plan: &TeardownPlan) {
 fn print_plan_json(plan: &TeardownPlan) {
     println!("{}", serde_json::to_string_pretty(plan).unwrap_or_default());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_operator(csv_name: &str, sub_name: &str) -> OperatorInstance {
+        OperatorInstance {
+            subscription: Some(ResourceId {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                kind: "Subscription".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: sub_name.to_string(),
+                uid: None,
+            }),
+            csv: ResourceId {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                kind: "ClusterServiceVersion".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: csv_name.to_string(),
+                uid: None,
+            },
+            owned_crds: vec![],
+            required_crds: vec![],
+            owned_api_services: vec![],
+            required_api_services: vec![],
+            deployments: vec!["test-controller".to_string()],
+            service_accounts: vec![],
+            install_namespace: "test-ns".to_string(),
+        }
+    }
+
+    fn make_cr_instance(
+        kind: &str,
+        name: &str,
+        uid: &str,
+        owner_refs: Vec<(String, String, String)>,
+        labels: HashMap<String, String>,
+        managers: Vec<String>,
+    ) -> CrInstance {
+        CrInstance {
+            id: ResourceId {
+                group: "test.example.com".to_string(),
+                version: "v1".to_string(),
+                kind: kind.to_string(),
+                namespace: None,
+                name: name.to_string(),
+                uid: Some(uid.to_string()),
+            },
+            owner_refs,
+            crd_name: format!("{}s.test.example.com", kind.to_lowercase()),
+            labels,
+            managed_field_managers: managers,
+            provenance: Provenance::Unknown,
+        }
+    }
+
+    // ── resolve_operator_targets ──
+
+    #[test]
+    fn resolve_exact_csv_match() {
+        let ops = vec![
+            make_test_operator("rhods-operator.3.5.0", "rhods-operator"),
+            make_test_operator("odf-operator.v4.22", "odf-operator"),
+        ];
+        let result = resolve_operator_targets(&["rhods-operator.3.5.0".to_string()], &ops).unwrap();
+        assert_eq!(result, vec![0]);
+    }
+
+    #[test]
+    fn resolve_exact_subscription_match() {
+        let ops = vec![
+            make_test_operator("rhods-operator.3.5.0", "rhods-operator"),
+            make_test_operator("odf-operator.v4.22", "odf-operator"),
+        ];
+        let result = resolve_operator_targets(&["odf-operator".to_string()], &ops).unwrap();
+        assert_eq!(result, vec![1]);
+    }
+
+    #[test]
+    fn resolve_partial_match() {
+        let ops = vec![
+            make_test_operator("rhods-operator.3.5.0", "rhods-operator"),
+            make_test_operator("odf-operator.v4.22", "odf-operator"),
+        ];
+        let result = resolve_operator_targets(&["rhods".to_string()], &ops).unwrap();
+        assert_eq!(result, vec![0]);
+    }
+
+    #[test]
+    fn resolve_ambiguous_fails() {
+        let ops = vec![
+            make_test_operator("my-operator.v1", "my-operator-a"),
+            make_test_operator("my-operator.v2", "my-operator-b"),
+        ];
+        let result = resolve_operator_targets(&["my-operator".to_string()], &ops);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Ambiguous"),
+            "expected ambiguous error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn resolve_not_found_fails() {
+        let ops = vec![make_test_operator("rhods-operator.3.5.0", "rhods-operator")];
+        let result = resolve_operator_targets(&["nonexistent".to_string()], &ops);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("not found"),
+            "expected not found error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn resolve_deduplicates() {
+        let ops = vec![make_test_operator("rhods-operator.3.5.0", "rhods-operator")];
+        let result = resolve_operator_targets(
+            &[
+                "rhods-operator".to_string(),
+                "rhods-operator.3.5.0".to_string(),
+            ],
+            &ops,
+        )
+        .unwrap();
+        assert_eq!(result, vec![0]);
+    }
+
+    // ── classify_provenance ──
+
+    #[test]
+    fn provenance_ownerref_to_csv_is_managed() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-1",
+            vec![(
+                "ClusterServiceVersion".to_string(),
+                "rhods-operator.3.5.0".to_string(),
+                "csv-uid".to_string(),
+            )],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr, &ops);
+        assert!(matches!(cr.provenance, Provenance::Managed));
+    }
+
+    #[test]
+    fn provenance_ownerref_to_deployment_is_managed() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-1",
+            vec![(
+                "Deployment".to_string(),
+                "test-controller".to_string(),
+                "deploy-uid".to_string(),
+            )],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr, &ops);
+        assert!(matches!(cr.provenance, Provenance::Managed));
+    }
+
+    #[test]
+    fn provenance_label_with_csv_prefix_is_likely_managed() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut labels = HashMap::new();
+        labels.insert(
+            "app.kubernetes.io/managed-by-rhods-operator".to_string(),
+            "true".to_string(),
+        );
+        let mut cr = make_cr_instance("MyResource", "test", "uid-1", vec![], labels, vec![]);
+        classify_provenance(&mut cr, &ops);
+        assert!(matches!(cr.provenance, Provenance::LikelyManaged));
+    }
+
+    #[test]
+    fn provenance_generic_label_stays_unknown() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut labels = HashMap::new();
+        labels.insert(
+            "app.kubernetes.io/part-of".to_string(),
+            "something".to_string(),
+        );
+        let mut cr = make_cr_instance("MyResource", "test", "uid-1", vec![], labels, vec![]);
+        classify_provenance(&mut cr, &ops);
+        assert!(matches!(cr.provenance, Provenance::Unknown));
+    }
+
+    #[test]
+    fn provenance_managed_fields_manager_is_likely_managed() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-1",
+            vec![],
+            HashMap::new(),
+            vec!["test-controller".to_string()],
+        );
+        classify_provenance(&mut cr, &ops);
+        assert!(matches!(cr.provenance, Provenance::LikelyManaged));
+    }
+
+    #[test]
+    fn provenance_no_evidence_is_unknown() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-1",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr, &ops);
+        assert!(matches!(cr.provenance, Provenance::Unknown));
+    }
+}

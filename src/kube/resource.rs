@@ -132,6 +132,18 @@ impl NamespaceIndex {
     }
 }
 
+pub fn resolve_kind_info<'a>(
+    resource: &ResourceId,
+    kind_map: &'a crate::kube::discovery::KindMap,
+    gk_map: &'a crate::kube::discovery::GroupKindMap,
+) -> Option<&'a crate::kube::discovery::KindInfo> {
+    if !resource.group.is_empty() {
+        gk_map.get(&(resource.group.clone(), resource.kind.clone()))
+    } else {
+        kind_map.get(&resource.kind)
+    }
+}
+
 /// Resolve the correct API endpoint for a ResourceId.
 /// Uses GroupKindMap for precise (group, kind) lookup, falls back to KindMap.
 pub fn resolve_api(
@@ -140,11 +152,7 @@ pub fn resolve_api(
     kind_map: &crate::kube::discovery::KindMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
-    let kind_info = if !resource.group.is_empty() {
-        gk_map.get(&(resource.group.clone(), resource.kind.clone()))?
-    } else {
-        kind_map.get(&resource.kind)?
-    };
+    let kind_info = resolve_kind_info(resource, kind_map, gk_map)?;
 
     let (group, version) = if !resource.group.is_empty() && !resource.version.is_empty() {
         (resource.group.as_str(), resource.version.as_str())
@@ -173,4 +181,103 @@ pub fn primary_owner(refs: &[OwnerRef]) -> Option<&OwnerRef> {
 pub fn dedup_spec_refs(refs: &mut Vec<SpecRef>) {
     let mut seen = HashSet::new();
     refs.retain(|r| seen.insert((r.target_kind.clone(), r.target_name.clone())));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kube::discovery::{GroupKindMap, KindInfo, KindMap};
+
+    fn make_resource_id(group: &str, kind: &str, name: &str) -> ResourceId {
+        ResourceId {
+            group: group.to_string(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: None,
+            name: name.to_string(),
+            uid: None,
+        }
+    }
+
+    fn make_kind_info(group: &str, plural: &str) -> KindInfo {
+        KindInfo {
+            group: group.to_string(),
+            version: "v1".to_string(),
+            plural: plural.to_string(),
+            namespaced: true,
+        }
+    }
+
+    fn make_test_maps() -> (KindMap, GroupKindMap) {
+        let mut km = KindMap::new();
+        let mut gk = GroupKindMap::new();
+
+        km.insert("Pod".to_string(), make_kind_info("", "pods"));
+        gk.insert(
+            ("".to_string(), "Pod".to_string()),
+            make_kind_info("", "pods"),
+        );
+
+        // Subscription exists in two groups
+        km.insert(
+            "Subscription".to_string(),
+            make_kind_info("operators.coreos.com", "subscriptions"),
+        );
+        gk.insert(
+            (
+                "operators.coreos.com".to_string(),
+                "Subscription".to_string(),
+            ),
+            make_kind_info("operators.coreos.com", "subscriptions"),
+        );
+        gk.insert(
+            (
+                "messaging.example.com".to_string(),
+                "Subscription".to_string(),
+            ),
+            make_kind_info("messaging.example.com", "messagingsubscriptions"),
+        );
+
+        (km, gk)
+    }
+
+    #[test]
+    fn resolve_kind_info_with_group_uses_gk_map() {
+        let (km, gk) = make_test_maps();
+        let res = make_resource_id("operators.coreos.com", "Subscription", "test");
+        let info = resolve_kind_info(&res, &km, &gk).unwrap();
+        assert_eq!(info.plural, "subscriptions");
+        assert_eq!(info.group, "operators.coreos.com");
+    }
+
+    #[test]
+    fn resolve_kind_info_with_group_picks_correct_group() {
+        let (km, gk) = make_test_maps();
+        let res = make_resource_id("messaging.example.com", "Subscription", "test");
+        let info = resolve_kind_info(&res, &km, &gk).unwrap();
+        assert_eq!(info.plural, "messagingsubscriptions");
+        assert_eq!(info.group, "messaging.example.com");
+    }
+
+    #[test]
+    fn resolve_kind_info_group_mismatch_returns_none() {
+        let (km, gk) = make_test_maps();
+        let res = make_resource_id("nonexistent.group", "Subscription", "test");
+        assert!(resolve_kind_info(&res, &km, &gk).is_none());
+    }
+
+    #[test]
+    fn resolve_kind_info_without_group_uses_kind_map() {
+        let (km, gk) = make_test_maps();
+        let res = make_resource_id("", "Pod", "test");
+        let info = resolve_kind_info(&res, &km, &gk).unwrap();
+        assert_eq!(info.plural, "pods");
+    }
+
+    #[test]
+    fn resolve_kind_info_unknown_kind_returns_none() {
+        let (km, gk) = make_test_maps();
+        let res = make_resource_id("", "NonExistentKind", "test");
+        assert!(resolve_kind_info(&res, &km, &gk).is_none());
+    }
 }

@@ -666,3 +666,102 @@ pub fn print_execution_result(result: &ExecutionResult) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::teardown::planner::*;
+
+    fn make_resource(kind: &str, name: &str) -> ResourceId {
+        ResourceId {
+            group: "test.example.com".to_string(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: None,
+        }
+    }
+
+    fn make_empty_preflight() -> Preflight {
+        Preflight { checks: vec![] }
+    }
+
+    fn make_plan_with_actions(actions: Vec<Action>) -> TeardownPlan {
+        TeardownPlan {
+            targets: vec![],
+            preflight: make_empty_preflight(),
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "test phase".to_string(),
+                actions,
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn count_actions_all_types() {
+        let plan = make_plan_with_actions(vec![
+            Action::Delete {
+                resource: make_resource("Pod", "a"),
+                reason: "test".to_string(),
+            },
+            Action::Delete {
+                resource: make_resource("Pod", "b"),
+                reason: "test".to_string(),
+            },
+            Action::ExpectGone {
+                resource: make_resource("Pod", "c"),
+                reason: "test".to_string(),
+            },
+            Action::Keep {
+                resource: make_resource("CRD", "d"),
+                reason: "test".to_string(),
+            },
+            Action::Review {
+                resource: make_resource("CR", "e"),
+                reason: "test".to_string(),
+            },
+            Action::WaitGone {
+                resource: make_resource("Pod", "f"),
+            },
+        ]);
+        let (d, e, k, r) = count_actions(&plan);
+        assert_eq!(d, 2);
+        assert_eq!(e, 1);
+        assert_eq!(k, 1);
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn count_actions_empty_plan() {
+        let plan = make_plan_with_actions(vec![]);
+        let (d, e, k, r) = count_actions(&plan);
+        assert_eq!((d, e, k, r), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn scope_suffix_namespaced() {
+        let res = make_resource("Pod", "test");
+        let suffix = scope_suffix(&res);
+        assert!(suffix.contains("ns: test-ns"));
+    }
+
+    #[test]
+    fn scope_suffix_cluster_scoped() {
+        let res = ResourceId {
+            group: "".to_string(),
+            version: "v1".to_string(),
+            kind: "Namespace".to_string(),
+            namespace: None,
+            name: "test".to_string(),
+            uid: None,
+        };
+        let suffix = scope_suffix(&res);
+        assert!(suffix.contains("cluster-scoped"));
+    }
+}
