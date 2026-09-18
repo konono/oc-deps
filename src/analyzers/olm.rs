@@ -24,9 +24,8 @@ pub struct OperatorInstance {
     pub csv_phase: String,
     pub owned_crds: Vec<String>,
     pub required_crds: Vec<String>,
-    pub owned_api_services: Vec<String>,
     pub owned_api_service_defs: Vec<OwnedApiServiceDef>,
-    pub required_api_services: Vec<String>,
+    pub required_api_service_defs: Vec<OwnedApiServiceDef>,
     pub deployments: Vec<String>,
     pub service_accounts: Vec<String>,
     pub install_namespace: String,
@@ -99,6 +98,16 @@ pub struct OwnedApiServiceDef {
     pub deployment_name: Option<String>,
 }
 
+impl OwnedApiServiceDef {
+    pub fn api_service_object_name(&self) -> String {
+        format!("{}.{}", self.version, self.group)
+    }
+
+    pub fn matches_gvk(&self, other: &OwnedApiServiceDef) -> bool {
+        self.group == other.group && self.version == other.version && self.kind == other.kind
+    }
+}
+
 fn extract_api_service_defs(csv_data: &serde_json::Value, field: &str) -> Vec<OwnedApiServiceDef> {
     csv_data
         .get("spec")
@@ -139,10 +148,6 @@ fn extract_api_service_defs(csv_data: &serde_json::Value, field: &str) -> Vec<Ow
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn extract_api_service_names(defs: &[OwnedApiServiceDef]) -> Vec<String> {
-    defs.iter().map(|d| d.name.clone()).collect()
 }
 
 fn extract_deployment_names(csv_data: &serde_json::Value) -> Vec<String> {
@@ -328,9 +333,7 @@ pub async fn discover_operators(
         let owned_crds = extract_crd_names(&csv.data, "owned");
         let required_crds = extract_crd_names(&csv.data, "required");
         let owned_api_service_defs = extract_api_service_defs(&csv.data, "owned");
-        let owned_api_services = extract_api_service_names(&owned_api_service_defs);
         let required_api_service_defs = extract_api_service_defs(&csv.data, "required");
-        let required_api_services = extract_api_service_names(&required_api_service_defs);
         let deployments = extract_deployment_names(&csv.data);
         let service_accounts = extract_service_account_names(&csv.data);
 
@@ -347,9 +350,8 @@ pub async fn discover_operators(
             csv_phase: csv_phase.clone(),
             owned_crds,
             required_crds,
-            owned_api_services,
             owned_api_service_defs,
-            required_api_services,
+            required_api_service_defs,
             deployments,
             service_accounts,
             install_namespace: csv_ns,
@@ -381,16 +383,20 @@ pub fn compute_operator_dependencies(operators: &[OperatorInstance]) -> Vec<Oper
             }
         }
 
-        for required_api in &requirer.required_api_services {
+        for req_def in &requirer.required_api_service_defs {
             for provider in operators {
                 if std::ptr::eq(requirer, provider) {
                     continue;
                 }
-                if provider.owned_api_services.contains(required_api) {
+                if provider
+                    .owned_api_service_defs
+                    .iter()
+                    .any(|owned| owned.matches_gvk(req_def))
+                {
                     deps.push(OperatorDependency {
                         from: OperatorId::from_instance(requirer),
                         to: OperatorId::from_instance(provider),
-                        via: DependencyVia::ApiService(required_api.clone()),
+                        via: DependencyVia::ApiService(req_def.api_service_object_name()),
                         confidence: 1.0,
                     });
                 }
@@ -443,7 +449,10 @@ fn print_operators_tree(operators: &[OperatorInstance], deps: &[OperatorDependen
             ),
             (
                 "APIServices",
-                op.owned_api_services.iter().map(|s| s.as_str()).collect(),
+                op.owned_api_service_defs
+                    .iter()
+                    .map(|d| d.name.as_str())
+                    .collect(),
             ),
             (
                 "Deployments",

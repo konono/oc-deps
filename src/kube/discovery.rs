@@ -219,7 +219,8 @@ fn deserialize_discovery(
     }
 
     let mut gvk_map = GvkMap::new();
-    if let Some(gvk_val) = value.get("gvk_map").and_then(|v| v.as_object()) {
+    {
+        let gvk_val = value.get("gvk_map").and_then(|v| v.as_object())?;
         for (k, v) in gvk_val {
             let parts: Vec<&str> = k.splitn(3, '/').collect();
             if parts.len() < 3 {

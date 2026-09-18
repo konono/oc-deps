@@ -15,6 +15,7 @@ use crate::analyzers::olm::{
     compute_operator_dependencies,
 };
 use crate::cli::OutputFormat;
+use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
@@ -368,6 +369,112 @@ async fn discover_cr_instances(
 
     let mut instances = Vec::new();
     let mut unavailable_crds = Vec::new();
+    for result in results {
+        match result {
+            CrdDiscoveryResult::Success(crs) => instances.extend(crs),
+            CrdDiscoveryResult::Unavailable { crd_name, reason } => {
+                unavailable_crds.push((crd_name, reason));
+            }
+        }
+    }
+
+    let total_observations = instances.len();
+
+    let mut seen_uids = HashSet::new();
+    instances.retain(|cr| {
+        if let Some(uid) = &cr.id.uid {
+            seen_uids.insert(uid.clone())
+        } else {
+            true
+        }
+    });
+
+    CrDiscoveryReport {
+        instances,
+        total_observations,
+        unavailable_crds,
+    }
+}
+
+async fn discover_api_service_instances(
+    client: &Client,
+    kind_infos: &[(&OwnedApiServiceDef, KindInfo)],
+) -> CrDiscoveryReport {
+    let mut instances = Vec::new();
+    let mut unavailable_crds = Vec::new();
+
+    let futs = kind_infos.iter().map(|(def, kind_info)| {
+        let client = client.clone();
+        let kind_info = kind_info.clone();
+        let def_name = def.name.clone();
+        let def_group = def.group.clone();
+        let kind = def.kind.clone();
+        async move {
+            let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
+            let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
+            let api: Api<DynamicObject> = Api::all_with(client, &ar);
+
+            let crd_name = format!("{}.{}", def_name, def_group);
+            match list_paginated(&api).await {
+                Ok(items) => {
+                    let crs: Vec<CrInstance> = items
+                        .into_iter()
+                        .filter_map(|obj| {
+                            let uid = obj.metadata.uid.unwrap_or_default();
+                            let name = obj.metadata.name?;
+                            let ns = obj.metadata.namespace;
+                            let owner_refs: Vec<(String, String, String)> = obj
+                                .metadata
+                                .owner_references
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|r| (r.kind, r.name, r.uid))
+                                .collect();
+                            let labels: HashMap<String, String> = obj
+                                .metadata
+                                .labels
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect();
+                            let managed_field_managers: Vec<String> = obj
+                                .metadata
+                                .managed_fields
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter_map(|mf| mf.manager)
+                                .collect();
+                            Some(CrInstance {
+                                id: ResourceId {
+                                    group: kind_info.group.clone(),
+                                    version: kind_info.version.clone(),
+                                    kind: kind.clone(),
+                                    namespace: ns,
+                                    name,
+                                    uid: Some(uid),
+                                },
+                                owner_refs,
+                                crd_name: crd_name.clone(),
+                                labels,
+                                managed_field_managers,
+                                provenance: Provenance::Unknown,
+                            })
+                        })
+                        .collect();
+                    CrdDiscoveryResult::Success(crs)
+                }
+                Err(e) => CrdDiscoveryResult::Unavailable {
+                    crd_name,
+                    reason: format!("LIST failed: {}", e),
+                },
+            }
+        }
+    });
+
+    let results: Vec<CrdDiscoveryResult> = futures::stream::iter(futs)
+        .buffer_unordered(DEFAULT_CONCURRENCY)
+        .collect()
+        .await;
+
     for result in results {
         match result {
             CrdDiscoveryResult::Success(crs) => instances.extend(crs),
@@ -774,8 +881,8 @@ pub async fn generate_teardown_plan(
         .collect();
 
     // Resolve APIService-backed resources via exact (group, version, kind) lookup
-    let mut api_service_resource_crds: Vec<String> = Vec::new();
     let mut unresolved_api_services: Vec<String> = Vec::new();
+    let mut api_service_kind_infos: Vec<(&OwnedApiServiceDef, KindInfo)> = Vec::new();
     for def in &target_api_service_defs {
         if def.group.is_empty() || def.version.is_empty() || def.kind.is_empty() {
             unresolved_api_services.push(format!(
@@ -787,10 +894,7 @@ pub async fn generate_teardown_plan(
         let gvk_key = (def.group.clone(), def.version.clone(), def.kind.clone());
         match gvk_map.get(&gvk_key) {
             Some(kind_info) => {
-                let resolved = format!("{}.{}", kind_info.plural, def.group);
-                if !target_crd_set.contains(resolved.as_str()) {
-                    api_service_resource_crds.push(resolved);
-                }
+                api_service_kind_infos.push((def, kind_info.clone()));
             }
             None => {
                 unresolved_api_services.push(format!(
@@ -801,23 +905,24 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    let mut all_discovery_crds = target_crds.clone();
-    all_discovery_crds.extend(api_service_resource_crds.clone());
-
     eprint!("🔍 Discovering CR instances...");
-    let cr_report = discover_cr_instances(client, &all_discovery_crds, gvr_map, gk_map).await;
+    let cr_report = discover_cr_instances(client, &target_crds, gvr_map, gk_map).await;
+    let api_svc_report = discover_api_service_instances(client, &api_service_kind_infos).await;
     let mut cr_instances = cr_report.instances;
-    let total_observations = cr_report.total_observations;
+    cr_instances.extend(api_svc_report.instances);
+    let total_observations = cr_report.total_observations + api_svc_report.total_observations;
     let unique_count = cr_instances.len();
     let duplicates = total_observations - unique_count;
     eprintln!(
         " found {} instances ({} observations)",
         unique_count, total_observations
     );
-    if !cr_report.unavailable_crds.is_empty() {
+    let mut all_unavailable = cr_report.unavailable_crds;
+    all_unavailable.extend(api_svc_report.unavailable_crds);
+    if !all_unavailable.is_empty() {
         eprintln!(
-            "  ⚠ {} CRD(s) could not be enumerated",
-            cr_report.unavailable_crds.len()
+            "  ⚠ {} API type(s) could not be enumerated",
+            all_unavailable.len()
         );
     }
 
@@ -852,7 +957,7 @@ pub async fn generate_teardown_plan(
         total_observations,
         unique_count,
         review_provenance_count,
-        &cr_report.unavailable_crds,
+        &all_unavailable,
     )
     .await;
     for api_svc in &unresolved_api_services {
@@ -909,9 +1014,14 @@ pub async fn generate_teardown_plan(
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
 
-    let target_api_service_set: HashSet<&str> = target_operators
+    // APIService identity: (group, version) pairs owned by target operators
+    let target_api_service_gvs: HashSet<(String, String)> = target_operators
         .iter()
-        .flat_map(|op| op.owned_api_services.iter().map(|s| s.as_str()))
+        .flat_map(|op| {
+            op.owned_api_service_defs
+                .iter()
+                .map(|d| (d.group.clone(), d.version.clone()))
+        })
         .collect();
 
     for op in all_operators {
@@ -937,20 +1047,22 @@ pub async fn generate_teardown_plan(
                 });
             }
         }
-        for req_api in &op.required_api_services {
-            if target_api_service_set.contains(req_api.as_str()) {
+        for req_def in &op.required_api_service_defs {
+            let gv = (req_def.group.clone(), req_def.version.clone());
+            if target_api_service_gvs.contains(&gv) {
+                let obj_name = req_def.api_service_object_name();
                 blockers.push(Blocker {
                     resource: ResourceId {
                         group: "apiregistration.k8s.io".to_string(),
                         version: "v1".to_string(),
                         kind: "APIService".to_string(),
                         namespace: None,
-                        name: req_api.clone(),
+                        name: obj_name.clone(),
                         uid: None,
                     },
                     reason: format!(
                         "APIService {} cannot be removed: required by operator {}",
-                        req_api, op.csv.name
+                        obj_name, op.csv.name
                     ),
                     external_dependency: Some(op.csv.name.clone()),
                 });
@@ -1038,11 +1150,8 @@ pub async fn generate_teardown_plan(
                 map.entry(crd.clone()).or_default().push(idx);
             }
             for def in &op.owned_api_service_defs {
-                let gvk_key = (def.group.clone(), def.version.clone(), def.kind.clone());
-                if let Some(kind_info) = gvk_map.get(&gvk_key) {
-                    let key = format!("{}.{}", kind_info.plural, def.group);
-                    map.entry(key).or_default().push(idx);
-                }
+                let key = format!("{}.{}", def.name, def.group);
+                map.entry(key).or_default().push(idx);
             }
         }
         map
@@ -1340,26 +1449,30 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // APIService actions
-    let target_api_service_names: HashSet<&str> = target_operators
+    // APIService actions — dedup by (group, version) since one APIService serves multiple kinds
+    let mut seen_api_services = HashSet::new();
+    for def in target_operators
         .iter()
-        .flat_map(|op| op.owned_api_services.iter().map(|s| s.as_str()))
-        .collect();
+        .flat_map(|op| op.owned_api_service_defs.iter())
+    {
+        let obj_name = def.api_service_object_name();
+        if !seen_api_services.insert(obj_name.clone()) {
+            continue;
+        }
 
-    for api_svc_name in &target_api_service_names {
         let api_svc_id = ResourceId {
             group: "apiregistration.k8s.io".to_string(),
             version: "v1".to_string(),
             kind: "APIService".to_string(),
             namespace: None,
-            name: api_svc_name.to_string(),
+            name: obj_name.clone(),
             uid: None,
         };
 
-        if blocked_crds.contains(api_svc_name) {
+        if blocked_crds.contains(obj_name.as_str()) {
             let blocker_op = blockers
                 .iter()
-                .find(|b| b.resource.name == *api_svc_name)
+                .find(|b| b.resource.name == obj_name)
                 .and_then(|b| b.external_dependency.as_deref())
                 .unwrap_or("unknown");
             phase4_actions.push(Action::Keep {
@@ -1641,9 +1754,8 @@ mod tests {
             csv_phase: "Succeeded".to_string(),
             owned_crds: vec![],
             required_crds: vec![],
-            owned_api_services: vec![],
             owned_api_service_defs: vec![],
-            required_api_services: vec![],
+            required_api_service_defs: vec![],
             deployments: vec!["test-controller".to_string()],
             service_accounts: vec![],
             install_namespace: "test-ns".to_string(),
