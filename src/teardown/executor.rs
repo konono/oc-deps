@@ -292,18 +292,27 @@ pub async fn execute_plan(
                     phase_wait_targets.push(resource.clone());
                 }
             } else {
-                // CRD live count checks (must be sequential per CRD for safety)
-                let mut crd_blocked: HashSet<String> = HashSet::new();
+                // CRD/APIService live count checks (must be sequential for safety)
+                let mut api_blocked: HashSet<String> = HashSet::new();
                 for (resource, _) in &delete_actions {
-                    if resource.kind == "CustomResourceDefinition" {
-                        let live = count_live_cr_instances(
-                            client,
-                            &resource.name,
-                            kind_map,
-                            gk_map,
-                            gvr_map,
+                    let live = if resource.kind == "CustomResourceDefinition" {
+                        Some(
+                            count_live_cr_instances(
+                                client,
+                                &resource.name,
+                                kind_map,
+                                gk_map,
+                                gvr_map,
+                            )
+                            .await,
                         )
-                        .await;
+                    } else if resource.kind == "APIService" {
+                        Some(count_live_api_service_instances(client, &resource.name, gk_map).await)
+                    } else {
+                        None
+                    };
+
+                    if let Some(live) = live {
                         match live {
                             LiveCount::NonZero(n) => {
                                 eprintln!(
@@ -312,12 +321,12 @@ pub async fn execute_plan(
                                     resource.name,
                                     scope_suffix(resource)
                                 );
-                                eprintln!("             {} live CR instances remain — skipping", n);
+                                eprintln!("             {} live instances remain — skipping", n);
                                 result.failed.push((
                                     resource.clone(),
-                                    format!("{} live CR instances remain", n),
+                                    format!("{} live instances remain", n),
                                 ));
-                                crd_blocked.insert(resource.name.clone());
+                                api_blocked.insert(resource.name.clone());
                             }
                             LiveCount::Unknown(err) => {
                                 eprintln!(
@@ -333,19 +342,17 @@ pub async fn execute_plan(
                                 result
                                     .failed
                                     .push((resource.clone(), format!("cannot verify: {}", err)));
-                                crd_blocked.insert(resource.name.clone());
+                                api_blocked.insert(resource.name.clone());
                             }
                             LiveCount::Zero => {}
                         }
                     }
                 }
 
-                // Parallel DELETE (excluding blocked CRDs)
+                // Parallel DELETE (excluding blocked APIs)
                 let eligible: Vec<_> = delete_actions
                     .iter()
-                    .filter(|(r, _)| {
-                        !(r.kind == "CustomResourceDefinition" && crd_blocked.contains(&r.name))
-                    })
+                    .filter(|(r, _)| !api_blocked.contains(&r.name))
                     .collect();
 
                 let km = Arc::new(kind_map.clone());
@@ -841,6 +848,47 @@ async fn count_live_cr_instances(
         Ok(_) => LiveCount::NonZero(1),
         Err(e) => LiveCount::Unknown(format!("list failed: {}", e)),
     }
+}
+
+async fn count_live_api_service_instances(
+    client: &Client,
+    api_service_name: &str,
+    gk_map: &GroupKindMap,
+) -> LiveCount {
+    // APIService name format: <version>.<group> e.g. "v1beta1.metrics.k8s.io"
+    let (version, group) = match api_service_name.split_once('.') {
+        Some((v, g)) => (v, g),
+        None => {
+            return LiveCount::Unknown(format!(
+                "cannot parse APIService name: {}",
+                api_service_name
+            ));
+        }
+    };
+
+    // Find all resource kinds served by this group+version
+    let matching: Vec<_> = gk_map
+        .iter()
+        .filter(|((g, _), info)| g == group && info.version == version)
+        .collect();
+
+    if matching.is_empty() {
+        return LiveCount::Zero;
+    }
+
+    for ((_, kind), kind_info) in &matching {
+        let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(kind);
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+
+        match api.list(&ListParams::default().limit(1)).await {
+            Ok(list) if !list.items.is_empty() => return LiveCount::NonZero(1),
+            Ok(_) => {}
+            Err(e) => return LiveCount::Unknown(format!("LIST {}/{} failed: {}", group, kind, e)),
+        }
+    }
+
+    LiveCount::Zero
 }
 
 pub fn print_execution_result(result: &ExecutionResult) {

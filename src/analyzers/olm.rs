@@ -32,13 +32,47 @@ pub struct OperatorInstance {
     pub install_namespace: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperatorId {
+    pub namespace: String,
+    pub csv_name: String,
+}
+
+impl std::fmt::Display for OperatorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.csv_name, self.namespace)
+    }
+}
+
+impl OperatorId {
+    pub fn from_instance(op: &OperatorInstance) -> Self {
+        Self {
+            namespace: op.install_namespace.clone(),
+            csv_name: op.csv.name.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum DependencyVia {
+    Crd(String),
+    ApiService(String),
+}
+
+impl std::fmt::Display for DependencyVia {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DependencyVia::Crd(name) => write!(f, "CRD/{}", name),
+            DependencyVia::ApiService(name) => write!(f, "APIService/{}", name),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperatorDependency {
-    pub from_csv: String,
-    pub from_namespace: String,
-    pub to_csv: String,
-    pub to_namespace: String,
-    pub via_crd: String,
+    pub from: OperatorId,
+    pub to: OperatorId,
+    pub via: DependencyVia,
     pub confidence: f64,
 }
 
@@ -207,7 +241,7 @@ pub async fn discover_operators(
         if let Some(csv_name) = sub
             .data
             .get("status")
-            .and_then(|s| s.get("installedCSV"))
+            .and_then(|s| s.get("installedCSV").or_else(|| s.get("currentCSV")))
             .and_then(|c| c.as_str())
         {
             sub_by_csv
@@ -333,11 +367,9 @@ pub fn compute_operator_dependencies(operators: &[OperatorInstance]) -> Vec<Oper
                 }
                 if provider.owned_crds.contains(required_crd) {
                     deps.push(OperatorDependency {
-                        from_csv: requirer.csv.name.clone(),
-                        from_namespace: requirer.install_namespace.clone(),
-                        to_csv: provider.csv.name.clone(),
-                        to_namespace: provider.install_namespace.clone(),
-                        via_crd: required_crd.clone(),
+                        from: OperatorId::from_instance(requirer),
+                        to: OperatorId::from_instance(provider),
+                        via: DependencyVia::Crd(required_crd.clone()),
                         confidence: 1.0,
                     });
                 }
@@ -351,11 +383,9 @@ pub fn compute_operator_dependencies(operators: &[OperatorInstance]) -> Vec<Oper
                 }
                 if provider.owned_api_services.contains(required_api) {
                     deps.push(OperatorDependency {
-                        from_csv: requirer.csv.name.clone(),
-                        from_namespace: requirer.install_namespace.clone(),
-                        to_csv: provider.csv.name.clone(),
-                        to_namespace: provider.install_namespace.clone(),
-                        via_crd: format!("APIService/{}", required_api),
+                        from: OperatorId::from_instance(requirer),
+                        to: OperatorId::from_instance(provider),
+                        via: DependencyVia::ApiService(required_api.clone()),
                         confidence: 1.0,
                     });
                 }
@@ -451,8 +481,8 @@ fn print_operators_tree(operators: &[OperatorInstance], deps: &[OperatorDependen
         println!("\n\x1b[1m── Operator Dependencies ──\x1b[0m\n");
         for dep in deps {
             println!(
-                "  {}@{} \x1b[33m→\x1b[0m {}@{} (via {})",
-                dep.from_csv, dep.from_namespace, dep.to_csv, dep.to_namespace, dep.via_crd
+                "  {} \x1b[33m→\x1b[0m {} (via {})",
+                dep.from, dep.to, dep.via
             );
         }
     }
@@ -625,12 +655,12 @@ pub async fn find_crd_origin(
         {
             if let Ok(subs) = sub_api.list(&ListParams::default()).await {
                 for sub in &subs.items {
-                    let installed_csv = sub
+                    let matched_csv = sub
                         .data
                         .get("status")
-                        .and_then(|s| s.get("installedCSV"))
+                        .and_then(|s| s.get("installedCSV").or_else(|| s.get("currentCSV")))
                         .and_then(|c| c.as_str());
-                    if installed_csv == Some(csv_name.as_str()) {
+                    if matched_csv == Some(csv_name.as_str()) {
                         chain.subscription_name = sub.metadata.name.clone();
                         chain.subscription_namespace = sub.metadata.namespace.clone();
                         break;

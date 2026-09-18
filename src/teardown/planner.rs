@@ -11,32 +11,12 @@ use kube::{
 use serde::{Deserialize, Serialize};
 
 use crate::analyzers::olm::{
-    OperatorDependency, OperatorInstance, OwnedApiServiceDef, compute_operator_dependencies,
+    OperatorDependency, OperatorId, OperatorInstance, OwnedApiServiceDef,
+    compute_operator_dependencies,
 };
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct OperatorId {
-    pub namespace: String,
-    pub csv_name: String,
-}
-
-impl std::fmt::Display for OperatorId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{}", self.csv_name, self.namespace)
-    }
-}
-
-impl OperatorId {
-    fn from_instance(op: &OperatorInstance) -> Self {
-        Self {
-            namespace: op.install_namespace.clone(),
-            csv_name: op.csv.name.clone(),
-        }
-    }
-}
 
 const DEFAULT_CONCURRENCY: usize = 16;
 const LIST_PAGE_SIZE: u32 = 500;
@@ -488,16 +468,11 @@ pub fn topo_sort_operators(
     // Build adjacency: from depends on to
     let mut depends_on: HashMap<OperatorId, HashSet<OperatorId>> = HashMap::new();
     for dep in deps {
-        let from_id = OperatorId {
-            namespace: dep.from_namespace.clone(),
-            csv_name: dep.from_csv.clone(),
-        };
-        let to_id = OperatorId {
-            namespace: dep.to_namespace.clone(),
-            csv_name: dep.to_csv.clone(),
-        };
-        if target_ids.contains_key(&from_id) && target_ids.contains_key(&to_id) {
-            depends_on.entry(from_id).or_default().insert(to_id);
+        if target_ids.contains_key(&dep.from) && target_ids.contains_key(&dep.to) {
+            depends_on
+                .entry(dep.from.clone())
+                .or_default()
+                .insert(dep.to.clone());
         }
     }
 
@@ -796,16 +771,15 @@ pub async fn generate_teardown_plan(
         .flat_map(|op| op.owned_api_service_defs.iter())
         .collect();
 
-    // Build synthetic CRD-like names for APIService-backed resources
-    // so they go through the same discovery pipeline
+    // Resolve APIService-backed resources via API discovery (no plural guessing)
     let api_service_resource_crds: Vec<String> = target_api_service_defs
         .iter()
         .filter(|def| !def.group.is_empty() && !def.kind.is_empty())
         .filter_map(|def| {
-            let plural = format!("{}s", def.kind.to_lowercase());
-            let synthetic = format!("{}.{}", plural, def.group);
-            if !target_crd_set.contains(synthetic.as_str()) {
-                Some(synthetic)
+            let kind_info = gk_map.get(&(def.group.clone(), def.kind.clone()))?;
+            let resolved = format!("{}.{}", kind_info.plural, def.group);
+            if !target_crd_set.contains(resolved.as_str()) {
+                Some(resolved)
             } else {
                 None
             }
@@ -1023,12 +997,18 @@ pub async fn generate_teardown_plan(
     };
 
     // ── Phase 1+: Trigger operand cleanup (dependency-layered) ──
-    // Attribute each CR to its owning operator via crd_name
-    let crd_to_op_indices: HashMap<&str, Vec<usize>> = {
-        let mut map: HashMap<&str, Vec<usize>> = HashMap::new();
+    // Attribute each CR to its owning operator via crd_name (CRD + APIService resources)
+    let api_to_op_indices: HashMap<String, Vec<usize>> = {
+        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
         for (idx, op) in target_operators.iter().enumerate() {
             for crd in &op.owned_crds {
-                map.entry(crd.as_str()).or_default().push(idx);
+                map.entry(crd.clone()).or_default().push(idx);
+            }
+            for def in &op.owned_api_service_defs {
+                if let Some(kind_info) = gk_map.get(&(def.group.clone(), def.kind.clone())) {
+                    let key = format!("{}.{}", kind_info.plural, def.group);
+                    map.entry(key).or_default().push(idx);
+                }
             }
         }
         map
@@ -1151,7 +1131,7 @@ pub async fn generate_teardown_plan(
             let mut phase_actions: Vec<Action> = Vec::new();
 
             for cr in &root_crs {
-                let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                let owners = api_to_op_indices.get(cr.crd_name.as_str());
                 let action = if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         Action::Review {
@@ -1172,7 +1152,7 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &managed_descendants {
-                let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                let owners = api_to_op_indices.get(cr.crd_name.as_str());
                 if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
@@ -1191,7 +1171,7 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &independent_crs {
-                let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                let owners = api_to_op_indices.get(cr.crd_name.as_str());
                 if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
@@ -1877,11 +1857,15 @@ mod tests {
         op_b.owned_crds = vec!["foos.example.com".to_string()];
         let ops = vec![op_a, op_b];
         let deps = vec![OperatorDependency {
-            from_csv: "a.v1".to_string(),
-            from_namespace: "test-ns".to_string(),
-            to_csv: "b.v1".to_string(),
-            to_namespace: "test-ns".to_string(),
-            via_crd: "foos.example.com".to_string(),
+            from: OperatorId {
+                csv_name: "a.v1".to_string(),
+                namespace: "test-ns".to_string(),
+            },
+            to: OperatorId {
+                csv_name: "b.v1".to_string(),
+                namespace: "test-ns".to_string(),
+            },
+            via: crate::analyzers::olm::DependencyVia::Crd("foos.example.com".to_string()),
             confidence: 1.0,
         }];
         let result = topo_sort_operators(&[0, 1], &ops, &deps);
@@ -1925,19 +1909,27 @@ mod tests {
         let ops = vec![op_a, op_b, op_c];
         let deps = vec![
             OperatorDependency {
-                from_csv: "a.v1".to_string(),
-                from_namespace: "test-ns".to_string(),
-                to_csv: "b.v1".to_string(),
-                to_namespace: "test-ns".to_string(),
-                via_crd: "foos.example.com".to_string(),
+                from: OperatorId {
+                    csv_name: "a.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                to: OperatorId {
+                    csv_name: "b.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                via: crate::analyzers::olm::DependencyVia::Crd("foos.example.com".to_string()),
                 confidence: 1.0,
             },
             OperatorDependency {
-                from_csv: "c.v1".to_string(),
-                from_namespace: "test-ns".to_string(),
-                to_csv: "b.v1".to_string(),
-                to_namespace: "test-ns".to_string(),
-                via_crd: "bars.example.com".to_string(),
+                from: OperatorId {
+                    csv_name: "c.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                to: OperatorId {
+                    csv_name: "b.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                via: crate::analyzers::olm::DependencyVia::Crd("bars.example.com".to_string()),
                 confidence: 1.0,
             },
         ];
@@ -1965,19 +1957,27 @@ mod tests {
         let ops = vec![op_a, op_b];
         let deps = vec![
             OperatorDependency {
-                from_csv: "a.v1".to_string(),
-                from_namespace: "test-ns".to_string(),
-                to_csv: "b.v1".to_string(),
-                to_namespace: "test-ns".to_string(),
-                via_crd: "foos.example.com".to_string(),
+                from: OperatorId {
+                    csv_name: "a.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                to: OperatorId {
+                    csv_name: "b.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                via: crate::analyzers::olm::DependencyVia::Crd("foos.example.com".to_string()),
                 confidence: 1.0,
             },
             OperatorDependency {
-                from_csv: "b.v1".to_string(),
-                from_namespace: "test-ns".to_string(),
-                to_csv: "a.v1".to_string(),
-                to_namespace: "test-ns".to_string(),
-                via_crd: "bars.example.com".to_string(),
+                from: OperatorId {
+                    csv_name: "b.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                to: OperatorId {
+                    csv_name: "a.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                via: crate::analyzers::olm::DependencyVia::Crd("bars.example.com".to_string()),
                 confidence: 1.0,
             },
         ];
