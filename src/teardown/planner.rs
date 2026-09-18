@@ -16,9 +16,9 @@ use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct OperatorId {
-    namespace: String,
-    csv_name: String,
+pub struct OperatorId {
+    pub namespace: String,
+    pub csv_name: String,
 }
 
 impl std::fmt::Display for OperatorId {
@@ -464,13 +464,18 @@ fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
 /// Topological sort of target operators by dependency.
 /// Returns layers: layer[0] has operators that depend on others (remove first),
 /// layer[last] has operators that others depend on (remove last).
+pub enum TopoSortResult {
+    Layers(Vec<Vec<usize>>),
+    Cycle(Vec<OperatorId>),
+}
+
 pub fn topo_sort_operators(
     target_indices: &[usize],
     all_operators: &[OperatorInstance],
     deps: &[OperatorDependency],
-) -> Vec<Vec<usize>> {
+) -> TopoSortResult {
     if target_indices.len() <= 1 {
-        return vec![target_indices.to_vec()];
+        return TopoSortResult::Layers(vec![target_indices.to_vec()]);
     }
 
     let target_ids: HashMap<OperatorId, usize> = target_indices
@@ -525,12 +530,7 @@ pub fn topo_sort_operators(
             .collect();
 
         if layer.is_empty() {
-            let last: Vec<usize> = remaining
-                .iter()
-                .filter_map(|id| target_ids.get(id).copied())
-                .collect();
-            layers.push(last);
-            break;
+            return TopoSortResult::Cycle(remaining.into_iter().collect());
         }
 
         let layer_indices: Vec<usize> = layer
@@ -551,7 +551,7 @@ pub fn topo_sort_operators(
         }
     }
 
-    layers
+    TopoSortResult::Layers(layers)
 }
 
 async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
@@ -870,6 +870,11 @@ pub async fn generate_teardown_plan(
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
 
+    let target_api_service_set: HashSet<&str> = target_operators
+        .iter()
+        .flat_map(|op| op.owned_api_services.iter().map(|s| s.as_str()))
+        .collect();
+
     for op in all_operators {
         if target_ids.contains(&OperatorId::from_instance(op)) {
             continue;
@@ -888,6 +893,25 @@ pub async fn generate_teardown_plan(
                     reason: format!(
                         "CRD {} cannot be removed: required by operator {}",
                         req_crd, op.csv.name
+                    ),
+                    external_dependency: Some(op.csv.name.clone()),
+                });
+            }
+        }
+        for req_api in &op.required_api_services {
+            if target_api_service_set.contains(req_api.as_str()) {
+                blockers.push(Blocker {
+                    resource: ResourceId {
+                        group: "apiregistration.k8s.io".to_string(),
+                        version: "v1".to_string(),
+                        kind: "APIService".to_string(),
+                        namespace: None,
+                        name: req_api.clone(),
+                        uid: None,
+                    },
+                    reason: format!(
+                        "APIService {} cannot be removed: required by operator {}",
+                        req_api, op.csv.name
                     ),
                     external_dependency: Some(op.csv.name.clone()),
                 });
@@ -934,11 +958,7 @@ pub async fn generate_teardown_plan(
         });
     }
 
-    let blocked_crds: HashSet<&str> = blockers.iter().map(|b| b.resource.name.as_str()).collect();
-    let warned_crds: HashSet<&str> = warnings
-        .iter()
-        .filter_map(|w| w.resource.as_ref().map(|r| r.name.as_str()))
-        .collect();
+    // NOTE: blocked_crds/warned_crds computed after topo_sort (which may add cycle blockers)
 
     // ── Phase 0: Freeze OLM ──
     let mut phase0_actions = Vec::new();
@@ -972,11 +992,11 @@ pub async fn generate_teardown_plan(
 
     // ── Phase 1+: Trigger operand cleanup (dependency-layered) ──
     // Attribute each CR to its owning operator via crd_name
-    let crd_to_op_idx: HashMap<&str, usize> = {
-        let mut map = HashMap::new();
+    let crd_to_op_indices: HashMap<&str, Vec<usize>> = {
+        let mut map: HashMap<&str, Vec<usize>> = HashMap::new();
         for (idx, op) in target_operators.iter().enumerate() {
             for crd in &op.owned_crds {
-                map.entry(crd.as_str()).or_insert(idx);
+                map.entry(crd.as_str()).or_default().push(idx);
             }
         }
         map
@@ -1032,7 +1052,29 @@ pub async fn generate_teardown_plan(
     let target_indices_local: Vec<usize> = (0..target_operators.len()).collect();
     let all_ops_local: Vec<OperatorInstance> =
         target_operators.iter().map(|op| (*op).clone()).collect();
-    let layers = topo_sort_operators(&target_indices_local, &all_ops_local, &deps);
+    let layers = match topo_sort_operators(&target_indices_local, &all_ops_local, &deps) {
+        TopoSortResult::Layers(l) => l,
+        TopoSortResult::Cycle(cycle_ids) => {
+            for id in &cycle_ids {
+                blockers.push(Blocker {
+                    resource: ResourceId {
+                        group: "operators.coreos.com".to_string(),
+                        version: "v1alpha1".to_string(),
+                        kind: "ClusterServiceVersion".to_string(),
+                        namespace: Some(id.namespace.clone()),
+                        name: id.csv_name.clone(),
+                        uid: None,
+                    },
+                    reason: format!(
+                        "dependency cycle detected: {} is part of a circular dependency",
+                        id
+                    ),
+                    external_dependency: None,
+                });
+            }
+            vec![target_indices_local.clone()]
+        }
+    };
 
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
 
@@ -1077,15 +1119,29 @@ pub async fn generate_teardown_plan(
             let mut phase_actions: Vec<Action> = Vec::new();
 
             for cr in &root_crs {
-                let op_idx = crd_to_op_idx.get(cr.crd_name.as_str()).copied();
+                let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                let action = if owners.is_some_and(|v| v.len() > 1) {
+                    if layer_idx == 0 {
+                        Action::Review {
+                            resource: cr.id.clone(),
+                            reason: "shared CRD — owned by multiple selected operators".to_string(),
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    cr_to_action(cr, "root")
+                };
+                let op_idx = owners.and_then(|v| v.first().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(cr, "root"));
+                    phase_actions.push(action);
                 }
             }
             for cr in &managed_descendants {
-                let op_idx = crd_to_op_idx.get(cr.crd_name.as_str()).copied();
+                let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                let op_idx = owners.and_then(|v| v.first().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1093,7 +1149,8 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &independent_crs {
-                let op_idx = crd_to_op_idx.get(cr.crd_name.as_str()).copied();
+                let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                let op_idx = owners.and_then(|v| v.first().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1168,6 +1225,12 @@ pub async fn generate_teardown_plan(
 
     // ── Phase 4: Remove unused APIs ──
     let mut phase4_actions = Vec::new();
+    let blocked_crds: HashSet<&str> = blockers.iter().map(|b| b.resource.name.as_str()).collect();
+    let warned_crds: HashSet<&str> = warnings
+        .iter()
+        .filter_map(|w| w.resource.as_ref().map(|r| r.name.as_str()))
+        .collect();
+
     let mut seen_crds = HashSet::new();
 
     for crd_name in &target_crds {
@@ -1687,7 +1750,11 @@ mod tests {
     #[test]
     fn topo_sort_single_operator() {
         let ops = vec![make_test_operator("a.v1", "a")];
-        let layers = topo_sort_operators(&[0], &ops, &[]);
+        let result = topo_sort_operators(&[0], &ops, &[]);
+        let layers = match result {
+            TopoSortResult::Layers(l) => l,
+            TopoSortResult::Cycle(_) => panic!("expected layers"),
+        };
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0], vec![0]);
     }
@@ -1698,7 +1765,11 @@ mod tests {
             make_test_operator("a.v1", "a"),
             make_test_operator("b.v1", "b"),
         ];
-        let layers = topo_sort_operators(&[0, 1], &ops, &[]);
+        let result = topo_sort_operators(&[0, 1], &ops, &[]);
+        let layers = match result {
+            TopoSortResult::Layers(l) => l,
+            TopoSortResult::Cycle(_) => panic!("expected layers"),
+        };
         // No dependencies → all in one layer
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].len(), 2);
@@ -1718,7 +1789,11 @@ mod tests {
             via_crd: "foos.example.com".to_string(),
             confidence: 1.0,
         }];
-        let layers = topo_sort_operators(&[0, 1], &ops, &deps);
+        let result = topo_sort_operators(&[0, 1], &ops, &deps);
+        let layers = match result {
+            TopoSortResult::Layers(l) => l,
+            TopoSortResult::Cycle(_) => panic!("expected layers"),
+        };
         // a depends on b → a in layer 0 (delete first), b in layer 1
         assert_eq!(layers.len(), 2);
         assert!(layers[0].contains(&0)); // a first (dependent)
@@ -1767,12 +1842,44 @@ mod tests {
                 confidence: 1.0,
             },
         ];
-        let layers = topo_sort_operators(&[0, 1, 2], &ops, &deps);
+        let result = topo_sort_operators(&[0, 1, 2], &ops, &deps);
+        let layers = match result {
+            TopoSortResult::Layers(l) => l,
+            TopoSortResult::Cycle(_) => panic!("expected layers"),
+        };
         assert_eq!(layers.len(), 2);
         // Layer 0: a and c (dependents), Layer 1: b (provider)
         assert!(layers[0].contains(&0));
         assert!(layers[0].contains(&2));
         assert!(layers[1].contains(&1));
+    }
+
+    #[test]
+    fn dependency_cycle_is_detected() {
+        use crate::analyzers::olm::OperatorDependency;
+        let mut op_a = make_test_operator("a.v1", "a");
+        op_a.required_crds = vec!["foos.example.com".to_string()];
+        let mut op_b = make_test_operator("b.v1", "b");
+        op_b.owned_crds = vec!["foos.example.com".to_string()];
+        op_b.required_crds = vec!["bars.example.com".to_string()];
+        op_a.owned_crds = vec!["bars.example.com".to_string()];
+        let ops = vec![op_a, op_b];
+        let deps = vec![
+            OperatorDependency {
+                from_csv: "a.v1".to_string(),
+                to_csv: "b.v1".to_string(),
+                via_crd: "foos.example.com".to_string(),
+                confidence: 1.0,
+            },
+            OperatorDependency {
+                from_csv: "b.v1".to_string(),
+                to_csv: "a.v1".to_string(),
+                via_crd: "bars.example.com".to_string(),
+                confidence: 1.0,
+            },
+        ];
+        let result = topo_sort_operators(&[0, 1], &ops, &deps);
+        assert!(matches!(result, TopoSortResult::Cycle(_)));
     }
 
     // P0-2 (round 3): CrdDiscoveryResult distinguishes Success vs Unavailable
