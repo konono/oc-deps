@@ -144,10 +144,14 @@ fn serialize_discovery(
         })
         .collect();
 
-    serde_json::json!({ "kind_map": km, "gvr_map": gm, "gk_map": gk })
+    serde_json::json!({ "version": 2, "kind_map": km, "gvr_map": gm, "gk_map": gk })
 }
 
 fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap, GroupKindMap)> {
+    let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
+    if version < 2 {
+        return None;
+    }
     let km_val = value.get("kind_map")?.as_object()?;
     let gm_val = value.get("gvr_map")?.as_object()?;
 
@@ -171,7 +175,8 @@ fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap, 
     }
 
     let mut gk_map = GroupKindMap::new();
-    if let Some(gk_val) = value.get("gk_map").and_then(|v| v.as_object()) {
+    {
+        let gk_val = value.get("gk_map").and_then(|v| v.as_object())?;
         for (k, v) in gk_val {
             let (group, kind) = k.split_once('/').unwrap_or(("", k));
             let arr = match v.as_array() {
@@ -190,18 +195,9 @@ fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap, 
                 );
             }
         }
-    } else {
-        gk_map = gk_map_from_kind_map(&kind_map);
     }
 
     Some((kind_map, gvr_map, gk_map))
-}
-
-fn gk_map_from_kind_map(kind_map: &KindMap) -> GroupKindMap {
-    kind_map
-        .iter()
-        .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
-        .collect()
 }
 
 pub async fn build_kind_lookup_cached(

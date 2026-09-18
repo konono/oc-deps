@@ -141,9 +141,7 @@ pub fn resolve_api(
     gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
     let kind_info = if !resource.group.is_empty() {
-        gk_map
-            .get(&(resource.group.clone(), resource.kind.clone()))
-            .or_else(|| kind_map.get(&resource.kind))?
+        gk_map.get(&(resource.group.clone(), resource.kind.clone()))?
     } else {
         kind_map.get(&resource.kind)?
     };
