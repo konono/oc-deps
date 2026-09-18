@@ -99,6 +99,12 @@ pub enum Command {
         no_cache: bool,
     },
 
+    /// Teardown planning for OLM operators
+    Teardown {
+        #[command(subcommand)]
+        action: TeardownAction,
+    },
+
     /// List all OLM-managed operators in the cluster
     Operators {
         /// Output format: tree, table, json
@@ -106,6 +112,24 @@ pub enum Command {
         output: OutputFormat,
 
         /// Skip discovery cache (force fresh API discovery)
+        #[arg(long)]
+        no_cache: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TeardownAction {
+    /// Generate a teardown plan
+    Plan {
+        /// Operator names (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operators: Vec<String>,
+
+        /// Output format: tree, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
         #[arg(long)]
         no_cache: bool,
     },

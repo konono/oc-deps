@@ -3,6 +3,7 @@ mod cli;
 mod graph;
 mod kube;
 mod output;
+mod teardown;
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -15,7 +16,7 @@ use crate::analyzers::olm::{
     print_operators,
 };
 use crate::analyzers::selector::get_service_selected_pods;
-use crate::cli::{Args, Command, OutputFormat};
+use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
 use crate::kube::discovery::{build_kind_lookup_cached, load_config_and_client, resolve_kind};
@@ -24,6 +25,9 @@ use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
+use crate::teardown::planner::{
+    generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
+};
 
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str) {
     match output {
@@ -100,6 +104,42 @@ async fn main() -> Result<()> {
                     output_file,
                     graph.edges.len()
                 );
+                return Ok(());
+            }
+            Command::Teardown { action } => {
+                match action {
+                    TeardownAction::Plan {
+                        operators: operator_queries,
+                        output,
+                        no_cache,
+                    } => {
+                        let t0 = Instant::now();
+                        eprintln!("🔍 Discovering API resources...");
+                        let (kind_map, gvr_map) =
+                            build_kind_lookup_cached(&client, &config, no_cache).await?;
+                        eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                        eprint!("🔍 Discovering operators...");
+                        let all_operators = discover_operators(&client, &kind_map).await?;
+                        eprintln!(" found {} operators", all_operators.len());
+
+                        let target_indices =
+                            resolve_operator_targets(&operator_queries, &all_operators)?;
+                        let target_operators: Vec<&_> =
+                            target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+                        let plan = generate_teardown_plan(
+                            &client,
+                            &target_operators,
+                            &all_operators,
+                            &kind_map,
+                            &gvr_map,
+                        )
+                        .await?;
+
+                        print_teardown_plan(&plan, &output);
+                    }
+                }
                 return Ok(());
             }
             Command::Operators { output, no_cache } => {
