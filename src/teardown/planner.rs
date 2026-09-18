@@ -19,6 +19,29 @@ use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
+pub struct ReviewDecisions {
+    pub approve_delete: HashSet<String>,
+}
+
+impl ReviewDecisions {
+    pub fn from_args(args: &[String]) -> Self {
+        Self {
+            approve_delete: args.iter().cloned().collect(),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            approve_delete: HashSet::new(),
+        }
+    }
+
+    fn is_approved(&self, resource: &ResourceId) -> bool {
+        let key = format!("{}/{}", resource.kind, resource.name);
+        self.approve_delete.contains(&key)
+    }
+}
+
 const DEFAULT_CONCURRENCY: usize = 16;
 const LIST_PAGE_SIZE: u32 = 500;
 
@@ -848,6 +871,7 @@ pub async fn generate_teardown_plan(
     gk_map: &GroupKindMap,
     gvk_map: &GvkMap,
     prune_apis: bool,
+    decisions: &ReviewDecisions,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
         .iter()
@@ -1173,11 +1197,21 @@ pub async fn generate_teardown_plan(
         map
     };
 
-    fn cr_to_action(cr: &CrInstance, action_type: &str) -> Action {
+    fn cr_to_action(cr: &CrInstance, action_type: &str, decisions: &ReviewDecisions) -> Action {
         match (action_type, &cr.provenance) {
             ("root", Provenance::Managed) => Action::Delete {
                 resource: cr.id.clone(),
                 reason: "root management CR (managed via ownerRef)".to_string(),
+            },
+            ("root", Provenance::LikelyManaged) if decisions.is_approved(&cr.id) => {
+                Action::Delete {
+                    resource: cr.id.clone(),
+                    reason: "root CR explicitly approved for deletion".to_string(),
+                }
+            }
+            ("root", Provenance::Unknown) if decisions.is_approved(&cr.id) => Action::Delete {
+                resource: cr.id.clone(),
+                reason: "root CR explicitly approved for deletion".to_string(),
             },
             ("root", Provenance::LikelyManaged) => Action::Review {
                 resource: cr.id.clone(),
@@ -1254,13 +1288,13 @@ pub async fn generate_teardown_plan(
         let mut phase_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, "root"));
+            phase_actions.push(cr_to_action(cr, "root", decisions));
         }
         for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(cr, "descendant"));
+            phase_actions.push(cr_to_action(cr, "descendant", decisions));
         }
         for cr in &independent_crs {
-            phase_actions.push(cr_to_action(cr, "independent"));
+            phase_actions.push(cr_to_action(cr, "independent", decisions));
         }
 
         let mut conds: Vec<String> = root_crs
@@ -1301,7 +1335,7 @@ pub async fn generate_teardown_plan(
                         continue;
                     }
                 } else {
-                    cr_to_action(cr, "root")
+                    cr_to_action(cr, "root", decisions)
                 };
                 let op_idx = owners.and_then(|v| v.iter().next().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
@@ -1326,7 +1360,7 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(cr, "descendant"));
+                    phase_actions.push(cr_to_action(cr, "descendant", decisions));
                 }
             }
             for cr in &independent_crs {
@@ -1344,7 +1378,7 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(cr, "independent"));
+                    phase_actions.push(cr_to_action(cr, "independent", decisions));
                 }
             }
 
@@ -1362,6 +1396,25 @@ pub async fn generate_teardown_plan(
                         conditions: vec![],
                     }),
                 });
+            }
+        }
+    }
+
+    // Root REVIEWs that are not approved become hard blockers
+    for phase in &operand_phases {
+        for action in &phase.actions {
+            if let Action::Review { resource, reason } = action {
+                let is_root = root_crs.iter().any(|cr| cr.id == *resource);
+                if is_root {
+                    blockers.push(Blocker {
+                        resource: resource.clone(),
+                        reason: format!(
+                            "root operand requires explicit deletion approval: {} — use --approve-delete {}/{}",
+                            reason, resource.kind, resource.name
+                        ),
+                        external_dependency: None,
+                    });
+                }
             }
         }
     }

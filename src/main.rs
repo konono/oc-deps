@@ -29,7 +29,7 @@ use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::inspect::{inspect_operator, print_inspection};
 use crate::teardown::planner::{
-    generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
+    ReviewDecisions, generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
 
@@ -119,6 +119,7 @@ async fn main() -> Result<()> {
                         output,
                         no_cache,
                         prune_apis,
+                        approve_delete,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -137,6 +138,7 @@ async fn main() -> Result<()> {
                         let target_operators: Vec<&_> =
                             target_indices.iter().map(|&i| &all_operators[i]).collect();
 
+                        let decisions = ReviewDecisions::from_args(&approve_delete);
                         let t_plan = Instant::now();
                         let plan = generate_teardown_plan(
                             &client,
@@ -147,6 +149,7 @@ async fn main() -> Result<()> {
                             &gk_map,
                             &gvk_map,
                             prune_apis,
+                            &decisions,
                         )
                         .await?;
                         let t_plan = t_plan.elapsed();
@@ -167,6 +170,7 @@ async fn main() -> Result<()> {
                         dry_run,
                         prune_apis,
                         force,
+                        approve_delete,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -183,6 +187,7 @@ async fn main() -> Result<()> {
                         let target_operators: Vec<&_> =
                             target_indices.iter().map(|&i| &all_operators[i]).collect();
 
+                        let decisions = ReviewDecisions::from_args(&approve_delete);
                         let plan = generate_teardown_plan(
                             &client,
                             &target_operators,
@@ -192,6 +197,7 @@ async fn main() -> Result<()> {
                             &gk_map,
                             &gvk_map,
                             prune_apis,
+                            &decisions,
                         )
                         .await?;
 
@@ -230,6 +236,7 @@ async fn main() -> Result<()> {
                             &gk_map,
                             &gvk_map,
                             false,
+                            &ReviewDecisions::empty(),
                         )
                         .await?;
 
@@ -292,6 +299,7 @@ async fn main() -> Result<()> {
                             &gk_map,
                             &gvk_map,
                             false,
+                            &ReviewDecisions::empty(),
                         )
                         .await?;
 

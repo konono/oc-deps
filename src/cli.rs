@@ -136,6 +136,10 @@ pub enum TeardownAction {
         /// Remove CRDs after teardown (default: keep)
         #[arg(long)]
         prune_apis: bool,
+
+        /// Explicitly approve deletion of a REVIEW resource (kind/name format, repeatable)
+        #[arg(long = "approve-delete", value_name = "KIND/NAME")]
+        approve_delete: Vec<String>,
     },
 
     /// Check current status of resources in a teardown plan
@@ -167,9 +171,13 @@ pub enum TeardownAction {
         #[arg(long)]
         prune_apis: bool,
 
-        /// Override REVIEW items and non-critical preflight warnings (controller health cannot be overridden)
+        /// Override advisory REVIEW items and non-critical preflight warnings
         #[arg(long)]
         force: bool,
+
+        /// Explicitly approve deletion of a REVIEW resource (kind/name format, repeatable)
+        #[arg(long = "approve-delete", value_name = "KIND/NAME")]
+        approve_delete: Vec<String>,
     },
 
     /// Inspect all resources belonging to an operator
