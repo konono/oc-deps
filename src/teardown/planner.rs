@@ -777,7 +777,11 @@ pub async fn generate_teardown_plan(
     let mut api_service_resource_crds: Vec<String> = Vec::new();
     let mut unresolved_api_services: Vec<String> = Vec::new();
     for def in &target_api_service_defs {
-        if def.group.is_empty() || def.kind.is_empty() {
+        if def.group.is_empty() || def.version.is_empty() || def.kind.is_empty() {
+            unresolved_api_services.push(format!(
+                "{} (incomplete definition: group={:?}, version={:?}, kind={:?})",
+                def.name, def.group, def.version, def.kind
+            ));
             continue;
         }
         let gvk_key = (def.group.clone(), def.version.clone(), def.kind.clone());

@@ -11,7 +11,7 @@ use kube::{
     core::GroupVersion,
 };
 
-use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
+use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
 
@@ -155,11 +155,13 @@ fn confirm_execution(plan: &TeardownPlan) -> bool {
     matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_plan(
     client: &Client,
     plan: &TeardownPlan,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
+    gvk_map: &GvkMap,
     gvr_map: &GvrMap,
     dry_run: bool,
     force: bool,
@@ -307,7 +309,9 @@ pub async fn execute_plan(
                             .await,
                         )
                     } else if resource.kind == "APIService" {
-                        Some(count_live_api_service_instances(client, &resource.name, gk_map).await)
+                        Some(
+                            count_live_api_service_instances(client, &resource.name, gvk_map).await,
+                        )
                     } else {
                         None
                     };
@@ -853,7 +857,7 @@ async fn count_live_cr_instances(
 async fn count_live_api_service_instances(
     client: &Client,
     api_service_name: &str,
-    gk_map: &GroupKindMap,
+    gvk_map: &GvkMap,
 ) -> LiveCount {
     // APIService name format: <version>.<group> e.g. "v1beta1.metrics.k8s.io"
     let (version, group) = match api_service_name.split_once('.') {
@@ -866,10 +870,9 @@ async fn count_live_api_service_instances(
         }
     };
 
-    // Find all resource kinds served by this group+version
-    let matching: Vec<_> = gk_map
+    let matching: Vec<_> = gvk_map
         .iter()
-        .filter(|((g, _), info)| g == group && info.version == version)
+        .filter(|((g, v, _), _)| g == group && v == version)
         .collect();
 
     if matching.is_empty() {
@@ -879,7 +882,7 @@ async fn count_live_api_service_instances(
         ));
     }
 
-    for ((_, kind), kind_info) in &matching {
+    for ((_, _, kind), kind_info) in &matching {
         let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(kind);
         let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
         let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);

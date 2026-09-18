@@ -124,6 +124,7 @@ fn serialize_discovery(
     kind_map: &KindMap,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
+    gvk_map: &GvkMap,
 ) -> serde_json::Value {
     let km: serde_json::Map<String, serde_json::Value> = kind_map
         .iter()
@@ -151,14 +152,25 @@ fn serialize_discovery(
         })
         .collect();
 
-    serde_json::json!({ "version": 2, "kind_map": km, "gvr_map": gm, "gk_map": gk })
+    let gvk: serde_json::Map<String, serde_json::Value> = gvk_map
+        .iter()
+        .map(|((group, version, kind), v)| {
+            let key = format!("{}/{}/{}", group, version, kind);
+            (
+                key,
+                serde_json::json!([v.group, v.version, v.plural, v.namespaced]),
+            )
+        })
+        .collect();
+
+    serde_json::json!({ "version": 3, "kind_map": km, "gvr_map": gm, "gk_map": gk, "gvk_map": gvk })
 }
 
 fn deserialize_discovery(
     value: &serde_json::Value,
 ) -> Option<(KindMap, GvrMap, GroupKindMap, GvkMap)> {
     let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
-    if version < 2 {
+    if version < 3 {
         return None;
     }
     let km_val = value.get("kind_map")?.as_object()?;
@@ -206,13 +218,28 @@ fn deserialize_discovery(
         }
     }
 
-    // Derive GvkMap from GroupKindMap
     let mut gvk_map = GvkMap::new();
-    for ((group, kind), info) in &gk_map {
-        gvk_map.insert(
-            (group.clone(), info.version.clone(), kind.clone()),
-            info.clone(),
-        );
+    if let Some(gvk_val) = value.get("gvk_map").and_then(|v| v.as_object()) {
+        for (k, v) in gvk_val {
+            let parts: Vec<&str> = k.splitn(3, '/').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let (group, version, kind) = (parts[0], parts[1], parts[2]);
+            let arr = match v.as_array() {
+                Some(a) if a.len() >= 4 => a,
+                _ => continue,
+            };
+            gvk_map.insert(
+                (group.to_string(), version.to_string(), kind.to_string()),
+                KindInfo {
+                    group: arr[0].as_str().unwrap_or("").to_string(),
+                    version: arr[1].as_str().unwrap_or("").to_string(),
+                    plural: arr[2].as_str().unwrap_or("").to_string(),
+                    namespaced: arr[3].as_bool().unwrap_or(true),
+                },
+            );
+        }
     }
 
     Some((kind_map, gvr_map, gk_map, gvk_map))
@@ -240,7 +267,7 @@ pub async fn build_kind_lookup_cached(
 
     let (kind_map, gvr_map, gk_map, gvk_map) = build_kind_lookup(client).await?;
 
-    let json = serialize_discovery(&kind_map, &gvr_map, &gk_map);
+    let json = serialize_discovery(&kind_map, &gvr_map, &gk_map, &gvk_map);
     if let Ok(data) = serde_json::to_string(&json) {
         std::fs::write(&path, data).ok();
     }
@@ -315,12 +342,24 @@ mod tests {
     }
 
     #[test]
-    fn v2_cache_with_gk_map_accepted() {
+    fn v2_cache_rejected() {
         let cache = serde_json::json!({
             "version": 2,
             "kind_map": { "Pod": ["", "v1", "pods", true] },
             "gvr_map": { "pods": "Pod" },
             "gk_map": { "/Pod": ["", "v1", "pods", true] }
+        });
+        assert!(deserialize_discovery(&cache).is_none());
+    }
+
+    #[test]
+    fn v3_cache_accepted() {
+        let cache = serde_json::json!({
+            "version": 3,
+            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "gvr_map": { "pods": "Pod" },
+            "gk_map": { "/Pod": ["", "v1", "pods", true] },
+            "gvk_map": { "/v1/Pod": ["", "v1", "pods", true] }
         });
         let result = deserialize_discovery(&cache);
         assert!(result.is_some());
@@ -332,19 +371,49 @@ mod tests {
     }
 
     #[test]
-    fn v2_cache_without_gk_map_rejected() {
+    fn v3_cache_preserves_multiple_versions() {
         let cache = serde_json::json!({
-            "version": 2,
-            "kind_map": { "Pod": ["", "v1", "pods", true] },
-            "gvr_map": { "pods": "Pod" }
+            "version": 3,
+            "kind_map": {
+                "Widget": ["example.io", "v1", "widgets", true]
+            },
+            "gvr_map": {
+                "widgets.example.io": "Widget"
+            },
+            "gk_map": {
+                "example.io/Widget": ["example.io", "v1", "widgets", true]
+            },
+            "gvk_map": {
+                "example.io/v1alpha1/Widget": ["example.io", "v1alpha1", "widgets", true],
+                "example.io/v1beta1/Widget": ["example.io", "v1beta1", "widgets", true],
+                "example.io/v1/Widget": ["example.io", "v1", "widgets", true]
+            }
         });
-        assert!(deserialize_discovery(&cache).is_none());
+        let result = deserialize_discovery(&cache);
+        assert!(result.is_some());
+        let (_, _, _, gvk) = result.unwrap();
+        assert_eq!(gvk.len(), 3);
+        assert!(gvk.contains_key(&(
+            "example.io".to_string(),
+            "v1alpha1".to_string(),
+            "Widget".to_string()
+        )));
+        assert!(gvk.contains_key(&(
+            "example.io".to_string(),
+            "v1beta1".to_string(),
+            "Widget".to_string()
+        )));
+        assert!(gvk.contains_key(&(
+            "example.io".to_string(),
+            "v1".to_string(),
+            "Widget".to_string()
+        )));
     }
 
     #[test]
-    fn v2_cache_with_multiple_groups() {
+    fn v3_cache_with_multiple_groups() {
         let cache = serde_json::json!({
-            "version": 2,
+            "version": 3,
             "kind_map": {
                 "Pod": ["", "v1", "pods", true],
                 "Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true]
@@ -357,13 +426,19 @@ mod tests {
                 "/Pod": ["", "v1", "pods", true],
                 "operators.coreos.com/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true],
                 "messaging.example.com/Subscription": ["messaging.example.com", "v1", "messagingsubs", true]
+            },
+            "gvk_map": {
+                "/v1/Pod": ["", "v1", "pods", true],
+                "operators.coreos.com/v1alpha1/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true],
+                "messaging.example.com/v1/Subscription": ["messaging.example.com", "v1", "messagingsubs", true]
             }
         });
         let result = deserialize_discovery(&cache);
         assert!(result.is_some());
-        let (km, _, gk, _) = result.unwrap();
+        let (km, _, gk, gvk) = result.unwrap();
         assert_eq!(km.len(), 2);
         assert_eq!(gk.len(), 3);
+        assert_eq!(gvk.len(), 3);
         let olm_sub = gk
             .get(&(
                 "operators.coreos.com".to_string(),
@@ -405,12 +480,87 @@ mod tests {
             },
         );
 
-        let json = serialize_discovery(&km, &gvr, &gk);
+        let mut gvk = GvkMap::new();
+        gvk.insert(
+            ("".to_string(), "v1".to_string(), "Pod".to_string()),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+            },
+        );
+
+        let json = serialize_discovery(&km, &gvr, &gk, &gvk);
         let result = deserialize_discovery(&json);
         assert!(result.is_some());
-        let (km2, gvr2, gk2, _) = result.unwrap();
+        let (km2, gvr2, gk2, gvk2) = result.unwrap();
         assert_eq!(km2.len(), km.len());
         assert_eq!(gvr2.len(), gvr.len());
         assert_eq!(gk2.len(), gk.len());
+        assert_eq!(gvk2.len(), gvk.len());
+    }
+
+    #[test]
+    fn gvk_cache_roundtrip_preserves_multiple_versions() {
+        let mut km = KindMap::new();
+        km.insert(
+            "Widget".to_string(),
+            KindInfo {
+                group: "example.io".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+            },
+        );
+        let gvr = GvrMap::new();
+        let mut gk = GroupKindMap::new();
+        gk.insert(
+            ("example.io".to_string(), "Widget".to_string()),
+            KindInfo {
+                group: "example.io".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+            },
+        );
+        let mut gvk = GvkMap::new();
+        for ver in &["v1alpha1", "v1beta1", "v1"] {
+            gvk.insert(
+                (
+                    "example.io".to_string(),
+                    ver.to_string(),
+                    "Widget".to_string(),
+                ),
+                KindInfo {
+                    group: "example.io".to_string(),
+                    version: ver.to_string(),
+                    plural: "widgets".to_string(),
+                    namespaced: true,
+                },
+            );
+        }
+        assert_eq!(gvk.len(), 3);
+
+        let json = serialize_discovery(&km, &gvr, &gk, &gvk);
+        let result = deserialize_discovery(&json);
+        assert!(result.is_some());
+        let (_, _, _, gvk2) = result.unwrap();
+        assert_eq!(gvk2.len(), 3);
+        assert!(gvk2.contains_key(&(
+            "example.io".to_string(),
+            "v1alpha1".to_string(),
+            "Widget".to_string()
+        )));
+        assert!(gvk2.contains_key(&(
+            "example.io".to_string(),
+            "v1beta1".to_string(),
+            "Widget".to_string()
+        )));
+        assert!(gvk2.contains_key(&(
+            "example.io".to_string(),
+            "v1".to_string(),
+            "Widget".to_string()
+        )));
     }
 }
