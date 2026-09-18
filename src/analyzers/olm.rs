@@ -438,6 +438,12 @@ fn print_operators_tree(operators: &[OperatorInstance], deps: &[OperatorDependen
 
         let prefix = if op.subscription.is_some() { "   " } else { "" };
 
+        let api_svc_display: Vec<String> = op
+            .owned_api_service_defs
+            .iter()
+            .map(|d| d.api_service_object_name())
+            .collect();
+
         let sections: Vec<(&str, Vec<&str>)> = vec![
             (
                 "owned CRDs",
@@ -449,10 +455,7 @@ fn print_operators_tree(operators: &[OperatorInstance], deps: &[OperatorDependen
             ),
             (
                 "APIServices",
-                op.owned_api_service_defs
-                    .iter()
-                    .map(|d| d.name.as_str())
-                    .collect(),
+                api_svc_display.iter().map(|s| s.as_str()).collect(),
             ),
             (
                 "Deployments",

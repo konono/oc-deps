@@ -119,7 +119,7 @@ struct CrInstance {
     id: ResourceId,
     owner_refs: Vec<(String, String, String)>, // (kind, name, uid)
     #[allow(dead_code)]
-    crd_name: String,
+    api_owner_key: String,
     labels: HashMap<String, String>,
     managed_field_managers: Vec<String>,
     provenance: Provenance,
@@ -320,7 +320,7 @@ async fn discover_one_crd(
                     uid: Some(uid),
                 },
                 owner_refs,
-                crd_name: crd_name.to_string(),
+                api_owner_key: crd_name.to_string(),
                 labels,
                 managed_field_managers,
                 provenance: Provenance::Unknown,
@@ -406,15 +406,15 @@ async fn discover_api_service_instances(
     let futs = kind_infos.iter().map(|(def, kind_info)| {
         let client = client.clone();
         let kind_info = kind_info.clone();
-        let def_name = def.name.clone();
         let def_group = def.group.clone();
+        let def_version = def.version.clone();
         let kind = def.kind.clone();
         async move {
             let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
             let api: Api<DynamicObject> = Api::all_with(client, &ar);
 
-            let crd_name = format!("{}.{}", def_name, def_group);
+            let owner_key = format!("{}/{}/{}", def_group, def_version, kind);
             match list_paginated(&api).await {
                 Ok(items) => {
                     let crs: Vec<CrInstance> = items
@@ -453,7 +453,7 @@ async fn discover_api_service_instances(
                                     uid: Some(uid),
                                 },
                                 owner_refs,
-                                crd_name: crd_name.clone(),
+                                api_owner_key: owner_key.clone(),
                                 labels,
                                 managed_field_managers,
                                 provenance: Provenance::Unknown,
@@ -463,7 +463,7 @@ async fn discover_api_service_instances(
                     CrdDiscoveryResult::Success(crs)
                 }
                 Err(e) => CrdDiscoveryResult::Unavailable {
-                    crd_name,
+                    crd_name: owner_key,
                     reason: format!("LIST failed: {}", e),
                 },
             }
@@ -1150,7 +1150,7 @@ pub async fn generate_teardown_plan(
                 map.entry(crd.clone()).or_default().push(idx);
             }
             for def in &op.owned_api_service_defs {
-                let key = format!("{}.{}", def.name, def.group);
+                let key = format!("{}/{}/{}", def.group, def.version, def.kind);
                 map.entry(key).or_default().push(idx);
             }
         }
@@ -1274,7 +1274,7 @@ pub async fn generate_teardown_plan(
             let mut phase_actions: Vec<Action> = Vec::new();
 
             for cr in &root_crs {
-                let owners = api_to_op_indices.get(cr.crd_name.as_str());
+                let owners = api_to_op_indices.get(cr.api_owner_key.as_str());
                 let action = if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         Action::Review {
@@ -1295,7 +1295,7 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &managed_descendants {
-                let owners = api_to_op_indices.get(cr.crd_name.as_str());
+                let owners = api_to_op_indices.get(cr.api_owner_key.as_str());
                 if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
@@ -1314,7 +1314,7 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &independent_crs {
-                let owners = api_to_op_indices.get(cr.crd_name.as_str());
+                let owners = api_to_op_indices.get(cr.api_owner_key.as_str());
                 if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
@@ -1780,7 +1780,7 @@ mod tests {
                 uid: Some(uid.to_string()),
             },
             owner_refs,
-            crd_name: format!("{}s.test.example.com", kind.to_lowercase()),
+            api_owner_key: format!("{}s.test.example.com", kind.to_lowercase()),
             labels,
             managed_field_managers: managers,
             provenance: Provenance::Unknown,
