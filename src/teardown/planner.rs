@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
+use futures::stream::StreamExt;
 use kube::{
     Client,
     api::{Api, ApiResource, DynamicObject, ListParams},
@@ -12,6 +14,9 @@ use crate::analyzers::olm::{OperatorDependency, OperatorInstance, compute_operat
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
+
+const DEFAULT_CONCURRENCY: usize = 16;
+const LIST_PAGE_SIZE: u32 = 500;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeardownPlan {
@@ -187,48 +192,42 @@ pub fn resolve_operator_targets(
     Ok(indices)
 }
 
-async fn discover_cr_instances(
+async fn discover_one_crd(
     client: &Client,
-    target_crds: &[String],
+    crd_name: &str,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
-) -> (Vec<CrInstance>, usize) {
-    let mut instances = Vec::new();
-    let mut total_observations: usize = 0;
+) -> Vec<CrInstance> {
+    let (plural, group) = match crd_name.split_once('.') {
+        Some((p, g)) => (p, g),
+        None => return vec![],
+    };
 
-    for crd_name in target_crds {
-        let (plural, group) = match crd_name.split_once('.') {
-            Some((p, g)) => (p, g),
-            None => continue,
-        };
+    let gvr_key = format!("{}.{}", plural, group).to_lowercase();
+    let kind = match gvr_map.get(&gvr_key) {
+        Some(k) => k.clone(),
+        None => return vec![],
+    };
 
-        let gvr_key = format!("{}.{}", plural, group).to_lowercase();
-        let kind = match gvr_map.get(&gvr_key) {
-            Some(k) => k.clone(),
-            None => continue,
-        };
+    let kind_info = match kind_map.get(&kind) {
+        Some(i) => i,
+        None => return vec![],
+    };
 
-        let kind_info = match kind_map.get(&kind) {
-            Some(i) => i,
-            None => continue,
-        };
+    let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
+    let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
 
-        let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
-        let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+    let items = match list_paginated(&api).await {
+        Ok(items) => items,
+        Err(_) => return vec![],
+    };
 
-        let items = match list_paginated(&api).await {
-            Ok(items) => items,
-            Err(_) => continue,
-        };
-
-        for obj in items {
-            total_observations += 1;
+    items
+        .into_iter()
+        .filter_map(|obj| {
             let uid = obj.metadata.uid.unwrap_or_default();
-            let name = match obj.metadata.name {
-                Some(n) => n,
-                None => continue,
-            };
+            let name = obj.metadata.name?;
             let ns = obj.metadata.namespace;
 
             let owner_refs: Vec<(String, String, String)> = obj
@@ -254,7 +253,7 @@ async fn discover_cr_instances(
                 .filter_map(|mf| mf.manager)
                 .collect();
 
-            instances.push(CrInstance {
+            Some(CrInstance {
                 id: ResourceId {
                     group: kind_info.group.clone(),
                     version: kind_info.version.clone(),
@@ -264,16 +263,50 @@ async fn discover_cr_instances(
                     uid: Some(uid),
                 },
                 owner_refs,
-                crd_name: crd_name.clone(),
+                crd_name: crd_name.to_string(),
                 labels,
                 managed_field_managers,
-                provenance: Provenance::Unknown, // classified later
-            });
-        }
-    }
+                provenance: Provenance::Unknown,
+            })
+        })
+        .collect()
+}
+
+async fn discover_cr_instances(
+    client: &Client,
+    target_crds: &[String],
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+) -> (Vec<CrInstance>, usize) {
+    // Dedup CRDs before API calls
+    let unique_crds: Vec<&String> = {
+        let mut seen = HashSet::new();
+        target_crds
+            .iter()
+            .filter(|crd| seen.insert((*crd).clone()))
+            .collect()
+    };
+
+    let kind_map = Arc::new(kind_map.clone());
+    let gvr_map = Arc::new(gvr_map.clone());
+
+    let futs = unique_crds.into_iter().map(|crd_name| {
+        let client = client.clone();
+        let crd_name = crd_name.clone();
+        let kind_map = kind_map.clone();
+        let gvr_map = gvr_map.clone();
+        async move { discover_one_crd(&client, &crd_name, &kind_map, &gvr_map).await }
+    });
+
+    let results: Vec<Vec<CrInstance>> = futures::stream::iter(futs)
+        .buffer_unordered(DEFAULT_CONCURRENCY)
+        .collect()
+        .await;
+
+    let mut instances: Vec<CrInstance> = results.into_iter().flatten().collect();
+    let total_observations = instances.len();
 
     // UID-based dedup
-    let pre_dedup = instances.len();
     let mut seen_uids = HashSet::new();
     instances.retain(|cr| {
         if let Some(uid) = &cr.id.uid {
@@ -282,8 +315,6 @@ async fn discover_cr_instances(
             true
         }
     });
-    let duplicates = pre_dedup - instances.len();
-    let _ = duplicates; // used in caller for warnings
 
     (instances, total_observations)
 }
@@ -433,7 +464,7 @@ async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> 
     let mut continue_token: Option<String> = None;
 
     loop {
-        let mut lp = ListParams::default().limit(100);
+        let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
         if let Some(token) = &continue_token {
             lp = lp.continue_token(token);
         }
@@ -474,19 +505,33 @@ async fn run_preflight(
         });
     }
 
-    // 2. CSV status and controller health
-    for op in target_operators {
-        let csv_ok = check_csv_health(client, op, kind_map).await;
+    // 2. CSV status and controller health (parallel)
+    let kind_map_arc = Arc::new(kind_map.clone());
+    let health_futs = target_operators.iter().map(|op| {
+        let client = client.clone();
+        let km = kind_map_arc.clone();
+        let op = (*op).clone();
+        async move {
+            let csv = check_csv_health(&client, &op, &km).await;
+            let ctrl = check_controller_health(&client, &op, &km).await;
+            (op.csv.name.clone(), csv, ctrl)
+        }
+    });
+
+    let health_results: Vec<_> = futures::stream::iter(health_futs)
+        .buffer_unordered(DEFAULT_CONCURRENCY)
+        .collect()
+        .await;
+
+    for (csv_name, csv_ok, ctrl_ok) in health_results {
         checks.push(PreflightCheck {
-            name: format!("CSV health ({})", op.csv.name),
+            name: format!("CSV health ({})", csv_name),
             severity: PreflightSeverity::Critical,
             passed: csv_ok.0,
             detail: csv_ok.1,
         });
-
-        let ctrl_ok = check_controller_health(client, op, kind_map).await;
         checks.push(PreflightCheck {
-            name: format!("Controller available ({})", op.csv.name),
+            name: format!("Controller available ({})", csv_name),
             severity: PreflightSeverity::Critical,
             passed: ctrl_ok.0,
             detail: ctrl_ok.1,
@@ -620,10 +665,15 @@ pub async fn generate_teardown_plan(
         })
         .collect();
 
-    let target_crds: Vec<String> = target_operators
-        .iter()
-        .flat_map(|op| op.owned_crds.iter().cloned())
-        .collect();
+    let target_crds: Vec<String> = {
+        let mut seen = HashSet::new();
+        target_operators
+            .iter()
+            .flat_map(|op| op.owned_crds.iter())
+            .filter(|crd| seen.insert((*crd).clone()))
+            .cloned()
+            .collect()
+    };
     let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
 
     eprint!("🔍 Discovering CR instances...");

@@ -108,12 +108,14 @@ fn extract_service_account_names(csv_data: &serde_json::Value) -> Vec<String> {
     sa_names
 }
 
+const LIST_PAGE_SIZE: u32 = 500;
+
 async fn list_all_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
 
     loop {
-        let mut lp = ListParams::default().limit(100);
+        let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
         if let Some(token) = &continue_token {
             lp = lp.continue_token(token);
         }
@@ -143,15 +145,15 @@ pub async fn discover_operators(
         GroupVersion::gv(&csv_info.group, &csv_info.version).with_kind("ClusterServiceVersion");
     let csv_ar = ApiResource::from_gvk_with_plural(&csv_gvk, &csv_info.plural);
     let csv_api: Api<DynamicObject> = Api::all_with(client.clone(), &csv_ar);
-    let csv_items = list_all_paginated(&csv_api).await?;
 
     let sub_gvk = GroupVersion::gv("operators.coreos.com", "v1alpha1").with_kind("Subscription");
     let sub_ar = ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
     let sub_api: Api<DynamicObject> = Api::all_with(client.clone(), &sub_ar);
-    let sub_items = match list_all_paginated(&sub_api).await {
-        Ok(items) => items,
-        Err(_) => return Ok(vec![]),
-    };
+
+    let (csv_result, sub_result) =
+        tokio::join!(list_all_paginated(&csv_api), list_all_paginated(&sub_api),);
+    let csv_items = csv_result?;
+    let sub_items = sub_result.unwrap_or_default();
 
     // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
     // namespaces via different Subscriptions produces separate installations

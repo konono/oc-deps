@@ -1,7 +1,10 @@
+use std::collections::HashSet;
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
+use futures::stream::StreamExt;
 use kube::{
     Client,
     api::{Api, ApiResource, DeleteParams, DynamicObject, ListParams},
@@ -11,6 +14,8 @@ use kube::{
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
+
+const DEFAULT_CONCURRENCY: usize = 16;
 
 #[derive(Debug)]
 enum DeleteResult {
@@ -264,11 +269,33 @@ pub async fn execute_plan(
 
         let mut phase_wait_targets: Vec<ResourceId> = Vec::new();
 
-        for action in &phase.actions {
-            match action {
-                Action::Delete { resource, reason } => {
-                    // P0-3: CRD deletion requires live instance count == 0
-                    if resource.kind == "CustomResourceDefinition" && !dry_run {
+        // Collect DELETE actions for parallel execution
+        let delete_actions: Vec<_> = phase
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::Delete { resource, reason } => Some((resource.clone(), reason.clone())),
+                _ => None,
+            })
+            .collect();
+
+        if !delete_actions.is_empty() {
+            if dry_run {
+                for (resource, reason) in &delete_actions {
+                    eprintln!(
+                        "  \x1b[36mDRY-DELETE\x1b[0m {}/{}{}",
+                        resource.kind,
+                        resource.name,
+                        scope_suffix(resource)
+                    );
+                    eprintln!("             \x1b[2m{}\x1b[0m", reason);
+                    phase_wait_targets.push(resource.clone());
+                }
+            } else {
+                // CRD live count checks (must be sequential per CRD for safety)
+                let mut crd_blocked: HashSet<String> = HashSet::new();
+                for (resource, _) in &delete_actions {
+                    if resource.kind == "CustomResourceDefinition" {
                         let live =
                             count_live_cr_instances(client, &resource.name, kind_map, gvr_map)
                                 .await;
@@ -280,15 +307,12 @@ pub async fn execute_plan(
                                     resource.name,
                                     scope_suffix(resource)
                                 );
-                                eprintln!(
-                                    "             {} live CR instances remain — skipping CRD deletion",
-                                    n
-                                );
+                                eprintln!("             {} live CR instances remain — skipping", n);
                                 result.failed.push((
                                     resource.clone(),
                                     format!("{} live CR instances remain", n),
                                 ));
-                                continue;
+                                crd_blocked.insert(resource.name.clone());
                             }
                             LiveCount::Unknown(err) => {
                                 eprintln!(
@@ -301,60 +325,83 @@ pub async fn execute_plan(
                                     "             cannot verify instance count: {} — skipping",
                                     err
                                 );
-                                result.failed.push((
-                                    resource.clone(),
-                                    format!("cannot verify instance count: {}", err),
-                                ));
-                                continue;
+                                result
+                                    .failed
+                                    .push((resource.clone(), format!("cannot verify: {}", err)));
+                                crd_blocked.insert(resource.name.clone());
                             }
-                            LiveCount::Zero => { /* proceed */ }
-                        }
-                    }
-
-                    if dry_run {
-                        eprintln!(
-                            "  \x1b[36mDRY-DELETE\x1b[0m {}/{}{}",
-                            resource.kind,
-                            resource.name,
-                            scope_suffix(resource)
-                        );
-                        eprintln!("             \x1b[2m{}\x1b[0m", reason);
-                        phase_wait_targets.push(resource.clone());
-                    } else {
-                        match delete_resource(client, resource, kind_map, gk_map).await {
-                            DeleteResult::Deleted => {
-                                eprintln!(
-                                    "  \x1b[31mDELETED\x1b[0m  {}/{}{}",
-                                    resource.kind,
-                                    resource.name,
-                                    scope_suffix(resource)
-                                );
-                                result.deleted.push(resource.clone());
-                                phase_wait_targets.push(resource.clone());
-                            }
-                            DeleteResult::AlreadyGone => {
-                                eprintln!(
-                                    "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
-                                    resource.kind,
-                                    resource.name,
-                                    scope_suffix(resource)
-                                );
-                                result.already_gone.push(resource.clone());
-                            }
-                            DeleteResult::Failed(err) => {
-                                eprintln!(
-                                    "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}",
-                                    resource.kind,
-                                    resource.name,
-                                    err,
-                                    scope_suffix(resource)
-                                );
-                                result.failed.push((resource.clone(), err));
-                                phase_wait_targets.push(resource.clone());
-                            }
+                            LiveCount::Zero => {}
                         }
                     }
                 }
+
+                // Parallel DELETE (excluding blocked CRDs)
+                let eligible: Vec<_> = delete_actions
+                    .iter()
+                    .filter(|(r, _)| {
+                        !(r.kind == "CustomResourceDefinition" && crd_blocked.contains(&r.name))
+                    })
+                    .collect();
+
+                let km = Arc::new(kind_map.clone());
+                let gk = Arc::new(gk_map.clone());
+                let del_futs = eligible.iter().map(|(resource, _)| {
+                    let client = client.clone();
+                    let resource = resource.clone();
+                    let km = km.clone();
+                    let gk = gk.clone();
+                    async move {
+                        let res = delete_resource(&client, &resource, &km, &gk).await;
+                        (resource, res)
+                    }
+                });
+
+                let del_results: Vec<_> = futures::stream::iter(del_futs)
+                    .buffer_unordered(DEFAULT_CONCURRENCY)
+                    .collect()
+                    .await;
+
+                for (resource, del_result) in del_results {
+                    match del_result {
+                        DeleteResult::Deleted => {
+                            eprintln!(
+                                "  \x1b[31mDELETED\x1b[0m  {}/{}{}",
+                                resource.kind,
+                                resource.name,
+                                scope_suffix(&resource)
+                            );
+                            result.deleted.push(resource.clone());
+                            phase_wait_targets.push(resource);
+                        }
+                        DeleteResult::AlreadyGone => {
+                            eprintln!(
+                                "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
+                                resource.kind,
+                                resource.name,
+                                scope_suffix(&resource)
+                            );
+                            result.already_gone.push(resource);
+                        }
+                        DeleteResult::Failed(err) => {
+                            eprintln!(
+                                "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}",
+                                resource.kind,
+                                resource.name,
+                                err,
+                                scope_suffix(&resource)
+                            );
+                            result.failed.push((resource.clone(), err));
+                            phase_wait_targets.push(resource);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Non-DELETE actions (sequential for display)
+        for action in &phase.actions {
+            match action {
+                Action::Delete { .. } => {} // already handled above
                 Action::ExpectGone { resource, reason } => {
                     if dry_run {
                         eprintln!(
@@ -471,15 +518,31 @@ pub async fn execute_plan(
                         _ => None,
                     })
                     .collect();
+                let km = Arc::new(kind_map.clone());
+                let gk = Arc::new(gk_map.clone());
+                let fin_futs = review_resources.into_iter().map(|res| {
+                    let client = client.clone();
+                    let res = res.clone();
+                    let km = km.clone();
+                    let gk = gk.clone();
+                    async move {
+                        let r = check_finalizers(&client, &res, &km, &gk).await;
+                        (res, r)
+                    }
+                });
+                let fin_results: Vec<_> = futures::stream::iter(fin_futs)
+                    .buffer_unordered(DEFAULT_CONCURRENCY)
+                    .collect()
+                    .await;
+
                 let mut block_reasons = Vec::new();
-                for res in &review_resources {
-                    match check_finalizers(client, res, kind_map, gk_map).await {
+                for (res, fin_result) in fin_results {
+                    match fin_result {
                         FinalizerCheckResult::Known(fins) if !fins.is_empty() => {
-                            block_reasons.push(((*res).clone(), fins));
+                            block_reasons.push((res, fins));
                         }
                         FinalizerCheckResult::Unknown(err) => {
-                            block_reasons
-                                .push(((*res).clone(), vec![format!("check failed: {}", err)]));
+                            block_reasons.push((res, vec![format!("check failed: {}", err)]));
                         }
                         _ => {}
                     }
@@ -540,43 +603,53 @@ enum BarrierResult {
     },
 }
 
-// P0-1: check_resource_state returns ObservationState — Unknown is never Gone
-async fn check_resource_state(
+struct ResourceStateInfo {
+    state: ObservationState,
+    finalizers: Vec<String>,
+}
+
+async fn check_resource_state_full(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
-) -> ObservationState {
+) -> ResourceStateInfo {
     let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => {
-            return ObservationState::Unknown(format!(
-                "cannot resolve API for {}/{}",
-                resource.kind, resource.name
-            ));
+            return ResourceStateInfo {
+                state: ObservationState::Unknown(format!(
+                    "cannot resolve API for {}/{}",
+                    resource.kind, resource.name
+                )),
+                finalizers: vec![],
+            };
         }
     };
 
     match api.get(&resource.name).await {
         Ok(obj) => {
-            let finalizer_count = obj
-                .metadata
-                .finalizers
-                .as_ref()
-                .map(|f| f.len())
-                .unwrap_or(0);
+            let finalizers = obj.metadata.finalizers.clone().unwrap_or_default();
             let has_dt = obj.metadata.deletion_timestamp.is_some();
-            ObservationState::Exists {
-                finalizer_count,
-                has_deletion_timestamp: has_dt,
+            ResourceStateInfo {
+                state: ObservationState::Exists {
+                    finalizer_count: finalizers.len(),
+                    has_deletion_timestamp: has_dt,
+                },
+                finalizers,
             }
         }
-        Err(kube::Error::Api(err)) if err.code == 404 => ObservationState::Gone,
-        Err(e) => ObservationState::Unknown(format!("GET failed: {}", e)),
+        Err(kube::Error::Api(err)) if err.code == 404 => ResourceStateInfo {
+            state: ObservationState::Gone,
+            finalizers: vec![],
+        },
+        Err(e) => ResourceStateInfo {
+            state: ObservationState::Unknown(format!("GET failed: {}", e)),
+            finalizers: vec![],
+        },
     }
 }
 
-// P0-1: Barrier stops on Unknown — never treats it as Gone
 async fn wait_for_barrier(
     client: &Client,
     resources: &[ResourceId],
@@ -592,8 +665,28 @@ async fn wait_for_barrier(
     let mut last_progress = Instant::now();
     let stall_threshold_secs = 120;
 
+    let kind_map = Arc::new(kind_map.clone());
+    let gk_map = Arc::new(gk_map.clone());
+
     loop {
         let elapsed = start.elapsed().as_secs();
+
+        // Parallel state check for all resources — single GET per resource
+        let check_futs = resources.iter().map(|res| {
+            let client = client.clone();
+            let res = res.clone();
+            let km = kind_map.clone();
+            let gk = gk_map.clone();
+            async move {
+                let r = check_resource_state_full(&client, &res, &km, &gk).await;
+                (res, r)
+            }
+        });
+
+        let states: Vec<_> = futures::stream::iter(check_futs)
+            .buffer_unordered(DEFAULT_CONCURRENCY)
+            .collect()
+            .await;
 
         let mut gone_count = 0;
         let mut unknown_count = 0;
@@ -603,8 +696,8 @@ async fn wait_for_barrier(
         let mut remaining_finalizers = Vec::new();
         let mut unknown_reasons = Vec::new();
 
-        for res in resources {
-            match check_resource_state(client, res, kind_map, gk_map).await {
+        for (res, info) in &states {
+            match &info.state {
                 ObservationState::Gone => {
                     gone_count += 1;
                 }
@@ -614,14 +707,11 @@ async fn wait_for_barrier(
                 } => {
                     remaining.push(res.clone());
                     total_finalizers += finalizer_count;
-                    if has_deletion_timestamp {
+                    if *has_deletion_timestamp {
                         deleting_count += 1;
                     }
-                    if finalizer_count > 0
-                        && let FinalizerCheckResult::Known(fins) =
-                            check_finalizers(client, res, kind_map, gk_map).await
-                    {
-                        remaining_finalizers.push((res.clone(), fins));
+                    if !info.finalizers.is_empty() {
+                        remaining_finalizers.push((res.clone(), info.finalizers.clone()));
                     }
                 }
                 ObservationState::Unknown(reason) => {
@@ -632,7 +722,6 @@ async fn wait_for_barrier(
             }
         }
 
-        // P0-1: Unknown immediately stops the barrier
         if unknown_count > 0 {
             eprintln!();
             return BarrierResult::Stalled {

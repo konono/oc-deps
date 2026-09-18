@@ -124,17 +124,20 @@ async fn main() -> Result<()> {
                         eprintln!("🔍 Discovering API resources...");
                         let (kind_map, gvr_map, _gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
-                        eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+                        let t_discovery = t0.elapsed();
 
+                        let t_olm = Instant::now();
                         eprint!("🔍 Discovering operators...");
                         let all_operators = discover_operators(&client, &kind_map).await?;
                         eprintln!(" found {} operators", all_operators.len());
+                        let t_olm = t_olm.elapsed();
 
                         let target_indices =
                             resolve_operator_targets(&operator_queries, &all_operators)?;
                         let target_operators: Vec<&_> =
                             target_indices.iter().map(|&i| &all_operators[i]).collect();
 
+                        let t_plan = Instant::now();
                         let plan = generate_teardown_plan(
                             &client,
                             &target_operators,
@@ -144,8 +147,17 @@ async fn main() -> Result<()> {
                             prune_apis,
                         )
                         .await?;
+                        let t_plan = t_plan.elapsed();
 
                         print_teardown_plan(&plan, &output);
+
+                        eprintln!(
+                            "\n⏱ Discovery: {:.1}s, OLM: {:.1}s, Plan: {:.1}s, Total: {:.1}s",
+                            t_discovery.as_secs_f64(),
+                            t_olm.as_secs_f64(),
+                            t_plan.as_secs_f64(),
+                            t0.elapsed().as_secs_f64()
+                        );
                     }
                     TeardownAction::Apply {
                         operators: operator_queries,
