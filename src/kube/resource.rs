@@ -1,5 +1,66 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
+// ──────────────────────────────────────────────────────────────
+//  Snapshot types — serializable, designed for persistence
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResourceId {
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub uid: Option<String>,
+}
+
+impl std::fmt::Display for ResourceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.kind, self.name)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OwnerRefEntry {
+    pub api_version: String,
+    pub kind: String,
+    pub name: String,
+    pub uid: String,
+    pub controller: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SpecRefEntry {
+    pub target_kind: String,
+    pub target_name: String,
+    pub field_path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResourceEntry {
+    pub id: ResourceId,
+    pub owner_refs: Vec<OwnerRefEntry>,
+    pub spec_refs: Vec<SpecRefEntry>,
+    pub labels: HashMap<String, String>,
+    pub annotations: HashMap<String, String>,
+    pub raw_spec: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClusterSnapshot {
+    pub resources: HashMap<String, ResourceEntry>,
+    pub scan_errors: Vec<String>,
+    pub cluster_url: String,
+    pub taken_at: String,
+    pub namespaces: Vec<String>,
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Runtime types — used for live tree traversal (existing)
+// ──────────────────────────────────────────────────────────────
+
 #[derive(Clone)]
 pub struct ResourceInfo {
     pub kind: String,

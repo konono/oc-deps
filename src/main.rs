@@ -12,10 +12,11 @@ use clap::Parser;
 
 use crate::analyzers::olm::{find_crd_origin, print_crd_origin};
 use crate::analyzers::selector::get_service_selected_pods;
-use crate::cli::{Args, OutputFormat};
+use crate::cli::{Args, Command, OutputFormat};
 use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
 use crate::kube::discovery::{build_kind_lookup_cached, load_config_and_client, resolve_kind};
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
+use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
@@ -36,6 +37,39 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let (config, client) = load_config_and_client().await?;
+
+    // ── Subcommand dispatch ──
+    if let Some(command) = args.command {
+        match command {
+            Command::Snapshot {
+                namespace,
+                output_file,
+                include_events,
+                no_cache,
+            } => {
+                let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
+                let t0 = Instant::now();
+                eprintln!("🔍 Discovering API resources...");
+                let (kind_map, _) = build_kind_lookup_cached(&client, &config, no_cache).await?;
+                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                let snapshot =
+                    build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
+
+                let resource_count = snapshot.resources.len();
+                let error_count = snapshot.scan_errors.len();
+                save_snapshot(&snapshot, &output_file)?;
+
+                eprintln!(
+                    "✅ Snapshot saved to {} ({} resources, {} errors)",
+                    output_file, resource_count, error_count
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    // ── Default inspect mode (backward compatible) ──
     let namespace = args
         .namespace
         .clone()

@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
@@ -7,6 +7,9 @@ use clap::{Parser, ValueEnum};
     about = "Kubernetes Resource Dependency Inspector"
 )]
 pub struct Args {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Namespace (default: kubeconfig の default namespace)
     #[arg(short = 'n', long)]
     pub namespace: Option<String>,
@@ -54,6 +57,28 @@ pub struct Args {
     /// Target resource: kind/name or name (with -k). --map 使用時は省略可
     #[arg(value_name = "RESOURCE")]
     pub resource: Option<String>,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Take a cluster snapshot and save to JSON
+    Snapshot {
+        /// Namespace to snapshot
+        #[arg(short = 'n', long)]
+        namespace: Option<String>,
+
+        /// Output file path
+        #[arg(short = 'o', long, default_value = "snapshot.json")]
+        output_file: String,
+
+        /// Include Event resources in scan (default: skip)
+        #[arg(long)]
+        include_events: bool,
+
+        /// Skip discovery cache (force fresh API discovery)
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
