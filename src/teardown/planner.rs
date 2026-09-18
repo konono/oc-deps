@@ -76,27 +76,54 @@ impl ReviewDecisions {
         }
     }
 
-    pub fn validate(&self, all_review_roots: &[&ResourceId]) -> Result<(), Vec<String>> {
+    pub fn validate(&self, approvable_roots: &[&ResourceId]) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
         for spec in &self.approve_delete {
             let parts: Vec<&str> = spec.splitn(4, '/').collect();
-            if parts.len() == 2 {
-                let (kind, name) = (parts[0], parts[1]);
-                let matching: Vec<_> = all_review_roots
-                    .iter()
-                    .filter(|r| r.kind == kind && r.name == name)
-                    .collect();
-                if matching.len() > 1 {
-                    let qualified: Vec<String> =
-                        matching.iter().map(|r| Self::canonical_key(r)).collect();
+            match parts.len() {
+                2 => {
+                    let (kind, name) = (parts[0], parts[1]);
+                    let matching: Vec<_> = approvable_roots
+                        .iter()
+                        .filter(|r| r.kind == kind && r.name == name)
+                        .collect();
+                    if matching.len() > 1 {
+                        let qualified: Vec<String> =
+                            matching.iter().map(|r| Self::canonical_key(r)).collect();
+                        errors.push(format!(
+                            "ambiguous --approve-delete {}/{}: matches {} resources. Use qualified form:\n  {}",
+                            kind, name, matching.len(), qualified.join("\n  ")
+                        ));
+                    } else if matching.is_empty() {
+                        errors.push(format!(
+                            "--approve-delete {}/{}: no matching approvable REVIEW root found",
+                            kind, name
+                        ));
+                    }
+                }
+                4 => {
+                    let (group, kind, ns, name) = (parts[0], parts[1], parts[2], parts[3]);
+                    let found = approvable_roots.iter().any(|r| {
+                        let ns_match = match &r.namespace {
+                            Some(rns) => rns == ns,
+                            None => ns == "-",
+                        };
+                        r.group.eq_ignore_ascii_case(group)
+                            && r.kind == kind
+                            && ns_match
+                            && r.name == name
+                    });
+                    if !found {
+                        errors.push(format!(
+                            "--approve-delete {}: no matching approvable REVIEW root found",
+                            spec
+                        ));
+                    }
+                }
+                _ => {
                     errors.push(format!(
-                        "ambiguous --approve-delete {}/{}: matches {} resources. Use qualified form:\n  {}",
-                        kind, name, matching.len(), qualified.join("\n  ")
-                    ));
-                } else if matching.is_empty() {
-                    errors.push(format!(
-                        "--approve-delete {}/{}: no matching REVIEW root found",
-                        kind, name
+                        "--approve-delete {}: invalid format. Use Kind/name or group/Kind/namespace/name",
+                        spec
                     ));
                 }
             }
@@ -1272,14 +1299,19 @@ pub async fn generate_teardown_plan(
         map
     };
 
-    // Collect all root CRs that would be REVIEW (for approval disambiguation)
-    let review_root_ids: Vec<&ResourceId> = root_crs
+    // Collect approvable root CRs: non-Managed provenance AND not shared-owned
+    let approvable_root_ids: Vec<&ResourceId> = root_crs
         .iter()
-        .filter(|cr| !matches!(cr.provenance, Provenance::Managed))
+        .filter(|cr| {
+            !matches!(cr.provenance, Provenance::Managed)
+                && !api_to_op_indices
+                    .get(cr.api_owner_key.as_str())
+                    .is_some_and(|v| v.len() > 1)
+        })
         .map(|cr| &cr.id)
         .collect();
 
-    if let Err(errors) = decisions.validate(&review_root_ids) {
+    if let Err(errors) = decisions.validate(&approvable_root_ids) {
         for err in &errors {
             eprintln!("\x1b[1;31m⛔\x1b[0m {}", err);
         }
@@ -1384,13 +1416,23 @@ pub async fn generate_teardown_plan(
         let mut phase_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, "root", decisions, &review_root_ids));
+            phase_actions.push(cr_to_action(cr, "root", decisions, &approvable_root_ids));
         }
         for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(cr, "descendant", decisions, &review_root_ids));
+            phase_actions.push(cr_to_action(
+                cr,
+                "descendant",
+                decisions,
+                &approvable_root_ids,
+            ));
         }
         for cr in &independent_crs {
-            phase_actions.push(cr_to_action(cr, "independent", decisions, &review_root_ids));
+            phase_actions.push(cr_to_action(
+                cr,
+                "independent",
+                decisions,
+                &approvable_root_ids,
+            ));
         }
 
         let mut conds: Vec<String> = root_crs
@@ -1431,7 +1473,7 @@ pub async fn generate_teardown_plan(
                         continue;
                     }
                 } else {
-                    cr_to_action(cr, "root", decisions, &review_root_ids)
+                    cr_to_action(cr, "root", decisions, &approvable_root_ids)
                 };
                 let op_idx = owners.and_then(|v| v.iter().next().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
@@ -1456,7 +1498,12 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(cr, "descendant", decisions, &review_root_ids));
+                    phase_actions.push(cr_to_action(
+                        cr,
+                        "descendant",
+                        decisions,
+                        &approvable_root_ids,
+                    ));
                 }
             }
             for cr in &independent_crs {
@@ -1478,7 +1525,7 @@ pub async fn generate_teardown_plan(
                         cr,
                         "independent",
                         decisions,
-                        &review_root_ids,
+                        &approvable_root_ids,
                     ));
                 }
             }
@@ -1505,11 +1552,16 @@ pub async fn generate_teardown_plan(
     for phase in &operand_phases {
         for action in &phase.actions {
             if let Action::Review { resource, reason } = action {
-                let is_root = root_crs.iter().any(|cr| cr.id == *resource);
+                let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
+                let is_root = root_cr.is_some();
                 if !is_root {
                     continue;
                 }
-                let is_shared = reason.contains("shared");
+                let is_shared = root_cr.is_some_and(|cr| {
+                    api_to_op_indices
+                        .get(cr.api_owner_key.as_str())
+                        .is_some_and(|v| v.len() > 1)
+                });
                 if is_shared {
                     blockers.push(Blocker {
                         resource: resource.clone(),
