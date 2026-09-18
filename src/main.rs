@@ -28,6 +28,7 @@ use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
 use crate::teardown::planner::{
     generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
 };
+use crate::teardown::progress::{check_plan_status, print_plan_status};
 
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str) {
     match output {
@@ -138,6 +139,40 @@ async fn main() -> Result<()> {
                         .await?;
 
                         print_teardown_plan(&plan, &output);
+                    }
+                    TeardownAction::Status {
+                        operators: operator_queries,
+                        no_cache,
+                    } => {
+                        let t0 = Instant::now();
+                        eprintln!("🔍 Discovering API resources...");
+                        let (kind_map, gvr_map) =
+                            build_kind_lookup_cached(&client, &config, no_cache).await?;
+                        eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                        eprint!("🔍 Discovering operators...");
+                        let all_operators = discover_operators(&client, &kind_map).await?;
+                        eprintln!(" found {} operators", all_operators.len());
+
+                        let target_indices =
+                            resolve_operator_targets(&operator_queries, &all_operators)?;
+                        let target_operators: Vec<&_> =
+                            target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+                        let plan = generate_teardown_plan(
+                            &client,
+                            &target_operators,
+                            &all_operators,
+                            &kind_map,
+                            &gvr_map,
+                        )
+                        .await?;
+
+                        eprint!("🔍 Checking resource status...");
+                        let statuses = check_plan_status(&client, &plan, &kind_map).await;
+                        eprintln!(" done");
+
+                        print_plan_status(&plan, &statuses);
                     }
                 }
                 return Ok(());

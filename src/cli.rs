@@ -133,6 +133,17 @@ pub enum TeardownAction {
         #[arg(long)]
         no_cache: bool,
     },
+
+    /// Check current status of resources in a teardown plan
+    Status {
+        /// Operator names (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operators: Vec<String>,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
