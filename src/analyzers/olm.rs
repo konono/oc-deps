@@ -238,12 +238,17 @@ pub async fn discover_operators(
     // namespaces via different Subscriptions produces separate installations
     let mut sub_by_csv: HashMap<String, Vec<&DynamicObject>> = HashMap::new();
     for sub in &sub_items {
-        if let Some(csv_name) = sub
-            .data
-            .get("status")
-            .and_then(|s| s.get("installedCSV").or_else(|| s.get("currentCSV")))
-            .and_then(|c| c.as_str())
-        {
+        let csv_name = sub.data.get("status").and_then(|s| {
+            s.get("installedCSV")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    s.get("currentCSV")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
+        });
+        if let Some(csv_name) = csv_name {
             sub_by_csv
                 .entry(csv_name.to_string())
                 .or_default()
@@ -655,11 +660,16 @@ pub async fn find_crd_origin(
         {
             if let Ok(subs) = sub_api.list(&ListParams::default()).await {
                 for sub in &subs.items {
-                    let matched_csv = sub
-                        .data
-                        .get("status")
-                        .and_then(|s| s.get("installedCSV").or_else(|| s.get("currentCSV")))
-                        .and_then(|c| c.as_str());
+                    let matched_csv = sub.data.get("status").and_then(|s| {
+                        s.get("installedCSV")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                s.get("currentCSV")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                            })
+                    });
                     if matched_csv == Some(csv_name.as_str()) {
                         chain.subscription_name = sub.metadata.name.clone();
                         chain.subscription_namespace = sub.metadata.namespace.clone();

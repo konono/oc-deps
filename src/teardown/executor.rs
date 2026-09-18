@@ -873,7 +873,10 @@ async fn count_live_api_service_instances(
         .collect();
 
     if matching.is_empty() {
-        return LiveCount::Zero;
+        return LiveCount::Unknown(format!(
+            "no discovered resources for APIService {}",
+            api_service_name
+        ));
     }
 
     for ((_, kind), kind_info) in &matching {

@@ -15,7 +15,7 @@ use crate::analyzers::olm::{
     compute_operator_dependencies,
 };
 use crate::cli::OutputFormat;
-use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
+use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
 const DEFAULT_CONCURRENCY: usize = 16;
@@ -731,6 +731,7 @@ async fn check_controller_health(
     (all_available, details.join("; "))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
     target_operators: &[&OperatorInstance],
@@ -738,6 +739,7 @@ pub async fn generate_teardown_plan(
     kind_map: &KindMap,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
+    gvk_map: &GvkMap,
     prune_apis: bool,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
@@ -771,20 +773,29 @@ pub async fn generate_teardown_plan(
         .flat_map(|op| op.owned_api_service_defs.iter())
         .collect();
 
-    // Resolve APIService-backed resources via API discovery (no plural guessing)
-    let api_service_resource_crds: Vec<String> = target_api_service_defs
-        .iter()
-        .filter(|def| !def.group.is_empty() && !def.kind.is_empty())
-        .filter_map(|def| {
-            let kind_info = gk_map.get(&(def.group.clone(), def.kind.clone()))?;
-            let resolved = format!("{}.{}", kind_info.plural, def.group);
-            if !target_crd_set.contains(resolved.as_str()) {
-                Some(resolved)
-            } else {
-                None
+    // Resolve APIService-backed resources via exact (group, version, kind) lookup
+    let mut api_service_resource_crds: Vec<String> = Vec::new();
+    let mut unresolved_api_services: Vec<String> = Vec::new();
+    for def in &target_api_service_defs {
+        if def.group.is_empty() || def.kind.is_empty() {
+            continue;
+        }
+        let gvk_key = (def.group.clone(), def.version.clone(), def.kind.clone());
+        match gvk_map.get(&gvk_key) {
+            Some(kind_info) => {
+                let resolved = format!("{}.{}", kind_info.plural, def.group);
+                if !target_crd_set.contains(resolved.as_str()) {
+                    api_service_resource_crds.push(resolved);
+                }
             }
-        })
-        .collect();
+            None => {
+                unresolved_api_services.push(format!(
+                    "{} ({}/{}/{})",
+                    def.name, def.group, def.version, def.kind
+                ));
+            }
+        }
+    }
 
     let mut all_discovery_crds = target_crds.clone();
     all_discovery_crds.extend(api_service_resource_crds.clone());
@@ -822,8 +833,15 @@ pub async fn generate_teardown_plan(
         .count();
 
     // Run preflight checks
+    if !unresolved_api_services.is_empty() {
+        eprintln!(
+            "  ⚠ {} owned APIService(s) could not be resolved in API discovery",
+            unresolved_api_services.len()
+        );
+    }
+
     eprint!("🔍 Running preflight checks...");
-    let preflight = run_preflight(
+    let mut preflight = run_preflight(
         client,
         target_operators,
         kind_map,
@@ -833,6 +851,17 @@ pub async fn generate_teardown_plan(
         &cr_report.unavailable_crds,
     )
     .await;
+    for api_svc in &unresolved_api_services {
+        preflight.checks.push(PreflightCheck {
+            name: format!("APIService resource resolution ({})", api_svc),
+            severity: PreflightSeverity::Critical,
+            passed: false,
+            detail: format!(
+                "cannot resolve resources served by owned APIService {} — operand discovery incomplete",
+                api_svc
+            ),
+        });
+    }
     eprintln!(" done");
 
     // Determine root vs managed CRs
@@ -1005,7 +1034,8 @@ pub async fn generate_teardown_plan(
                 map.entry(crd.clone()).or_default().push(idx);
             }
             for def in &op.owned_api_service_defs {
-                if let Some(kind_info) = gk_map.get(&(def.group.clone(), def.kind.clone())) {
+                let gvk_key = (def.group.clone(), def.version.clone(), def.kind.clone());
+                if let Some(kind_info) = gvk_map.get(&gvk_key) {
                     let key = format!("{}.{}", kind_info.plural, def.group);
                     map.entry(key).or_default().push(idx);
                 }
