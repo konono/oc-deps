@@ -80,6 +80,25 @@ pub enum Command {
         no_cache: bool,
     },
 
+    /// Build and export the evidence graph for a namespace
+    Graph {
+        /// Namespace to analyze
+        #[arg(short = 'n', long)]
+        namespace: Option<String>,
+
+        /// Output file path
+        #[arg(short = 'o', long, default_value = "evidence-graph.json")]
+        output_file: String,
+
+        /// Include Event resources in scan (default: skip)
+        #[arg(long)]
+        include_events: bool,
+
+        /// Skip discovery cache (force fresh API discovery)
+        #[arg(long)]
+        no_cache: bool,
+    },
+
     /// List all OLM-managed operators in the cluster
     Operators {
         /// Output format: tree, table, json

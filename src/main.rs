@@ -16,6 +16,7 @@ use crate::analyzers::olm::{
 };
 use crate::analyzers::selector::get_service_selected_pods;
 use crate::cli::{Args, Command, OutputFormat};
+use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
 use crate::kube::discovery::{build_kind_lookup_cached, load_config_and_client, resolve_kind};
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
@@ -66,6 +67,38 @@ async fn main() -> Result<()> {
                 eprintln!(
                     "✅ Snapshot saved to {} ({} resources, {} errors)",
                     output_file, resource_count, error_count
+                );
+                return Ok(());
+            }
+            Command::Graph {
+                namespace,
+                output_file,
+                include_events,
+                no_cache,
+            } => {
+                let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
+                let t0 = Instant::now();
+                eprintln!("🔍 Discovering API resources...");
+                let (kind_map, _) = build_kind_lookup_cached(&client, &config, no_cache).await?;
+                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                let snapshot =
+                    build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
+
+                eprint!("🔍 Discovering operators...");
+                let operators = discover_operators(&client, &kind_map).await?;
+                eprintln!(" found {} operators", operators.len());
+
+                eprint!("🔗 Building evidence graph...");
+                let graph = build_evidence_graph(&snapshot, &operators);
+                eprintln!(" {} edges", graph.edges.len());
+
+                let json = serde_json::to_string_pretty(&graph)?;
+                std::fs::write(&output_file, json)?;
+                eprintln!(
+                    "✅ Evidence graph saved to {} ({} edges)",
+                    output_file,
+                    graph.edges.len()
                 );
                 return Ok(());
             }
