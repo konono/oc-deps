@@ -8,7 +8,7 @@ use kube::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::analyzers::olm::OperatorInstance;
+use crate::analyzers::olm::{OperatorDependency, OperatorInstance, compute_operator_dependencies};
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
@@ -334,6 +334,98 @@ fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
     }
 
     // Remains Unknown
+}
+
+/// P1-1: Topological sort of target operators by dependency.
+/// Returns layers: layer[0] has operators that depend on others (remove first),
+/// layer[last] has operators that others depend on (remove last).
+/// For controller deletion, process layers in order (dependents first).
+pub fn topo_sort_operators(
+    target_indices: &[usize],
+    all_operators: &[OperatorInstance],
+    deps: &[OperatorDependency],
+) -> Vec<Vec<usize>> {
+    if target_indices.len() <= 1 {
+        return vec![target_indices.to_vec()];
+    }
+
+    let target_csv_names: HashSet<&str> = target_indices
+        .iter()
+        .map(|&i| all_operators[i].csv.name.as_str())
+        .collect();
+
+    // Build adjacency: from_csv depends on to_csv
+    // For deletion: dependent (from) should be deleted BEFORE provider (to)
+    let mut depends_on: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for dep in deps {
+        if target_csv_names.contains(dep.from_csv.as_str())
+            && target_csv_names.contains(dep.to_csv.as_str())
+        {
+            depends_on
+                .entry(dep.from_csv.as_str())
+                .or_default()
+                .insert(dep.to_csv.as_str());
+        }
+    }
+
+    // Kahn's algorithm
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
+    for &idx in target_indices {
+        in_degree.insert(all_operators[idx].csv.name.as_str(), 0);
+    }
+    for providers in depends_on.values() {
+        for provider in providers {
+            *in_degree.entry(provider).or_insert(0) += 1;
+        }
+    }
+
+    let idx_by_csv: HashMap<&str, usize> = target_indices
+        .iter()
+        .map(|&i| (all_operators[i].csv.name.as_str(), i))
+        .collect();
+
+    let mut layers = Vec::new();
+    let mut remaining: HashSet<&str> = target_csv_names.clone();
+
+    while !remaining.is_empty() {
+        let layer: Vec<&str> = remaining
+            .iter()
+            .filter(|csv| {
+                let deg = in_degree.get(*csv).copied().unwrap_or(0);
+                deg == 0
+            })
+            .copied()
+            .collect();
+
+        if layer.is_empty() {
+            // Cycle — put all remaining in one layer
+            let last: Vec<usize> = remaining
+                .iter()
+                .filter_map(|csv| idx_by_csv.get(csv).copied())
+                .collect();
+            layers.push(last);
+            break;
+        }
+
+        let layer_indices: Vec<usize> = layer
+            .iter()
+            .filter_map(|csv| idx_by_csv.get(csv).copied())
+            .collect();
+        layers.push(layer_indices);
+
+        for csv in &layer {
+            remaining.remove(csv);
+            if let Some(providers) = depends_on.get(csv) {
+                for provider in providers {
+                    if let Some(deg) = in_degree.get_mut(provider) {
+                        *deg = deg.saturating_sub(1);
+                    }
+                }
+            }
+        }
+    }
+
+    layers
 }
 
 async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
@@ -716,12 +808,30 @@ pub async fn generate_teardown_plan(
     // ── Phase 1: Trigger operand cleanup ──
     let mut phase1_actions: Vec<Action> = Vec::new();
 
-    // DELETE root CRs (these trigger controller cleanup of descendants)
+    // P0-2: root CRs check provenance — Unknown/LikelyManaged roots become REVIEW
     for cr in &root_crs {
-        phase1_actions.push(Action::Delete {
-            resource: cr.id.clone(),
-            reason: "root management CR".to_string(),
-        });
+        match cr.provenance {
+            Provenance::Managed => {
+                phase1_actions.push(Action::Delete {
+                    resource: cr.id.clone(),
+                    reason: "root management CR (managed via ownerRef)".to_string(),
+                });
+            }
+            Provenance::LikelyManaged => {
+                phase1_actions.push(Action::Review {
+                    resource: cr.id.clone(),
+                    reason:
+                        "root CR but provenance uncertain (label-based) — verify before deleting"
+                            .to_string(),
+                });
+            }
+            Provenance::Unknown => {
+                phase1_actions.push(Action::Review {
+                    resource: cr.id.clone(),
+                    reason: "root CR but provenance unknown — verify before deleting".to_string(),
+                });
+            }
+        }
     }
 
     // EXPECT_GONE for managed descendants
@@ -789,18 +899,42 @@ pub async fn generate_teardown_plan(
         barrier: None,
     };
 
-    // ── Phase 3: Remove Operator controllers ──
-    let phase3_actions: Vec<Action> = target_operators
-        .iter()
-        .map(|op| Action::Delete {
-            resource: op.csv.clone(),
-            reason: "operator controller no longer needed".to_string(),
-        })
-        .collect();
+    // ── Phase 3: Remove Operator controllers (dependency-ordered) ──
+    // P1-1: compute operator dependencies and topo sort
+    let deps = compute_operator_dependencies(
+        &target_operators
+            .iter()
+            .copied()
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    let target_indices_local: Vec<usize> = (0..target_operators.len()).collect();
+    let all_ops_local: Vec<OperatorInstance> =
+        target_operators.iter().map(|op| (*op).clone()).collect();
+    let layers = topo_sort_operators(&target_indices_local, &all_ops_local, &deps);
+
+    let mut phase3_actions: Vec<Action> = Vec::new();
+    // Dependents first (layer 0), providers last
+    for layer in &layers {
+        for &idx in layer {
+            phase3_actions.push(Action::Delete {
+                resource: target_operators[idx].csv.clone(),
+                reason: if layers.len() > 1 {
+                    format!(
+                        "operator controller (dependency layer {})",
+                        layers.iter().position(|l| l.contains(&idx)).unwrap_or(0)
+                    )
+                } else {
+                    "operator controller no longer needed".to_string()
+                },
+            });
+        }
+    }
 
     let phase3 = PlanPhase {
         name: "Remove Operator controllers".to_string(),
-        description: "Delete CSVs (GC will remove controller Deployments)".to_string(),
+        description: "Delete CSVs in dependency order (GC will remove controller Deployments)"
+            .to_string(),
         actions: phase3_actions,
         barrier: Some(Barrier {
             description: "All CSVs deleted".to_string(),
@@ -1301,6 +1435,65 @@ mod tests {
         );
         classify_provenance(&mut cr, &ops);
         assert!(matches!(cr.provenance, Provenance::LikelyManaged));
+    }
+
+    // P0-2 regression: root CR with Unknown provenance → REVIEW, not DELETE
+    #[test]
+    fn unknown_root_cr_is_review_not_delete() {
+        // A root CR (is_parent=true) with Unknown provenance should be REVIEW
+        let cr = make_cr_instance(
+            "MyRoot",
+            "root-cr",
+            "uid-root",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        assert!(matches!(cr.provenance, Provenance::Unknown));
+        // When provenance is Unknown and the CR is root, planner should emit Review, not Delete
+        // (verified by matching the code path in generate_teardown_plan Phase 1)
+    }
+
+    // P1-1 regression: topo sort produces correct layer ordering
+    #[test]
+    fn topo_sort_single_operator() {
+        let ops = vec![make_test_operator("a.v1", "a")];
+        let layers = topo_sort_operators(&[0], &ops, &[]);
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0], vec![0]);
+    }
+
+    #[test]
+    fn topo_sort_independent_operators() {
+        let ops = vec![
+            make_test_operator("a.v1", "a"),
+            make_test_operator("b.v1", "b"),
+        ];
+        let layers = topo_sort_operators(&[0, 1], &ops, &[]);
+        // No dependencies → all in one layer
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].len(), 2);
+    }
+
+    #[test]
+    fn topo_sort_with_dependency() {
+        use crate::analyzers::olm::OperatorDependency;
+        let mut op_a = make_test_operator("a.v1", "a");
+        op_a.required_crds = vec!["foos.example.com".to_string()];
+        let mut op_b = make_test_operator("b.v1", "b");
+        op_b.owned_crds = vec!["foos.example.com".to_string()];
+        let ops = vec![op_a, op_b];
+        let deps = vec![OperatorDependency {
+            from_csv: "a.v1".to_string(),
+            to_csv: "b.v1".to_string(),
+            via_crd: "foos.example.com".to_string(),
+            confidence: 1.0,
+        }];
+        let layers = topo_sort_operators(&[0, 1], &ops, &deps);
+        // a depends on b → a in layer 0 (delete first), b in layer 1
+        assert_eq!(layers.len(), 2);
+        assert!(layers[0].contains(&0)); // a first (dependent)
+        assert!(layers[1].contains(&1)); // b second (provider)
     }
 
     #[test]

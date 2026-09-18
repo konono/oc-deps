@@ -153,22 +153,28 @@ pub async fn discover_operators(
         Err(_) => return Ok(vec![]),
     };
 
-    let sub_by_csv: HashMap<String, &DynamicObject> = sub_items
-        .iter()
-        .filter_map(|sub| {
-            let csv_name = sub
-                .data
-                .get("status")
-                .and_then(|s| s.get("currentCSV"))
-                .and_then(|c| c.as_str())?
-                .to_string();
-            Some((csv_name, sub))
-        })
-        .collect();
+    // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
+    // namespaces via different Subscriptions produces separate installations
+    let mut sub_by_csv: HashMap<String, Vec<&DynamicObject>> = HashMap::new();
+    for sub in &sub_items {
+        if let Some(csv_name) = sub
+            .data
+            .get("status")
+            .and_then(|s| s.get("currentCSV"))
+            .and_then(|c| c.as_str())
+        {
+            sub_by_csv
+                .entry(csv_name.to_string())
+                .or_default()
+                .push(sub);
+        }
+    }
 
-    // OLM copies CSVs into every target namespace — deduplicate by CSV name,
-    // preferring the copy in the Subscription's namespace
-    let mut best_csv: HashMap<String, (&DynamicObject, Option<ResourceId>)> = HashMap::new();
+    // Deduplicate CSV copies: OLM copies CSVs into every target namespace.
+    // Key: (subscription_namespace, csv_name) — different Subscriptions = different installations.
+    // For each installation, prefer the CSV copy in the Subscription's namespace.
+    let mut best_csv: HashMap<(String, String), (&DynamicObject, Option<ResourceId>)> =
+        HashMap::new();
 
     for csv in &csv_items {
         let phase = csv
@@ -185,42 +191,48 @@ pub async fn discover_operators(
             Some(n) => n.clone(),
             None => continue,
         };
-
-        let subscription = sub_by_csv.get(&csv_name).and_then(|sub| {
-            Some(ResourceId {
-                group: "operators.coreos.com".to_string(),
-                version: "v1alpha1".to_string(),
-                kind: "Subscription".to_string(),
-                namespace: sub.metadata.namespace.clone(),
-                name: sub.metadata.name.clone()?,
-                uid: sub.metadata.uid.clone(),
-            })
-        });
-
         let csv_ns = csv.metadata.namespace.as_deref().unwrap_or("unknown");
-        let sub_ns = subscription.as_ref().and_then(|s| s.namespace.as_deref());
 
-        let dominated = if let Some((existing, existing_sub)) = best_csv.get(&csv_name) {
-            let existing_ns = existing.metadata.namespace.as_deref().unwrap_or("unknown");
-            let existing_has_match = existing_sub
-                .as_ref()
-                .and_then(|s| s.namespace.as_deref())
-                .is_some_and(|sns| sns == existing_ns);
-            let new_has_match = sub_ns.is_some_and(|sns| sns == csv_ns);
-            // prefer the copy whose namespace matches its subscription
-            new_has_match && !existing_has_match
+        // Find matching subscription(s) for this CSV name
+        let matching_subs = sub_by_csv.get(&csv_name);
+
+        if let Some(subs) = matching_subs {
+            for sub in subs {
+                let sub_ns = sub.metadata.namespace.as_deref().unwrap_or("unknown");
+                let subscription = Some(ResourceId {
+                    group: "operators.coreos.com".to_string(),
+                    version: "v1alpha1".to_string(),
+                    kind: "Subscription".to_string(),
+                    namespace: sub.metadata.namespace.clone(),
+                    name: sub.metadata.name.clone().unwrap_or_default(),
+                    uid: sub.metadata.uid.clone(),
+                });
+
+                let key = (sub_ns.to_string(), csv_name.clone());
+                let new_matches_sub_ns = csv_ns == sub_ns;
+
+                let should_replace = if let Some((existing, _)) = best_csv.get(&key) {
+                    let existing_ns = existing.metadata.namespace.as_deref().unwrap_or("unknown");
+                    let existing_matches = existing_ns == sub_ns;
+                    new_matches_sub_ns && !existing_matches
+                } else {
+                    true
+                };
+
+                if should_replace {
+                    best_csv.insert(key, (csv, subscription));
+                }
+            }
         } else {
-            true
-        };
-
-        if dominated {
-            best_csv.insert(csv_name, (csv, subscription));
+            // No subscription for this CSV — use csv_ns as key
+            let key = (csv_ns.to_string(), csv_name.clone());
+            best_csv.entry(key).or_insert((csv, None));
         }
     }
 
     let mut operators = Vec::new();
 
-    for (csv_name, (csv, subscription)) in &best_csv {
+    for ((_, csv_name), (csv, subscription)) in &best_csv {
         let csv_ns = csv
             .metadata
             .namespace

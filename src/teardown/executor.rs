@@ -2,9 +2,13 @@ use std::io::Write;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use kube::{Client, api::DeleteParams};
+use kube::{
+    Client,
+    api::{Api, ApiResource, DeleteParams, DynamicObject, ListParams},
+    core::GroupVersion,
+};
 
-use crate::kube::discovery::{GroupKindMap, KindMap};
+use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
 
@@ -28,6 +32,33 @@ pub struct BarrierTimeout {
     pub phase: String,
     pub remaining: Vec<ResourceId>,
     pub finalizers: Vec<(ResourceId, Vec<String>)>,
+}
+
+// P0-1: three-value state for resource checks — Unknown is never treated as Gone
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObservationState {
+    Gone,
+    Exists {
+        finalizer_count: usize,
+        has_deletion_timestamp: bool,
+    },
+    Unknown(String),
+}
+
+// P0-adjacent: three-value result for finalizer checks
+#[derive(Debug, Clone)]
+pub enum FinalizerCheckResult {
+    Known(Vec<String>),
+    Gone,
+    Unknown(String),
+}
+
+// P0-3: live instance count check before CRD deletion
+#[derive(Debug)]
+enum LiveCount {
+    Zero,
+    NonZero(usize),
+    Unknown(String),
 }
 
 fn count_actions(plan: &TeardownPlan) -> (usize, usize, usize, usize) {
@@ -124,6 +155,7 @@ pub async fn execute_plan(
     plan: &TeardownPlan,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
+    gvr_map: &GvrMap,
     dry_run: bool,
     force: bool,
 ) -> Result<ExecutionResult> {
@@ -235,6 +267,50 @@ pub async fn execute_plan(
         for action in &phase.actions {
             match action {
                 Action::Delete { resource, reason } => {
+                    // P0-3: CRD deletion requires live instance count == 0
+                    if resource.kind == "CustomResourceDefinition" && !dry_run {
+                        let live =
+                            count_live_cr_instances(client, &resource.name, kind_map, gvr_map)
+                                .await;
+                        match live {
+                            LiveCount::NonZero(n) => {
+                                eprintln!(
+                                    "  \x1b[1;31m⛔ BLOCKED\x1b[0m {}/{}{}",
+                                    resource.kind,
+                                    resource.name,
+                                    scope_suffix(resource)
+                                );
+                                eprintln!(
+                                    "             {} live CR instances remain — skipping CRD deletion",
+                                    n
+                                );
+                                result.failed.push((
+                                    resource.clone(),
+                                    format!("{} live CR instances remain", n),
+                                ));
+                                continue;
+                            }
+                            LiveCount::Unknown(err) => {
+                                eprintln!(
+                                    "  \x1b[1;31m⛔ BLOCKED\x1b[0m {}/{}{}",
+                                    resource.kind,
+                                    resource.name,
+                                    scope_suffix(resource)
+                                );
+                                eprintln!(
+                                    "             cannot verify instance count: {} — skipping",
+                                    err
+                                );
+                                result.failed.push((
+                                    resource.clone(),
+                                    format!("cannot verify instance count: {}", err),
+                                ));
+                                continue;
+                            }
+                            LiveCount::Zero => { /* proceed */ }
+                        }
+                    }
+
                     if dry_run {
                         eprintln!(
                             "  \x1b[36mDRY-DELETE\x1b[0m {}/{}{}",
@@ -376,7 +452,8 @@ pub async fn execute_plan(
             }
         }
 
-        // Before advancing to a controller-deletion phase, check REVIEW resources for finalizers
+        // P0-adjacent: Before advancing to a controller-deletion phase,
+        // check REVIEW resources — Unknown finalizer state blocks controller deletion
         if !dry_run {
             let next_phase = plan.phases.get(i + 1);
             let next_deletes_controllers = next_phase.is_some_and(|p| {
@@ -394,30 +471,31 @@ pub async fn execute_plan(
                         _ => None,
                     })
                     .collect();
-                let mut stuck_reviews = Vec::new();
+                let mut block_reasons = Vec::new();
                 for res in &review_resources {
-                    let fins = get_finalizers(client, res, kind_map, gk_map).await;
-                    if !fins.is_empty() {
-                        stuck_reviews.push(((*res).clone(), fins));
+                    match check_finalizers(client, res, kind_map, gk_map).await {
+                        FinalizerCheckResult::Known(fins) if !fins.is_empty() => {
+                            block_reasons.push(((*res).clone(), fins));
+                        }
+                        FinalizerCheckResult::Unknown(err) => {
+                            block_reasons
+                                .push(((*res).clone(), vec![format!("check failed: {}", err)]));
+                        }
+                        _ => {}
                     }
                 }
-                if !stuck_reviews.is_empty() {
+                if !block_reasons.is_empty() {
                     eprintln!(
-                        "\n  \x1b[1;31m⛔ {} REVIEW resource(s) have finalizers — cannot delete controller:\x1b[0m",
-                        stuck_reviews.len()
+                        "\n  \x1b[1;31m⛔ {} REVIEW resource(s) block controller deletion:\x1b[0m",
+                        block_reasons.len()
                     );
-                    for (res, fins) in &stuck_reviews {
-                        eprintln!(
-                            "    {}/{} (finalizers: [{}])",
-                            res.kind,
-                            res.name,
-                            fins.join(", ")
-                        );
+                    for (res, fins) in &block_reasons {
+                        eprintln!("    {}/{} ({})", res.kind, res.name, fins.join(", "));
                     }
                     result.barrier_timeout = Some(BarrierTimeout {
                         phase: "pre-controller safety check".to_string(),
-                        remaining: stuck_reviews.iter().map(|(r, _)| r.clone()).collect(),
-                        finalizers: stuck_reviews,
+                        remaining: block_reasons.iter().map(|(r, _)| r.clone()).collect(),
+                        finalizers: block_reasons,
                     });
                     break;
                 }
@@ -462,57 +540,43 @@ enum BarrierResult {
     },
 }
 
-struct ResourceState {
-    gone: bool,
-    finalizer_count: usize,
-    has_deletion_timestamp: bool,
-}
-
+// P0-1: check_resource_state returns ObservationState — Unknown is never Gone
 async fn check_resource_state(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
-) -> ResourceState {
+) -> ObservationState {
     let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => {
-            return ResourceState {
-                gone: true,
-                finalizer_count: 0,
-                has_deletion_timestamp: false,
-            };
+            return ObservationState::Unknown(format!(
+                "cannot resolve API for {}/{}",
+                resource.kind, resource.name
+            ));
         }
     };
 
     match api.get(&resource.name).await {
         Ok(obj) => {
-            let finalizers = obj
+            let finalizer_count = obj
                 .metadata
                 .finalizers
                 .as_ref()
                 .map(|f| f.len())
                 .unwrap_or(0);
             let has_dt = obj.metadata.deletion_timestamp.is_some();
-            ResourceState {
-                gone: false,
-                finalizer_count: finalizers,
+            ObservationState::Exists {
+                finalizer_count,
                 has_deletion_timestamp: has_dt,
             }
         }
-        Err(kube::Error::Api(err)) if err.code == 404 => ResourceState {
-            gone: true,
-            finalizer_count: 0,
-            has_deletion_timestamp: false,
-        },
-        Err(_) => ResourceState {
-            gone: false,
-            finalizer_count: 0,
-            has_deletion_timestamp: false,
-        },
+        Err(kube::Error::Api(err)) if err.code == 404 => ObservationState::Gone,
+        Err(e) => ObservationState::Unknown(format!("GET failed: {}", e)),
     }
 }
 
+// P0-1: Barrier stops on Unknown — never treats it as Gone
 async fn wait_for_barrier(
     client: &Client,
     resources: &[ResourceId],
@@ -532,26 +596,54 @@ async fn wait_for_barrier(
         let elapsed = start.elapsed().as_secs();
 
         let mut gone_count = 0;
+        let mut unknown_count = 0;
         let mut deleting_count = 0;
         let mut total_finalizers = 0;
         let mut remaining = Vec::new();
         let mut remaining_finalizers = Vec::new();
+        let mut unknown_reasons = Vec::new();
 
         for res in resources {
-            let state = check_resource_state(client, res, kind_map, gk_map).await;
-            if state.gone {
-                gone_count += 1;
-            } else {
-                remaining.push(res.clone());
-                total_finalizers += state.finalizer_count;
-                if state.has_deletion_timestamp {
-                    deleting_count += 1;
+            match check_resource_state(client, res, kind_map, gk_map).await {
+                ObservationState::Gone => {
+                    gone_count += 1;
                 }
-                if state.finalizer_count > 0 {
-                    let fins = get_finalizers(client, res, kind_map, gk_map).await;
-                    remaining_finalizers.push((res.clone(), fins));
+                ObservationState::Exists {
+                    finalizer_count,
+                    has_deletion_timestamp,
+                } => {
+                    remaining.push(res.clone());
+                    total_finalizers += finalizer_count;
+                    if has_deletion_timestamp {
+                        deleting_count += 1;
+                    }
+                    if finalizer_count > 0
+                        && let FinalizerCheckResult::Known(fins) =
+                            check_finalizers(client, res, kind_map, gk_map).await
+                    {
+                        remaining_finalizers.push((res.clone(), fins));
+                    }
+                }
+                ObservationState::Unknown(reason) => {
+                    unknown_count += 1;
+                    remaining.push(res.clone());
+                    unknown_reasons.push(format!("{}/{}: {}", res.kind, res.name, reason));
                 }
             }
+        }
+
+        // P0-1: Unknown immediately stops the barrier
+        if unknown_count > 0 {
+            eprintln!();
+            return BarrierResult::Stalled {
+                remaining,
+                finalizers: remaining_finalizers,
+                reason: format!(
+                    "{} resource(s) could not be observed: {}",
+                    unknown_count,
+                    unknown_reasons.join("; ")
+                ),
+            };
         }
 
         let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
@@ -599,20 +691,77 @@ async fn wait_for_barrier(
     }
 }
 
-async fn get_finalizers(
+// P0-adjacent: check_finalizers distinguishes Known/Gone/Unknown
+async fn check_finalizers(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
-) -> Vec<String> {
+) -> FinalizerCheckResult {
     let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
-        None => return vec![],
+        None => {
+            return FinalizerCheckResult::Unknown(format!(
+                "cannot resolve API for {}/{}",
+                resource.kind, resource.name
+            ));
+        }
     };
 
     match api.get(&resource.name).await {
-        Ok(obj) => obj.metadata.finalizers.unwrap_or_default(),
-        Err(_) => vec![],
+        Ok(obj) => FinalizerCheckResult::Known(obj.metadata.finalizers.unwrap_or_default()),
+        Err(kube::Error::Api(err)) if err.code == 404 => FinalizerCheckResult::Gone,
+        Err(e) => FinalizerCheckResult::Unknown(format!("GET failed: {}", e)),
+    }
+}
+
+// P0-3: verify no live CR instances exist before CRD deletion
+async fn count_live_cr_instances(
+    client: &Client,
+    crd_name: &str,
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+) -> LiveCount {
+    let (plural, group) = match crd_name.split_once('.') {
+        Some((p, g)) => (p, g),
+        None => return LiveCount::Unknown(format!("cannot parse CRD name: {}", crd_name)),
+    };
+
+    let gvr_key = format!("{}.{}", plural, group).to_lowercase();
+    let kind = match gvr_map.get(&gvr_key) {
+        Some(k) => k.clone(),
+        None => return LiveCount::Unknown(format!("kind not found for {}", gvr_key)),
+    };
+
+    let kind_info = match kind_map.get(&kind) {
+        Some(i) => i,
+        None => return LiveCount::Unknown(format!("no KindInfo for {}", kind)),
+    };
+
+    let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
+    let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+
+    match api.list(&ListParams::default().limit(1)).await {
+        Ok(list) => {
+            let count = list.items.len();
+            if count == 0 {
+                LiveCount::Zero
+            } else {
+                // There may be more — list with limit=1 just tells us non-empty
+                match api.list(&ListParams::default()).await {
+                    Ok(full) => {
+                        if full.items.is_empty() {
+                            LiveCount::Zero
+                        } else {
+                            LiveCount::NonZero(full.items.len())
+                        }
+                    }
+                    Err(e) => LiveCount::Unknown(format!("full list failed: {}", e)),
+                }
+            }
+        }
+        Err(e) => LiveCount::Unknown(format!("list failed: {}", e)),
     }
 }
 
@@ -758,5 +907,32 @@ mod tests {
         };
         let suffix = scope_suffix(&res);
         assert!(suffix.contains("cluster-scoped"));
+    }
+
+    // P0-1 regression: Unknown state is never Gone
+    #[test]
+    fn observation_state_unknown_is_not_gone() {
+        let state = ObservationState::Unknown("test error".to_string());
+        assert_ne!(state, ObservationState::Gone);
+        assert!(matches!(state, ObservationState::Unknown(_)));
+    }
+
+    #[test]
+    fn observation_state_exists_is_not_gone() {
+        let state = ObservationState::Exists {
+            finalizer_count: 0,
+            has_deletion_timestamp: false,
+        };
+        assert_ne!(state, ObservationState::Gone);
+    }
+
+    // P0-adjacent regression: FinalizerCheckResult::Unknown is distinguishable
+    #[test]
+    fn finalizer_check_unknown_is_not_empty_known() {
+        let result = FinalizerCheckResult::Unknown("resolve failed".to_string());
+        assert!(matches!(result, FinalizerCheckResult::Unknown(_)));
+        // Known with empty vec is a different state
+        let empty = FinalizerCheckResult::Known(vec![]);
+        assert!(matches!(empty, FinalizerCheckResult::Known(ref v) if v.is_empty()));
     }
 }

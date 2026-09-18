@@ -179,9 +179,10 @@ async fn main() -> Result<()> {
                         )
                         .await?;
 
-                        let result =
-                            execute_plan(&client, &plan, &kind_map, &gk_map, dry_run, force)
-                                .await?;
+                        let result = execute_plan(
+                            &client, &plan, &kind_map, &gk_map, &gvr_map, dry_run, force,
+                        )
+                        .await?;
 
                         print_execution_result(&result);
                     }
