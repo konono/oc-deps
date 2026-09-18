@@ -294,6 +294,22 @@ pub fn compute_operator_dependencies(operators: &[OperatorInstance]) -> Vec<Oper
                 }
             }
         }
+
+        for required_api in &requirer.required_api_services {
+            for provider in operators {
+                if std::ptr::eq(requirer, provider) {
+                    continue;
+                }
+                if provider.owned_api_services.contains(required_api) {
+                    deps.push(OperatorDependency {
+                        from_csv: requirer.csv.name.clone(),
+                        to_csv: provider.csv.name.clone(),
+                        via_crd: format!("APIService/{}", required_api),
+                        confidence: 1.0,
+                    });
+                }
+            }
+        }
     }
 
     deps

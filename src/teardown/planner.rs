@@ -12,8 +12,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::analyzers::olm::{OperatorDependency, OperatorInstance, compute_operator_dependencies};
 use crate::cli::OutputFormat;
-use crate::kube::discovery::{GvrMap, KindMap};
+use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct OperatorId {
+    namespace: String,
+    csv_name: String,
+}
+
+impl std::fmt::Display for OperatorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.csv_name, self.namespace)
+    }
+}
+
+impl OperatorId {
+    fn from_instance(op: &OperatorInstance) -> Self {
+        Self {
+            namespace: op.install_namespace.clone(),
+            csv_name: op.csv.name.clone(),
+        }
+    }
+}
 
 const DEFAULT_CONCURRENCY: usize = 16;
 const LIST_PAGE_SIZE: u32 = 500;
@@ -127,8 +148,16 @@ pub fn resolve_operator_targets(
 ) -> Result<Vec<usize>> {
     let mut indices = Vec::new();
     for query in queries {
-        let q = query.to_lowercase();
-        let mut found = None;
+        // Support "csv_name@namespace" format for disambiguation
+        let (q_name, q_ns) = if let Some((name, ns)) = query.rsplit_once('@') {
+            (name.to_lowercase(), Some(ns.to_lowercase()))
+        } else {
+            (query.to_lowercase(), None)
+        };
+
+        let mut found: Vec<usize> = Vec::new();
+
+        // Exact match
         for (i, op) in operators.iter().enumerate() {
             let csv_lower = op.csv.name.to_lowercase();
             let sub_lower = op
@@ -136,12 +165,18 @@ pub fn resolve_operator_targets(
                 .as_ref()
                 .map(|s| s.name.to_lowercase())
                 .unwrap_or_default();
-            if csv_lower == q || sub_lower == q {
-                found = Some(i);
-                break;
+            let ns_lower = op.install_namespace.to_lowercase();
+
+            let name_match = csv_lower == q_name || sub_lower == q_name;
+            let ns_match = q_ns.as_ref().is_none_or(|ns| ns_lower == *ns);
+
+            if name_match && ns_match {
+                found.push(i);
             }
         }
-        if found.is_none() {
+
+        // Partial match if no exact match
+        if found.is_empty() {
             for (i, op) in operators.iter().enumerate() {
                 let csv_lower = op.csv.name.to_lowercase();
                 let sub_lower = op
@@ -149,43 +184,56 @@ pub fn resolve_operator_targets(
                     .as_ref()
                     .map(|s| s.name.to_lowercase())
                     .unwrap_or_default();
-                if csv_lower.contains(&q) || sub_lower.contains(&q) {
-                    if found.is_some() {
-                        let mut candidates: Vec<String> = operators
-                            .iter()
-                            .filter(|o| {
-                                let c = o.csv.name.to_lowercase();
-                                let s = o
-                                    .subscription
-                                    .as_ref()
-                                    .map(|s| s.name.to_lowercase())
-                                    .unwrap_or_default();
-                                c.contains(&q) || s.contains(&q)
-                            })
-                            .map(|o| o.csv.name.clone())
-                            .collect();
-                        candidates.sort();
-                        bail!(
-                            "Ambiguous operator '{}'. Candidates: {}",
-                            query,
-                            candidates.join(", ")
-                        );
-                    }
-                    found = Some(i);
+                let ns_lower = op.install_namespace.to_lowercase();
+
+                let name_match = csv_lower.contains(&q_name) || sub_lower.contains(&q_name);
+                let ns_match = q_ns.as_ref().is_none_or(|ns| ns_lower == *ns);
+
+                if name_match && ns_match {
+                    found.push(i);
                 }
             }
         }
-        match found {
-            Some(i) => {
-                if !indices.contains(&i) {
-                    indices.push(i);
-                }
-            }
-            None => {
+
+        match found.len() {
+            0 => {
                 bail!(
                     "Operator '{}' not found. Use `oc-deps operators` to list available operators.",
                     query
                 );
+            }
+            1 => {
+                if !indices.contains(&found[0]) {
+                    indices.push(found[0]);
+                }
+            }
+            _ => {
+                // Check if all matches are actually the same operator (same csv name, different match paths)
+                let first_id = OperatorId::from_instance(&operators[found[0]]);
+                let all_same = found
+                    .iter()
+                    .all(|&i| OperatorId::from_instance(&operators[i]) == first_id);
+
+                if all_same {
+                    if !indices.contains(&found[0]) {
+                        indices.push(found[0]);
+                    }
+                } else {
+                    let mut candidates: Vec<String> = found
+                        .iter()
+                        .map(|&i| {
+                            let op = &operators[i];
+                            format!("{}@{}", op.csv.name, op.install_namespace)
+                        })
+                        .collect();
+                    candidates.sort();
+                    candidates.dedup();
+                    bail!(
+                        "Ambiguous operator '{}'. Installations:\n  {}\nUse name@namespace to disambiguate.",
+                        query,
+                        candidates.join("\n  ")
+                    );
+                }
             }
         }
     }
@@ -200,8 +248,8 @@ enum CrdDiscoveryResult {
 async fn discover_one_crd(
     client: &Client,
     crd_name: &str,
-    kind_map: &KindMap,
     gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
 ) -> CrdDiscoveryResult {
     let (plural, group) = match crd_name.split_once('.') {
         Some((p, g)) => (p, g),
@@ -224,12 +272,13 @@ async fn discover_one_crd(
         }
     };
 
-    let kind_info = match kind_map.get(&kind) {
+    // Use GroupKindMap — no KindMap fallback (fail-closed)
+    let kind_info = match gk_map.get(&(group.to_string(), kind.clone())) {
         Some(i) => i,
         None => {
             return CrdDiscoveryResult::Unavailable {
                 crd_name: crd_name.to_string(),
-                reason: format!("no KindInfo for {}", kind),
+                reason: format!("no GroupKind mapping for {}/{}", group, kind),
             };
         }
     };
@@ -308,8 +357,8 @@ struct CrDiscoveryReport {
 async fn discover_cr_instances(
     client: &Client,
     target_crds: &[String],
-    kind_map: &KindMap,
     gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
 ) -> CrDiscoveryReport {
     let unique_crds: Vec<&String> = {
         let mut seen = HashSet::new();
@@ -319,15 +368,15 @@ async fn discover_cr_instances(
             .collect()
     };
 
-    let kind_map = Arc::new(kind_map.clone());
     let gvr_map = Arc::new(gvr_map.clone());
+    let gk_map = Arc::new(gk_map.clone());
 
     let futs = unique_crds.into_iter().map(|crd_name| {
         let client = client.clone();
         let crd_name = crd_name.clone();
-        let kind_map = kind_map.clone();
         let gvr_map = gvr_map.clone();
-        async move { discover_one_crd(&client, &crd_name, &kind_map, &gvr_map).await }
+        let gk_map = gk_map.clone();
+        async move { discover_one_crd(&client, &crd_name, &gvr_map, &gk_map).await }
     });
 
     let results: Vec<CrdDiscoveryResult> = futures::stream::iter(futs)
@@ -412,10 +461,9 @@ fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
     // Remains Unknown
 }
 
-/// P1-1: Topological sort of target operators by dependency.
+/// Topological sort of target operators by dependency.
 /// Returns layers: layer[0] has operators that depend on others (remove first),
 /// layer[last] has operators that others depend on (remove last).
-/// For controller deletion, process layers in order (dependents first).
 pub fn topo_sort_operators(
     target_indices: &[usize],
     all_operators: &[OperatorInstance],
@@ -425,59 +473,61 @@ pub fn topo_sort_operators(
         return vec![target_indices.to_vec()];
     }
 
-    let target_csv_names: HashSet<&str> = target_indices
+    let target_ids: HashMap<OperatorId, usize> = target_indices
+        .iter()
+        .map(|&i| (OperatorId::from_instance(&all_operators[i]), i))
+        .collect();
+
+    let target_csv_set: HashSet<&str> = target_indices
         .iter()
         .map(|&i| all_operators[i].csv.name.as_str())
         .collect();
 
-    // Build adjacency: from_csv depends on to_csv
-    // For deletion: dependent (from) should be deleted BEFORE provider (to)
-    let mut depends_on: HashMap<&str, HashSet<&str>> = HashMap::new();
+    // Build adjacency: from depends on to
+    let mut depends_on: HashMap<OperatorId, HashSet<OperatorId>> = HashMap::new();
     for dep in deps {
-        if target_csv_names.contains(dep.from_csv.as_str())
-            && target_csv_names.contains(dep.to_csv.as_str())
+        if target_csv_set.contains(dep.from_csv.as_str())
+            && target_csv_set.contains(dep.to_csv.as_str())
         {
-            depends_on
-                .entry(dep.from_csv.as_str())
-                .or_default()
-                .insert(dep.to_csv.as_str());
+            let from_id = target_ids
+                .keys()
+                .find(|id| id.csv_name == dep.from_csv)
+                .cloned();
+            let to_id = target_ids
+                .keys()
+                .find(|id| id.csv_name == dep.to_csv)
+                .cloned();
+            if let (Some(from), Some(to)) = (from_id, to_id) {
+                depends_on.entry(from).or_default().insert(to);
+            }
         }
     }
 
     // Kahn's algorithm
-    let mut in_degree: HashMap<&str, usize> = HashMap::new();
-    for &idx in target_indices {
-        in_degree.insert(all_operators[idx].csv.name.as_str(), 0);
+    let mut in_degree: HashMap<OperatorId, usize> = HashMap::new();
+    for id in target_ids.keys() {
+        in_degree.insert(id.clone(), 0);
     }
     for providers in depends_on.values() {
         for provider in providers {
-            *in_degree.entry(provider).or_insert(0) += 1;
+            *in_degree.entry(provider.clone()).or_insert(0) += 1;
         }
     }
 
-    let idx_by_csv: HashMap<&str, usize> = target_indices
-        .iter()
-        .map(|&i| (all_operators[i].csv.name.as_str(), i))
-        .collect();
-
     let mut layers = Vec::new();
-    let mut remaining: HashSet<&str> = target_csv_names.clone();
+    let mut remaining: HashSet<OperatorId> = target_ids.keys().cloned().collect();
 
     while !remaining.is_empty() {
-        let layer: Vec<&str> = remaining
+        let layer: Vec<OperatorId> = remaining
             .iter()
-            .filter(|csv| {
-                let deg = in_degree.get(*csv).copied().unwrap_or(0);
-                deg == 0
-            })
-            .copied()
+            .filter(|id| in_degree.get(*id).copied().unwrap_or(0) == 0)
+            .cloned()
             .collect();
 
         if layer.is_empty() {
-            // Cycle — put all remaining in one layer
             let last: Vec<usize> = remaining
                 .iter()
-                .filter_map(|csv| idx_by_csv.get(csv).copied())
+                .filter_map(|id| target_ids.get(id).copied())
                 .collect();
             layers.push(last);
             break;
@@ -485,13 +535,13 @@ pub fn topo_sort_operators(
 
         let layer_indices: Vec<usize> = layer
             .iter()
-            .filter_map(|csv| idx_by_csv.get(csv).copied())
+            .filter_map(|id| target_ids.get(id).copied())
             .collect();
         layers.push(layer_indices);
 
-        for csv in &layer {
-            remaining.remove(csv);
-            if let Some(providers) = depends_on.get(csv) {
+        for id in &layer {
+            remaining.remove(id);
+            if let Some(providers) = depends_on.get(id) {
                 for provider in providers {
                     if let Some(deg) = in_degree.get_mut(provider) {
                         *deg = deg.saturating_sub(1);
@@ -705,11 +755,12 @@ pub async fn generate_teardown_plan(
     all_operators: &[OperatorInstance],
     kind_map: &KindMap,
     gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
     prune_apis: bool,
 ) -> Result<TeardownPlan> {
-    let target_csv_names: HashSet<&str> = target_operators
+    let target_ids: HashSet<OperatorId> = target_operators
         .iter()
-        .map(|op| op.csv.name.as_str())
+        .map(|op| OperatorId::from_instance(op))
         .collect();
 
     let targets: Vec<OperatorTarget> = target_operators
@@ -733,7 +784,7 @@ pub async fn generate_teardown_plan(
     let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
 
     eprint!("🔍 Discovering CR instances...");
-    let cr_report = discover_cr_instances(client, &target_crds, kind_map, gvr_map).await;
+    let cr_report = discover_cr_instances(client, &target_crds, gvr_map, gk_map).await;
     let mut cr_instances = cr_report.instances;
     let total_observations = cr_report.total_observations;
     let unique_count = cr_instances.len();
@@ -820,7 +871,7 @@ pub async fn generate_teardown_plan(
     let mut warnings = Vec::new();
 
     for op in all_operators {
-        if target_csv_names.contains(op.csv.name.as_str()) {
+        if target_ids.contains(&OperatorId::from_instance(op)) {
             continue;
         }
         for req_crd in &op.required_crds {
@@ -919,101 +970,58 @@ pub async fn generate_teardown_plan(
         }),
     };
 
-    // ── Phase 1: Trigger operand cleanup ──
-    let mut phase1_actions: Vec<Action> = Vec::new();
-
-    // P0-2: root CRs check provenance — Unknown/LikelyManaged roots become REVIEW
-    for cr in &root_crs {
-        match cr.provenance {
-            Provenance::Managed => {
-                phase1_actions.push(Action::Delete {
-                    resource: cr.id.clone(),
-                    reason: "root management CR (managed via ownerRef)".to_string(),
-                });
-            }
-            Provenance::LikelyManaged => {
-                phase1_actions.push(Action::Review {
-                    resource: cr.id.clone(),
-                    reason:
-                        "root CR but provenance uncertain (label-based) — verify before deleting"
-                            .to_string(),
-                });
-            }
-            Provenance::Unknown => {
-                phase1_actions.push(Action::Review {
-                    resource: cr.id.clone(),
-                    reason: "root CR but provenance unknown — verify before deleting".to_string(),
-                });
+    // ── Phase 1+: Trigger operand cleanup (dependency-layered) ──
+    // Attribute each CR to its owning operator via crd_name
+    let crd_to_op_idx: HashMap<&str, usize> = {
+        let mut map = HashMap::new();
+        for (idx, op) in target_operators.iter().enumerate() {
+            for crd in &op.owned_crds {
+                map.entry(crd.as_str()).or_insert(idx);
             }
         }
-    }
+        map
+    };
 
-    // EXPECT_GONE for managed descendants
-    for cr in &managed_descendants {
-        phase1_actions.push(Action::ExpectGone {
-            resource: cr.id.clone(),
-            reason: "managed descendant; controller expected to remove".to_string(),
-        });
-    }
-
-    // Handle independent CRs based on provenance
-    for cr in &independent_crs {
-        match cr.provenance {
-            Provenance::Managed => {
-                phase1_actions.push(Action::Delete {
-                    resource: cr.id.clone(),
-                    reason: "independent operand (managed via ownerRef)".to_string(),
-                });
-            }
-            Provenance::LikelyManaged => {
-                phase1_actions.push(Action::Review {
-                    resource: cr.id.clone(),
-                    reason: "likely operator-managed but no ownerRef — verify before deleting"
-                        .to_string(),
-                });
-            }
-            Provenance::Unknown => {
-                phase1_actions.push(Action::Review {
-                    resource: cr.id.clone(),
-                    reason: "owned API, but provenance unknown".to_string(),
-                });
-            }
-        }
-    }
-
-    let phase1 = PlanPhase {
-        name: "Trigger operand cleanup".to_string(),
-        description:
-            "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish"
-                .to_string(),
-        actions: phase1_actions,
-        barrier: Some(Barrier {
-            description: "All operands removed (deleted + expected)".to_string(),
-            conditions: {
-                let mut conds: Vec<String> = root_crs
-                    .iter()
-                    .map(|cr| format!("{} is gone", cr.id))
-                    .collect();
-                conds.extend(
-                    managed_descendants
-                        .iter()
-                        .map(|cr| format!("{} is gone (expected)", cr.id)),
-                );
-                conds
+    fn cr_to_action(cr: &CrInstance, action_type: &str) -> Action {
+        match (action_type, &cr.provenance) {
+            ("root", Provenance::Managed) => Action::Delete {
+                resource: cr.id.clone(),
+                reason: "root management CR (managed via ownerRef)".to_string(),
             },
-        }),
-    };
+            ("root", Provenance::LikelyManaged) => Action::Review {
+                resource: cr.id.clone(),
+                reason: "root CR but provenance uncertain (label-based) — verify before deleting"
+                    .to_string(),
+            },
+            ("root", Provenance::Unknown) => Action::Review {
+                resource: cr.id.clone(),
+                reason: "root CR but provenance unknown — verify before deleting".to_string(),
+            },
+            ("descendant", _) => Action::ExpectGone {
+                resource: cr.id.clone(),
+                reason: "managed descendant; controller expected to remove".to_string(),
+            },
+            ("independent", Provenance::Managed) => Action::Delete {
+                resource: cr.id.clone(),
+                reason: "independent operand (managed via ownerRef)".to_string(),
+            },
+            ("independent", Provenance::LikelyManaged) => Action::Review {
+                resource: cr.id.clone(),
+                reason: "likely operator-managed but no ownerRef — verify before deleting"
+                    .to_string(),
+            },
+            ("independent", Provenance::Unknown) => Action::Review {
+                resource: cr.id.clone(),
+                reason: "owned API, but provenance unknown".to_string(),
+            },
+            _ => Action::Review {
+                resource: cr.id.clone(),
+                reason: "unclassified CR".to_string(),
+            },
+        }
+    }
 
-    // ── Phase 2: Remaining roots ──
-    // (empty by design — Phase 1 should handle everything, but this phase catches stragglers)
-    let phase2 = PlanPhase {
-        name: "Remaining cleanup".to_string(),
-        description: "Delete any CRs that were not cleaned up by controller".to_string(),
-        actions: vec![],
-        barrier: None,
-    };
-
-    // ── Phase 3+: Remove Operator controllers (dependency-ordered, one Phase per layer) ──
+    // Compute dependency layers for operand cleanup
     let deps = compute_operator_dependencies(
         &target_operators
             .iter()
@@ -1026,6 +1034,100 @@ pub async fn generate_teardown_plan(
         target_operators.iter().map(|op| (*op).clone()).collect();
     let layers = topo_sort_operators(&target_indices_local, &all_ops_local, &deps);
 
+    let mut operand_phases: Vec<PlanPhase> = Vec::new();
+
+    if layers.len() <= 1 {
+        // Single layer — all operands in one phase (original behavior)
+        let mut phase_actions: Vec<Action> = Vec::new();
+
+        for cr in &root_crs {
+            phase_actions.push(cr_to_action(cr, "root"));
+        }
+        for cr in &managed_descendants {
+            phase_actions.push(cr_to_action(cr, "descendant"));
+        }
+        for cr in &independent_crs {
+            phase_actions.push(cr_to_action(cr, "independent"));
+        }
+
+        let mut conds: Vec<String> = root_crs
+            .iter()
+            .chain(independent_crs.iter())
+            .map(|cr| format!("{} is gone", cr.id))
+            .collect();
+        conds.extend(
+            managed_descendants
+                .iter()
+                .map(|cr| format!("{} is gone (expected)", cr.id)),
+        );
+
+        operand_phases.push(PlanPhase {
+            name: "Trigger operand cleanup".to_string(),
+            description: "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish".to_string(),
+            actions: phase_actions,
+            barrier: Some(Barrier {
+                description: "All operands removed (deleted + expected)".to_string(),
+                conditions: conds,
+            }),
+        });
+    } else {
+        // Multiple layers — split operands by owning operator's layer
+        for (layer_idx, layer) in layers.iter().enumerate() {
+            let layer_op_indices: HashSet<usize> = layer.iter().copied().collect();
+            let mut phase_actions: Vec<Action> = Vec::new();
+
+            for cr in &root_crs {
+                let op_idx = crd_to_op_idx.get(cr.crd_name.as_str()).copied();
+                if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
+                    || (layer_idx == 0 && op_idx.is_none())
+                {
+                    phase_actions.push(cr_to_action(cr, "root"));
+                }
+            }
+            for cr in &managed_descendants {
+                let op_idx = crd_to_op_idx.get(cr.crd_name.as_str()).copied();
+                if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
+                    || (layer_idx == 0 && op_idx.is_none())
+                {
+                    phase_actions.push(cr_to_action(cr, "descendant"));
+                }
+            }
+            for cr in &independent_crs {
+                let op_idx = crd_to_op_idx.get(cr.crd_name.as_str()).copied();
+                if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
+                    || (layer_idx == 0 && op_idx.is_none())
+                {
+                    phase_actions.push(cr_to_action(cr, "independent"));
+                }
+            }
+
+            if !phase_actions.is_empty() {
+                let layer_ops: Vec<&str> = layer
+                    .iter()
+                    .map(|&i| target_operators[i].csv.name.as_str())
+                    .collect();
+                operand_phases.push(PlanPhase {
+                    name: format!("Operand cleanup (layer {})", layer_idx),
+                    description: format!("Cleanup operands for: {}", layer_ops.join(", ")),
+                    actions: phase_actions,
+                    barrier: Some(Barrier {
+                        description: format!("Layer {} operands removed", layer_idx),
+                        conditions: vec![],
+                    }),
+                });
+            }
+        }
+    }
+
+    // Remaining cleanup phase (empty catch-all)
+    let phase_remaining = PlanPhase {
+        name: "Remaining cleanup".to_string(),
+        description: "Delete any CRs that were not cleaned up by controller".to_string(),
+        actions: vec![],
+        barrier: None,
+    };
+
+    // ── Controller phases: Remove Operator controllers (dependency-ordered) ──
     let mut controller_phases: Vec<PlanPhase> = Vec::new();
     for (layer_idx, layer) in layers.iter().enumerate() {
         let mut layer_actions = Vec::new();
@@ -1168,7 +1270,9 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    let mut phases = vec![phase0, phase1, phase2];
+    let mut phases = vec![phase0];
+    phases.extend(operand_phases);
+    phases.push(phase_remaining);
     phases.extend(controller_phases);
     phases.push(phase4);
     phases.push(phase5);

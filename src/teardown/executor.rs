@@ -812,7 +812,7 @@ async fn check_finalizers(
 async fn count_live_cr_instances(
     client: &Client,
     crd_name: &str,
-    kind_map: &KindMap,
+    _kind_map: &KindMap,
     gk_map: &GroupKindMap,
     gvr_map: &GvrMap,
 ) -> LiveCount {
@@ -829,10 +829,7 @@ async fn count_live_cr_instances(
 
     let kind_info = match gk_map.get(&(group.to_string(), kind.clone())) {
         Some(i) => i,
-        None => match kind_map.get(&kind) {
-            Some(i) => i,
-            None => return LiveCount::Unknown(format!("no KindInfo for {}", kind)),
-        },
+        None => return LiveCount::Unknown(format!("no GroupKind mapping for {}/{}", group, kind)),
     };
 
     let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);

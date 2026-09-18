@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map, _gk_map) =
+                        let (kind_map, gvr_map, gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         let t_discovery = t0.elapsed();
 
@@ -144,6 +144,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            &gk_map,
                             prune_apis,
                         )
                         .await?;
@@ -187,6 +188,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            &gk_map,
                             prune_apis,
                         )
                         .await?;
@@ -223,6 +225,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            &gk_map,
                             false,
                         )
                         .await?;
@@ -264,7 +267,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map, _gk_map) =
+                        let (kind_map, gvr_map, gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -283,6 +286,7 @@ async fn main() -> Result<()> {
                             &all_operators,
                             &kind_map,
                             &gvr_map,
+                            &gk_map,
                             false,
                         )
                         .await?;
