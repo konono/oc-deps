@@ -25,6 +25,7 @@ use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
+use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::planner::{
     generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
@@ -140,6 +141,39 @@ async fn main() -> Result<()> {
                         .await?;
 
                         print_teardown_plan(&plan, &output);
+                    }
+                    TeardownAction::Apply {
+                        operators: operator_queries,
+                        no_cache,
+                        dry_run,
+                    } => {
+                        let t0 = Instant::now();
+                        eprintln!("🔍 Discovering API resources...");
+                        let (kind_map, gvr_map) =
+                            build_kind_lookup_cached(&client, &config, no_cache).await?;
+                        eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                        eprint!("🔍 Discovering operators...");
+                        let all_operators = discover_operators(&client, &kind_map).await?;
+                        eprintln!(" found {} operators", all_operators.len());
+
+                        let target_indices =
+                            resolve_operator_targets(&operator_queries, &all_operators)?;
+                        let target_operators: Vec<&_> =
+                            target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+                        let plan = generate_teardown_plan(
+                            &client,
+                            &target_operators,
+                            &all_operators,
+                            &kind_map,
+                            &gvr_map,
+                        )
+                        .await?;
+
+                        let result = execute_plan(&client, &plan, &kind_map, dry_run).await?;
+
+                        print_execution_result(&result);
                     }
                     TeardownAction::Status {
                         operators: operator_queries,

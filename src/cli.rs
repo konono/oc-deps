@@ -145,6 +145,21 @@ pub enum TeardownAction {
         no_cache: bool,
     },
 
+    /// Execute a teardown plan
+    Apply {
+        /// Operator names (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operators: Vec<String>,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Dry run — show what would be done without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Explain why a resource is scheduled at its position in the plan
     Explain {
         /// Operator names to plan teardown for
