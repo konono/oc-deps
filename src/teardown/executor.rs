@@ -140,22 +140,45 @@ pub async fn execute_plan(
         bail!("Plan has blockers. Resolve external dependencies before applying.");
     }
 
-    let failed_preflight: Vec<&str> = plan
+    let critical_failures: Vec<&str> = plan
         .preflight
         .checks
         .iter()
-        .filter(|c| !c.passed)
+        .filter(|c| {
+            !c.passed
+                && (c.name.contains("CSV health")
+                    || c.name.contains("Controller available")
+                    || c.name.contains("Subscription resolved"))
+        })
         .map(|c| c.name.as_str())
         .collect();
-    if !failed_preflight.is_empty() && !dry_run && !force {
+    if !critical_failures.is_empty() && !dry_run {
         eprintln!(
-            "\x1b[1;31m⛔ Preflight failed — {} check(s):\x1b[0m",
-            failed_preflight.len()
+            "\x1b[1;31m⛔ Critical preflight failed — {} check(s):\x1b[0m",
+            critical_failures.len()
         );
-        for name in &failed_preflight {
+        for name in &critical_failures {
             eprintln!("  {}", name);
         }
-        bail!("Preflight checks failed. Use --force to override.");
+        bail!("Critical preflight checks failed. Cannot override with --force.");
+    }
+
+    let non_critical_failures: Vec<&str> = plan
+        .preflight
+        .checks
+        .iter()
+        .filter(|c| !c.passed && !critical_failures.contains(&c.name.as_str()))
+        .map(|c| c.name.as_str())
+        .collect();
+    if !non_critical_failures.is_empty() && !dry_run && !force {
+        eprintln!(
+            "\x1b[1;33m⚠ Preflight warnings — {} check(s):\x1b[0m",
+            non_critical_failures.len()
+        );
+        for name in &non_critical_failures {
+            eprintln!("  {}", name);
+        }
+        bail!("Preflight checks have warnings. Use --force to override.");
     }
 
     let review_count = plan

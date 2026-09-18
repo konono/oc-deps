@@ -62,7 +62,8 @@ async fn main() -> Result<()> {
                 let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
                 let t0 = Instant::now();
                 eprintln!("🔍 Discovering API resources...");
-                let (kind_map, _) = build_kind_lookup_cached(&client, &config, no_cache).await?;
+                let (kind_map, _, _gk_map) =
+                    build_kind_lookup_cached(&client, &config, no_cache).await?;
                 eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
                 let snapshot =
@@ -87,7 +88,8 @@ async fn main() -> Result<()> {
                 let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
                 let t0 = Instant::now();
                 eprintln!("🔍 Discovering API resources...");
-                let (kind_map, _) = build_kind_lookup_cached(&client, &config, no_cache).await?;
+                let (kind_map, _, _gk_map) =
+                    build_kind_lookup_cached(&client, &config, no_cache).await?;
                 eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
                 let snapshot =
@@ -120,7 +122,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map) =
+                        let (kind_map, gvr_map, _gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -154,7 +156,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map) =
+                        let (kind_map, gvr_map, _gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -188,7 +190,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map) =
+                        let (kind_map, gvr_map, _gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -224,7 +226,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map) =
+                        let (kind_map, gvr_map, _gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -248,7 +250,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map) =
+                        let (kind_map, gvr_map, _gk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -291,7 +293,8 @@ async fn main() -> Result<()> {
             Command::Operators { output, no_cache } => {
                 let t0 = Instant::now();
                 eprintln!("🔍 Discovering API resources...");
-                let (kind_map, _) = build_kind_lookup_cached(&client, &config, no_cache).await?;
+                let (kind_map, _, _gk_map) =
+                    build_kind_lookup_cached(&client, &config, no_cache).await?;
                 eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
                 eprint!("🔍 Discovering operators...");
@@ -318,7 +321,8 @@ async fn main() -> Result<()> {
     if args.map {
         let t0 = Instant::now();
         eprintln!("🔍 Discovering API resources...");
-        let (kind_map, _) = build_kind_lookup_cached(&client, &config, args.no_cache).await?;
+        let (kind_map, _, _gk_map) =
+            build_kind_lookup_cached(&client, &config, args.no_cache).await?;
         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
         let mut index = scan_namespace(
             &client,
@@ -404,7 +408,8 @@ async fn main() -> Result<()> {
 
     let t0 = Instant::now();
     eprintln!("🔍 Discovering API resources...");
-    let (kind_map, gvr_map) = build_kind_lookup_cached(&client, &config, args.no_cache).await?;
+    let (kind_map, gvr_map, _gk_map) =
+        build_kind_lookup_cached(&client, &config, args.no_cache).await?;
     eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
     let (kind_input, name) = if let Some((k, n)) = resource.split_once('/') {

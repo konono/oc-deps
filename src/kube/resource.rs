@@ -132,18 +132,25 @@ impl NamespaceIndex {
     }
 }
 
-/// When ResourceId carries a group, find the kind_map entry whose group matches.
-/// Falls back to kind-only lookup if no group is specified or no match found.
+/// Resolve the correct API endpoint for a ResourceId.
+/// Uses GroupKindMap for precise (group, kind) lookup, falls back to KindMap.
 pub fn resolve_api(
     client: &kube::Client,
     resource: &ResourceId,
     kind_map: &crate::kube::discovery::KindMap,
 ) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
+    resolve_api_with_gk(client, resource, kind_map, None)
+}
+
+pub fn resolve_api_with_gk(
+    client: &kube::Client,
+    resource: &ResourceId,
+    kind_map: &crate::kube::discovery::KindMap,
+    gk_map: Option<&crate::kube::discovery::GroupKindMap>,
+) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
     let kind_info = if !resource.group.is_empty() {
-        kind_map
-            .iter()
-            .find(|(k, info)| k.as_str() == resource.kind && info.group == resource.group)
-            .map(|(_, info)| info)
+        gk_map
+            .and_then(|gk| gk.get(&(resource.group.clone(), resource.kind.clone())))
             .or_else(|| kind_map.get(&resource.kind))?
     } else {
         kind_map.get(&resource.kind)?

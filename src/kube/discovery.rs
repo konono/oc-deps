@@ -18,6 +18,8 @@ pub struct KindInfo {
 
 pub type KindMap = HashMap<String, KindInfo>;
 pub type GvrMap = HashMap<String, String>;
+/// (group, kind) → KindInfo — handles duplicate Kinds across API groups
+pub type GroupKindMap = HashMap<(String, String), KindInfo>;
 
 pub async fn load_config_and_client() -> Result<(Config, Client)> {
     let config = Config::infer().await?;
@@ -25,10 +27,11 @@ pub async fn load_config_and_client() -> Result<(Config, Client)> {
     Ok((config, client))
 }
 
-pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap)> {
+pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, GroupKindMap)> {
     let discovery = Discovery::new(client.clone()).run().await?;
     let mut kind_map = KindMap::new();
     let mut gvr_map = GvrMap::new();
+    let mut gk_map = GroupKindMap::new();
 
     for group in discovery.groups() {
         for version in group.versions() {
@@ -38,18 +41,23 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap)> {
                 let plural = ar.plural.clone();
                 let namespaced = caps.scope == Scope::Namespaced;
 
+                let info = KindInfo {
+                    group: group_name.clone(),
+                    version: ar.version.clone(),
+                    plural: plural.clone(),
+                    namespaced,
+                };
+
                 let gvr_key = if group_name.is_empty() {
                     plural.clone()
                 } else {
                     format!("{}.{}", plural, group_name)
                 };
 
-                kind_map.entry(kind.clone()).or_insert_with(|| KindInfo {
-                    group: group_name.clone(),
-                    version: ar.version.clone(),
-                    plural: plural.clone(),
-                    namespaced,
-                });
+                kind_map.entry(kind.clone()).or_insert_with(|| info.clone());
+                gk_map
+                    .entry((group_name.clone(), kind.clone()))
+                    .or_insert_with(|| info);
                 gvr_map
                     .entry(gvr_key.to_lowercase())
                     .or_insert_with(|| kind.clone());
@@ -66,15 +74,15 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap)> {
             let plural = ar.plural.clone();
             let namespaced = caps.scope == Scope::Namespaced;
 
-            kind_map.insert(
-                kind.clone(),
-                KindInfo {
-                    group: group_name.clone(),
-                    version: ar.version.clone(),
-                    plural: plural.clone(),
-                    namespaced,
-                },
-            );
+            let info = KindInfo {
+                group: group_name.clone(),
+                version: ar.version.clone(),
+                plural: plural.clone(),
+                namespaced,
+            };
+
+            kind_map.insert(kind.clone(), info.clone());
+            gk_map.insert((group_name.clone(), kind.clone()), info);
 
             let gvr_key = if group_name.is_empty() {
                 plural.clone()
@@ -89,7 +97,7 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap)> {
         }
     }
 
-    Ok((kind_map, gvr_map))
+    Ok((kind_map, gvr_map, gk_map))
 }
 
 const CACHE_TTL_SECS: u64 = 300;
@@ -150,11 +158,18 @@ fn deserialize_discovery(value: &serde_json::Value) -> Option<(KindMap, GvrMap)>
     Some((kind_map, gvr_map))
 }
 
+fn gk_map_from_kind_map(kind_map: &KindMap) -> GroupKindMap {
+    kind_map
+        .iter()
+        .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+        .collect()
+}
+
 pub async fn build_kind_lookup_cached(
     client: &Client,
     config: &Config,
     no_cache: bool,
-) -> Result<(KindMap, GvrMap)> {
+) -> Result<(KindMap, GvrMap, GroupKindMap)> {
     let path = discovery_cache_path(config);
 
     if !no_cache
@@ -167,17 +182,18 @@ pub async fn build_kind_lookup_cached(
             .and_then(|v| deserialize_discovery(&v))
     {
         eprintln!("   (cached, {} types)", result.0.len());
-        return Ok(result);
+        let gk = gk_map_from_kind_map(&result.0);
+        return Ok((result.0, result.1, gk));
     }
 
-    let (kind_map, gvr_map) = build_kind_lookup(client).await?;
+    let (kind_map, gvr_map, gk_map) = build_kind_lookup(client).await?;
 
     let json = serialize_discovery(&kind_map, &gvr_map);
     if let Ok(data) = serde_json::to_string(&json) {
         std::fs::write(&path, data).ok();
     }
 
-    Ok((kind_map, gvr_map))
+    Ok((kind_map, gvr_map, gk_map))
 }
 
 pub fn resolve_kind(input: &str, kind_map: &KindMap, gvr_map: &GvrMap) -> Result<String> {

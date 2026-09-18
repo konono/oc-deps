@@ -167,7 +167,7 @@ pub enum TeardownAction {
         #[arg(long)]
         prune_apis: bool,
 
-        /// Execute even if REVIEW items remain in the plan
+        /// Override REVIEW items and non-critical preflight warnings (controller health cannot be overridden)
         #[arg(long)]
         force: bool,
     },
