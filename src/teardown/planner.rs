@@ -882,6 +882,7 @@ pub async fn generate_teardown_plan(
 
     // Resolve APIService-backed resources via exact (group, version, kind) lookup
     let mut unresolved_api_services: Vec<String> = Vec::new();
+    let mut api_service_warnings: Vec<String> = Vec::new();
     let mut api_service_kind_infos: Vec<(&OwnedApiServiceDef, KindInfo)> = Vec::new();
     for def in &target_api_service_defs {
         if def.group.is_empty() || def.version.is_empty() || def.kind.is_empty() {
@@ -894,6 +895,14 @@ pub async fn generate_teardown_plan(
         let gvk_key = (def.group.clone(), def.version.clone(), def.kind.clone());
         match gvk_map.get(&gvk_key) {
             Some(kind_info) => {
+                if def.name != kind_info.plural {
+                    api_service_warnings.push(format!(
+                        "APIService {}: CSV plural '{}' differs from discovery plural '{}' — using discovery",
+                        def.api_service_object_name(),
+                        def.name,
+                        kind_info.plural
+                    ));
+                }
                 api_service_kind_infos.push((def, kind_info.clone()));
             }
             None => {
@@ -1012,7 +1021,13 @@ pub async fn generate_teardown_plan(
 
     // Check for blockers
     let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<Warning> = api_service_warnings
+        .into_iter()
+        .map(|msg| Warning {
+            message: msg,
+            resource: None,
+        })
+        .collect();
 
     // APIService identity: (group, version) pairs owned by target operators
     let target_api_service_gvs: HashSet<(String, String)> = target_operators
@@ -1142,16 +1157,17 @@ pub async fn generate_teardown_plan(
     };
 
     // ── Phase 1+: Trigger operand cleanup (dependency-layered) ──
-    // Attribute each CR to its owning operator via crd_name (CRD + APIService resources)
-    let api_to_op_indices: HashMap<String, Vec<usize>> = {
-        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
+    // Attribute each CR to its owning operator (CRD + APIService resources)
+    // Use HashSet to dedup — a broken CSV may list the same definition twice
+    let api_to_op_indices: HashMap<String, HashSet<usize>> = {
+        let mut map: HashMap<String, HashSet<usize>> = HashMap::new();
         for (idx, op) in target_operators.iter().enumerate() {
             for crd in &op.owned_crds {
-                map.entry(crd.clone()).or_default().push(idx);
+                map.entry(crd.clone()).or_default().insert(idx);
             }
             for def in &op.owned_api_service_defs {
                 let key = format!("{}/{}/{}", def.group, def.version, def.kind);
-                map.entry(key).or_default().push(idx);
+                map.entry(key).or_default().insert(idx);
             }
         }
         map
@@ -1287,7 +1303,7 @@ pub async fn generate_teardown_plan(
                 } else {
                     cr_to_action(cr, "root")
                 };
-                let op_idx = owners.and_then(|v| v.first().copied());
+                let op_idx = owners.and_then(|v| v.iter().next().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1306,7 +1322,7 @@ pub async fn generate_teardown_plan(
                     }
                     continue;
                 }
-                let op_idx = owners.and_then(|v| v.first().copied());
+                let op_idx = owners.and_then(|v| v.iter().next().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1324,7 +1340,7 @@ pub async fn generate_teardown_plan(
                     }
                     continue;
                 }
-                let op_idx = owners.and_then(|v| v.first().copied());
+                let op_idx = owners.and_then(|v| v.iter().next().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
