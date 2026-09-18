@@ -144,6 +144,21 @@ pub enum TeardownAction {
         #[arg(long)]
         no_cache: bool,
     },
+
+    /// Explain why a resource is scheduled at its position in the plan
+    Explain {
+        /// Operator names to plan teardown for
+        #[arg(required = true)]
+        operators: Vec<String>,
+
+        /// Resource to explain (kind/name format)
+        #[arg(long)]
+        resource: String,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]

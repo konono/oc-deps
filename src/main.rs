@@ -25,6 +25,7 @@ use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
+use crate::teardown::explain::explain_resource;
 use crate::teardown::planner::{
     generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
 };
@@ -173,6 +174,49 @@ async fn main() -> Result<()> {
                         eprintln!(" done");
 
                         print_plan_status(&plan, &statuses);
+                    }
+                    TeardownAction::Explain {
+                        operators: operator_queries,
+                        resource,
+                        no_cache,
+                    } => {
+                        let t0 = Instant::now();
+                        eprintln!("🔍 Discovering API resources...");
+                        let (kind_map, gvr_map) =
+                            build_kind_lookup_cached(&client, &config, no_cache).await?;
+                        eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                        eprint!("🔍 Discovering operators...");
+                        let all_operators = discover_operators(&client, &kind_map).await?;
+                        eprintln!(" found {} operators", all_operators.len());
+
+                        let target_indices =
+                            resolve_operator_targets(&operator_queries, &all_operators)?;
+                        let target_operators: Vec<&_> =
+                            target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+                        let plan = generate_teardown_plan(
+                            &client,
+                            &target_operators,
+                            &all_operators,
+                            &kind_map,
+                            &gvr_map,
+                        )
+                        .await?;
+
+                        let namespace = target_operators
+                            .first()
+                            .map(|op| op.install_namespace.as_str())
+                            .unwrap_or("default");
+
+                        let snapshot =
+                            build_snapshot(&client, &config, namespace, &kind_map, false).await?;
+
+                        let evidence_graph = build_evidence_graph(&snapshot, &all_operators);
+
+                        let explanation =
+                            explain_resource(&plan, &resource, &all_operators, &evidence_graph);
+                        println!("{}", explanation);
                     }
                 }
                 return Ok(());
