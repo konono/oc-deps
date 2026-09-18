@@ -25,6 +25,7 @@ pub struct OperatorInstance {
     pub owned_crds: Vec<String>,
     pub required_crds: Vec<String>,
     pub owned_api_services: Vec<String>,
+    pub owned_api_service_defs: Vec<OwnedApiServiceDef>,
     pub required_api_services: Vec<String>,
     pub deployments: Vec<String>,
     pub service_accounts: Vec<String>,
@@ -34,7 +35,9 @@ pub struct OperatorInstance {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperatorDependency {
     pub from_csv: String,
+    pub from_namespace: String,
     pub to_csv: String,
+    pub to_namespace: String,
     pub via_crd: String,
     pub confidence: f64,
 }
@@ -53,7 +56,16 @@ fn extract_crd_names(csv_data: &serde_json::Value, field: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn extract_api_service_names(csv_data: &serde_json::Value, field: &str) -> Vec<String> {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OwnedApiServiceDef {
+    pub name: String,
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    pub deployment_name: Option<String>,
+}
+
+fn extract_api_service_defs(csv_data: &serde_json::Value, field: &str) -> Vec<OwnedApiServiceDef> {
     csv_data
         .get("spec")
         .and_then(|s| s.get("apiservicedefinitions"))
@@ -61,10 +73,42 @@ fn extract_api_service_names(csv_data: &serde_json::Value, field: &str) -> Vec<S
         .and_then(|o| o.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|item| item.get("name").and_then(|n| n.as_str()).map(String::from))
+                .filter_map(|item| {
+                    let name = item.get("name")?.as_str()?.to_string();
+                    let group = item
+                        .get("group")
+                        .and_then(|g| g.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let version = item
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let kind = item
+                        .get("kind")
+                        .and_then(|k| k.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let deployment_name = item
+                        .get("deploymentName")
+                        .and_then(|d| d.as_str())
+                        .map(String::from);
+                    Some(OwnedApiServiceDef {
+                        name,
+                        group,
+                        version,
+                        kind,
+                        deployment_name,
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn extract_api_service_names(defs: &[OwnedApiServiceDef]) -> Vec<String> {
+    defs.iter().map(|d| d.name.clone()).collect()
 }
 
 fn extract_deployment_names(csv_data: &serde_json::Value) -> Vec<String> {
@@ -154,7 +198,7 @@ pub async fn discover_operators(
     let (csv_result, sub_result) =
         tokio::join!(list_all_paginated(&csv_api), list_all_paginated(&sub_api),);
     let csv_items = csv_result?;
-    let sub_items = sub_result.unwrap_or_default();
+    let sub_items = sub_result?;
 
     // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
     // namespaces via different Subscriptions produces separate installations
@@ -163,7 +207,7 @@ pub async fn discover_operators(
         if let Some(csv_name) = sub
             .data
             .get("status")
-            .and_then(|s| s.get("currentCSV"))
+            .and_then(|s| s.get("installedCSV"))
             .and_then(|c| c.as_str())
         {
             sub_by_csv
@@ -244,8 +288,10 @@ pub async fn discover_operators(
 
         let owned_crds = extract_crd_names(&csv.data, "owned");
         let required_crds = extract_crd_names(&csv.data, "required");
-        let owned_api_services = extract_api_service_names(&csv.data, "owned");
-        let required_api_services = extract_api_service_names(&csv.data, "required");
+        let owned_api_service_defs = extract_api_service_defs(&csv.data, "owned");
+        let owned_api_services = extract_api_service_names(&owned_api_service_defs);
+        let required_api_service_defs = extract_api_service_defs(&csv.data, "required");
+        let required_api_services = extract_api_service_names(&required_api_service_defs);
         let deployments = extract_deployment_names(&csv.data);
         let service_accounts = extract_service_account_names(&csv.data);
 
@@ -263,6 +309,7 @@ pub async fn discover_operators(
             owned_crds,
             required_crds,
             owned_api_services,
+            owned_api_service_defs,
             required_api_services,
             deployments,
             service_accounts,
@@ -287,7 +334,9 @@ pub fn compute_operator_dependencies(operators: &[OperatorInstance]) -> Vec<Oper
                 if provider.owned_crds.contains(required_crd) {
                     deps.push(OperatorDependency {
                         from_csv: requirer.csv.name.clone(),
+                        from_namespace: requirer.install_namespace.clone(),
                         to_csv: provider.csv.name.clone(),
+                        to_namespace: provider.install_namespace.clone(),
                         via_crd: required_crd.clone(),
                         confidence: 1.0,
                     });
@@ -303,7 +352,9 @@ pub fn compute_operator_dependencies(operators: &[OperatorInstance]) -> Vec<Oper
                 if provider.owned_api_services.contains(required_api) {
                     deps.push(OperatorDependency {
                         from_csv: requirer.csv.name.clone(),
+                        from_namespace: requirer.install_namespace.clone(),
                         to_csv: provider.csv.name.clone(),
+                        to_namespace: provider.install_namespace.clone(),
                         via_crd: format!("APIService/{}", required_api),
                         confidence: 1.0,
                     });
@@ -400,8 +451,8 @@ fn print_operators_tree(operators: &[OperatorInstance], deps: &[OperatorDependen
         println!("\n\x1b[1m── Operator Dependencies ──\x1b[0m\n");
         for dep in deps {
             println!(
-                "  {} \x1b[33m→\x1b[0m {} (via CRD: {})",
-                dep.from_csv, dep.to_csv, dep.via_crd
+                "  {}@{} \x1b[33m→\x1b[0m {}@{} (via {})",
+                dep.from_csv, dep.from_namespace, dep.to_csv, dep.to_namespace, dep.via_crd
             );
         }
     }
@@ -574,12 +625,12 @@ pub async fn find_crd_origin(
         {
             if let Ok(subs) = sub_api.list(&ListParams::default()).await {
                 for sub in &subs.items {
-                    let current_csv = sub
+                    let installed_csv = sub
                         .data
                         .get("status")
-                        .and_then(|s| s.get("currentCSV"))
+                        .and_then(|s| s.get("installedCSV"))
                         .and_then(|c| c.as_str());
-                    if current_csv == Some(csv_name.as_str()) {
+                    if installed_csv == Some(csv_name.as_str()) {
                         chain.subscription_name = sub.metadata.name.clone();
                         chain.subscription_namespace = sub.metadata.namespace.clone();
                         break;

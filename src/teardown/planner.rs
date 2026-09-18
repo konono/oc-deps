@@ -10,7 +10,9 @@ use kube::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::analyzers::olm::{OperatorDependency, OperatorInstance, compute_operator_dependencies};
+use crate::analyzers::olm::{
+    OwnedApiServiceDef, OperatorDependency, OperatorInstance, compute_operator_dependencies,
+};
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
@@ -483,28 +485,19 @@ pub fn topo_sort_operators(
         .map(|&i| (OperatorId::from_instance(&all_operators[i]), i))
         .collect();
 
-    let target_csv_set: HashSet<&str> = target_indices
-        .iter()
-        .map(|&i| all_operators[i].csv.name.as_str())
-        .collect();
-
     // Build adjacency: from depends on to
     let mut depends_on: HashMap<OperatorId, HashSet<OperatorId>> = HashMap::new();
     for dep in deps {
-        if target_csv_set.contains(dep.from_csv.as_str())
-            && target_csv_set.contains(dep.to_csv.as_str())
-        {
-            let from_id = target_ids
-                .keys()
-                .find(|id| id.csv_name == dep.from_csv)
-                .cloned();
-            let to_id = target_ids
-                .keys()
-                .find(|id| id.csv_name == dep.to_csv)
-                .cloned();
-            if let (Some(from), Some(to)) = (from_id, to_id) {
-                depends_on.entry(from).or_default().insert(to);
-            }
+        let from_id = OperatorId {
+            namespace: dep.from_namespace.clone(),
+            csv_name: dep.from_csv.clone(),
+        };
+        let to_id = OperatorId {
+            namespace: dep.to_namespace.clone(),
+            csv_name: dep.to_csv.clone(),
+        };
+        if target_ids.contains_key(&from_id) && target_ids.contains_key(&to_id) {
+            depends_on.entry(from_id).or_default().insert(to_id);
         }
     }
 
@@ -587,15 +580,26 @@ async fn run_preflight(
 ) -> Preflight {
     let mut checks = Vec::new();
 
-    // 1. Subscription resolved
+    // 1. Subscription resolved (absent is OK — already frozen / manually managed)
     for op in target_operators {
-        let (passed, detail) = match &op.subscription {
-            Some(sub) => (true, format!("Subscription/{} found", sub.name)),
-            None => (false, format!("No subscription for CSV/{}", op.csv.name)),
+        let (passed, severity, detail) = match &op.subscription {
+            Some(sub) => (
+                true,
+                PreflightSeverity::Warning,
+                format!("Subscription/{} found — will be deleted in Phase 0", sub.name),
+            ),
+            None => (
+                true,
+                PreflightSeverity::Warning,
+                format!(
+                    "No subscription for CSV/{} — already frozen or manually installed",
+                    op.csv.name
+                ),
+            ),
         };
         checks.push(PreflightCheck {
             name: format!("Subscription resolved ({})", op.csv.name),
-            severity: PreflightSeverity::Critical,
+            severity,
             passed,
             detail,
         });
@@ -783,8 +787,33 @@ pub async fn generate_teardown_plan(
     };
     let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
 
+    // Collect owned APIService definitions for resource discovery
+    let target_api_service_defs: Vec<&OwnedApiServiceDef> = target_operators
+        .iter()
+        .flat_map(|op| op.owned_api_service_defs.iter())
+        .collect();
+
+    // Build synthetic CRD-like names for APIService-backed resources
+    // so they go through the same discovery pipeline
+    let api_service_resource_crds: Vec<String> = target_api_service_defs
+        .iter()
+        .filter(|def| !def.group.is_empty() && !def.kind.is_empty())
+        .filter_map(|def| {
+            let plural = format!("{}s", def.kind.to_lowercase());
+            let synthetic = format!("{}.{}", plural, def.group);
+            if !target_crd_set.contains(synthetic.as_str()) {
+                Some(synthetic)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut all_discovery_crds = target_crds.clone();
+    all_discovery_crds.extend(api_service_resource_crds.clone());
+
     eprint!("🔍 Discovering CR instances...");
-    let cr_report = discover_cr_instances(client, &target_crds, gvr_map, gk_map).await;
+    let cr_report = discover_cr_instances(client, &all_discovery_crds, gvr_map, gk_map).await;
     let mut cr_instances = cr_report.instances;
     let total_observations = cr_report.total_observations;
     let unique_count = cr_instances.len();
@@ -1141,6 +1170,16 @@ pub async fn generate_teardown_plan(
             }
             for cr in &managed_descendants {
                 let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                if owners.is_some_and(|v| v.len() > 1) {
+                    if layer_idx == 0 {
+                        phase_actions.push(Action::Review {
+                            resource: cr.id.clone(),
+                            reason: "shared CRD descendant — owned by multiple selected operators"
+                                .to_string(),
+                        });
+                    }
+                    continue;
+                }
                 let op_idx = owners.and_then(|v| v.first().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
@@ -1150,6 +1189,15 @@ pub async fn generate_teardown_plan(
             }
             for cr in &independent_crs {
                 let owners = crd_to_op_indices.get(cr.crd_name.as_str());
+                if owners.is_some_and(|v| v.len() > 1) {
+                    if layer_idx == 0 {
+                        phase_actions.push(Action::Review {
+                            resource: cr.id.clone(),
+                            reason: "shared CRD — owned by multiple selected operators".to_string(),
+                        });
+                    }
+                    continue;
+                }
                 let op_idx = owners.and_then(|v| v.first().copied());
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
@@ -1275,12 +1323,53 @@ pub async fn generate_teardown_plan(
         }
     }
 
+    // APIService actions
+    let target_api_service_names: HashSet<&str> = target_operators
+        .iter()
+        .flat_map(|op| op.owned_api_services.iter().map(|s| s.as_str()))
+        .collect();
+
+    for api_svc_name in &target_api_service_names {
+        let api_svc_id = ResourceId {
+            group: "apiregistration.k8s.io".to_string(),
+            version: "v1".to_string(),
+            kind: "APIService".to_string(),
+            namespace: None,
+            name: api_svc_name.to_string(),
+            uid: None,
+        };
+
+        if blocked_crds.contains(api_svc_name) {
+            let blocker_op = blockers
+                .iter()
+                .find(|b| b.resource.name == *api_svc_name)
+                .and_then(|b| b.external_dependency.as_deref())
+                .unwrap_or("unknown");
+            phase4_actions.push(Action::Keep {
+                resource: api_svc_id,
+                reason: format!("required by unselected operator {}", blocker_op),
+            });
+        } else if prune_apis {
+            phase4_actions.push(Action::Delete {
+                resource: api_svc_id,
+                reason: "aggregated API owned by target operator".to_string(),
+            });
+        } else {
+            phase4_actions.push(Action::Keep {
+                resource: api_svc_id,
+                reason: "eligible for prune (use --prune-apis to remove)".to_string(),
+            });
+        }
+    }
+
     let phase4 = PlanPhase {
         name: "APIs".to_string(),
         description: if prune_apis {
-            "Delete CRDs with no remaining instances and no external dependencies".to_string()
+            "Delete CRDs/APIServices with no remaining instances and no external dependencies"
+                .to_string()
         } else {
-            "CRDs kept by default — use --prune-apis for complete API removal".to_string()
+            "CRDs/APIServices kept by default — use --prune-apis for complete API removal"
+                .to_string()
         },
         actions: phase4_actions,
         barrier: None,
@@ -1536,6 +1625,7 @@ mod tests {
             owned_crds: vec![],
             required_crds: vec![],
             owned_api_services: vec![],
+            owned_api_service_defs: vec![],
             required_api_services: vec![],
             deployments: vec!["test-controller".to_string()],
             service_accounts: vec![],
@@ -1785,7 +1875,9 @@ mod tests {
         let ops = vec![op_a, op_b];
         let deps = vec![OperatorDependency {
             from_csv: "a.v1".to_string(),
+            from_namespace: "test-ns".to_string(),
             to_csv: "b.v1".to_string(),
+            to_namespace: "test-ns".to_string(),
             via_crd: "foos.example.com".to_string(),
             confidence: 1.0,
         }];
@@ -1831,13 +1923,17 @@ mod tests {
         let deps = vec![
             OperatorDependency {
                 from_csv: "a.v1".to_string(),
+                from_namespace: "test-ns".to_string(),
                 to_csv: "b.v1".to_string(),
+                to_namespace: "test-ns".to_string(),
                 via_crd: "foos.example.com".to_string(),
                 confidence: 1.0,
             },
             OperatorDependency {
                 from_csv: "c.v1".to_string(),
+                from_namespace: "test-ns".to_string(),
                 to_csv: "b.v1".to_string(),
+                to_namespace: "test-ns".to_string(),
                 via_crd: "bars.example.com".to_string(),
                 confidence: 1.0,
             },
@@ -1867,13 +1963,17 @@ mod tests {
         let deps = vec![
             OperatorDependency {
                 from_csv: "a.v1".to_string(),
+                from_namespace: "test-ns".to_string(),
                 to_csv: "b.v1".to_string(),
+                to_namespace: "test-ns".to_string(),
                 via_crd: "foos.example.com".to_string(),
                 confidence: 1.0,
             },
             OperatorDependency {
                 from_csv: "b.v1".to_string(),
+                from_namespace: "test-ns".to_string(),
                 to_csv: "a.v1".to_string(),
+                to_namespace: "test-ns".to_string(),
                 via_crd: "bars.example.com".to_string(),
                 confidence: 1.0,
             },
