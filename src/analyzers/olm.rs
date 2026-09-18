@@ -21,6 +21,7 @@ use crate::kube::resource::ResourceId;
 pub struct OperatorInstance {
     pub subscription: Option<ResourceId>,
     pub csv: ResourceId,
+    pub csv_phase: String,
     pub owned_crds: Vec<String>,
     pub required_crds: Vec<String>,
     pub owned_api_services: Vec<String>,
@@ -175,7 +176,7 @@ pub async fn discover_operators(
     // Deduplicate CSV copies: OLM copies CSVs into every target namespace.
     // Key: (subscription_namespace, csv_name) — different Subscriptions = different installations.
     // For each installation, prefer the CSV copy in the Subscription's namespace.
-    let mut best_csv: HashMap<(String, String), (&DynamicObject, Option<ResourceId>)> =
+    let mut best_csv: HashMap<(String, String), (&DynamicObject, Option<ResourceId>, String)> =
         HashMap::new();
 
     for csv in &csv_items {
@@ -184,10 +185,8 @@ pub async fn discover_operators(
             .get("status")
             .and_then(|s| s.get("phase"))
             .and_then(|p| p.as_str())
-            .unwrap_or("");
-        if phase != "Succeeded" {
-            continue;
-        }
+            .unwrap_or("Unknown")
+            .to_string();
 
         let csv_name = match &csv.metadata.name {
             Some(n) => n.clone(),
@@ -213,7 +212,7 @@ pub async fn discover_operators(
                 let key = (sub_ns.to_string(), csv_name.clone());
                 let new_matches_sub_ns = csv_ns == sub_ns;
 
-                let should_replace = if let Some((existing, _)) = best_csv.get(&key) {
+                let should_replace = if let Some((existing, _, _)) = best_csv.get(&key) {
                     let existing_ns = existing.metadata.namespace.as_deref().unwrap_or("unknown");
                     let existing_matches = existing_ns == sub_ns;
                     new_matches_sub_ns && !existing_matches
@@ -222,19 +221,20 @@ pub async fn discover_operators(
                 };
 
                 if should_replace {
-                    best_csv.insert(key, (csv, subscription));
+                    best_csv.insert(key, (csv, subscription, phase.clone()));
                 }
             }
         } else {
-            // No subscription for this CSV — use csv_ns as key
             let key = (csv_ns.to_string(), csv_name.clone());
-            best_csv.entry(key).or_insert((csv, None));
+            best_csv
+                .entry(key)
+                .or_insert_with(|| (csv, None, phase.clone()));
         }
     }
 
     let mut operators = Vec::new();
 
-    for ((_, csv_name), (csv, subscription)) in &best_csv {
+    for ((_, csv_name), (csv, subscription, csv_phase)) in &best_csv {
         let csv_ns = csv
             .metadata
             .namespace
@@ -259,6 +259,7 @@ pub async fn discover_operators(
                 name: csv_name.clone(),
                 uid: csv_uid,
             },
+            csv_phase: csv_phase.clone(),
             owned_crds,
             required_crds,
             owned_api_services,

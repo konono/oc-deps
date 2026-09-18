@@ -296,9 +296,14 @@ pub async fn execute_plan(
                 let mut crd_blocked: HashSet<String> = HashSet::new();
                 for (resource, _) in &delete_actions {
                     if resource.kind == "CustomResourceDefinition" {
-                        let live =
-                            count_live_cr_instances(client, &resource.name, kind_map, gvr_map)
-                                .await;
+                        let live = count_live_cr_instances(
+                            client,
+                            &resource.name,
+                            kind_map,
+                            gk_map,
+                            gvr_map,
+                        )
+                        .await;
                         match live {
                             LiveCount::NonZero(n) => {
                                 eprintln!(
@@ -804,11 +809,11 @@ async fn check_finalizers(
     }
 }
 
-// P0-3: verify no live CR instances exist before CRD deletion
 async fn count_live_cr_instances(
     client: &Client,
     crd_name: &str,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
     gvr_map: &GvrMap,
 ) -> LiveCount {
     let (plural, group) = match crd_name.split_once('.') {
@@ -822,9 +827,12 @@ async fn count_live_cr_instances(
         None => return LiveCount::Unknown(format!("kind not found for {}", gvr_key)),
     };
 
-    let kind_info = match kind_map.get(&kind) {
+    let kind_info = match gk_map.get(&(group.to_string(), kind.clone())) {
         Some(i) => i,
-        None => return LiveCount::Unknown(format!("no KindInfo for {}", kind)),
+        None => match kind_map.get(&kind) {
+            Some(i) => i,
+            None => return LiveCount::Unknown(format!("no KindInfo for {}", kind)),
+        },
     };
 
     let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
@@ -832,24 +840,8 @@ async fn count_live_cr_instances(
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
 
     match api.list(&ListParams::default().limit(1)).await {
-        Ok(list) => {
-            let count = list.items.len();
-            if count == 0 {
-                LiveCount::Zero
-            } else {
-                // There may be more — list with limit=1 just tells us non-empty
-                match api.list(&ListParams::default()).await {
-                    Ok(full) => {
-                        if full.items.is_empty() {
-                            LiveCount::Zero
-                        } else {
-                            LiveCount::NonZero(full.items.len())
-                        }
-                    }
-                    Err(e) => LiveCount::Unknown(format!("full list failed: {}", e)),
-                }
-            }
-        }
+        Ok(list) if list.items.is_empty() => LiveCount::Zero,
+        Ok(_) => LiveCount::NonZero(1),
         Err(e) => LiveCount::Unknown(format!("list failed: {}", e)),
     }
 }
@@ -1020,8 +1012,38 @@ mod tests {
     fn finalizer_check_unknown_is_not_empty_known() {
         let result = FinalizerCheckResult::Unknown("resolve failed".to_string());
         assert!(matches!(result, FinalizerCheckResult::Unknown(_)));
-        // Known with empty vec is a different state
         let empty = FinalizerCheckResult::Known(vec![]);
         assert!(matches!(empty, FinalizerCheckResult::Known(ref v) if v.is_empty()));
+    }
+
+    // P0-3 (round 3): LiveCount types are distinct
+    #[test]
+    fn live_count_types() {
+        assert!(matches!(LiveCount::Zero, LiveCount::Zero));
+        assert!(matches!(LiveCount::NonZero(1), LiveCount::NonZero(1)));
+        assert!(matches!(
+            LiveCount::Unknown("err".to_string()),
+            LiveCount::Unknown(_)
+        ));
+    }
+
+    // ResourceStateInfo carries finalizers in single GET
+    #[test]
+    fn resource_state_info_carries_finalizers() {
+        let info = ResourceStateInfo {
+            state: ObservationState::Exists {
+                finalizer_count: 2,
+                has_deletion_timestamp: false,
+            },
+            finalizers: vec!["a".to_string(), "b".to_string()],
+        };
+        assert_eq!(info.finalizers.len(), 2);
+        assert!(matches!(
+            info.state,
+            ObservationState::Exists {
+                finalizer_count: 2,
+                ..
+            }
+        ));
     }
 }

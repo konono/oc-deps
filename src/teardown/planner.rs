@@ -192,26 +192,46 @@ pub fn resolve_operator_targets(
     Ok(indices)
 }
 
+enum CrdDiscoveryResult {
+    Success(Vec<CrInstance>),
+    Unavailable { crd_name: String, reason: String },
+}
+
 async fn discover_one_crd(
     client: &Client,
     crd_name: &str,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
-) -> Vec<CrInstance> {
+) -> CrdDiscoveryResult {
     let (plural, group) = match crd_name.split_once('.') {
         Some((p, g)) => (p, g),
-        None => return vec![],
+        None => {
+            return CrdDiscoveryResult::Unavailable {
+                crd_name: crd_name.to_string(),
+                reason: "cannot parse CRD name".to_string(),
+            };
+        }
     };
 
     let gvr_key = format!("{}.{}", plural, group).to_lowercase();
     let kind = match gvr_map.get(&gvr_key) {
         Some(k) => k.clone(),
-        None => return vec![],
+        None => {
+            return CrdDiscoveryResult::Unavailable {
+                crd_name: crd_name.to_string(),
+                reason: format!("kind not found for GVR {}", gvr_key),
+            };
+        }
     };
 
     let kind_info = match kind_map.get(&kind) {
         Some(i) => i,
-        None => return vec![],
+        None => {
+            return CrdDiscoveryResult::Unavailable {
+                crd_name: crd_name.to_string(),
+                reason: format!("no KindInfo for {}", kind),
+            };
+        }
     };
 
     let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
@@ -220,10 +240,15 @@ async fn discover_one_crd(
 
     let items = match list_paginated(&api).await {
         Ok(items) => items,
-        Err(_) => return vec![],
+        Err(e) => {
+            return CrdDiscoveryResult::Unavailable {
+                crd_name: crd_name.to_string(),
+                reason: format!("LIST failed: {}", e),
+            };
+        }
     };
 
-    items
+    let crs = items
         .into_iter()
         .filter_map(|obj| {
             let uid = obj.metadata.uid.unwrap_or_default();
@@ -269,7 +294,15 @@ async fn discover_one_crd(
                 provenance: Provenance::Unknown,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    CrdDiscoveryResult::Success(crs)
+}
+
+struct CrDiscoveryReport {
+    instances: Vec<CrInstance>,
+    total_observations: usize,
+    unavailable_crds: Vec<(String, String)>,
 }
 
 async fn discover_cr_instances(
@@ -277,8 +310,7 @@ async fn discover_cr_instances(
     target_crds: &[String],
     kind_map: &KindMap,
     gvr_map: &GvrMap,
-) -> (Vec<CrInstance>, usize) {
-    // Dedup CRDs before API calls
+) -> CrDiscoveryReport {
     let unique_crds: Vec<&String> = {
         let mut seen = HashSet::new();
         target_crds
@@ -298,15 +330,24 @@ async fn discover_cr_instances(
         async move { discover_one_crd(&client, &crd_name, &kind_map, &gvr_map).await }
     });
 
-    let results: Vec<Vec<CrInstance>> = futures::stream::iter(futs)
+    let results: Vec<CrdDiscoveryResult> = futures::stream::iter(futs)
         .buffer_unordered(DEFAULT_CONCURRENCY)
         .collect()
         .await;
 
-    let mut instances: Vec<CrInstance> = results.into_iter().flatten().collect();
+    let mut instances = Vec::new();
+    let mut unavailable_crds = Vec::new();
+    for result in results {
+        match result {
+            CrdDiscoveryResult::Success(crs) => instances.extend(crs),
+            CrdDiscoveryResult::Unavailable { crd_name, reason } => {
+                unavailable_crds.push((crd_name, reason));
+            }
+        }
+    }
+
     let total_observations = instances.len();
 
-    // UID-based dedup
     let mut seen_uids = HashSet::new();
     instances.retain(|cr| {
         if let Some(uid) = &cr.id.uid {
@@ -316,7 +357,11 @@ async fn discover_cr_instances(
         }
     });
 
-    (instances, total_observations)
+    CrDiscoveryReport {
+        instances,
+        total_observations,
+        unavailable_crds,
+    }
 }
 
 fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
@@ -488,6 +533,7 @@ async fn run_preflight(
     total_observations: usize,
     unique_count: usize,
     review_provenance_count: usize,
+    unavailable_crds: &[(String, String)],
 ) -> Preflight {
     let mut checks = Vec::new();
 
@@ -551,7 +597,17 @@ async fn run_preflight(
         });
     }
 
-    // 4. Uncertain provenance
+    // 4. Undiscoverable CRDs
+    for (crd_name, reason) in unavailable_crds {
+        checks.push(PreflightCheck {
+            name: format!("CR enumeration ({})", crd_name),
+            severity: PreflightSeverity::Critical,
+            passed: false,
+            detail: format!("cannot enumerate: {}", reason),
+        });
+    }
+
+    // 5. Uncertain provenance
     if review_provenance_count > 0 {
         checks.push(PreflightCheck {
             name: "Provenance".to_string(),
@@ -677,14 +733,21 @@ pub async fn generate_teardown_plan(
     let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
 
     eprint!("🔍 Discovering CR instances...");
-    let (mut cr_instances, total_observations) =
-        discover_cr_instances(client, &target_crds, kind_map, gvr_map).await;
+    let cr_report = discover_cr_instances(client, &target_crds, kind_map, gvr_map).await;
+    let mut cr_instances = cr_report.instances;
+    let total_observations = cr_report.total_observations;
     let unique_count = cr_instances.len();
     let duplicates = total_observations - unique_count;
     eprintln!(
         " found {} instances ({} observations)",
         unique_count, total_observations
     );
+    if !cr_report.unavailable_crds.is_empty() {
+        eprintln!(
+            "  ⚠ {} CRD(s) could not be enumerated",
+            cr_report.unavailable_crds.len()
+        );
+    }
 
     // Classify provenance
     for cr in &mut cr_instances {
@@ -710,6 +773,7 @@ pub async fn generate_teardown_plan(
         total_observations,
         unique_count,
         review_provenance_count,
+        &cr_report.unavailable_crds,
     )
     .await;
     eprintln!(" done");
@@ -949,8 +1013,7 @@ pub async fn generate_teardown_plan(
         barrier: None,
     };
 
-    // ── Phase 3: Remove Operator controllers (dependency-ordered) ──
-    // P1-1: compute operator dependencies and topo sort
+    // ── Phase 3+: Remove Operator controllers (dependency-ordered, one Phase per layer) ──
     let deps = compute_operator_dependencies(
         &target_operators
             .iter()
@@ -963,37 +1026,43 @@ pub async fn generate_teardown_plan(
         target_operators.iter().map(|op| (*op).clone()).collect();
     let layers = topo_sort_operators(&target_indices_local, &all_ops_local, &deps);
 
-    let mut phase3_actions: Vec<Action> = Vec::new();
-    // Dependents first (layer 0), providers last
-    for layer in &layers {
+    let mut controller_phases: Vec<PlanPhase> = Vec::new();
+    for (layer_idx, layer) in layers.iter().enumerate() {
+        let mut layer_actions = Vec::new();
         for &idx in layer {
-            phase3_actions.push(Action::Delete {
+            layer_actions.push(Action::Delete {
                 resource: target_operators[idx].csv.clone(),
                 reason: if layers.len() > 1 {
-                    format!(
-                        "operator controller (dependency layer {})",
-                        layers.iter().position(|l| l.contains(&idx)).unwrap_or(0)
-                    )
+                    format!("operator controller (dependency layer {})", layer_idx)
                 } else {
                     "operator controller no longer needed".to_string()
                 },
             });
         }
+        controller_phases.push(PlanPhase {
+            name: if layers.len() > 1 {
+                format!("Remove controllers (layer {})", layer_idx)
+            } else {
+                "Remove Operator controllers".to_string()
+            },
+            description: if layers.len() > 1 {
+                format!(
+                    "Delete CSVs in dependency layer {} — same-layer CSVs are independent",
+                    layer_idx
+                )
+            } else {
+                "Delete CSVs (GC will remove controller Deployments)".to_string()
+            },
+            actions: layer_actions,
+            barrier: Some(Barrier {
+                description: format!("Layer {} CSVs deleted", layer_idx),
+                conditions: layer
+                    .iter()
+                    .map(|&idx| format!("{} is gone", target_operators[idx].csv))
+                    .collect(),
+            }),
+        });
     }
-
-    let phase3 = PlanPhase {
-        name: "Remove Operator controllers".to_string(),
-        description: "Delete CSVs in dependency order (GC will remove controller Deployments)"
-            .to_string(),
-        actions: phase3_actions,
-        barrier: Some(Barrier {
-            description: "All CSVs deleted".to_string(),
-            conditions: target_operators
-                .iter()
-                .map(|op| format!("{} is gone", op.csv))
-                .collect(),
-        }),
-    };
 
     // ── Phase 4: Remove unused APIs ──
     let mut phase4_actions = Vec::new();
@@ -1099,10 +1168,15 @@ pub async fn generate_teardown_plan(
         }
     }
 
+    let mut phases = vec![phase0, phase1, phase2];
+    phases.extend(controller_phases);
+    phases.push(phase4);
+    phases.push(phase5);
+
     let plan = TeardownPlan {
         targets,
         preflight,
-        phases: vec![phase0, phase1, phase2, phase3, phase4, phase5],
+        phases,
         blockers,
         warnings,
         snapshot_taken_at: chrono::Utc::now().to_rfc3339(),
@@ -1291,6 +1365,7 @@ mod tests {
                 name: csv_name.to_string(),
                 uid: None,
             },
+            csv_phase: "Succeeded".to_string(),
             owned_crds: vec![],
             required_crds: vec![],
             owned_api_services: vec![],
@@ -1560,5 +1635,51 @@ mod tests {
         );
         classify_provenance(&mut cr, &ops);
         assert!(matches!(cr.provenance, Provenance::Unknown));
+    }
+
+    // P0-1 (round 3): dependency layers become separate phases
+    #[test]
+    fn topo_sort_dependency_produces_multiple_layers() {
+        use crate::analyzers::olm::OperatorDependency;
+        let mut op_a = make_test_operator("a.v1", "a");
+        op_a.required_crds = vec!["foos.example.com".to_string()];
+        let mut op_b = make_test_operator("b.v1", "b");
+        op_b.owned_crds = vec!["foos.example.com".to_string()];
+        let mut op_c = make_test_operator("c.v1", "c");
+        op_c.required_crds = vec!["bars.example.com".to_string()];
+        op_b.owned_crds.push("bars.example.com".to_string());
+        let ops = vec![op_a, op_b, op_c];
+        let deps = vec![
+            OperatorDependency {
+                from_csv: "a.v1".to_string(),
+                to_csv: "b.v1".to_string(),
+                via_crd: "foos.example.com".to_string(),
+                confidence: 1.0,
+            },
+            OperatorDependency {
+                from_csv: "c.v1".to_string(),
+                to_csv: "b.v1".to_string(),
+                via_crd: "bars.example.com".to_string(),
+                confidence: 1.0,
+            },
+        ];
+        let layers = topo_sort_operators(&[0, 1, 2], &ops, &deps);
+        assert_eq!(layers.len(), 2);
+        // Layer 0: a and c (dependents), Layer 1: b (provider)
+        assert!(layers[0].contains(&0));
+        assert!(layers[0].contains(&2));
+        assert!(layers[1].contains(&1));
+    }
+
+    // P0-2 (round 3): CrdDiscoveryResult distinguishes Success vs Unavailable
+    #[test]
+    fn crd_discovery_result_types() {
+        let success = CrdDiscoveryResult::Success(vec![]);
+        assert!(matches!(success, CrdDiscoveryResult::Success(_)));
+        let unavail = CrdDiscoveryResult::Unavailable {
+            crd_name: "test".to_string(),
+            reason: "403".to_string(),
+        };
+        assert!(matches!(unavail, CrdDiscoveryResult::Unavailable { .. }));
     }
 }
