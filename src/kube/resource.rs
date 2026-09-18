@@ -132,15 +132,22 @@ impl NamespaceIndex {
     }
 }
 
-// TODO: kind_map is keyed by Kind alone. If two groups define the same Kind
-// with different plural/scope, this picks whichever was inserted first.
-// A (group, kind) keyed index would be more correct.
+/// When ResourceId carries a group, find the kind_map entry whose group matches.
+/// Falls back to kind-only lookup if no group is specified or no match found.
 pub fn resolve_api(
     client: &kube::Client,
     resource: &ResourceId,
     kind_map: &crate::kube::discovery::KindMap,
 ) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
-    let kind_info = kind_map.get(&resource.kind)?;
+    let kind_info = if !resource.group.is_empty() {
+        kind_map
+            .iter()
+            .find(|(k, info)| k.as_str() == resource.kind && info.group == resource.group)
+            .map(|(_, info)| info)
+            .or_else(|| kind_map.get(&resource.kind))?
+    } else {
+        kind_map.get(&resource.kind)?
+    };
 
     let (group, version) = if !resource.group.is_empty() && !resource.version.is_empty() {
         (resource.group.as_str(), resource.version.as_str())

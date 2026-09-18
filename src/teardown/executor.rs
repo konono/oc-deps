@@ -140,6 +140,24 @@ pub async fn execute_plan(
         bail!("Plan has blockers. Resolve external dependencies before applying.");
     }
 
+    let failed_preflight: Vec<&str> = plan
+        .preflight
+        .checks
+        .iter()
+        .filter(|c| !c.passed)
+        .map(|c| c.name.as_str())
+        .collect();
+    if !failed_preflight.is_empty() && !dry_run && !force {
+        eprintln!(
+            "\x1b[1;31m⛔ Preflight failed — {} check(s):\x1b[0m",
+            failed_preflight.len()
+        );
+        for name in &failed_preflight {
+            eprintln!("  {}", name);
+        }
+        bail!("Preflight checks failed. Use --force to override.");
+    }
+
     let review_count = plan
         .phases
         .iter()
