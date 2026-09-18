@@ -132,6 +132,35 @@ impl NamespaceIndex {
     }
 }
 
+/// Build a kube Api for a ResourceId, using its group/version when available,
+/// falling back to kind_map when ResourceId has empty group/version.
+pub fn resolve_api(
+    client: &kube::Client,
+    resource: &ResourceId,
+    kind_map: &crate::kube::discovery::KindMap,
+) -> Option<(kube::api::Api<kube::api::DynamicObject>, bool)> {
+    let kind_info = kind_map.get(&resource.kind)?;
+
+    let (group, version) = if !resource.group.is_empty() && !resource.version.is_empty() {
+        (resource.group.as_str(), resource.version.as_str())
+    } else {
+        (kind_info.group.as_str(), kind_info.version.as_str())
+    };
+
+    let gvk = kube::core::GroupVersion::gv(group, version).with_kind(&resource.kind);
+    let ar = kube::api::ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
+
+    let api = if let Some(ns) = &resource.namespace {
+        kube::api::Api::namespaced_with(client.clone(), ns, &ar)
+    } else if kind_info.namespaced {
+        return None;
+    } else {
+        kube::api::Api::all_with(client.clone(), &ar)
+    };
+
+    Some((api, kind_info.namespaced))
+}
+
 pub fn primary_owner(refs: &[OwnerRef]) -> Option<&OwnerRef> {
     refs.iter().find(|r| r.controller).or(refs.first())
 }

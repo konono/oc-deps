@@ -1,15 +1,11 @@
 use std::io::Write;
 use std::time::Instant;
 
-use anyhow::Result;
-use kube::{
-    Client,
-    api::{Api, ApiResource, DeleteParams, DynamicObject},
-    core::GroupVersion,
-};
+use anyhow::{Result, bail};
+use kube::{Client, api::DeleteParams};
 
 use crate::kube::discovery::KindMap;
-use crate::kube::resource::ResourceId;
+use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, TeardownPlan};
 
 #[derive(Debug)]
@@ -129,6 +125,20 @@ pub async fn execute_plan(
     kind_map: &KindMap,
     dry_run: bool,
 ) -> Result<ExecutionResult> {
+    if !plan.blockers.is_empty() && !dry_run {
+        eprintln!(
+            "\x1b[1;31m⛔ Plan has {} blocker(s) — cannot execute:\x1b[0m",
+            plan.blockers.len()
+        );
+        for blocker in &plan.blockers {
+            eprintln!(
+                "  {}/{}: {}",
+                blocker.resource.kind, blocker.resource.name, blocker.reason
+            );
+        }
+        bail!("Plan has blockers. Resolve external dependencies before applying.");
+    }
+
     if dry_run {
         eprintln!("\x1b[1;36m── DRY RUN ──\x1b[0m\n");
     } else if !confirm_execution(plan) {
@@ -269,13 +279,15 @@ pub async fn execute_plan(
                     BarrierResult::Passed => {
                         eprintln!("  \x1b[32m✅ Barrier passed\x1b[0m");
                     }
-                    BarrierResult::Timeout {
+                    BarrierResult::Stalled {
                         remaining,
                         finalizers,
+                        reason,
                     } => {
                         eprintln!(
-                            "  \x1b[1;31m⚠ Barrier timeout — {} resources remain\x1b[0m",
-                            remaining.len()
+                            "  \x1b[1;31m⚠ Barrier stalled — {} resources remain ({})\x1b[0m",
+                            remaining.len(),
+                            reason
                         );
                         for res in &remaining {
                             let fins: Vec<&str> = finalizers
@@ -316,19 +328,14 @@ async fn delete_resource(
     resource: &ResourceId,
     kind_map: &KindMap,
 ) -> DeleteResult {
-    let kind_info = match kind_map.get(&resource.kind) {
-        Some(i) => i,
-        None => return DeleteResult::Failed(format!("unknown kind: {}", resource.kind)),
-    };
-
-    let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&resource.kind);
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-    let api: Api<DynamicObject> = if let Some(ns) = &resource.namespace {
-        Api::namespaced_with(client.clone(), ns, &ar)
-    } else if kind_info.namespaced {
-        return DeleteResult::Failed("namespaced resource without namespace".to_string());
-    } else {
-        Api::all_with(client.clone(), &ar)
+    let (api, _) = match resolve_api(client, resource, kind_map) {
+        Some(r) => r,
+        None => {
+            return DeleteResult::Failed(format!(
+                "cannot resolve API for {}/{}",
+                resource.kind, resource.name
+            ));
+        }
     };
 
     match api.delete(&resource.name, &DeleteParams::default()).await {
@@ -340,10 +347,61 @@ async fn delete_resource(
 
 enum BarrierResult {
     Passed,
-    Timeout {
+    Stalled {
         remaining: Vec<ResourceId>,
         finalizers: Vec<(ResourceId, Vec<String>)>,
+        reason: String,
     },
+}
+
+struct ResourceState {
+    gone: bool,
+    finalizer_count: usize,
+    has_deletion_timestamp: bool,
+}
+
+async fn check_resource_state(
+    client: &Client,
+    resource: &ResourceId,
+    kind_map: &KindMap,
+) -> ResourceState {
+    let (api, _) = match resolve_api(client, resource, kind_map) {
+        Some(r) => r,
+        None => {
+            return ResourceState {
+                gone: true,
+                finalizer_count: 0,
+                has_deletion_timestamp: false,
+            };
+        }
+    };
+
+    match api.get(&resource.name).await {
+        Ok(obj) => {
+            let finalizers = obj
+                .metadata
+                .finalizers
+                .as_ref()
+                .map(|f| f.len())
+                .unwrap_or(0);
+            let has_dt = obj.metadata.deletion_timestamp.is_some();
+            ResourceState {
+                gone: false,
+                finalizer_count: finalizers,
+                has_deletion_timestamp: has_dt,
+            }
+        }
+        Err(kube::Error::Api(err)) if err.code == 404 => ResourceState {
+            gone: true,
+            finalizer_count: 0,
+            has_deletion_timestamp: false,
+        },
+        Err(_) => ResourceState {
+            gone: false,
+            finalizer_count: 0,
+            has_deletion_timestamp: false,
+        },
+    }
 }
 
 async fn wait_for_barrier(
@@ -355,36 +413,48 @@ async fn wait_for_barrier(
     let start = Instant::now();
     let total = resources.len();
 
+    let mut prev_gone = 0usize;
+    let mut prev_total_finalizers = usize::MAX;
+    let mut last_progress = Instant::now();
+    let stall_threshold_secs = 120;
+
     loop {
         let elapsed = start.elapsed().as_secs();
-        if elapsed >= timeout_secs {
-            let mut remaining = Vec::new();
-            let mut finalizers = Vec::new();
-            for res in resources {
-                if !is_gone(client, res, kind_map).await {
-                    let fins = get_finalizers(client, res, kind_map).await;
-                    if !fins.is_empty() {
-                        finalizers.push((res.clone(), fins));
-                    }
-                    remaining.push(res.clone());
-                }
-            }
-            return BarrierResult::Timeout {
-                remaining,
-                finalizers,
-            };
-        }
 
         let mut gone_count = 0;
+        let mut deleting_count = 0;
+        let mut total_finalizers = 0;
+        let mut remaining = Vec::new();
+        let mut remaining_finalizers = Vec::new();
+
         for res in resources {
-            if is_gone(client, res, kind_map).await {
+            let state = check_resource_state(client, res, kind_map).await;
+            if state.gone {
                 gone_count += 1;
+            } else {
+                remaining.push(res.clone());
+                total_finalizers += state.finalizer_count;
+                if state.has_deletion_timestamp {
+                    deleting_count += 1;
+                }
+                if state.finalizer_count > 0 {
+                    let fins = get_finalizers(client, res, kind_map).await;
+                    remaining_finalizers.push((res.clone(), fins));
+                }
             }
+        }
+
+        let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
+
+        if made_progress {
+            last_progress = Instant::now();
+            prev_gone = gone_count;
+            prev_total_finalizers = total_finalizers;
         }
 
         eprint!(
-            "\r\x1b[2K  ⏳ Waiting... {}/{} gone (elapsed: {}s)",
-            gone_count, total, elapsed
+            "\r\x1b[2K  ⏳ {}/{} gone, {} deleting, {} finalizers ({}s)",
+            gone_count, total, deleting_count, total_finalizers, elapsed
         );
         std::io::stderr().flush().ok();
 
@@ -393,46 +463,36 @@ async fn wait_for_barrier(
             return BarrierResult::Passed;
         }
 
+        let stall_duration = last_progress.elapsed().as_secs();
+        if elapsed >= timeout_secs {
+            eprintln!();
+            return BarrierResult::Stalled {
+                remaining,
+                finalizers: remaining_finalizers,
+                reason: format!("timeout after {}s", elapsed),
+            };
+        }
+
+        if stall_duration >= stall_threshold_secs && deleting_count > 0 {
+            eprintln!();
+            return BarrierResult::Stalled {
+                remaining,
+                finalizers: remaining_finalizers,
+                reason: format!(
+                    "no progress for {}s — {} resources stuck in Deleting with finalizers",
+                    stall_duration, deleting_count
+                ),
+            };
+        }
+
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
 }
 
-async fn is_gone(client: &Client, resource: &ResourceId, kind_map: &KindMap) -> bool {
-    let kind_info = match kind_map.get(&resource.kind) {
-        Some(i) => i,
-        None => return true,
-    };
-
-    let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&resource.kind);
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-    let api: Api<DynamicObject> = if let Some(ns) = &resource.namespace {
-        Api::namespaced_with(client.clone(), ns, &ar)
-    } else if kind_info.namespaced {
-        return true;
-    } else {
-        Api::all_with(client.clone(), &ar)
-    };
-
-    matches!(
-        api.get(&resource.name).await,
-        Err(kube::Error::Api(err)) if err.code == 404
-    )
-}
-
 async fn get_finalizers(client: &Client, resource: &ResourceId, kind_map: &KindMap) -> Vec<String> {
-    let kind_info = match kind_map.get(&resource.kind) {
-        Some(i) => i,
+    let (api, _) = match resolve_api(client, resource, kind_map) {
+        Some(r) => r,
         None => return vec![],
-    };
-
-    let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&resource.kind);
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-    let api: Api<DynamicObject> = if let Some(ns) = &resource.namespace {
-        Api::namespaced_with(client.clone(), ns, &ar)
-    } else if kind_info.namespaced {
-        return vec![];
-    } else {
-        Api::all_with(client.clone(), &ar)
     };
 
     match api.get(&resource.name).await {
@@ -462,7 +522,7 @@ pub fn print_execution_result(result: &ExecutionResult) {
 
     if let Some(timeout) = &result.barrier_timeout {
         eprintln!(
-            "\n\x1b[1;33mBarrier timeout in phase '{}'\x1b[0m — {} resources remain:",
+            "\n\x1b[1;33mBarrier stalled in phase '{}'\x1b[0m — {} resources remain:",
             timeout.phase,
             timeout.remaining.len()
         );

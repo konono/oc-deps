@@ -8,7 +8,7 @@ use kube::{
 use serde::{Deserialize, Serialize};
 
 use crate::kube::discovery::KindMap;
-use crate::kube::resource::ResourceId;
+use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::planner::{Action, TeardownPlan};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -94,8 +94,8 @@ async fn check_resource(
     kind_map: &KindMap,
     is_keep: bool,
 ) -> ResourceStatus {
-    let kind_info = match kind_map.get(&resource.kind) {
-        Some(i) => i,
+    let (api, _) = match resolve_api(client, resource, kind_map) {
+        Some(r) => r,
         None => {
             return ResourceStatus {
                 resource: resource.clone(),
@@ -106,23 +106,6 @@ async fn check_resource(
                 is_keep,
             };
         }
-    };
-
-    let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&resource.kind);
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-    let api: Api<DynamicObject> = if let Some(ns) = &resource.namespace {
-        Api::namespaced_with(client.clone(), ns, &ar)
-    } else if kind_info.namespaced {
-        return ResourceStatus {
-            resource: resource.clone(),
-            state: ProgressState::Unknown,
-            finalizers: vec![],
-            deletion_timestamp: None,
-            controller_available: None,
-            is_keep,
-        };
-    } else {
-        Api::all_with(client.clone(), &ar)
     };
 
     match api.get(&resource.name).await {
