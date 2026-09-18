@@ -6,7 +6,7 @@ use kube::{Client, api::DeleteParams};
 
 use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
-use crate::teardown::planner::{Action, TeardownPlan};
+use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
 
 #[derive(Debug)]
 enum DeleteResult {
@@ -145,12 +145,7 @@ pub async fn execute_plan(
         .preflight
         .checks
         .iter()
-        .filter(|c| {
-            !c.passed
-                && (c.name.contains("CSV health")
-                    || c.name.contains("Controller available")
-                    || c.name.contains("Subscription resolved"))
-        })
+        .filter(|c| !c.passed && c.severity == PreflightSeverity::Critical)
         .map(|c| c.name.as_str())
         .collect();
     if !critical_failures.is_empty() && !dry_run {
@@ -168,7 +163,7 @@ pub async fn execute_plan(
         .preflight
         .checks
         .iter()
-        .filter(|c| !c.passed && !critical_failures.contains(&c.name.as_str()))
+        .filter(|c| !c.passed && c.severity == PreflightSeverity::Warning)
         .map(|c| c.name.as_str())
         .collect();
     if !non_critical_failures.is_empty() && !dry_run && !force {

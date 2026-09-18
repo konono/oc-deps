@@ -95,10 +95,119 @@ The `--up-only` mode skips step 2 entirely and uses targeted API calls to walk t
 
 **JSON** — structured output for scripting and automation.
 
+## Operator Teardown
+
+`oc-deps` includes a teardown planner that generates safe, phased deletion plans for OLM-managed operators.
+
+### List operators
+
+```bash
+oc-deps operators              # tree view
+oc-deps operators -o table     # table view
+oc-deps operators -o json      # JSON output
+```
+
+### Inspect an operator
+
+Show all resources belonging to an operator (OLM resources, controllers, CRDs, CR instances, pods):
+
+```bash
+oc-deps teardown inspect rhods-operator
+```
+
+### Generate a teardown plan
+
+```bash
+oc-deps teardown plan rhods-operator
+oc-deps teardown plan rhods-operator odf-operator   # multiple operators
+oc-deps teardown plan rhods-operator -o json         # JSON output
+oc-deps teardown plan rhods-operator --prune-apis    # include CRD deletion
+```
+
+The plan is read-only — nothing is deleted. It generates a phased deletion sequence:
+
+| Phase | Name | Action |
+|-------|------|--------|
+| 0 | Freeze OLM | DELETE Subscription, KEEP CSV |
+| 1 | Trigger operand cleanup | DELETE root CRs, EXPECT managed descendants to vanish |
+| 2 | Remaining cleanup | DELETE any remaining operands |
+| 3 | Remove controllers | DELETE CSV (GC removes Deployments) |
+| 4 | APIs | KEEP CRDs by default (DELETE with `--prune-apis`) |
+| 5 | Namespaces | KEEP (manual verification required) |
+
+### Check resource status
+
+```bash
+oc-deps teardown status rhods-operator
+```
+
+Shows the current cluster state of each resource in the plan (EXISTS, DELETING, GONE) with finalizer details.
+
+### Explain plan ordering
+
+```bash
+oc-deps teardown explain rhods-operator --resource datasciencecluster/default-dsc
+```
+
+Explains why a specific resource is in its phase, showing the evidence chain from OLM attribution and safety invariants.
+
+### Execute a plan
+
+```bash
+oc-deps teardown apply rhods-operator --dry-run    # preview only
+oc-deps teardown apply rhods-operator              # interactive confirmation
+oc-deps teardown apply rhods-operator --force       # override REVIEW/warnings
+```
+
+### Cluster snapshot and evidence graph
+
+```bash
+oc-deps snapshot -n <namespace> -o snapshot.json
+oc-deps graph -n <namespace> -o evidence-graph.json
+```
+
+### Safety tiers
+
+`apply` enforces a multi-layer safety model before any deletion:
+
+| Tier | Condition | Override |
+|------|-----------|----------|
+| **Blocker** | External operator depends on target CRD | Cannot override |
+| **Critical preflight** | CSV not Succeeded, controller unavailable | Cannot override (`--force` ignored) |
+| **Non-critical preflight** | Uncertain CR provenance | `--force` overrides |
+| **REVIEW items** | Resources with unknown provenance | `--force` overrides |
+| **Confirmation** | Interactive y/N prompt | User types `y` |
+| **Barrier** | Resources must vanish before next phase | Times out after 300s or stalls after 120s |
+| **Pre-controller guard** | REVIEW resources with finalizers block CSV deletion | Cannot override |
+
+### Provenance classification
+
+CRs are classified by how strongly they can be attributed to the target operator:
+
+- **Managed**: ownerRef points to operator's CSV or Deployment
+- **LikelyManaged**: labels contain the operator's CSV name prefix, or managedFields manager matches a deployment name
+- **Unknown**: no attributable evidence
+
+Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW items — `--force` is required to proceed with them unresolved. With `--force`, REVIEW resources without finalizers may become orphans after controller deletion.
+
+### Key flags
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show what would be done without executing |
+| `--prune-apis` | Include CRD deletion in plan (default: KEEP) |
+| `--force` | Override REVIEW items and non-critical preflight warnings. Cannot override blockers, critical preflight (controller health), or pre-controller finalizer guards |
+| `--no-cache` | Skip API discovery cache (force fresh discovery) |
+
 ## Build
 
 ```bash
 cargo build --release
+# or
+make build           # dev build
+make release         # release build
+make check           # fmt + lint + build
+make test            # run tests
 ```
 
 The binary is at `target/release/oc-deps`.

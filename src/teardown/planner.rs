@@ -28,9 +28,16 @@ pub struct Preflight {
     pub checks: Vec<PreflightCheck>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreflightSeverity {
+    Critical,
+    Warning,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreflightCheck {
     pub name: String,
+    pub severity: PreflightSeverity,
     pub passed: bool,
     pub detail: String,
 }
@@ -369,6 +376,7 @@ async fn run_preflight(
         };
         checks.push(PreflightCheck {
             name: format!("Subscription resolved ({})", op.csv.name),
+            severity: PreflightSeverity::Critical,
             passed,
             detail,
         });
@@ -379,6 +387,7 @@ async fn run_preflight(
         let csv_ok = check_csv_health(client, op, kind_map).await;
         checks.push(PreflightCheck {
             name: format!("CSV health ({})", op.csv.name),
+            severity: PreflightSeverity::Critical,
             passed: csv_ok.0,
             detail: csv_ok.1,
         });
@@ -386,6 +395,7 @@ async fn run_preflight(
         let ctrl_ok = check_controller_health(client, op, kind_map).await;
         checks.push(PreflightCheck {
             name: format!("Controller available ({})", op.csv.name),
+            severity: PreflightSeverity::Critical,
             passed: ctrl_ok.0,
             detail: ctrl_ok.1,
         });
@@ -395,6 +405,7 @@ async fn run_preflight(
     if total_observations != unique_count {
         checks.push(PreflightCheck {
             name: "CR dedup".to_string(),
+            severity: PreflightSeverity::Warning,
             passed: true,
             detail: format!(
                 "{} observations normalized to {} unique CRs",
@@ -407,6 +418,7 @@ async fn run_preflight(
     if review_provenance_count > 0 {
         checks.push(PreflightCheck {
             name: "Provenance".to_string(),
+            severity: PreflightSeverity::Warning,
             passed: false,
             detail: format!(
                 "{} CRs have uncertain provenance (will be marked REVIEW if independent)",
@@ -726,7 +738,7 @@ pub async fn generate_teardown_plan(
             Provenance::Managed => {
                 phase1_actions.push(Action::Delete {
                     resource: cr.id.clone(),
-                    reason: format!("independent operand (provenance: {:?})", cr.provenance),
+                    reason: "independent operand (managed via ownerRef)".to_string(),
                 });
             }
             Provenance::LikelyManaged => {
