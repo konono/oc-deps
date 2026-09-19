@@ -989,7 +989,10 @@ pub async fn discover_related_crd_instances(
             return RelatedCrdReport {
                 actions,
                 instances: vec![],
-                unavailable_crds: vec![],
+                unavailable_crds: vec![(
+                    "<related-crd-catalog>".to_string(),
+                    "CustomResourceDefinition kind not found in discovery".to_string(),
+                )],
                 crd_count: 0,
                 instance_count: 0,
             };
@@ -1004,11 +1007,14 @@ pub async fn discover_related_crd_instances(
     let label_selector = "platform.opendatahub.io/part-of";
     let all_crds = match crd_api.list(&ListParams::default()).await {
         Ok(list) => list.items,
-        Err(_) => {
+        Err(e) => {
             return RelatedCrdReport {
                 actions,
                 instances: vec![],
-                unavailable_crds: vec![],
+                unavailable_crds: vec![(
+                    "<related-crd-catalog>".to_string(),
+                    format!("LIST CustomResourceDefinitions failed: {}", e),
+                )],
                 crd_count: 0,
                 instance_count: 0,
             };
@@ -1564,13 +1570,18 @@ pub async fn generate_teardown_plan(
         map
     };
 
+    // Build UID → CrInstance index for ownerRef ancestry resolution
+    let cr_by_uid: HashMap<&str, &CrInstance> = cr_instances
+        .iter()
+        .filter_map(|cr| cr.id.uid.as_deref().map(|uid| (uid, cr)))
+        .collect();
+
     // Collect approvable root CRs: non-Managed provenance AND not shared-owned
     let approvable_root_ids: Vec<&ResourceId> = root_crs
         .iter()
         .filter(|cr| {
             !matches!(cr.provenance, Provenance::Managed)
-                && !api_to_op_indices
-                    .get(cr.api_owner_key.as_str())
+                && !resolve_op_index(cr, &api_to_op_indices, &cr_by_uid)
                     .is_some_and(|v| v.len() > 1)
         })
         .map(|cr| &cr.id)
@@ -1636,6 +1647,41 @@ pub async fn generate_teardown_plan(
                 resource: cr.id.clone(),
                 reason: "unclassified CR".to_string(),
             },
+        }
+    }
+
+    // Resolve operator attribution via ownerRef ancestry
+    // For CRs whose api_owner_key isn't in api_to_op_indices (e.g. related CRs),
+    // trace ownerRef chain to find an ancestor with known attribution
+    fn resolve_op_index<'a>(
+        cr: &CrInstance,
+        api_to_op_indices: &'a HashMap<String, HashSet<usize>>,
+        cr_by_uid: &HashMap<&str, &CrInstance>,
+    ) -> Option<&'a HashSet<usize>> {
+        if let Some(owners) = api_to_op_indices.get(cr.api_owner_key.as_str()) {
+            return Some(owners);
+        }
+        // Trace ownerRef chain upward
+        let mut visited = HashSet::new();
+        let mut current_refs = &cr.owner_refs;
+        loop {
+            let mut found_ancestor = false;
+            for (_, _, ref_uid) in current_refs {
+                if !visited.insert(ref_uid.as_str()) {
+                    continue;
+                }
+                if let Some(ancestor) = cr_by_uid.get(ref_uid.as_str()) {
+                    if let Some(owners) = api_to_op_indices.get(ancestor.api_owner_key.as_str()) {
+                        return Some(owners);
+                    }
+                    current_refs = &ancestor.owner_refs;
+                    found_ancestor = true;
+                    break;
+                }
+            }
+            if !found_ancestor {
+                return None;
+            }
         }
     }
 
@@ -1727,7 +1773,7 @@ pub async fn generate_teardown_plan(
             let mut phase_actions: Vec<Action> = Vec::new();
 
             for cr in &root_crs {
-                let owners = api_to_op_indices.get(cr.api_owner_key.as_str());
+                let owners = resolve_op_index(cr, &api_to_op_indices, &cr_by_uid);
                 let action = if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         Action::Review {
@@ -1748,7 +1794,7 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &managed_descendants {
-                let owners = api_to_op_indices.get(cr.api_owner_key.as_str());
+                let owners = resolve_op_index(cr, &api_to_op_indices, &cr_by_uid);
                 if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
@@ -1772,7 +1818,7 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &independent_crs {
-                let owners = api_to_op_indices.get(cr.api_owner_key.as_str());
+                let owners = resolve_op_index(cr, &api_to_op_indices, &cr_by_uid);
                 if owners.is_some_and(|v| v.len() > 1) {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
@@ -1823,8 +1869,7 @@ pub async fn generate_teardown_plan(
                     continue;
                 }
                 let is_shared = root_cr.is_some_and(|cr| {
-                    api_to_op_indices
-                        .get(cr.api_owner_key.as_str())
+                    resolve_op_index(cr, &api_to_op_indices, &cr_by_uid)
                         .is_some_and(|v| v.len() > 1)
                 });
                 if is_shared {
