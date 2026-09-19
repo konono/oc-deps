@@ -965,6 +965,95 @@ async fn check_controller_health(
 
 const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca.crt"];
 
+struct RelatedCrdReport {
+    actions: Vec<Action>,
+    crd_count: usize,
+    instance_count: usize,
+}
+
+async fn discover_related_crd_instances(
+    client: &Client,
+    target_crds: &HashSet<&str>,
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
+) -> RelatedCrdReport {
+    let mut actions = Vec::new();
+
+    let crd_kind_info = match kind_map.get("CustomResourceDefinition") {
+        Some(i) => i,
+        None => {
+            return RelatedCrdReport {
+                actions,
+                crd_count: 0,
+                instance_count: 0,
+            };
+        }
+    };
+
+    let crd_gvk = GroupVersion::gv(&crd_kind_info.group, &crd_kind_info.version)
+        .with_kind("CustomResourceDefinition");
+    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
+    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+
+    let label_selector = "platform.opendatahub.io/part-of";
+    let all_crds = match crd_api.list(&ListParams::default()).await {
+        Ok(list) => list.items,
+        Err(_) => {
+            return RelatedCrdReport {
+                actions,
+                crd_count: 0,
+                instance_count: 0,
+            };
+        }
+    };
+
+    let mut related_crd_names: Vec<String> = Vec::new();
+    for crd in &all_crds {
+        let crd_name = match &crd.metadata.name {
+            Some(n) => n,
+            None => continue,
+        };
+        if target_crds.contains(crd_name.as_str()) {
+            continue;
+        }
+        let has_label = crd
+            .metadata
+            .labels
+            .as_ref()
+            .is_some_and(|l| l.contains_key(label_selector));
+        if has_label {
+            related_crd_names.push(crd_name.clone());
+        }
+    }
+
+    if related_crd_names.is_empty() {
+        return RelatedCrdReport {
+            actions,
+            crd_count: 0,
+            instance_count: 0,
+        };
+    }
+
+    let related_report = discover_cr_instances(client, &related_crd_names, gvr_map, gk_map).await;
+
+    let crd_count = related_crd_names.len();
+    let instance_count = related_report.instances.len();
+
+    for cr in related_report.instances {
+        actions.push(Action::Review {
+            resource: cr.id,
+            reason: "related CRD instance (not CSV-owned, discovered via label)".to_string(),
+        });
+    }
+
+    RelatedCrdReport {
+        actions,
+        crd_count,
+        instance_count,
+    }
+}
+
 async fn discover_namespace_resources(
     client: &Client,
     target_operators: &[&OperatorInstance],
@@ -1960,8 +2049,38 @@ pub async fn generate_teardown_plan(
         }
     }
 
+    // ── Related CRD instances (label-based discovery) ──
+    eprint!("🔍 Discovering related CRD instances...");
+    let related_report =
+        discover_related_crd_instances(client, &target_crd_set, kind_map, gvr_map, gk_map).await;
+    eprintln!(
+        " {} CRDs, {} instances",
+        related_report.crd_count, related_report.instance_count
+    );
+
+    let related_phase = if !related_report.actions.is_empty() {
+        warnings.push(Warning {
+            message: format!(
+                "{} instances across {} related CRDs (not CSV-owned) require manual review",
+                related_report.instance_count, related_report.crd_count
+            ),
+            resource: None,
+        });
+        Some(PlanPhase {
+            name: "Related operands".to_string(),
+            description: "Instances of CRDs managed by sub-controllers (not CSV-owned). These may include user-created resources.".to_string(),
+            actions: related_report.actions,
+            barrier: None,
+        })
+    } else {
+        None
+    };
+
     let mut phases = vec![phase0];
     phases.extend(operand_phases);
+    if let Some(rp) = related_phase {
+        phases.push(rp);
+    }
     phases.push(phase_remaining);
     phases.extend(controller_phases);
     if let Some(ns_phase) = ns_cleanup_phase {

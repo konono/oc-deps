@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
-use crate::kube::discovery::{GvrMap, KindMap};
+use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
 const DEFAULT_CONCURRENCY: usize = 16;
@@ -22,6 +22,7 @@ const LIST_PAGE_SIZE: u32 = 500;
 pub struct OperatorInspection {
     pub operator: OperatorInstance,
     pub cr_instances: Vec<ResourceId>,
+    pub related_cr_instances: Vec<ResourceId>,
     pub controller_pods: Vec<ResourceId>,
 }
 
@@ -30,6 +31,7 @@ pub async fn inspect_operator(
     operator: &OperatorInstance,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
 ) -> Result<OperatorInspection> {
     eprint!("🔍 Discovering CR instances...");
 
@@ -114,6 +116,99 @@ pub async fn inspect_operator(
 
     eprintln!(" found {} instances", cr_instances.len());
 
+    // Related CRDs (label-based)
+    eprint!("🔍 Discovering related CRDs...");
+    let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
+    let mut related_cr_instances = Vec::new();
+
+    let crd_kind_info = kind_map.get("CustomResourceDefinition");
+    if let Some(crd_ki) = crd_kind_info {
+        let crd_gvk =
+            GroupVersion::gv(&crd_ki.group, &crd_ki.version).with_kind("CustomResourceDefinition");
+        let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
+        let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+
+        if let Ok(all_crds) = crd_api.list(&ListParams::default()).await {
+            let mut related_crd_names: Vec<String> = Vec::new();
+            for crd in &all_crds.items {
+                let crd_name = match &crd.metadata.name {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if owned_crd_set.contains(crd_name.as_str()) {
+                    continue;
+                }
+                let has_label = crd
+                    .metadata
+                    .labels
+                    .as_ref()
+                    .is_some_and(|l| l.contains_key("platform.opendatahub.io/part-of"));
+                if has_label {
+                    related_crd_names.push(crd_name.clone());
+                }
+            }
+
+            let gvr_map_ref = gvr_map.clone();
+            let gk_map_arc = Arc::new(gk_map.clone());
+            let related_futs = related_crd_names.iter().map(|crd_name| {
+                let client = client.clone();
+                let crd_name = crd_name.clone();
+                let gm = gvr_map_ref.clone();
+                let gk = gk_map_arc.clone();
+                async move {
+                    let (plural, group) = match crd_name.split_once('.') {
+                        Some((p, g)) => (p, g),
+                        None => return vec![],
+                    };
+                    let gvr_key = format!("{}.{}", plural, group).to_lowercase();
+                    let kind = match gm.get(&gvr_key) {
+                        Some(k) => k.clone(),
+                        None => return vec![],
+                    };
+                    let ki = match gk.get(&(group.to_string(), kind.clone())) {
+                        Some(i) => i,
+                        None => return vec![],
+                    };
+                    let gvk = GroupVersion::gv(&ki.group, &ki.version).with_kind(&kind);
+                    let ar = ApiResource::from_gvk_with_plural(&gvk, &ki.plural);
+                    let api: Api<DynamicObject> = Api::all_with(client, &ar);
+                    match list_paginated(&api).await {
+                        Ok(items) => items
+                            .into_iter()
+                            .filter_map(|obj| {
+                                Some(ResourceId {
+                                    group: ki.group.clone(),
+                                    version: ki.version.clone(),
+                                    kind: kind.clone(),
+                                    namespace: obj.metadata.namespace,
+                                    name: obj.metadata.name?,
+                                    uid: obj.metadata.uid,
+                                })
+                            })
+                            .collect(),
+                        Err(_) => vec![],
+                    }
+                }
+            });
+
+            let related_results: Vec<Vec<ResourceId>> = futures::stream::iter(related_futs)
+                .buffer_unordered(DEFAULT_CONCURRENCY)
+                .collect()
+                .await;
+            related_cr_instances = related_results.into_iter().flatten().collect();
+
+            let mut seen_uids = HashSet::new();
+            related_cr_instances.retain(|cr| {
+                if let Some(uid) = &cr.uid {
+                    seen_uids.insert(uid.clone())
+                } else {
+                    true
+                }
+            });
+        }
+    }
+    eprintln!(" found {} related instances", related_cr_instances.len());
+
     let mut controller_pods = Vec::new();
 
     eprint!("🔍 Discovering controller pods...");
@@ -189,6 +284,7 @@ pub async fn inspect_operator(
     Ok(OperatorInspection {
         operator: operator.clone(),
         cr_instances,
+        related_cr_instances,
         controller_pods,
     })
 }
@@ -287,16 +383,32 @@ fn print_inspection_tree(inspection: &OperatorInspection) {
         }
     }
 
+    // Related CR Instances
+    if !inspection.related_cr_instances.is_empty() {
+        println!(
+            "\n\x1b[1mRelated CR Instances ({})\x1b[0m",
+            inspection.related_cr_instances.len()
+        );
+        for cr in &inspection.related_cr_instances {
+            let scope = match &cr.namespace {
+                Some(ns) => format!("  \x1b[2m(ns: {})\x1b[0m", ns),
+                None => "  \x1b[2m(cluster-scoped)\x1b[0m".to_string(),
+            };
+            println!("  {}/{}{}", cr.kind, cr.name, scope);
+        }
+    }
+
     // Summary
     let olm_count = 1 + op.subscription.as_ref().map(|_| 1).unwrap_or(0);
     let controller_count =
         op.deployments.len() + op.service_accounts.len() + inspection.controller_pods.len();
     println!(
-        "\n\x1b[1mSummary\x1b[0m: {} OLM, {} controller, {} CRDs, {} CR instances",
+        "\n\x1b[1mSummary\x1b[0m: {} OLM, {} controller, {} CRDs, {} CR instances, {} related",
         olm_count,
         controller_count,
         unique_crds.len(),
-        inspection.cr_instances.len()
+        inspection.cr_instances.len(),
+        inspection.related_cr_instances.len()
     );
 }
 

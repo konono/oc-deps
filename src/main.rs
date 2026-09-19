@@ -265,7 +265,7 @@ async fn main() -> Result<()> {
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map, _gk_map, _) =
+                        let (kind_map, gvr_map, gk_map, _) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -278,7 +278,8 @@ async fn main() -> Result<()> {
                         let target_op = &all_operators[target_indices[0]];
 
                         let inspection =
-                            inspect_operator(&client, target_op, &kind_map, &gvr_map).await?;
+                            inspect_operator(&client, target_op, &kind_map, &gvr_map, &gk_map)
+                                .await?;
 
                         print_inspection(&inspection, &output);
                     }
