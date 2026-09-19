@@ -2437,6 +2437,57 @@ pub async fn generate_teardown_plan(
         }
     }
 
+    // Preserved root operands also become hard blockers
+    for phase in &operand_phases {
+        for action in &phase.actions {
+            if let Action::Keep { resource, reason } = action {
+                let is_root = root_crs.iter().any(|cr| cr.id == *resource);
+                if is_root {
+                    blockers.push(Blocker {
+                        resource: resource.clone(),
+                        reason: format!(
+                            "root operand explicitly preserved; operator controller must be retained: {}",
+                            reason
+                        ),
+                        external_dependency: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // EXPECT→DELETE invariant: demote EXPECT_GONE descendants whose root
+    // trigger is not scheduled for DELETE (preserved or still REVIEW)
+    {
+        let scheduled_delete_uids: HashSet<String> = operand_phases
+            .iter()
+            .flat_map(|p| &p.actions)
+            .filter_map(|a| match a {
+                Action::Delete { resource, .. } => resource.uid.clone(),
+                _ => None,
+            })
+            .collect();
+
+        for phase in &mut operand_phases {
+            for action in &mut phase.actions {
+                if let Action::ExpectGone { resource, .. } = action {
+                    let cr = cr_instances.iter().find(|cr| cr.id == *resource);
+                    let has_delete_trigger = cr.is_some_and(|cr| {
+                        cr.owner_refs
+                            .iter()
+                            .any(|(_, _, uid)| scheduled_delete_uids.contains(uid))
+                    });
+                    if !has_delete_trigger {
+                        *action = Action::Keep {
+                            resource: resource.clone(),
+                            reason: "cleanup trigger not scheduled for deletion".to_string(),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
     // Remaining cleanup phase (empty catch-all)
     let phase_remaining = PlanPhase {
         name: "Remaining cleanup".to_string(),
