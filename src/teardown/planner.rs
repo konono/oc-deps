@@ -17,7 +17,7 @@ use crate::analyzers::olm::{
 use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
-use crate::kube::resource::ResourceId;
+use crate::kube::resource::{ResourceId, resolve_api};
 
 // ── Decision types ──
 
@@ -1743,10 +1743,16 @@ pub async fn generate_teardown_plan(
             false
         }
 
+        // Build set of API groups owned by target operators for CRD-ownership fallback
+        let target_owned_groups: HashSet<&str> = target_crd_set
+            .iter()
+            .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
+            .collect();
+
         let mut linked_count = 0;
         let mut unlinked_count = 0;
         for cr in related_instances {
-            let linked = cr.owner_refs.iter().any(|(_, _, owner_uid)| {
+            let linked_by_owner_ref = cr.owner_refs.iter().any(|(_, _, owner_uid)| {
                 is_reachable(
                     owner_uid,
                     &anchor_uids,
@@ -1754,7 +1760,19 @@ pub async fn generate_teardown_plan(
                     &mut HashSet::new(),
                 )
             });
-            if linked {
+
+            // Fallback: if no ownerRef chain, check if the CR's CRD is directly
+            // owned by the target operator's CSV. Resources whose API group matches
+            // a target-owned CRD and whose provenance indicates operator management
+            // are treated as linked (managed operands created without ownerRef).
+            let linked_by_crd_ownership = !linked_by_owner_ref
+                && target_owned_groups.contains(cr.id.group.as_str())
+                && matches!(
+                    cr.provenance,
+                    Provenance::Managed | Provenance::LikelyManaged
+                );
+
+            if linked_by_owner_ref || linked_by_crd_ownership {
                 linked_count += 1;
                 let mut cr = cr;
                 cr.discovery_source = DiscoverySource::RelatedLinked;
@@ -2782,6 +2800,87 @@ pub async fn generate_teardown_plan(
     }
     phases.push(phase4);
     phases.push(phase5);
+
+    // Post-phase preflight: check EXPECT targets for finalizers in phases with multiple DELETEs.
+    // This surfaces serialization decisions in the plan output.
+    for phase in &phases {
+        let delete_count = phase
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::Delete { .. }))
+            .count();
+        if delete_count <= 1 || phase.barrier.is_none() {
+            continue;
+        }
+        let expect_resources: Vec<&ResourceId> = phase
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::ExpectGone { resource, .. } => Some(resource),
+                _ => None,
+            })
+            .collect();
+        if expect_resources.is_empty() {
+            continue;
+        }
+
+        let km_arc = Arc::new(kind_map.clone());
+        let gk_arc = Arc::new(gk_map.clone());
+        let fin_futs = expect_resources.iter().take(50).map(|res| {
+            let client = client.clone();
+            let res = (*res).clone();
+            let km = km_arc.clone();
+            let gk = gk_arc.clone();
+            async move {
+                let Some((api, _)) = resolve_api(&client, &res, &km, &gk) else {
+                    return Err(None);
+                };
+                match api.get(&res.name).await {
+                    Ok(obj) => {
+                        let fins = obj.metadata.finalizers.unwrap_or_default();
+                        if fins.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some((res, fins)))
+                        }
+                    }
+                    Err(kube::Error::Api(err)) if err.code == 404 => Ok(None),
+                    Err(e) => Err(Some((res, format!("{}", e)))),
+                }
+            }
+        });
+
+        let fin_results: Vec<_> = futures::stream::iter(fin_futs)
+            .buffer_unordered(16)
+            .collect()
+            .await;
+
+        let finalized: Vec<(ResourceId, Vec<String>)> = fin_results
+            .into_iter()
+            .filter_map(|r| match r {
+                Ok(Some(pair)) => Some(pair),
+                _ => None,
+            })
+            .collect();
+
+        if !finalized.is_empty() {
+            let detail = finalized
+                .iter()
+                .map(|(r, f)| format!("{}/{} [{}]", r.kind, r.name, f.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ");
+            preflight.checks.push(PreflightCheck {
+                name: format!("Finalizers in phase '{}'", phase.name),
+                severity: PreflightSeverity::Warning,
+                passed: false,
+                detail: format!(
+                    "{} EXPECT target(s) have finalizers — root CR deletions will be serialized. {}",
+                    finalized.len(),
+                    detail
+                ),
+            });
+        }
+    }
 
     let plan = TeardownPlan {
         targets,

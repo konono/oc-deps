@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use futures::stream::StreamExt;
 use kube::{
     Client,
-    api::{Api, ApiResource, DeleteParams, DynamicObject, ListParams},
+    api::{Api, ApiResource, DeleteParams, DynamicObject, ListParams, Patch, PatchParams},
     core::GroupVersion,
 };
 
@@ -165,6 +165,7 @@ pub async fn execute_plan(
     gvr_map: &GvrMap,
     dry_run: bool,
     force: bool,
+    strip_finalizers: bool,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -353,63 +354,221 @@ pub async fn execute_plan(
                     }
                 }
 
-                // Parallel DELETE (excluding blocked APIs)
+                // Eligible DELETEs (excluding blocked APIs)
                 let eligible: Vec<_> = delete_actions
                     .iter()
                     .filter(|(r, _)| !api_blocked.contains(&r.name))
                     .collect();
+                let eligible_resources: Vec<ResourceId> = eligible.iter().map(|(r, _)| r.clone()).collect();
 
-                let km = Arc::new(kind_map.clone());
-                let gk = Arc::new(gk_map.clone());
-                let del_futs = eligible.iter().map(|(resource, _)| {
-                    let client = client.clone();
-                    let resource = resource.clone();
-                    let km = km.clone();
-                    let gk = gk.clone();
-                    async move {
-                        let res = delete_resource(&client, &resource, &km, &gk).await;
-                        (resource, res)
+                // Pre-flight: check if EXPECT targets in this phase have finalizers.
+                // If so, serialize root CR deletions to let the controller process
+                // finalizers while other root CRs still exist.
+                let expect_targets: Vec<&ResourceId> = phase
+                    .actions
+                    .iter()
+                    .filter_map(|a| match a {
+                        Action::ExpectGone { resource, .. } => Some(resource),
+                        _ => None,
+                    })
+                    .collect();
+
+                let has_finalized_descendants = if !expect_targets.is_empty()
+                    && eligible_resources.len() > 1
+                    && phase.barrier.is_some()
+                {
+                    let km = Arc::new(kind_map.clone());
+                    let gk = Arc::new(gk_map.clone());
+                    let fin_futs = expect_targets.iter().take(30).map(|res| {
+                        let client = client.clone();
+                        let res = (*res).clone();
+                        let km = km.clone();
+                        let gk = gk.clone();
+                        async move {
+                            let r = check_finalizers(&client, &res, &km, &gk).await;
+                            (res, r)
+                        }
+                    });
+                    let fin_results: Vec<_> = futures::stream::iter(fin_futs)
+                        .buffer_unordered(DEFAULT_CONCURRENCY)
+                        .collect()
+                        .await;
+                    let count = fin_results
+                        .iter()
+                        .filter(|(_, r)| matches!(r, FinalizerCheckResult::Known(f) if !f.is_empty()))
+                        .count();
+                    if count > 0 {
+                        eprintln!(
+                            "  \x1b[33m⚠ {} EXPECT target(s) have finalizers — serializing root CR deletions\x1b[0m",
+                            count
+                        );
                     }
-                });
+                    count > 0
+                } else {
+                    false
+                };
 
-                let del_results: Vec<_> = futures::stream::iter(del_futs)
-                    .buffer_unordered(DEFAULT_CONCURRENCY)
-                    .collect()
-                    .await;
+                if has_finalized_descendants {
+                    // Collect all EXPECT + WaitGone targets upfront so intermediate
+                    // barriers can wait for descendant finalizer processing
+                    let all_expect_targets: Vec<ResourceId> = phase
+                        .actions
+                        .iter()
+                        .filter_map(|a| match a {
+                            Action::ExpectGone { resource, .. } => Some(resource.clone()),
+                            Action::WaitGone { resource } => Some(resource.clone()),
+                            _ => None,
+                        })
+                        .collect();
 
-                for (resource, del_result) in del_results {
-                    match del_result {
-                        DeleteResult::Deleted => {
+                    // Track stalled resource sets to detect deadlocks:
+                    // if consecutive intermediate barriers stall on the same set,
+                    // skip remaining barriers (deleting more root CRs won't help)
+                    let mut prev_stall_set: Option<HashSet<ResourceId>> = None;
+                    let mut skip_intermediate = false;
+
+                    // Sequential deletion: delete one root CR at a time, barrier between each
+                    for (seq_idx, resource) in eligible_resources.iter().enumerate() {
+                        let (s, d) = execute_delete_batch(
+                            client,
+                            std::slice::from_ref(resource),
+                            kind_map,
+                            gk_map,
+                            &mut result,
+                            None,
+                        )
+                        .await;
+
+                        // Retry if webhook rejected
+                        let mut d = d;
+                        for attempt in 0..2u64 {
+                            if d.is_empty() {
+                                break;
+                            }
+                            let delay = std::time::Duration::from_secs(2 * (attempt + 1));
                             eprintln!(
-                                "  \x1b[31mDELETED\x1b[0m  {}/{}{}",
-                                resource.kind,
-                                resource.name,
-                                scope_suffix(&resource)
+                                "  \x1b[33m⟳ Retrying in {}s...\x1b[0m",
+                                delay.as_secs()
                             );
-                            result.deleted.push(resource.clone());
-                            phase_wait_targets.push(resource);
+                            tokio::time::sleep(delay).await;
+                            let (s2, d2) = execute_delete_batch(
+                                client, &d, kind_map, gk_map, &mut result, Some(attempt + 1),
+                            )
+                            .await;
+                            phase_wait_targets.extend(s2);
+                            d = d2;
                         }
-                        DeleteResult::AlreadyGone => {
-                            eprintln!(
-                                "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
-                                resource.kind,
-                                resource.name,
-                                scope_suffix(&resource)
-                            );
-                            result.already_gone.push(resource);
+
+                        phase_wait_targets.extend(s);
+                        if !d.is_empty() {
+                            for r in &d {
+                                result.failed.push((r.clone(), "failed after retries".to_string()));
+                            }
+                            phase_wait_targets.extend(d);
                         }
-                        DeleteResult::Failed(err) => {
-                            eprintln!(
-                                "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}",
-                                resource.kind,
-                                resource.name,
-                                err,
-                                scope_suffix(&resource)
-                            );
-                            result.failed.push((resource.clone(), err));
-                            phase_wait_targets.push(resource);
+
+                        // Intermediate barrier: wait for this root CR AND all EXPECT
+                        // descendants before deleting the next root CR.
+                        // Skip for the last root CR — main barrier handles it.
+                        // Skip if previous barrier stalled on the same set (deadlock).
+                        if seq_idx < eligible_resources.len() - 1 && phase.barrier.is_some() {
+                            if skip_intermediate {
+                                eprintln!(
+                                    "\n  \x1b[2m⏭ Skipping intermediate barrier (deadlock detected — same resources stalled)\x1b[0m"
+                                );
+                            } else {
+                                let mut inter_wait = phase_wait_targets.clone();
+                                for et in &all_expect_targets {
+                                    if !inter_wait.contains(et) {
+                                        inter_wait.push(et.clone());
+                                    }
+                                }
+                                if !inter_wait.is_empty() {
+                                    eprintln!(
+                                        "\n  \x1b[33m⏳ Intermediate barrier: waiting for {}/{} + {} descendants before next root CR\x1b[0m",
+                                        resource.kind, resource.name, all_expect_targets.len()
+                                    );
+                                    match wait_for_barrier(client, &inter_wait, kind_map, gk_map, 300)
+                                        .await
+                                    {
+                                        BarrierResult::Passed => {
+                                            eprintln!(
+                                                "  \x1b[32m✅ Intermediate barrier passed\x1b[0m"
+                                            );
+                                            phase_wait_targets.clear();
+                                            prev_stall_set = None;
+                                        }
+                                        BarrierResult::Stalled {
+                                            remaining,
+                                            finalizers,
+                                            reason,
+                                        } => {
+                                            let current_stall: HashSet<ResourceId> =
+                                                remaining.iter().cloned().collect();
+                                            if let Some(prev) = &prev_stall_set {
+                                                if *prev == current_stall {
+                                                    eprintln!(
+                                                        "  \x1b[1;33m⚠ Intermediate barrier stalled on same {} resources — skipping remaining intermediate barriers\x1b[0m",
+                                                        current_stall.len()
+                                                    );
+                                                    skip_intermediate = true;
+                                                } else {
+                                                    eprintln!(
+                                                        "  \x1b[1;33m⚠ Intermediate barrier stalled ({}) — continuing with next root CR\x1b[0m",
+                                                        reason
+                                                    );
+                                                }
+                                            } else {
+                                                eprintln!(
+                                                    "  \x1b[1;33m⚠ Intermediate barrier stalled ({}) — continuing with next root CR\x1b[0m",
+                                                    reason
+                                                );
+                                            }
+                                            prev_stall_set = Some(current_stall);
+                                            phase_wait_targets = remaining;
+                                            for (r, f) in finalizers {
+                                                if !f.is_empty()
+                                                    && !phase_wait_targets.contains(&r)
+                                                {
+                                                    phase_wait_targets.push(r);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
+                } else {
+                    // Standard parallel DELETE
+                    let (mut succeeded, mut deferred) =
+                        execute_delete_batch(client, &eligible_resources, kind_map, gk_map, &mut result, None).await;
+
+                    // Quick retry with backoff for webhook ordering races
+                    for attempt in 0..2u64 {
+                        if deferred.is_empty() {
+                            break;
+                        }
+                        let delay = std::time::Duration::from_secs(2 * (attempt + 1));
+                        eprintln!(
+                            "  \x1b[33m⟳ Retrying {} failed DELETE(s) in {}s...\x1b[0m",
+                            deferred.len(),
+                            delay.as_secs()
+                        );
+                        tokio::time::sleep(delay).await;
+
+                        let (s, d) = execute_delete_batch(
+                            client, &deferred, kind_map, gk_map, &mut result, Some(attempt + 1),
+                        ).await;
+                        succeeded.extend(s);
+                        deferred = d;
+                    }
+
+                    phase_wait_targets.extend(succeeded);
+                    for r in &deferred {
+                        result.failed.push((r.clone(), "failed after retries".to_string()));
+                    }
+                    phase_wait_targets.extend(deferred);
                 }
             }
         }
@@ -504,12 +663,71 @@ pub async fn execute_plan(
                                 );
                             }
                         }
-                        result.barrier_timeout = Some(BarrierTimeout {
-                            phase: phase.name.clone(),
-                            remaining: remaining.clone(),
-                            finalizers,
-                        });
-                        break;
+
+                        let stuck_with_finalizers: Vec<_> = finalizers
+                            .iter()
+                            .filter(|(_, f)| !f.is_empty())
+                            .collect();
+
+                        if strip_finalizers && !stuck_with_finalizers.is_empty() {
+                            eprintln!(
+                                "\n  \x1b[1;33m⚠ --strip-finalizers: removing finalizers from {} resource(s)\x1b[0m",
+                                stuck_with_finalizers.len()
+                            );
+                            for (res, fins) in &stuck_with_finalizers {
+                                match strip_resource_finalizers(client, res, kind_map, gk_map).await {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "  \x1b[33mSTRIPPED\x1b[0m {}/{} (was: [{}])",
+                                            res.kind,
+                                            res.name,
+                                            fins.join(", ")
+                                        );
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "  \x1b[1;31mFAILED\x1b[0m   strip {}/{}: {}",
+                                            res.kind, res.name, e
+                                        );
+                                    }
+                                }
+                            }
+                            eprintln!("  \x1b[33m⟳ Re-entering barrier after finalizer strip...\x1b[0m\n");
+                            match wait_for_barrier(client, &remaining, kind_map, gk_map, 120).await {
+                                BarrierResult::Passed => {
+                                    eprintln!("  \x1b[32m✅ Barrier passed (after finalizer strip)\x1b[0m");
+                                }
+                                BarrierResult::Stalled {
+                                    remaining: remaining2,
+                                    finalizers: finalizers2,
+                                    reason: reason2,
+                                } => {
+                                    eprintln!(
+                                        "  \x1b[1;31m⚠ Barrier still stalled after strip — {} resources remain ({})\x1b[0m",
+                                        remaining2.len(),
+                                        reason2
+                                    );
+                                    result.barrier_timeout = Some(BarrierTimeout {
+                                        phase: phase.name.clone(),
+                                        remaining: remaining2,
+                                        finalizers: finalizers2,
+                                    });
+                                    break;
+                                }
+                            }
+                        } else {
+                            if !stuck_with_finalizers.is_empty() && !strip_finalizers {
+                                eprintln!(
+                                    "\n  \x1b[2mHint: use --strip-finalizers to remove finalizers and continue\x1b[0m"
+                                );
+                            }
+                            result.barrier_timeout = Some(BarrierTimeout {
+                                phase: phase.name.clone(),
+                                remaining: remaining.clone(),
+                                finalizers,
+                            });
+                            break;
+                        }
                     }
                 }
             }
@@ -587,6 +805,79 @@ pub async fn execute_plan(
     Ok(result)
 }
 
+async fn execute_delete_batch(
+    client: &Client,
+    targets: &[ResourceId],
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    result: &mut ExecutionResult,
+    retry_num: Option<u64>,
+) -> (Vec<ResourceId>, Vec<ResourceId>) {
+    let km = Arc::new(kind_map.clone());
+    let gk = Arc::new(gk_map.clone());
+    let del_futs = targets.iter().map(|resource| {
+        let client = client.clone();
+        let resource = resource.clone();
+        let km = km.clone();
+        let gk = gk.clone();
+        async move {
+            let res = delete_resource(&client, &resource, &km, &gk).await;
+            (resource, res)
+        }
+    });
+
+    let del_results: Vec<_> = futures::stream::iter(del_futs)
+        .buffer_unordered(DEFAULT_CONCURRENCY)
+        .collect()
+        .await;
+
+    let retry_suffix = match retry_num {
+        Some(n) => format!(" (retry {})", n),
+        None => String::new(),
+    };
+
+    let mut succeeded = Vec::new();
+    let mut deferred = Vec::new();
+
+    for (resource, del_result) in del_results {
+        match del_result {
+            DeleteResult::Deleted => {
+                eprintln!(
+                    "  \x1b[31mDELETED\x1b[0m  {}/{}{}{}",
+                    resource.kind,
+                    resource.name,
+                    retry_suffix,
+                    scope_suffix(&resource)
+                );
+                result.deleted.push(resource.clone());
+                succeeded.push(resource);
+            }
+            DeleteResult::AlreadyGone => {
+                eprintln!(
+                    "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
+                    resource.kind,
+                    resource.name,
+                    scope_suffix(&resource)
+                );
+                result.already_gone.push(resource);
+            }
+            DeleteResult::Failed(err) => {
+                eprintln!(
+                    "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}{}",
+                    resource.kind,
+                    resource.name,
+                    err,
+                    retry_suffix,
+                    scope_suffix(&resource)
+                );
+                deferred.push(resource);
+            }
+        }
+    }
+
+    (succeeded, deferred)
+}
+
 async fn delete_resource(
     client: &Client,
     resource: &ResourceId,
@@ -622,6 +913,27 @@ enum BarrierResult {
 struct ResourceStateInfo {
     state: ObservationState,
     finalizers: Vec<String>,
+}
+
+async fn strip_resource_finalizers(
+    client: &Client,
+    resource: &ResourceId,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+) -> Result<()> {
+    let (api, _) = resolve_api(client, resource, kind_map, gk_map)
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve API for {}/{}", resource.kind, resource.name))?;
+
+    let patch = serde_json::json!({
+        "metadata": { "finalizers": null }
+    });
+    api.patch(
+        &resource.name,
+        &PatchParams::default(),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn check_resource_state_full(
@@ -764,6 +1076,56 @@ async fn wait_for_barrier(
             continue;
         }
         consecutive_unknown_cycles = 0;
+
+        // Re-DELETE resources that exist without deletionTimestamp (recreated by controller)
+        let recreated: Vec<_> = states
+            .iter()
+            .filter(|(_, info)| {
+                matches!(
+                    info.state,
+                    ObservationState::Exists {
+                        has_deletion_timestamp: false,
+                        ..
+                    }
+                )
+            })
+            .map(|(res, _)| res.clone())
+            .collect();
+
+        if !recreated.is_empty() {
+            let re_del_futs = recreated.iter().map(|res| {
+                let client = client.clone();
+                let res = res.clone();
+                let km = kind_map.clone();
+                let gk = gk_map.clone();
+                async move {
+                    let r = delete_resource(&client, &res, &km, &gk).await;
+                    (res, r)
+                }
+            });
+            let re_del_results: Vec<_> = futures::stream::iter(re_del_futs)
+                .buffer_unordered(DEFAULT_CONCURRENCY)
+                .collect()
+                .await;
+            for (res, del_result) in &re_del_results {
+                match del_result {
+                    DeleteResult::Deleted => {
+                        eprint!(
+                            "\r\x1b[2K  \x1b[33m♻ RE-DELETE\x1b[0m {}/{} (recreated by controller)\n",
+                            res.kind, res.name
+                        );
+                    }
+                    DeleteResult::Failed(err) => {
+                        eprint!(
+                            "\r\x1b[2K  \x1b[2m♻ re-delete {}/{} failed: {}\x1b[0m\n",
+                            res.kind, res.name, err
+                        );
+                    }
+                    DeleteResult::AlreadyGone => {}
+                }
+            }
+            std::io::stderr().flush().ok();
+        }
 
         let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
 

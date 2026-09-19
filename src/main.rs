@@ -172,6 +172,7 @@ async fn main() -> Result<()> {
                         dry_run,
                         prune_apis,
                         force,
+                        strip_finalizers,
                         approve_delete,
                         preserve,
                     } => {
@@ -210,7 +211,7 @@ async fn main() -> Result<()> {
                         }
 
                         let result = execute_plan(
-                            &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map, dry_run, force,
+                            &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map, dry_run, force, strip_finalizers,
                         )
                         .await?;
 
