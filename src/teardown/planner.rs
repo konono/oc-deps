@@ -1317,9 +1317,77 @@ pub async fn generate_teardown_plan(
         " {} CRDs, {} instances",
         related_report.crd_count, related_report.instance_count
     );
-    // Merge related instances into the main resource graph
-    // They carry full ownerRefs/labels/managedFields for provenance classification
-    cr_instances.extend(related_report.instances);
+    // Filter related instances: only include those whose ownerRef chain
+    // reaches a direct CR (target operator's owned CRD instance).
+    // This prevents cross-operator contamination where unrelated operators'
+    // CRD instances share the same platform label.
+    {
+        let direct_uids: HashSet<String> = cr_instances
+            .iter()
+            .filter_map(|cr| cr.id.uid.clone())
+            .collect();
+
+        let related_instances = related_report.instances;
+
+        let related_uid_to_owners: HashMap<String, Vec<String>> = related_instances
+            .iter()
+            .filter_map(|cr| {
+                let uid = cr.id.uid.clone()?;
+                let owners: Vec<String> = cr.owner_refs.iter().map(|(_, _, u)| u.clone()).collect();
+                Some((uid, owners))
+            })
+            .collect();
+
+        fn is_reachable(
+            uid: &str,
+            direct_uids: &HashSet<String>,
+            related_owners: &HashMap<String, Vec<String>>,
+            visited: &mut HashSet<String>,
+        ) -> bool {
+            if direct_uids.contains(uid) {
+                return true;
+            }
+            if !visited.insert(uid.to_string()) {
+                return false;
+            }
+            if let Some(owners) = related_owners.get(uid) {
+                for owner_uid in owners {
+                    if direct_uids.contains(owner_uid.as_str()) {
+                        return true;
+                    }
+                    if is_reachable(owner_uid, direct_uids, related_owners, visited) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        let pre_filter = related_instances.len();
+        let reachable: Vec<CrInstance> = related_instances
+            .into_iter()
+            .filter(|cr| {
+                cr.owner_refs.iter().any(|(_, _, owner_uid)| {
+                    is_reachable(
+                        owner_uid,
+                        &direct_uids,
+                        &related_uid_to_owners,
+                        &mut HashSet::new(),
+                    )
+                })
+            })
+            .collect();
+
+        let filtered = pre_filter - reachable.len();
+        if filtered > 0 {
+            eprintln!(
+                "  {} related instances filtered (no ownerRef chain to target operator)",
+                filtered
+            );
+        }
+
+        cr_instances.extend(reachable);
+    }
     all_unavailable.extend(related_report.unavailable_crds);
 
     // UID dedup across direct + APIService + related sources
