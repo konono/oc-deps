@@ -211,7 +211,15 @@ async fn main() -> Result<()> {
                         }
 
                         let result = execute_plan(
-                            &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map, dry_run, force, strip_finalizers,
+                            &client,
+                            &plan,
+                            &kind_map,
+                            &gk_map,
+                            &gvk_map,
+                            &gvr_map,
+                            dry_run,
+                            force,
+                            strip_finalizers,
                         )
                         .await?;
 

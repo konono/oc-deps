@@ -359,7 +359,8 @@ pub async fn execute_plan(
                     .iter()
                     .filter(|(r, _)| !api_blocked.contains(&r.name))
                     .collect();
-                let eligible_resources: Vec<ResourceId> = eligible.iter().map(|(r, _)| r.clone()).collect();
+                let eligible_resources: Vec<ResourceId> =
+                    eligible.iter().map(|(r, _)| r.clone()).collect();
 
                 // Pre-flight: check if EXPECT targets in this phase have finalizers.
                 // If so, serialize root CR deletions to let the controller process
@@ -395,7 +396,9 @@ pub async fn execute_plan(
                         .await;
                     let count = fin_results
                         .iter()
-                        .filter(|(_, r)| matches!(r, FinalizerCheckResult::Known(f) if !f.is_empty()))
+                        .filter(
+                            |(_, r)| matches!(r, FinalizerCheckResult::Known(f) if !f.is_empty()),
+                        )
                         .count();
                     if count > 0 {
                         eprintln!(
@@ -446,13 +449,15 @@ pub async fn execute_plan(
                                 break;
                             }
                             let delay = std::time::Duration::from_secs(2 * (attempt + 1));
-                            eprintln!(
-                                "  \x1b[33m⟳ Retrying in {}s...\x1b[0m",
-                                delay.as_secs()
-                            );
+                            eprintln!("  \x1b[33m⟳ Retrying in {}s...\x1b[0m", delay.as_secs());
                             tokio::time::sleep(delay).await;
                             let (s2, d2) = execute_delete_batch(
-                                client, &d, kind_map, gk_map, &mut result, Some(attempt + 1),
+                                client,
+                                &d,
+                                kind_map,
+                                gk_map,
+                                &mut result,
+                                Some(attempt + 1),
                             )
                             .await;
                             phase_wait_targets.extend(s2);
@@ -462,7 +467,9 @@ pub async fn execute_plan(
                         phase_wait_targets.extend(s);
                         if !d.is_empty() {
                             for r in &d {
-                                result.failed.push((r.clone(), "failed after retries".to_string()));
+                                result
+                                    .failed
+                                    .push((r.clone(), "failed after retries".to_string()));
                             }
                             phase_wait_targets.extend(d);
                         }
@@ -486,10 +493,18 @@ pub async fn execute_plan(
                                 if !inter_wait.is_empty() {
                                     eprintln!(
                                         "\n  \x1b[33m⏳ Intermediate barrier: waiting for {}/{} + {} descendants before next root CR\x1b[0m",
-                                        resource.kind, resource.name, all_expect_targets.len()
+                                        resource.kind,
+                                        resource.name,
+                                        all_expect_targets.len()
                                     );
-                                    match wait_for_barrier(client, &inter_wait, kind_map, gk_map, 300)
-                                        .await
+                                    match wait_for_barrier(
+                                        client,
+                                        &inter_wait,
+                                        kind_map,
+                                        gk_map,
+                                        300,
+                                    )
+                                    .await
                                     {
                                         BarrierResult::Passed => {
                                             eprintln!(
@@ -527,8 +542,7 @@ pub async fn execute_plan(
                                             prev_stall_set = Some(current_stall);
                                             phase_wait_targets = remaining;
                                             for (r, f) in finalizers {
-                                                if !f.is_empty()
-                                                    && !phase_wait_targets.contains(&r)
+                                                if !f.is_empty() && !phase_wait_targets.contains(&r)
                                                 {
                                                     phase_wait_targets.push(r);
                                                 }
@@ -541,8 +555,15 @@ pub async fn execute_plan(
                     }
                 } else {
                     // Standard parallel DELETE
-                    let (mut succeeded, mut deferred) =
-                        execute_delete_batch(client, &eligible_resources, kind_map, gk_map, &mut result, None).await;
+                    let (mut succeeded, mut deferred) = execute_delete_batch(
+                        client,
+                        &eligible_resources,
+                        kind_map,
+                        gk_map,
+                        &mut result,
+                        None,
+                    )
+                    .await;
 
                     // Quick retry with backoff for webhook ordering races
                     for attempt in 0..2u64 {
@@ -558,15 +579,23 @@ pub async fn execute_plan(
                         tokio::time::sleep(delay).await;
 
                         let (s, d) = execute_delete_batch(
-                            client, &deferred, kind_map, gk_map, &mut result, Some(attempt + 1),
-                        ).await;
+                            client,
+                            &deferred,
+                            kind_map,
+                            gk_map,
+                            &mut result,
+                            Some(attempt + 1),
+                        )
+                        .await;
                         succeeded.extend(s);
                         deferred = d;
                     }
 
                     phase_wait_targets.extend(succeeded);
                     for r in &deferred {
-                        result.failed.push((r.clone(), "failed after retries".to_string()));
+                        result
+                            .failed
+                            .push((r.clone(), "failed after retries".to_string()));
                     }
                     phase_wait_targets.extend(deferred);
                 }
@@ -664,10 +693,8 @@ pub async fn execute_plan(
                             }
                         }
 
-                        let stuck_with_finalizers: Vec<_> = finalizers
-                            .iter()
-                            .filter(|(_, f)| !f.is_empty())
-                            .collect();
+                        let stuck_with_finalizers: Vec<_> =
+                            finalizers.iter().filter(|(_, f)| !f.is_empty()).collect();
 
                         if strip_finalizers && !stuck_with_finalizers.is_empty() {
                             eprintln!(
@@ -675,7 +702,8 @@ pub async fn execute_plan(
                                 stuck_with_finalizers.len()
                             );
                             for (res, fins) in &stuck_with_finalizers {
-                                match strip_resource_finalizers(client, res, kind_map, gk_map).await {
+                                match strip_resource_finalizers(client, res, kind_map, gk_map).await
+                                {
                                     Ok(()) => {
                                         eprintln!(
                                             "  \x1b[33mSTRIPPED\x1b[0m {}/{} (was: [{}])",
@@ -692,10 +720,15 @@ pub async fn execute_plan(
                                     }
                                 }
                             }
-                            eprintln!("  \x1b[33m⟳ Re-entering barrier after finalizer strip...\x1b[0m\n");
-                            match wait_for_barrier(client, &remaining, kind_map, gk_map, 120).await {
+                            eprintln!(
+                                "  \x1b[33m⟳ Re-entering barrier after finalizer strip...\x1b[0m\n"
+                            );
+                            match wait_for_barrier(client, &remaining, kind_map, gk_map, 120).await
+                            {
                                 BarrierResult::Passed => {
-                                    eprintln!("  \x1b[32m✅ Barrier passed (after finalizer strip)\x1b[0m");
+                                    eprintln!(
+                                        "  \x1b[32m✅ Barrier passed (after finalizer strip)\x1b[0m"
+                                    );
                                 }
                                 BarrierResult::Stalled {
                                     remaining: remaining2,
@@ -921,8 +954,9 @@ async fn strip_resource_finalizers(
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
 ) -> Result<()> {
-    let (api, _) = resolve_api(client, resource, kind_map, gk_map)
-        .ok_or_else(|| anyhow::anyhow!("cannot resolve API for {}/{}", resource.kind, resource.name))?;
+    let (api, _) = resolve_api(client, resource, kind_map, gk_map).ok_or_else(|| {
+        anyhow::anyhow!("cannot resolve API for {}/{}", resource.kind, resource.name)
+    })?;
 
     let patch = serde_json::json!({
         "metadata": { "finalizers": null }
