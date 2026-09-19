@@ -1322,9 +1322,28 @@ pub async fn generate_teardown_plan(
     cr_instances.extend(related_report.instances);
     all_unavailable.extend(related_report.unavailable_crds);
 
+    // UID dedup across direct + APIService + related sources
+    // Ensures 1 Kubernetes UID = 1 CrInstance node in the graph
+    let pre_dedup = cr_instances.len();
+    {
+        let mut seen = HashSet::new();
+        cr_instances.retain(|cr| match cr.id.uid.as_deref() {
+            Some(uid) => seen.insert(uid.to_string()),
+            None => {
+                let fallback = format!(
+                    "{}/{}/{}/{}",
+                    cr.id.group,
+                    cr.id.kind,
+                    cr.id.namespace.as_deref().unwrap_or("-"),
+                    cr.id.name
+                );
+                seen.insert(fallback)
+            }
+        });
+    }
     let total_observations = direct_count + related_report.instance_count;
     let unique_count = cr_instances.len();
-    let duplicates = total_observations - unique_count;
+    let duplicates = pre_dedup - unique_count;
     if !all_unavailable.is_empty() {
         eprintln!(
             "  ⚠ {} API type(s) could not be enumerated",
@@ -1380,38 +1399,43 @@ pub async fn generate_teardown_plan(
     eprintln!(" done");
 
     // Determine root vs managed CRs
-    // Root CRs: have no ownerRef pointing to another target CR, or are ownerRef targets of other CRs
-    let cr_uids: HashSet<String> = cr_instances
+    // Parent-first: has_parent_in_set takes priority so intermediate nodes
+    // (both parent and child) are always classified as descendants.
+    let cr_uids: HashSet<&str> = cr_instances
         .iter()
-        .filter_map(|cr| cr.id.uid.clone())
+        .filter_map(|cr| cr.id.uid.as_deref())
         .collect();
 
-    // UIDs that are referenced as owners by other CRs
-    let parent_uids: HashSet<String> = cr_instances
+    let referenced_owner_uids: HashSet<&str> = cr_instances
         .iter()
-        .flat_map(|cr| cr.owner_refs.iter().map(|(_, _, uid)| uid.clone()))
-        .filter(|uid| cr_uids.contains(uid))
+        .flat_map(|cr| cr.owner_refs.iter())
+        .map(|(_, _, uid)| uid.as_str())
         .collect();
 
-    // Root CRs: those that ARE parents of other target CRs, or have no ownerRef to target CRs
-    // Managed descendants: those whose ownerRef points to a root CR
     let mut root_crs: Vec<&CrInstance> = Vec::new();
     let mut managed_descendants: Vec<&CrInstance> = Vec::new();
     let mut independent_crs: Vec<&CrInstance> = Vec::new();
 
     for cr in &cr_instances {
-        let uid = cr.id.uid.as_deref().unwrap_or("");
-        let is_parent = parent_uids.contains(uid);
         let has_parent_in_set = cr
             .owner_refs
             .iter()
-            .any(|(_, _, ouid)| cr_uids.contains(ouid));
+            .any(|(_, _, owner_uid)| cr_uids.contains(owner_uid.as_str()));
 
-        if is_parent {
-            root_crs.push(cr);
-        } else if has_parent_in_set {
+        let is_parent = cr
+            .id
+            .uid
+            .as_deref()
+            .is_some_and(|uid| referenced_owner_uids.contains(uid));
+
+        if has_parent_in_set {
+            // Parent + child intermediate nodes go here too
             managed_descendants.push(cr);
+        } else if is_parent {
+            // No parent + has children = observed graph root / cleanup trigger
+            root_crs.push(cr);
         } else {
+            // No parent + no children = graph-isolated, no auto-delete evidence
             independent_crs.push(cr);
         }
     }
