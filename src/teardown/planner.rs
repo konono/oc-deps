@@ -1786,16 +1786,57 @@ pub async fn generate_teardown_plan(
         .filter_map(|cr| cr.id.uid.as_deref().map(|uid| (uid, cr)))
         .collect();
 
-    // Collect all approvable REVIEW candidates (root + independent)
-    // Excludes: Managed provenance (auto-DELETE), shared ownership (needs operator selection change)
+    // Build review candidates with centralized approvability logic
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum GraphPosition {
+        Root,
+        Descendant,
+        Independent,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum DeleteApprovalClass {
+        Standard,
+        ExplicitOnly,
+    }
+
+    fn compute_approval_class(cr: &CrInstance, position: GraphPosition) -> DeleteApprovalClass {
+        if cr.discovery_source == DiscoverySource::RelatedLabelOnly
+            && position != GraphPosition::Descendant
+        {
+            return DeleteApprovalClass::ExplicitOnly;
+        }
+        DeleteApprovalClass::Standard
+    }
+
+    fn is_exact_delete_approvable(
+        cr: &CrInstance,
+        position: GraphPosition,
+        owner_count: usize,
+    ) -> bool {
+        if matches!(cr.provenance, Provenance::Managed) {
+            return false;
+        }
+        if owner_count > 1 {
+            return false;
+        }
+        matches!(position, GraphPosition::Root | GraphPosition::Independent)
+    }
+
+    // Collect approvable REVIEW candidates across all positions
     let approvable_ids: Vec<&ResourceId> = root_crs
         .iter()
-        .chain(independent_crs.iter())
-        .filter(|cr| {
-            !matches!(cr.provenance, Provenance::Managed)
-                && resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len() <= 1
+        .map(|cr| (cr, GraphPosition::Root))
+        .chain(
+            independent_crs
+                .iter()
+                .map(|cr| (cr, GraphPosition::Independent)),
+        )
+        .filter(|(cr, position)| {
+            let owner_count = resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len();
+            is_exact_delete_approvable(cr, *position, owner_count)
         })
-        .map(|cr| &cr.id)
+        .map(|(cr, _)| &cr.id)
         .collect();
 
     if let Err(errors) = decisions.validate(&approvable_ids) {
@@ -1805,26 +1846,18 @@ pub async fn generate_teardown_plan(
         bail!("{} --approve-delete argument(s) are invalid", errors.len());
     }
 
-    #[derive(Debug, PartialEq)]
-    enum DeleteApprovalClass {
-        Standard,
-        ExplicitOnly,
-    }
-
-    fn approval_class(cr: &CrInstance, action_type: &str) -> DeleteApprovalClass {
-        if cr.discovery_source == DiscoverySource::RelatedLabelOnly && action_type != "descendant" {
-            return DeleteApprovalClass::ExplicitOnly;
-        }
-        DeleteApprovalClass::Standard
-    }
-
     fn cr_to_action(
         cr: &CrInstance,
         action_type: &str,
         decisions: &ReviewDecisions,
-        review_roots: &[&ResourceId],
+        review_candidates: &[&ResourceId],
     ) -> Action {
-        let approval = approval_class(cr, action_type);
+        let position = match action_type {
+            "root" => GraphPosition::Root,
+            "descendant" => GraphPosition::Descendant,
+            _ => GraphPosition::Independent,
+        };
+        let approval = compute_approval_class(cr, position);
 
         match (action_type, &cr.provenance) {
             ("root", Provenance::Managed) if approval == DeleteApprovalClass::Standard => {
@@ -1833,7 +1866,7 @@ pub async fn generate_teardown_plan(
                     reason: "root management CR (managed via ownerRef)".to_string(),
                 }
             }
-            ("root", _) if decisions.is_approved(&cr.id, review_roots) => Action::Delete {
+            ("root", _) if decisions.is_approved(&cr.id, review_candidates) => Action::Delete {
                 resource: cr.id.clone(),
                 reason: if approval == DeleteApprovalClass::ExplicitOnly {
                     "label-related root CR explicitly approved for deletion".to_string()
@@ -1861,7 +1894,7 @@ pub async fn generate_teardown_plan(
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
             ("independent", _) if approval == DeleteApprovalClass::ExplicitOnly => {
-                if decisions.is_approved(&cr.id, review_roots) {
+                if decisions.is_approved(&cr.id, review_candidates) {
                     Action::Delete {
                         resource: cr.id.clone(),
                         reason: "label-related CR explicitly approved for deletion".to_string(),
