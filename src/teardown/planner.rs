@@ -2456,10 +2456,12 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // EXPECT→DELETE invariant: demote EXPECT_GONE descendants whose root
-    // trigger is not scheduled for DELETE (preserved or still REVIEW)
+    // EXPECT→DELETE invariant (transitive): build the set of UIDs reachable
+    // from a scheduled DELETE via ownerRef chains. EXPECT_GONE resources
+    // not in this set are demoted to KEEP.
     {
-        let scheduled_delete_uids: HashSet<String> = operand_phases
+        // Seed: all DELETE action UIDs
+        let mut supported_uids: HashSet<String> = operand_phases
             .iter()
             .flat_map(|p| &p.actions)
             .filter_map(|a| match a {
@@ -2468,16 +2470,48 @@ pub async fn generate_teardown_plan(
             })
             .collect();
 
+        // Collect EXPECT_GONE resources with their ownerRef UIDs
+        let expect_crs: Vec<(String, Vec<String>)> = operand_phases
+            .iter()
+            .flat_map(|p| &p.actions)
+            .filter_map(|a| match a {
+                Action::ExpectGone { resource, .. } => {
+                    let cr = cr_instances.iter().find(|cr| cr.id == *resource)?;
+                    let uid = cr.id.uid.clone()?;
+                    let owner_uids: Vec<String> =
+                        cr.owner_refs.iter().map(|(_, _, u)| u.clone()).collect();
+                    Some((uid, owner_uids))
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Fixed-point: expand supported set through EXPECT chains
+        loop {
+            let mut changed = false;
+            for (uid, owner_uids) in &expect_crs {
+                if supported_uids.contains(uid) {
+                    continue;
+                }
+                if owner_uids.iter().any(|ou| supported_uids.contains(ou)) {
+                    supported_uids.insert(uid.clone());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // Demote unsupported EXPECT_GONE to KEEP
         for phase in &mut operand_phases {
             for action in &mut phase.actions {
                 if let Action::ExpectGone { resource, .. } = action {
-                    let cr = cr_instances.iter().find(|cr| cr.id == *resource);
-                    let has_delete_trigger = cr.is_some_and(|cr| {
-                        cr.owner_refs
-                            .iter()
-                            .any(|(_, _, uid)| scheduled_delete_uids.contains(uid))
-                    });
-                    if !has_delete_trigger {
+                    let uid_supported = resource
+                        .uid
+                        .as_ref()
+                        .is_some_and(|uid| supported_uids.contains(uid));
+                    if !uid_supported {
                         *action = Action::Keep {
                             resource: resource.clone(),
                             reason: "cleanup trigger not scheduled for deletion".to_string(),
