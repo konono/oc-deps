@@ -1524,6 +1524,70 @@ pub struct ReviewCandidate<'a> {
     pub exact_approvable: bool,
 }
 
+/// Phase-ordered EXPECT→DELETE invariant enforcement.
+/// Only DELETEs from the current or earlier phases can support EXPECT_GONE.
+/// Unsupported EXPECTs are demoted to KEEP.
+fn enforce_expect_delete_invariant(
+    phases: &mut [PlanPhase],
+    uid_to_owner_uids: &HashMap<String, Vec<String>>,
+) {
+    let mut supported_uids: HashSet<String> = HashSet::new();
+
+    for phase in phases.iter_mut() {
+        for action in phase.actions.iter() {
+            if let Action::Delete { resource, .. } = action
+                && let Some(uid) = &resource.uid
+            {
+                supported_uids.insert(uid.clone());
+            }
+        }
+
+        let phase_expects: Vec<(String, Vec<String>)> = phase
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::ExpectGone { resource, .. } => {
+                    let uid = resource.uid.clone()?;
+                    let owner_uids = uid_to_owner_uids.get(&uid)?.clone();
+                    Some((uid, owner_uids))
+                }
+                _ => None,
+            })
+            .collect();
+
+        loop {
+            let mut changed = false;
+            for (uid, owner_uids) in &phase_expects {
+                if supported_uids.contains(uid) {
+                    continue;
+                }
+                if owner_uids.iter().any(|ou| supported_uids.contains(ou)) {
+                    supported_uids.insert(uid.clone());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        for action in &mut phase.actions {
+            if let Action::ExpectGone { resource, .. } = action {
+                let uid_supported = resource
+                    .uid
+                    .as_ref()
+                    .is_some_and(|uid| supported_uids.contains(uid));
+                if !uid_supported {
+                    *action = Action::Keep {
+                        resource: resource.clone(),
+                        reason: "cleanup trigger not scheduled for deletion".to_string(),
+                    };
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
@@ -2456,74 +2520,17 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // EXPECT→DELETE invariant (phase-ordered, transitive):
-    // Process phases in execution order. Only DELETEs from the current
-    // or earlier phases can support EXPECT_GONE in the current phase.
-    // This prevents a future-phase DELETE from falsely supporting an
-    // earlier-phase EXPECT that would stall at the barrier.
-    {
-        let mut supported_uids: HashSet<String> = HashSet::new();
+    // Build ownerRef lookup for the invariant check
+    let uid_to_owner_uids: HashMap<String, Vec<String>> = cr_instances
+        .iter()
+        .filter_map(|cr| {
+            let uid = cr.id.uid.clone()?;
+            let owners: Vec<String> = cr.owner_refs.iter().map(|(_, _, u)| u.clone()).collect();
+            Some((uid, owners))
+        })
+        .collect();
 
-        for phase in &mut operand_phases {
-            // Add this phase's DELETE UIDs to the supported set
-            for action in phase.actions.iter() {
-                if let Action::Delete { resource, .. } = action
-                    && let Some(uid) = &resource.uid
-                {
-                    supported_uids.insert(uid.clone());
-                }
-            }
-
-            // Collect this phase's EXPECT_GONE with ownerRef UIDs
-            let phase_expects: Vec<(String, Vec<String>)> = phase
-                .actions
-                .iter()
-                .filter_map(|a| match a {
-                    Action::ExpectGone { resource, .. } => {
-                        let cr = cr_instances.iter().find(|cr| cr.id == *resource)?;
-                        let uid = cr.id.uid.clone()?;
-                        let owner_uids: Vec<String> =
-                            cr.owner_refs.iter().map(|(_, _, u)| u.clone()).collect();
-                        Some((uid, owner_uids))
-                    }
-                    _ => None,
-                })
-                .collect();
-
-            // Fixed-point: expand supported through this phase's EXPECT chains
-            loop {
-                let mut changed = false;
-                for (uid, owner_uids) in &phase_expects {
-                    if supported_uids.contains(uid) {
-                        continue;
-                    }
-                    if owner_uids.iter().any(|ou| supported_uids.contains(ou)) {
-                        supported_uids.insert(uid.clone());
-                        changed = true;
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-
-            // Demote unsupported EXPECT_GONE to KEEP
-            for action in &mut phase.actions {
-                if let Action::ExpectGone { resource, .. } = action {
-                    let uid_supported = resource
-                        .uid
-                        .as_ref()
-                        .is_some_and(|uid| supported_uids.contains(uid));
-                    if !uid_supported {
-                        *action = Action::Keep {
-                            resource: resource.clone(),
-                            reason: "cleanup trigger not scheduled for deletion".to_string(),
-                        };
-                    }
-                }
-            }
-        }
-    }
+    enforce_expect_delete_invariant(&mut operand_phases, &uid_to_owner_uids);
 
     // Remaining cleanup phase (empty catch-all)
     let phase_remaining = PlanPhase {
@@ -3512,5 +3519,124 @@ mod tests {
             compute_approval_class(&cr, GraphPosition::Independent),
             DeleteApprovalClass::Standard
         );
+    }
+
+    // ── enforce_expect_delete_invariant ──
+
+    fn make_phase(actions: Vec<Action>) -> PlanPhase {
+        PlanPhase {
+            name: "test".to_string(),
+            description: "".to_string(),
+            actions,
+            barrier: None,
+        }
+    }
+
+    fn make_res(kind: &str, name: &str, uid: &str) -> ResourceId {
+        ResourceId {
+            group: "test".to_string(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: None,
+            name: name.to_string(),
+            uid: Some(uid.to_string()),
+        }
+    }
+
+    #[test]
+    fn same_phase_transitive_chain_is_supported() {
+        let a = make_res("R", "a", "uid-a");
+        let b = make_res("R", "b", "uid-b");
+        let c = make_res("R", "c", "uid-c");
+        let mut phases = vec![make_phase(vec![
+            Action::Delete {
+                resource: a,
+                reason: "".into(),
+            },
+            Action::ExpectGone {
+                resource: b.clone(),
+                reason: "".into(),
+            },
+            Action::ExpectGone {
+                resource: c.clone(),
+                reason: "".into(),
+            },
+        ])];
+        let mut owners = HashMap::new();
+        owners.insert("uid-b".to_string(), vec!["uid-a".to_string()]);
+        owners.insert("uid-c".to_string(), vec!["uid-b".to_string()]);
+
+        enforce_expect_delete_invariant(&mut phases, &owners);
+
+        assert!(matches!(&phases[0].actions[1], Action::ExpectGone { .. }));
+        assert!(matches!(&phases[0].actions[2], Action::ExpectGone { .. }));
+    }
+
+    #[test]
+    fn previous_phase_delete_supports_later_expect() {
+        let a = make_res("R", "a", "uid-a");
+        let b = make_res("R", "b", "uid-b");
+        let mut phases = vec![
+            make_phase(vec![Action::Delete {
+                resource: a,
+                reason: "".into(),
+            }]),
+            make_phase(vec![Action::ExpectGone {
+                resource: b.clone(),
+                reason: "".into(),
+            }]),
+        ];
+        let mut owners = HashMap::new();
+        owners.insert("uid-b".to_string(), vec!["uid-a".to_string()]);
+
+        enforce_expect_delete_invariant(&mut phases, &owners);
+
+        assert!(matches!(&phases[1].actions[0], Action::ExpectGone { .. }));
+    }
+
+    #[test]
+    fn future_phase_delete_does_not_support_earlier_expect() {
+        let a = make_res("R", "a", "uid-a");
+        let b = make_res("R", "b", "uid-b");
+        let mut phases = vec![
+            make_phase(vec![Action::ExpectGone {
+                resource: b.clone(),
+                reason: "".into(),
+            }]),
+            make_phase(vec![Action::Delete {
+                resource: a,
+                reason: "".into(),
+            }]),
+        ];
+        let mut owners = HashMap::new();
+        owners.insert("uid-b".to_string(), vec!["uid-a".to_string()]);
+
+        enforce_expect_delete_invariant(&mut phases, &owners);
+
+        assert!(matches!(&phases[0].actions[0], Action::Keep { .. }));
+    }
+
+    #[test]
+    fn cycle_without_delete_seed_is_demoted() {
+        let a = make_res("R", "a", "uid-a");
+        let b = make_res("R", "b", "uid-b");
+        let mut phases = vec![make_phase(vec![
+            Action::ExpectGone {
+                resource: a.clone(),
+                reason: "".into(),
+            },
+            Action::ExpectGone {
+                resource: b.clone(),
+                reason: "".into(),
+            },
+        ])];
+        let mut owners = HashMap::new();
+        owners.insert("uid-a".to_string(), vec!["uid-b".to_string()]);
+        owners.insert("uid-b".to_string(), vec!["uid-a".to_string()]);
+
+        enforce_expect_delete_invariant(&mut phases, &owners);
+
+        assert!(matches!(&phases[0].actions[0], Action::Keep { .. }));
+        assert!(matches!(&phases[0].actions[1], Action::Keep { .. }));
     }
 }
