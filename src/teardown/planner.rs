@@ -1985,8 +1985,11 @@ pub async fn generate_teardown_plan(
 pub fn save_plan_to_file(plan: &TeardownPlan) -> Result<String> {
     let dir = std::env::temp_dir().join("oc-deps-plans");
     std::fs::create_dir_all(&dir)?;
+    let operator_names: Vec<&str> = plan.targets.iter().map(|t| t.csv.name.as_str()).collect();
+    let op_slug = operator_names.join("_");
     let filename = format!(
-        "teardown-{}.json",
+        "teardown-{}-{}.json",
+        op_slug,
         plan.snapshot_taken_at.replace(':', "-").replace('+', "_")
     );
     let path = dir.join(&filename);
