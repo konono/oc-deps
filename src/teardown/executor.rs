@@ -680,6 +680,8 @@ async fn wait_for_barrier(
     let mut prev_total_finalizers = usize::MAX;
     let mut last_progress = Instant::now();
     let stall_threshold_secs = 120;
+    let mut consecutive_unknown_cycles = 0u32;
+    const MAX_UNKNOWN_RETRIES: u32 = 3;
 
     let kind_map = Arc::new(kind_map.clone());
     let gk_map = Arc::new(gk_map.clone());
@@ -739,17 +741,29 @@ async fn wait_for_barrier(
         }
 
         if unknown_count > 0 {
-            eprintln!();
-            return BarrierResult::Stalled {
-                remaining,
-                finalizers: remaining_finalizers,
-                reason: format!(
-                    "{} resource(s) could not be observed: {}",
-                    unknown_count,
-                    unknown_reasons.join("; ")
-                ),
-            };
+            consecutive_unknown_cycles += 1;
+            if consecutive_unknown_cycles >= MAX_UNKNOWN_RETRIES {
+                eprintln!();
+                return BarrierResult::Stalled {
+                    remaining,
+                    finalizers: remaining_finalizers,
+                    reason: format!(
+                        "{} resource(s) could not be observed after {} retries: {}",
+                        unknown_count,
+                        MAX_UNKNOWN_RETRIES,
+                        unknown_reasons.first().unwrap_or(&String::new())
+                    ),
+                };
+            }
+            eprint!(
+                "\r\x1b[2K  ⚠ {} resource(s) unknown (retry {}/{}), waiting...",
+                unknown_count, consecutive_unknown_cycles, MAX_UNKNOWN_RETRIES
+            );
+            std::io::stderr().flush().ok();
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            continue;
         }
+        consecutive_unknown_cycles = 0;
 
         let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
 
