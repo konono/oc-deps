@@ -977,11 +977,23 @@ pub struct RelatedCrdReport {
 pub async fn discover_related_crd_instances(
     client: &Client,
     target_crds: &HashSet<&str>,
+    target_part_of_values: &HashSet<String>,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> RelatedCrdReport {
     let mut actions = Vec::new();
+
+    // If target operator has no part-of labels, skip related discovery entirely
+    if target_part_of_values.is_empty() {
+        return RelatedCrdReport {
+            actions,
+            instances: vec![],
+            unavailable_crds: vec![],
+            crd_count: 0,
+            instance_count: 0,
+        };
+    }
 
     let crd_kind_info = match kind_map.get("CustomResourceDefinition") {
         Some(i) => i,
@@ -1004,7 +1016,7 @@ pub async fn discover_related_crd_instances(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let label_selector = "platform.opendatahub.io/part-of";
+    let label_key = "platform.opendatahub.io/part-of";
     let all_crds = match crd_api.list(&ListParams::default()).await {
         Ok(list) => list.items,
         Err(e) => {
@@ -1021,6 +1033,7 @@ pub async fn discover_related_crd_instances(
         }
     };
 
+    // Scope CRD types by label VALUE match (not just key existence)
     let mut related_crd_names: Vec<String> = Vec::new();
     for crd in &all_crds {
         let crd_name = match &crd.metadata.name {
@@ -1030,12 +1043,13 @@ pub async fn discover_related_crd_instances(
         if target_crds.contains(crd_name.as_str()) {
             continue;
         }
-        let has_label = crd
+        let matches_value = crd
             .metadata
             .labels
             .as_ref()
-            .is_some_and(|l| l.contains_key(label_selector));
-        if has_label {
+            .and_then(|l| l.get(label_key))
+            .is_some_and(|v| target_part_of_values.contains(v));
+        if matches_value {
             related_crd_names.push(crd_name.clone());
         }
     }
@@ -1309,23 +1323,93 @@ pub async fn generate_teardown_plan(
     let direct_count = cr_instances.len();
     eprintln!(" found {} direct instances", direct_count);
 
-    // Related CRD discovery (label-based candidate expansion)
+    // Related CRD discovery — scoped by label VALUE match
+    // Seed part-of values by finding CRDs whose API group shares a root
+    // domain with target-owned CRDs (e.g. *.opendatahub.io, *.kserve.io)
     eprint!("🔍 Discovering related CRD instances...");
-    let related_report =
-        discover_related_crd_instances(client, &target_crd_set, kind_map, gvr_map, gk_map).await;
+    let target_part_of_values: HashSet<String> = {
+        let mut values = HashSet::new();
+        let label_key = "platform.opendatahub.io/part-of";
+
+        // Extract organizational domains from target-owned CRD groups.
+        // Skip generic infrastructure domains to prevent over-broad matching.
+        const GENERIC_DOMAINS: &[&str] = &[
+            "openshift.io",
+            "k8s.io",
+            "kubernetes.io",
+            "coreos.com",
+            "cncf.io",
+        ];
+        let target_root_domains: HashSet<String> = target_crds
+            .iter()
+            .filter_map(|crd| {
+                let group = crd.split_once('.')?.1;
+                let parts: Vec<&str> = group.rsplitn(3, '.').collect();
+                if parts.len() >= 2 {
+                    let root = format!("{}.{}", parts[1], parts[0]);
+                    if GENERIC_DOMAINS.contains(&root.as_str()) {
+                        None
+                    } else {
+                        Some(root)
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !target_root_domains.is_empty()
+            && let Some(crd_ki) = kind_map.get("CustomResourceDefinition")
+        {
+            let crd_gvk = GroupVersion::gv(&crd_ki.group, &crd_ki.version)
+                .with_kind("CustomResourceDefinition");
+            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
+            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+            if let Ok(crd_list) = crd_api.list(&ListParams::default()).await {
+                for crd in &crd_list.items {
+                    let crd_name = crd.metadata.name.as_deref().unwrap_or("");
+                    let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
+                    let shares_domain = target_root_domains.iter().any(|d| crd_group.ends_with(d));
+                    if shares_domain
+                        && let Some(labels) = &crd.metadata.labels
+                        && let Some(v) = labels.get(label_key)
+                    {
+                        values.insert(v.clone());
+                    }
+                }
+            }
+        }
+        values
+    };
+
+    let related_report = discover_related_crd_instances(
+        client,
+        &target_crd_set,
+        &target_part_of_values,
+        kind_map,
+        gvr_map,
+        gk_map,
+    )
+    .await;
     eprintln!(
         " {} CRDs, {} instances",
         related_report.crd_count, related_report.instance_count
     );
-    // Filter related instances: only include those whose ownerRef chain
-    // reaches a direct CR (target operator's owned CRD instance).
-    // This prevents cross-operator contamination where unrelated operators'
-    // CRD instances share the same platform label.
+
+    // Two-category merge of related instances:
+    // - Linked: ownerRef chain reaches target anchors → merge into graph (EXPECT/descendant)
+    // - Unlinked: scoped CRD type but no ownerRef chain → independent REVIEW
     {
-        let direct_uids: HashSet<String> = cr_instances
+        // Target anchors: direct CR UIDs + CSV UIDs + Deployment UIDs
+        let mut anchor_uids: HashSet<String> = cr_instances
             .iter()
             .filter_map(|cr| cr.id.uid.clone())
             .collect();
+        for op in target_operators {
+            if let Some(uid) = &op.csv.uid {
+                anchor_uids.insert(uid.clone());
+            }
+        }
 
         let related_instances = related_report.instances;
 
@@ -1340,11 +1424,11 @@ pub async fn generate_teardown_plan(
 
         fn is_reachable(
             uid: &str,
-            direct_uids: &HashSet<String>,
+            anchor_uids: &HashSet<String>,
             related_owners: &HashMap<String, Vec<String>>,
             visited: &mut HashSet<String>,
         ) -> bool {
-            if direct_uids.contains(uid) {
+            if anchor_uids.contains(uid) {
                 return true;
             }
             if !visited.insert(uid.to_string()) {
@@ -1352,10 +1436,7 @@ pub async fn generate_teardown_plan(
             }
             if let Some(owners) = related_owners.get(uid) {
                 for owner_uid in owners {
-                    if direct_uids.contains(owner_uid.as_str()) {
-                        return true;
-                    }
-                    if is_reachable(owner_uid, direct_uids, related_owners, visited) {
+                    if is_reachable(owner_uid, anchor_uids, related_owners, visited) {
                         return true;
                     }
                 }
@@ -1363,31 +1444,35 @@ pub async fn generate_teardown_plan(
             false
         }
 
-        let pre_filter = related_instances.len();
-        let reachable: Vec<CrInstance> = related_instances
-            .into_iter()
-            .filter(|cr| {
-                cr.owner_refs.iter().any(|(_, _, owner_uid)| {
-                    is_reachable(
-                        owner_uid,
-                        &direct_uids,
-                        &related_uid_to_owners,
-                        &mut HashSet::new(),
-                    )
-                })
-            })
-            .collect();
-
-        let filtered = pre_filter - reachable.len();
-        if filtered > 0 {
-            eprintln!(
-                "  {} related instances filtered (no ownerRef chain to target operator)",
-                filtered
-            );
+        let mut linked_count = 0;
+        let mut unlinked_count = 0;
+        for cr in related_instances {
+            let linked = cr.owner_refs.iter().any(|(_, _, owner_uid)| {
+                is_reachable(
+                    owner_uid,
+                    &anchor_uids,
+                    &related_uid_to_owners,
+                    &mut HashSet::new(),
+                )
+            });
+            if linked {
+                linked_count += 1;
+                cr_instances.push(cr);
+            } else {
+                unlinked_count += 1;
+                // Keep as independent — will become REVIEW via provenance Unknown
+                cr_instances.push(cr);
+            }
         }
 
-        cr_instances.extend(reachable);
+        if linked_count > 0 || unlinked_count > 0 {
+            eprintln!(
+                "  {} linked, {} unlinked (independent REVIEW)",
+                linked_count, unlinked_count
+            );
+        }
     }
+    // Only include unavailable CRDs from scoped related discovery
     all_unavailable.extend(related_report.unavailable_crds);
 
     // UID dedup across direct + APIService + related sources
