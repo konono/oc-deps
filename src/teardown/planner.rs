@@ -966,58 +966,30 @@ async fn check_controller_health(
 
 const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca.crt"];
 
-const GENERIC_DOMAINS: &[&str] = &[
-    "openshift.io",
-    "k8s.io",
-    "kubernetes.io",
-    "coreos.com",
-    "cncf.io",
-];
-
-fn extract_org_domains(crd_names: &[String]) -> HashSet<String> {
-    let mut domains = HashSet::new();
-    for crd in crd_names {
-        let group = match crd.split_once('.') {
-            Some((_, g)) => g,
-            None => continue,
-        };
-        // Collect all non-generic suffixes of the group as candidate domains.
-        // E.g. "components.platform.opendatahub.io" yields:
-        //   "components.platform.opendatahub.io"
-        //   "platform.opendatahub.io"
-        //   "opendatahub.io"
-        // but NOT "io" (single label) or any GENERIC_DOMAINS match.
-        let mut suffix = group;
-        loop {
-            if suffix.contains('.') && !GENERIC_DOMAINS.contains(&suffix) {
-                domains.insert(suffix.to_string());
-            }
-            match suffix.split_once('.') {
-                Some((_, rest)) if rest.contains('.') => suffix = rest,
-                _ => break,
-            }
-        }
-    }
-    domains
-}
-
-fn group_matches_domain(group: &str, domain: &str) -> bool {
-    group == domain || group.ends_with(&format!(".{}", domain))
-}
-
-/// Discover part-of label values from CRDs sharing organizational domains
-/// with the target operator's owned CRDs. Returns (values, unavailable_crds).
+/// Discover part-of label values for related CRD scoping.
+///
+/// Strategy:
+/// 1. Direct seed: part-of labels on target-owned CRDs themselves
+/// 2. Group seed: part-of labels on CRDs sharing a full API group
+///    with target-owned CRDs (e.g. both under `components.platform.opendatahub.io`)
+///
+/// No domain suffix guessing — avoids public suffix ambiguity.
 pub async fn compute_part_of_seeds(
     target_crds: &[String],
     kind_map: &KindMap,
     client: &Client,
 ) -> (HashSet<String>, Vec<(String, String)>) {
     let label_key = "platform.opendatahub.io/part-of";
-    let target_root_domains = extract_org_domains(target_crds);
 
-    if target_root_domains.is_empty() {
+    if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
     }
+
+    let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
+    let target_groups: HashSet<&str> = target_crds
+        .iter()
+        .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
+        .collect();
 
     let Some(crd_ki) = kind_map.get("CustomResourceDefinition") else {
         return (
@@ -1051,10 +1023,12 @@ pub async fn compute_part_of_seeds(
     for crd in &crd_list.items {
         let crd_name = crd.metadata.name.as_deref().unwrap_or("");
         let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
-        let shares_domain = target_root_domains
-            .iter()
-            .any(|d| group_matches_domain(crd_group, d));
-        if shares_domain
+
+        // Seed from: target-owned CRDs or CRDs sharing exact API group
+        let is_target = target_crd_set.contains(crd_name);
+        let shares_group = target_groups.contains(crd_group);
+
+        if (is_target || shares_group)
             && let Some(labels) = &crd.metadata.labels
             && let Some(v) = labels.get(label_key)
         {
