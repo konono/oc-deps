@@ -1848,52 +1848,51 @@ pub async fn generate_teardown_plan(
 
     fn cr_to_action(
         cr: &CrInstance,
-        action_type: &str,
+        position: GraphPosition,
         decisions: &ReviewDecisions,
         review_candidates: &[&ResourceId],
     ) -> Action {
-        let position = match action_type {
-            "root" => GraphPosition::Root,
-            "descendant" => GraphPosition::Descendant,
-            _ => GraphPosition::Independent,
-        };
         let approval = compute_approval_class(cr, position);
 
-        match (action_type, &cr.provenance) {
-            ("root", Provenance::Managed) if approval == DeleteApprovalClass::Standard => {
+        match (position, &cr.provenance) {
+            (GraphPosition::Root, Provenance::Managed)
+                if approval == DeleteApprovalClass::Standard =>
+            {
                 Action::Delete {
                     resource: cr.id.clone(),
                     reason: "root management CR (managed via ownerRef)".to_string(),
                 }
             }
-            ("root", _) if decisions.is_approved(&cr.id, review_candidates) => Action::Delete {
-                resource: cr.id.clone(),
-                reason: if approval == DeleteApprovalClass::ExplicitOnly {
-                    "label-related root CR explicitly approved for deletion".to_string()
-                } else {
-                    "root CR explicitly approved for deletion".to_string()
-                },
-            },
-            ("root", _) if approval == DeleteApprovalClass::ExplicitOnly => Action::Review {
-                resource: cr.id.clone(),
-                reason:
-                    "label-related only — discovered via platform label, no ownerRef chain to target operator"
-                        .to_string(),
-            },
-            ("root", Provenance::LikelyManaged) => Action::Review {
+            (GraphPosition::Root, _) if decisions.is_approved(&cr.id, review_candidates) => {
+                Action::Delete {
+                    resource: cr.id.clone(),
+                    reason: if approval == DeleteApprovalClass::ExplicitOnly {
+                        "label-related root CR explicitly approved for deletion".to_string()
+                    } else {
+                        "root CR explicitly approved for deletion".to_string()
+                    },
+                }
+            }
+            (GraphPosition::Root, _) if approval == DeleteApprovalClass::ExplicitOnly => {
+                Action::Review {
+                    resource: cr.id.clone(),
+                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                }
+            }
+            (GraphPosition::Root, Provenance::LikelyManaged) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "root CR but provenance uncertain (label-based) — verify before deleting"
                     .to_string(),
             },
-            ("root", Provenance::Unknown | Provenance::Managed) => Action::Review {
+            (GraphPosition::Root, Provenance::Unknown | Provenance::Managed) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "root CR but provenance unknown — verify before deleting".to_string(),
             },
-            ("descendant", _) => Action::ExpectGone {
+            (GraphPosition::Descendant, _) => Action::ExpectGone {
                 resource: cr.id.clone(),
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
-            ("independent", _) if approval == DeleteApprovalClass::ExplicitOnly => {
+            (GraphPosition::Independent, _) if approval == DeleteApprovalClass::ExplicitOnly => {
                 if decisions.is_approved(&cr.id, review_candidates) {
                     Action::Delete {
                         resource: cr.id.clone(),
@@ -1906,22 +1905,18 @@ pub async fn generate_teardown_plan(
                     }
                 }
             }
-            ("independent", Provenance::Managed) => Action::Delete {
+            (GraphPosition::Independent, Provenance::Managed) => Action::Delete {
                 resource: cr.id.clone(),
                 reason: "independent operand (managed via ownerRef)".to_string(),
             },
-            ("independent", Provenance::LikelyManaged) => Action::Review {
+            (GraphPosition::Independent, Provenance::LikelyManaged) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "likely operator-managed but no ownerRef — verify before deleting"
                     .to_string(),
             },
-            ("independent", Provenance::Unknown) => Action::Review {
+            (GraphPosition::Independent, Provenance::Unknown) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "owned API, but provenance unknown".to_string(),
-            },
-            _ => Action::Review {
-                resource: cr.id.clone(),
-                reason: "unclassified CR".to_string(),
             },
         }
     }
@@ -2075,13 +2070,28 @@ pub async fn generate_teardown_plan(
         let mut phase_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, "root", decisions, &approvable_ids));
+            phase_actions.push(cr_to_action(
+                cr,
+                GraphPosition::Root,
+                decisions,
+                &approvable_ids,
+            ));
         }
         for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(cr, "descendant", decisions, &approvable_ids));
+            phase_actions.push(cr_to_action(
+                cr,
+                GraphPosition::Descendant,
+                decisions,
+                &approvable_ids,
+            ));
         }
         for cr in &independent_crs {
-            phase_actions.push(cr_to_action(cr, "independent", decisions, &approvable_ids));
+            phase_actions.push(cr_to_action(
+                cr,
+                GraphPosition::Independent,
+                decisions,
+                &approvable_ids,
+            ));
         }
 
         let conds: Vec<String> = phase_actions
@@ -2122,7 +2132,7 @@ pub async fn generate_teardown_plan(
                         continue;
                     }
                 } else {
-                    cr_to_action(cr, "root", decisions, &approvable_ids)
+                    cr_to_action(cr, GraphPosition::Root, decisions, &approvable_ids)
                 };
                 let op_idx = owners.iter().next().copied();
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
@@ -2154,7 +2164,12 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(cr, "descendant", decisions, &approvable_ids));
+                    phase_actions.push(cr_to_action(
+                        cr,
+                        GraphPosition::Descendant,
+                        decisions,
+                        &approvable_ids,
+                    ));
                 }
             }
             for cr in &independent_crs {
@@ -2172,7 +2187,12 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(cr, "independent", decisions, &approvable_ids));
+                    phase_actions.push(cr_to_action(
+                        cr,
+                        GraphPosition::Independent,
+                        decisions,
+                        &approvable_ids,
+                    ));
                 }
             }
 
