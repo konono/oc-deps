@@ -19,7 +19,7 @@ use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
-pub trait ReviewCandidateRef {
+pub(crate) trait ReviewCandidateRef {
     fn resource_id(&self) -> &ResourceId;
     fn is_approvable(&self) -> bool;
 }
@@ -81,7 +81,7 @@ impl ReviewDecisions {
         }
     }
 
-    pub fn validate<T: ReviewCandidateRef>(
+    pub(crate) fn validate<T: ReviewCandidateRef>(
         &self,
         all_review_candidates: &[T],
     ) -> Result<(), Vec<String>> {
