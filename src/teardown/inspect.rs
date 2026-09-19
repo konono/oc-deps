@@ -40,8 +40,14 @@ pub async fn inspect_operator(
     // Related CRDs (label-based, scoped by part-of value) — reuse planner's shared functions
     eprint!("🔍 Discovering related CRDs...");
     let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
-    let (target_part_of_values, _seed_errors) =
+    let (target_part_of_values, seed_errors) =
         compute_part_of_seeds(&operator.owned_crds, kind_map, client).await;
+    for (source, reason) in &seed_errors {
+        eprintln!(
+            "\n  \x1b[33m⚠ Related CR discovery incomplete: {} — {}\x1b[0m",
+            source, reason
+        );
+    }
     let related_report = discover_related_crd_instances(
         client,
         &owned_crd_set,

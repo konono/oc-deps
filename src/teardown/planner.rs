@@ -975,23 +975,30 @@ const GENERIC_DOMAINS: &[&str] = &[
 ];
 
 fn extract_org_domains(crd_names: &[String]) -> HashSet<String> {
-    crd_names
-        .iter()
-        .filter_map(|crd| {
-            let group = crd.split_once('.')?.1;
-            let parts: Vec<&str> = group.rsplitn(3, '.').collect();
-            if parts.len() >= 2 {
-                let root = format!("{}.{}", parts[1], parts[0]);
-                if GENERIC_DOMAINS.contains(&root.as_str()) {
-                    None
-                } else {
-                    Some(root)
-                }
-            } else {
-                None
+    let mut domains = HashSet::new();
+    for crd in crd_names {
+        let group = match crd.split_once('.') {
+            Some((_, g)) => g,
+            None => continue,
+        };
+        // Collect all non-generic suffixes of the group as candidate domains.
+        // E.g. "components.platform.opendatahub.io" yields:
+        //   "components.platform.opendatahub.io"
+        //   "platform.opendatahub.io"
+        //   "opendatahub.io"
+        // but NOT "io" (single label) or any GENERIC_DOMAINS match.
+        let mut suffix = group;
+        loop {
+            if suffix.contains('.') && !GENERIC_DOMAINS.contains(&suffix) {
+                domains.insert(suffix.to_string());
             }
-        })
-        .collect()
+            match suffix.split_once('.') {
+                Some((_, rest)) if rest.contains('.') => suffix = rest,
+                _ => break,
+            }
+        }
+    }
+    domains
 }
 
 fn group_matches_domain(group: &str, domain: &str) -> bool {
