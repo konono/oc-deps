@@ -12,7 +12,9 @@ use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
-use crate::teardown::planner::{discover_cr_instances, discover_related_crd_instances};
+use crate::teardown::planner::{
+    compute_part_of_seeds, discover_cr_instances, discover_related_crd_instances,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperatorInspection {
@@ -35,60 +37,11 @@ pub async fn inspect_operator(
     let cr_instances: Vec<ResourceId> = cr_report.instances.into_iter().map(|cr| cr.id).collect();
     eprintln!(" found {} instances", cr_instances.len());
 
-    // Related CRDs (label-based, scoped by part-of value) — reuse planner's discovery
+    // Related CRDs (label-based, scoped by part-of value) — reuse planner's shared functions
     eprint!("🔍 Discovering related CRDs...");
     let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
-    let target_part_of_values: HashSet<String> = {
-        let mut values = HashSet::new();
-        let label_key = "platform.opendatahub.io/part-of";
-        const GENERIC_DOMAINS: &[&str] = &[
-            "openshift.io",
-            "k8s.io",
-            "kubernetes.io",
-            "coreos.com",
-            "cncf.io",
-        ];
-        let target_root_domains: HashSet<String> = operator
-            .owned_crds
-            .iter()
-            .filter_map(|crd| {
-                let group = crd.split_once('.')?.1;
-                let parts: Vec<&str> = group.rsplitn(3, '.').collect();
-                if parts.len() >= 2 {
-                    let root = format!("{}.{}", parts[1], parts[0]);
-                    if GENERIC_DOMAINS.contains(&root.as_str()) {
-                        None
-                    } else {
-                        Some(root)
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if !target_root_domains.is_empty()
-            && let Some(crd_ki) = kind_map.get("CustomResourceDefinition")
-        {
-            let crd_gvk = GroupVersion::gv(&crd_ki.group, &crd_ki.version)
-                .with_kind("CustomResourceDefinition");
-            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
-            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-            if let Ok(crd_list) = crd_api.list(&ListParams::default()).await {
-                for crd in &crd_list.items {
-                    let crd_name = crd.metadata.name.as_deref().unwrap_or("");
-                    let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
-                    let shares_domain = target_root_domains.iter().any(|d| crd_group.ends_with(d));
-                    if shares_domain
-                        && let Some(labels) = &crd.metadata.labels
-                        && let Some(v) = labels.get(label_key)
-                    {
-                        values.insert(v.clone());
-                    }
-                }
-            }
-        }
-        values
-    };
+    let (target_part_of_values, _seed_errors) =
+        compute_part_of_seeds(&operator.owned_crds, kind_map, client).await;
     let related_report = discover_related_crd_instances(
         client,
         &owned_crd_set,

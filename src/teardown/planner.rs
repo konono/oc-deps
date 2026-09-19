@@ -966,6 +966,98 @@ async fn check_controller_health(
 
 const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca.crt"];
 
+const GENERIC_DOMAINS: &[&str] = &[
+    "openshift.io",
+    "k8s.io",
+    "kubernetes.io",
+    "coreos.com",
+    "cncf.io",
+];
+
+fn extract_org_domains(crd_names: &[String]) -> HashSet<String> {
+    crd_names
+        .iter()
+        .filter_map(|crd| {
+            let group = crd.split_once('.')?.1;
+            let parts: Vec<&str> = group.rsplitn(3, '.').collect();
+            if parts.len() >= 2 {
+                let root = format!("{}.{}", parts[1], parts[0]);
+                if GENERIC_DOMAINS.contains(&root.as_str()) {
+                    None
+                } else {
+                    Some(root)
+                }
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn group_matches_domain(group: &str, domain: &str) -> bool {
+    group == domain || group.ends_with(&format!(".{}", domain))
+}
+
+/// Discover part-of label values from CRDs sharing organizational domains
+/// with the target operator's owned CRDs. Returns (values, unavailable_crds).
+pub async fn compute_part_of_seeds(
+    target_crds: &[String],
+    kind_map: &KindMap,
+    client: &Client,
+) -> (HashSet<String>, Vec<(String, String)>) {
+    let label_key = "platform.opendatahub.io/part-of";
+    let target_root_domains = extract_org_domains(target_crds);
+
+    if target_root_domains.is_empty() {
+        return (HashSet::new(), vec![]);
+    }
+
+    let Some(crd_ki) = kind_map.get("CustomResourceDefinition") else {
+        return (
+            HashSet::new(),
+            vec![(
+                "<related-crd-seed>".to_string(),
+                "CustomResourceDefinition kind not found in discovery".to_string(),
+            )],
+        );
+    };
+
+    let crd_gvk =
+        GroupVersion::gv(&crd_ki.group, &crd_ki.version).with_kind("CustomResourceDefinition");
+    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
+    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+
+    let crd_list = match crd_api.list(&ListParams::default()).await {
+        Ok(list) => list,
+        Err(e) => {
+            return (
+                HashSet::new(),
+                vec![(
+                    "<related-crd-seed>".to_string(),
+                    format!("LIST CustomResourceDefinitions failed: {}", e),
+                )],
+            );
+        }
+    };
+
+    let mut values = HashSet::new();
+    for crd in &crd_list.items {
+        let crd_name = crd.metadata.name.as_deref().unwrap_or("");
+        let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
+        let shares_domain = target_root_domains
+            .iter()
+            .any(|d| group_matches_domain(crd_group, d));
+        if shares_domain
+            && let Some(labels) = &crd.metadata.labels
+            && let Some(v) = labels.get(label_key)
+        {
+            values.insert(v.clone());
+        }
+    }
+
+    (values, vec![])
+}
+
 pub struct RelatedCrdReport {
     pub actions: Vec<Action>,
     pub instances: Vec<CrInstance>,
@@ -1324,63 +1416,10 @@ pub async fn generate_teardown_plan(
     eprintln!(" found {} direct instances", direct_count);
 
     // Related CRD discovery — scoped by label VALUE match
-    // Seed part-of values by finding CRDs whose API group shares a root
-    // domain with target-owned CRDs (e.g. *.opendatahub.io, *.kserve.io)
     eprint!("🔍 Discovering related CRD instances...");
-    let target_part_of_values: HashSet<String> = {
-        let mut values = HashSet::new();
-        let label_key = "platform.opendatahub.io/part-of";
-
-        // Extract organizational domains from target-owned CRD groups.
-        // Skip generic infrastructure domains to prevent over-broad matching.
-        const GENERIC_DOMAINS: &[&str] = &[
-            "openshift.io",
-            "k8s.io",
-            "kubernetes.io",
-            "coreos.com",
-            "cncf.io",
-        ];
-        let target_root_domains: HashSet<String> = target_crds
-            .iter()
-            .filter_map(|crd| {
-                let group = crd.split_once('.')?.1;
-                let parts: Vec<&str> = group.rsplitn(3, '.').collect();
-                if parts.len() >= 2 {
-                    let root = format!("{}.{}", parts[1], parts[0]);
-                    if GENERIC_DOMAINS.contains(&root.as_str()) {
-                        None
-                    } else {
-                        Some(root)
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !target_root_domains.is_empty()
-            && let Some(crd_ki) = kind_map.get("CustomResourceDefinition")
-        {
-            let crd_gvk = GroupVersion::gv(&crd_ki.group, &crd_ki.version)
-                .with_kind("CustomResourceDefinition");
-            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
-            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-            if let Ok(crd_list) = crd_api.list(&ListParams::default()).await {
-                for crd in &crd_list.items {
-                    let crd_name = crd.metadata.name.as_deref().unwrap_or("");
-                    let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
-                    let shares_domain = target_root_domains.iter().any(|d| crd_group.ends_with(d));
-                    if shares_domain
-                        && let Some(labels) = &crd.metadata.labels
-                        && let Some(v) = labels.get(label_key)
-                    {
-                        values.insert(v.clone());
-                    }
-                }
-            }
-        }
-        values
-    };
+    let (target_part_of_values, seed_unavailable) =
+        compute_part_of_seeds(&target_crds, kind_map, client).await;
+    all_unavailable.extend(seed_unavailable);
 
     let related_report = discover_related_crd_instances(
         client,
@@ -1400,7 +1439,7 @@ pub async fn generate_teardown_plan(
     // - Linked: ownerRef chain reaches target anchors → merge into graph (EXPECT/descendant)
     // - Unlinked: scoped CRD type but no ownerRef chain → independent REVIEW
     {
-        // Target anchors: direct CR UIDs + CSV UIDs + Deployment UIDs
+        // Target anchors: direct CR UIDs + CSV UIDs
         let mut anchor_uids: HashSet<String> = cr_instances
             .iter()
             .filter_map(|cr| cr.id.uid.clone())
