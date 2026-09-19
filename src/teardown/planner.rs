@@ -234,20 +234,20 @@ pub struct Warning {
 }
 
 #[derive(Clone, Debug)]
-enum Provenance {
+pub enum Provenance {
     Managed,
     LikelyManaged,
     Unknown,
 }
 
-struct CrInstance {
-    id: ResourceId,
-    owner_refs: Vec<(String, String, String)>, // (kind, name, uid)
+pub struct CrInstance {
+    pub id: ResourceId,
+    pub owner_refs: Vec<(String, String, String)>, // (kind, name, uid)
     #[allow(dead_code)]
-    api_owner_key: String,
-    labels: HashMap<String, String>,
-    managed_field_managers: Vec<String>,
-    provenance: Provenance,
+    pub api_owner_key: String,
+    pub labels: HashMap<String, String>,
+    pub managed_field_managers: Vec<String>,
+    pub provenance: Provenance,
 }
 
 pub fn resolve_operator_targets(
@@ -456,13 +456,13 @@ async fn discover_one_crd(
     CrdDiscoveryResult::Success(crs)
 }
 
-struct CrDiscoveryReport {
-    instances: Vec<CrInstance>,
-    total_observations: usize,
-    unavailable_crds: Vec<(String, String)>,
+pub struct CrDiscoveryReport {
+    pub instances: Vec<CrInstance>,
+    pub total_observations: usize,
+    pub unavailable_crds: Vec<(String, String)>,
 }
 
-async fn discover_cr_instances(
+pub async fn discover_cr_instances(
     client: &Client,
     target_crds: &[String],
     gvr_map: &GvrMap,
@@ -965,13 +965,13 @@ async fn check_controller_health(
 
 const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca.crt"];
 
-struct RelatedCrdReport {
-    actions: Vec<Action>,
-    crd_count: usize,
-    instance_count: usize,
+pub struct RelatedCrdReport {
+    pub actions: Vec<Action>,
+    pub crd_count: usize,
+    pub instance_count: usize,
 }
 
-async fn discover_related_crd_instances(
+pub async fn discover_related_crd_instances(
     client: &Client,
     target_crds: &HashSet<&str>,
     kind_map: &KindMap,

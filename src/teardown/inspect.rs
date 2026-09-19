@@ -1,8 +1,6 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use anyhow::Result;
-use futures::stream::StreamExt;
 use kube::{
     Client,
     api::{Api, ApiResource, DynamicObject, ListParams},
@@ -14,9 +12,7 @@ use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
-
-const DEFAULT_CONCURRENCY: usize = 16;
-const LIST_PAGE_SIZE: u32 = 500;
+use crate::teardown::planner::{discover_cr_instances, discover_related_crd_instances};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperatorInspection {
@@ -33,184 +29,29 @@ pub async fn inspect_operator(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> Result<OperatorInspection> {
+    // Owned CRD instances — reuse planner's discovery
     eprint!("🔍 Discovering CR instances...");
-
-    // Dedup CRDs by GVR key
-    let unique_crds: Vec<&String> = {
-        let mut seen_gvr = HashSet::new();
-        operator
-            .owned_crds
-            .iter()
-            .filter(|crd| {
-                let gvr_key = crd
-                    .split_once('.')
-                    .map(|(p, g)| format!("{}.{}", p, g).to_lowercase())
-                    .unwrap_or_default();
-                seen_gvr.insert(gvr_key)
-            })
-            .collect()
-    };
-
-    let kind_map = Arc::new(kind_map.clone());
-    let gvr_map = Arc::new(gvr_map.clone());
-
-    let futs = unique_crds.into_iter().map(|crd_name| {
-        let client = client.clone();
-        let crd_name = crd_name.clone();
-        let km = kind_map.clone();
-        let gm = gvr_map.clone();
-        async move {
-            let (plural, group) = match crd_name.split_once('.') {
-                Some((p, g)) => (p, g),
-                None => return vec![],
-            };
-            let gvr_key = format!("{}.{}", plural, group).to_lowercase();
-            let kind = match gm.get(&gvr_key) {
-                Some(k) => k.clone(),
-                None => return vec![],
-            };
-            let kind_info = match km.get(&kind) {
-                Some(i) => i,
-                None => return vec![],
-            };
-            let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
-            let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-            let api: Api<DynamicObject> = Api::all_with(client, &ar);
-            let items = match list_paginated(&api).await {
-                Ok(items) => items,
-                Err(_) => return vec![],
-            };
-            items
-                .into_iter()
-                .filter_map(|obj| {
-                    let name = obj.metadata.name?;
-                    Some(ResourceId {
-                        group: kind_info.group.clone(),
-                        version: kind_info.version.clone(),
-                        kind: kind.clone(),
-                        namespace: obj.metadata.namespace,
-                        name,
-                        uid: obj.metadata.uid,
-                    })
-                })
-                .collect::<Vec<_>>()
-        }
-    });
-
-    let results: Vec<Vec<ResourceId>> = futures::stream::iter(futs)
-        .buffer_unordered(DEFAULT_CONCURRENCY)
-        .collect()
-        .await;
-
-    let mut cr_instances: Vec<ResourceId> = results.into_iter().flatten().collect();
-
-    // UID-based dedup
-    let mut seen_uids = HashSet::new();
-    cr_instances.retain(|cr| {
-        if let Some(uid) = &cr.uid {
-            seen_uids.insert(uid.clone())
-        } else {
-            true
-        }
-    });
-
+    let cr_report = discover_cr_instances(client, &operator.owned_crds, gvr_map, gk_map).await;
+    let cr_instances: Vec<ResourceId> = cr_report.instances.into_iter().map(|cr| cr.id).collect();
     eprintln!(" found {} instances", cr_instances.len());
 
-    // Related CRDs (label-based)
+    // Related CRDs (label-based) — reuse planner's discovery
     eprint!("🔍 Discovering related CRDs...");
     let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
-    let mut related_cr_instances = Vec::new();
-
-    let crd_kind_info = kind_map.get("CustomResourceDefinition");
-    if let Some(crd_ki) = crd_kind_info {
-        let crd_gvk =
-            GroupVersion::gv(&crd_ki.group, &crd_ki.version).with_kind("CustomResourceDefinition");
-        let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
-        let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-
-        if let Ok(all_crds) = crd_api.list(&ListParams::default()).await {
-            let mut related_crd_names: Vec<String> = Vec::new();
-            for crd in &all_crds.items {
-                let crd_name = match &crd.metadata.name {
-                    Some(n) => n,
-                    None => continue,
-                };
-                if owned_crd_set.contains(crd_name.as_str()) {
-                    continue;
-                }
-                let has_label = crd
-                    .metadata
-                    .labels
-                    .as_ref()
-                    .is_some_and(|l| l.contains_key("platform.opendatahub.io/part-of"));
-                if has_label {
-                    related_crd_names.push(crd_name.clone());
-                }
-            }
-
-            let gvr_map_ref = gvr_map.clone();
-            let gk_map_arc = Arc::new(gk_map.clone());
-            let related_futs = related_crd_names.iter().map(|crd_name| {
-                let client = client.clone();
-                let crd_name = crd_name.clone();
-                let gm = gvr_map_ref.clone();
-                let gk = gk_map_arc.clone();
-                async move {
-                    let (plural, group) = match crd_name.split_once('.') {
-                        Some((p, g)) => (p, g),
-                        None => return vec![],
-                    };
-                    let gvr_key = format!("{}.{}", plural, group).to_lowercase();
-                    let kind = match gm.get(&gvr_key) {
-                        Some(k) => k.clone(),
-                        None => return vec![],
-                    };
-                    let ki = match gk.get(&(group.to_string(), kind.clone())) {
-                        Some(i) => i,
-                        None => return vec![],
-                    };
-                    let gvk = GroupVersion::gv(&ki.group, &ki.version).with_kind(&kind);
-                    let ar = ApiResource::from_gvk_with_plural(&gvk, &ki.plural);
-                    let api: Api<DynamicObject> = Api::all_with(client, &ar);
-                    match list_paginated(&api).await {
-                        Ok(items) => items
-                            .into_iter()
-                            .filter_map(|obj| {
-                                Some(ResourceId {
-                                    group: ki.group.clone(),
-                                    version: ki.version.clone(),
-                                    kind: kind.clone(),
-                                    namespace: obj.metadata.namespace,
-                                    name: obj.metadata.name?,
-                                    uid: obj.metadata.uid,
-                                })
-                            })
-                            .collect(),
-                        Err(_) => vec![],
-                    }
-                }
-            });
-
-            let related_results: Vec<Vec<ResourceId>> = futures::stream::iter(related_futs)
-                .buffer_unordered(DEFAULT_CONCURRENCY)
-                .collect()
-                .await;
-            related_cr_instances = related_results.into_iter().flatten().collect();
-
-            let mut seen_uids = HashSet::new();
-            related_cr_instances.retain(|cr| {
-                if let Some(uid) = &cr.uid {
-                    seen_uids.insert(uid.clone())
-                } else {
-                    true
-                }
-            });
-        }
-    }
+    let related_report =
+        discover_related_crd_instances(client, &owned_crd_set, kind_map, gvr_map, gk_map).await;
+    let related_cr_instances: Vec<ResourceId> = related_report
+        .actions
+        .into_iter()
+        .filter_map(|action| match action {
+            crate::teardown::planner::Action::Review { resource, .. } => Some(resource),
+            _ => None,
+        })
+        .collect();
     eprintln!(" found {} related instances", related_cr_instances.len());
 
+    // Controller pods
     let mut controller_pods = Vec::new();
-
     eprint!("🔍 Discovering controller pods...");
     for deploy_name in &operator.deployments {
         let deploy_info = match kind_map.get("Deployment") {
@@ -287,28 +128,6 @@ pub async fn inspect_operator(
         related_cr_instances,
         controller_pods,
     })
-}
-
-async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
-    let mut all_items = Vec::new();
-    let mut continue_token: Option<String> = None;
-
-    loop {
-        let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
-        if let Some(token) = &continue_token {
-            lp = lp.continue_token(token);
-        }
-        let list = api.list(&lp).await?;
-        let metadata = list.metadata;
-        all_items.extend(list.items);
-
-        match metadata.continue_.filter(|t| !t.is_empty()) {
-            Some(token) => continue_token = Some(token),
-            None => break,
-        }
-    }
-
-    Ok(all_items)
 }
 
 pub fn print_inspection(inspection: &OperatorInspection, output: &OutputFormat) {
