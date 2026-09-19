@@ -96,7 +96,7 @@ impl ReviewDecisions {
                         ));
                     } else if matching.is_empty() {
                         errors.push(format!(
-                            "--approve-delete {}/{}: no matching approvable REVIEW root found",
+                            "--approve-delete {}/{}: no matching approvable REVIEW resource found",
                             kind, name
                         ));
                     }
@@ -115,7 +115,7 @@ impl ReviewDecisions {
                     });
                     if !found {
                         errors.push(format!(
-                            "--approve-delete {}: no matching approvable REVIEW root found",
+                            "--approve-delete {}: no matching approvable REVIEW resource found",
                             spec
                         ));
                     }
@@ -1786,9 +1786,11 @@ pub async fn generate_teardown_plan(
         .filter_map(|cr| cr.id.uid.as_deref().map(|uid| (uid, cr)))
         .collect();
 
-    // Collect approvable root CRs: non-Managed provenance AND not shared-owned
-    let approvable_root_ids: Vec<&ResourceId> = root_crs
+    // Collect all approvable REVIEW candidates (root + independent)
+    // Excludes: Managed provenance (auto-DELETE), shared ownership (needs operator selection change)
+    let approvable_ids: Vec<&ResourceId> = root_crs
         .iter()
+        .chain(independent_crs.iter())
         .filter(|cr| {
             !matches!(cr.provenance, Provenance::Managed)
                 && resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len() <= 1
@@ -1796,7 +1798,7 @@ pub async fn generate_teardown_plan(
         .map(|cr| &cr.id)
         .collect();
 
-    if let Err(errors) = decisions.validate(&approvable_root_ids) {
+    if let Err(errors) = decisions.validate(&approvable_ids) {
         for err in &errors {
             eprintln!("\x1b[1;31m⛔\x1b[0m {}", err);
         }
@@ -2040,23 +2042,13 @@ pub async fn generate_teardown_plan(
         let mut phase_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, "root", decisions, &approvable_root_ids));
+            phase_actions.push(cr_to_action(cr, "root", decisions, &approvable_ids));
         }
         for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(
-                cr,
-                "descendant",
-                decisions,
-                &approvable_root_ids,
-            ));
+            phase_actions.push(cr_to_action(cr, "descendant", decisions, &approvable_ids));
         }
         for cr in &independent_crs {
-            phase_actions.push(cr_to_action(
-                cr,
-                "independent",
-                decisions,
-                &approvable_root_ids,
-            ));
+            phase_actions.push(cr_to_action(cr, "independent", decisions, &approvable_ids));
         }
 
         let conds: Vec<String> = phase_actions
@@ -2097,7 +2089,7 @@ pub async fn generate_teardown_plan(
                         continue;
                     }
                 } else {
-                    cr_to_action(cr, "root", decisions, &approvable_root_ids)
+                    cr_to_action(cr, "root", decisions, &approvable_ids)
                 };
                 let op_idx = owners.iter().next().copied();
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
@@ -2129,12 +2121,7 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(
-                        cr,
-                        "descendant",
-                        decisions,
-                        &approvable_root_ids,
-                    ));
+                    phase_actions.push(cr_to_action(cr, "descendant", decisions, &approvable_ids));
                 }
             }
             for cr in &independent_crs {
@@ -2152,12 +2139,7 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(
-                        cr,
-                        "independent",
-                        decisions,
-                        &approvable_root_ids,
-                    ));
+                    phase_actions.push(cr_to_action(cr, "independent", decisions, &approvable_ids));
                 }
             }
 
