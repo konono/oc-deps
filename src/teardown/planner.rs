@@ -1803,44 +1803,54 @@ pub async fn generate_teardown_plan(
         bail!("{} --approve-delete argument(s) are invalid", errors.len());
     }
 
+    #[derive(Debug, PartialEq)]
+    enum DeleteApprovalClass {
+        Automatic,
+        ExplicitOnly,
+    }
+
+    fn approval_class(cr: &CrInstance, action_type: &str) -> DeleteApprovalClass {
+        if cr.discovery_source == DiscoverySource::RelatedLabelOnly && action_type != "descendant" {
+            return DeleteApprovalClass::ExplicitOnly;
+        }
+        DeleteApprovalClass::Automatic
+    }
+
     fn cr_to_action(
         cr: &CrInstance,
         action_type: &str,
         decisions: &ReviewDecisions,
         review_roots: &[&ResourceId],
     ) -> Action {
-        // Label-only related CRs: REVIEW regardless of graph position.
-        // Descendant is the exception — if parent triggers cleanup, child follows.
-        if cr.discovery_source == DiscoverySource::RelatedLabelOnly && action_type != "descendant" {
-            return Action::Review {
-                resource: cr.id.clone(),
-                reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
-            };
-        }
+        let approval = approval_class(cr, action_type);
 
         match (action_type, &cr.provenance) {
-            ("root", Provenance::Managed) => Action::Delete {
+            ("root", Provenance::Managed) if approval == DeleteApprovalClass::Automatic => {
+                Action::Delete {
+                    resource: cr.id.clone(),
+                    reason: "root management CR (managed via ownerRef)".to_string(),
+                }
+            }
+            ("root", _) if decisions.is_approved(&cr.id, review_roots) => Action::Delete {
                 resource: cr.id.clone(),
-                reason: "root management CR (managed via ownerRef)".to_string(),
+                reason: if approval == DeleteApprovalClass::ExplicitOnly {
+                    "label-related root CR explicitly approved for deletion".to_string()
+                } else {
+                    "root CR explicitly approved for deletion".to_string()
+                },
             },
-            ("root", Provenance::LikelyManaged) if decisions.is_approved(&cr.id, review_roots) => {
-                Action::Delete {
-                    resource: cr.id.clone(),
-                    reason: "root CR explicitly approved for deletion".to_string(),
-                }
-            }
-            ("root", Provenance::Unknown) if decisions.is_approved(&cr.id, review_roots) => {
-                Action::Delete {
-                    resource: cr.id.clone(),
-                    reason: "root CR explicitly approved for deletion".to_string(),
-                }
-            }
+            ("root", _) if approval == DeleteApprovalClass::ExplicitOnly => Action::Review {
+                resource: cr.id.clone(),
+                reason:
+                    "label-related only — discovered via platform label, no ownerRef chain to target operator"
+                        .to_string(),
+            },
             ("root", Provenance::LikelyManaged) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "root CR but provenance uncertain (label-based) — verify before deleting"
                     .to_string(),
             },
-            ("root", Provenance::Unknown) => Action::Review {
+            ("root", Provenance::Unknown | Provenance::Managed) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "root CR but provenance unknown — verify before deleting".to_string(),
             },
@@ -1848,6 +1858,19 @@ pub async fn generate_teardown_plan(
                 resource: cr.id.clone(),
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
+            ("independent", _) if approval == DeleteApprovalClass::ExplicitOnly => {
+                if decisions.is_approved(&cr.id, review_roots) {
+                    Action::Delete {
+                        resource: cr.id.clone(),
+                        reason: "label-related CR explicitly approved for deletion".to_string(),
+                    }
+                } else {
+                    Action::Review {
+                        resource: cr.id.clone(),
+                        reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    }
+                }
+            }
             ("independent", Provenance::Managed) => Action::Delete {
                 resource: cr.id.clone(),
                 reason: "independent operand (managed via ownerRef)".to_string(),
