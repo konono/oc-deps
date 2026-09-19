@@ -240,6 +240,13 @@ pub enum Provenance {
     Unknown,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum DiscoverySource {
+    Direct,
+    RelatedLinked,
+    RelatedLabelOnly,
+}
+
 pub struct CrInstance {
     pub id: ResourceId,
     pub owner_refs: Vec<(String, String, String)>, // (kind, name, uid)
@@ -248,6 +255,7 @@ pub struct CrInstance {
     pub labels: HashMap<String, String>,
     pub managed_field_managers: Vec<String>,
     pub provenance: Provenance,
+    pub discovery_source: DiscoverySource,
 }
 
 pub fn resolve_operator_targets(
@@ -449,6 +457,7 @@ async fn discover_one_crd(
                 labels,
                 managed_field_managers,
                 provenance: Provenance::Unknown,
+                discovery_source: DiscoverySource::Direct,
             })
         })
         .collect::<Vec<_>>();
@@ -583,6 +592,7 @@ async fn discover_api_service_instances(
                                 labels,
                                 managed_field_managers,
                                 provenance: Provenance::Unknown,
+                                discovery_source: DiscoverySource::Direct,
                             })
                         })
                         .collect();
@@ -1477,10 +1487,13 @@ pub async fn generate_teardown_plan(
             });
             if linked {
                 linked_count += 1;
+                let mut cr = cr;
+                cr.discovery_source = DiscoverySource::RelatedLinked;
                 cr_instances.push(cr);
             } else {
                 unlinked_count += 1;
-                // Keep as independent — will become REVIEW via provenance Unknown
+                let mut cr = cr;
+                cr.discovery_source = DiscoverySource::RelatedLabelOnly;
                 cr_instances.push(cr);
             }
         }
@@ -1826,6 +1839,14 @@ pub async fn generate_teardown_plan(
                 resource: cr.id.clone(),
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
+            ("independent", _)
+                if cr.discovery_source == DiscoverySource::RelatedLabelOnly =>
+            {
+                Action::Review {
+                    resource: cr.id.clone(),
+                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                }
+            }
             ("independent", Provenance::Managed) => Action::Delete {
                 resource: cr.id.clone(),
                 reason: "independent operand (managed via ownerRef)".to_string(),
@@ -2648,6 +2669,7 @@ mod tests {
             labels,
             managed_field_managers: managers,
             provenance: Provenance::Unknown,
+            discovery_source: DiscoverySource::Direct,
         }
     }
 
