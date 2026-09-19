@@ -1,3 +1,6 @@
 target
 .envrc
 .kube/
+.claude/worktrees/
+.tracecraft/
+mise.lock
