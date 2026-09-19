@@ -458,6 +458,7 @@ async fn discover_one_crd(
 
 pub struct CrDiscoveryReport {
     pub instances: Vec<CrInstance>,
+    #[allow(dead_code)]
     pub total_observations: usize,
     pub unavailable_crds: Vec<(String, String)>,
 }
@@ -967,6 +968,8 @@ const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca
 
 pub struct RelatedCrdReport {
     pub actions: Vec<Action>,
+    pub instances: Vec<CrInstance>,
+    pub unavailable_crds: Vec<(String, String)>,
     pub crd_count: usize,
     pub instance_count: usize,
 }
@@ -985,6 +988,8 @@ pub async fn discover_related_crd_instances(
         None => {
             return RelatedCrdReport {
                 actions,
+                instances: vec![],
+                unavailable_crds: vec![],
                 crd_count: 0,
                 instance_count: 0,
             };
@@ -1002,6 +1007,8 @@ pub async fn discover_related_crd_instances(
         Err(_) => {
             return RelatedCrdReport {
                 actions,
+                instances: vec![],
+                unavailable_crds: vec![],
                 crd_count: 0,
                 instance_count: 0,
             };
@@ -1030,6 +1037,8 @@ pub async fn discover_related_crd_instances(
     if related_crd_names.is_empty() {
         return RelatedCrdReport {
             actions,
+            instances: vec![],
+            unavailable_crds: vec![],
             crd_count: 0,
             instance_count: 0,
         };
@@ -1040,15 +1049,17 @@ pub async fn discover_related_crd_instances(
     let crd_count = related_crd_names.len();
     let instance_count = related_report.instances.len();
 
-    for cr in related_report.instances {
+    for cr in &related_report.instances {
         actions.push(Action::Review {
-            resource: cr.id,
+            resource: cr.id.clone(),
             reason: "related CRD instance (not CSV-owned, discovered via label)".to_string(),
         });
     }
 
     RelatedCrdReport {
         actions,
+        instances: related_report.instances,
+        unavailable_crds: related_report.unavailable_crds,
         crd_count,
         instance_count,
     }
@@ -1287,15 +1298,27 @@ pub async fn generate_teardown_plan(
     let api_svc_report = discover_api_service_instances(client, &api_service_kind_infos).await;
     let mut cr_instances = cr_report.instances;
     cr_instances.extend(api_svc_report.instances);
-    let total_observations = cr_report.total_observations + api_svc_report.total_observations;
-    let unique_count = cr_instances.len();
-    let duplicates = total_observations - unique_count;
-    eprintln!(
-        " found {} instances ({} observations)",
-        unique_count, total_observations
-    );
     let mut all_unavailable = cr_report.unavailable_crds;
     all_unavailable.extend(api_svc_report.unavailable_crds);
+    let direct_count = cr_instances.len();
+    eprintln!(" found {} direct instances", direct_count);
+
+    // Related CRD discovery (label-based candidate expansion)
+    eprint!("🔍 Discovering related CRD instances...");
+    let related_report =
+        discover_related_crd_instances(client, &target_crd_set, kind_map, gvr_map, gk_map).await;
+    eprintln!(
+        " {} CRDs, {} instances",
+        related_report.crd_count, related_report.instance_count
+    );
+    // Merge related instances into the main resource graph
+    // They carry full ownerRefs/labels/managedFields for provenance classification
+    cr_instances.extend(related_report.instances);
+    all_unavailable.extend(related_report.unavailable_crds);
+
+    let total_observations = direct_count + related_report.instance_count;
+    let unique_count = cr_instances.len();
+    let duplicates = total_observations - unique_count;
     if !all_unavailable.is_empty() {
         eprintln!(
             "  ⚠ {} API type(s) could not be enumerated",
@@ -1303,7 +1326,7 @@ pub async fn generate_teardown_plan(
         );
     }
 
-    // Classify provenance
+    // Classify provenance (applies to both direct and related CRs)
     for cr in &mut cr_instances {
         classify_provenance(cr, target_operators);
     }
@@ -2049,38 +2072,8 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // ── Related CRD instances (label-based discovery) ──
-    eprint!("🔍 Discovering related CRD instances...");
-    let related_report =
-        discover_related_crd_instances(client, &target_crd_set, kind_map, gvr_map, gk_map).await;
-    eprintln!(
-        " {} CRDs, {} instances",
-        related_report.crd_count, related_report.instance_count
-    );
-
-    let related_phase = if !related_report.actions.is_empty() {
-        warnings.push(Warning {
-            message: format!(
-                "{} instances across {} related CRDs (not CSV-owned) require manual review",
-                related_report.instance_count, related_report.crd_count
-            ),
-            resource: None,
-        });
-        Some(PlanPhase {
-            name: "Related operands".to_string(),
-            description: "Instances of CRDs managed by sub-controllers (not CSV-owned). These may include user-created resources.".to_string(),
-            actions: related_report.actions,
-            barrier: None,
-        })
-    } else {
-        None
-    };
-
     let mut phases = vec![phase0];
     phases.extend(operand_phases);
-    if let Some(rp) = related_phase {
-        phases.push(rp);
-    }
     phases.push(phase_remaining);
     phases.extend(controller_phases);
     if let Some(ns_phase) = ns_cleanup_phase {
