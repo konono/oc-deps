@@ -19,6 +19,11 @@ use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
+pub trait ReviewCandidateRef {
+    fn resource_id(&self) -> &ResourceId;
+    fn is_approvable(&self) -> bool;
+}
+
 pub struct ReviewDecisions {
     pub approve_delete: Vec<String>,
 }
@@ -76,34 +81,45 @@ impl ReviewDecisions {
         }
     }
 
-    pub fn validate(&self, approvable_roots: &[&ResourceId]) -> Result<(), Vec<String>> {
+    pub fn validate<T: ReviewCandidateRef>(
+        &self,
+        all_review_candidates: &[T],
+    ) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
         for spec in &self.approve_delete {
             let parts: Vec<&str> = spec.splitn(4, '/').collect();
             match parts.len() {
                 2 => {
                     let (kind, name) = (parts[0], parts[1]);
-                    let matching: Vec<_> = approvable_roots
+                    let matching: Vec<_> = all_review_candidates
                         .iter()
-                        .filter(|r| r.kind == kind && r.name == name)
+                        .filter(|rc| rc.resource_id().kind == kind && rc.resource_id().name == name)
                         .collect();
                     if matching.len() > 1 {
-                        let qualified: Vec<String> =
-                            matching.iter().map(|r| Self::canonical_key(r)).collect();
+                        let qualified: Vec<String> = matching
+                            .iter()
+                            .map(|rc| Self::canonical_key(rc.resource_id()))
+                            .collect();
                         errors.push(format!(
-                            "ambiguous --approve-delete {}/{}: matches {} resources. Use qualified form:\n  {}",
+                            "ambiguous --approve-delete {}/{}: matches {} REVIEW resources. Use qualified form:\n  {}",
                             kind, name, matching.len(), qualified.join("\n  ")
                         ));
                     } else if matching.is_empty() {
                         errors.push(format!(
-                            "--approve-delete {}/{}: no matching approvable REVIEW resource found",
+                            "--approve-delete {}/{}: no matching REVIEW resource found",
+                            kind, name
+                        ));
+                    } else if !matching[0].is_approvable() {
+                        errors.push(format!(
+                            "--approve-delete {}/{}: resource exists but cannot be approved for deletion (shared ownership or other constraint)",
                             kind, name
                         ));
                     }
                 }
                 4 => {
                     let (group, kind, ns, name) = (parts[0], parts[1], parts[2], parts[3]);
-                    let found = approvable_roots.iter().any(|r| {
+                    let found = all_review_candidates.iter().find(|rc| {
+                        let r = rc.resource_id();
                         let ns_match = match &r.namespace {
                             Some(rns) => rns == ns,
                             None => ns == "-",
@@ -113,11 +129,20 @@ impl ReviewDecisions {
                             && ns_match
                             && r.name == name
                     });
-                    if !found {
-                        errors.push(format!(
-                            "--approve-delete {}: no matching approvable REVIEW resource found",
-                            spec
-                        ));
+                    match found {
+                        None => {
+                            errors.push(format!(
+                                "--approve-delete {}: no matching REVIEW resource found",
+                                spec
+                            ));
+                        }
+                        Some(rc) if !rc.is_approvable() => {
+                            errors.push(format!(
+                                "--approve-delete {}: resource exists but cannot be approved for deletion",
+                                spec
+                            ));
+                        }
+                        _ => {}
                     }
                 }
                 _ => {
@@ -1829,9 +1854,20 @@ pub async fn generate_teardown_plan(
         position: GraphPosition,
         #[allow(dead_code)]
         approval_class: DeleteApprovalClass,
+        exact_approvable: bool,
     }
 
-    // Collect approvable REVIEW candidates across all positions
+    impl ReviewCandidateRef for ReviewCandidate<'_> {
+        fn resource_id(&self) -> &ResourceId {
+            self.resource
+        }
+        fn is_approvable(&self) -> bool {
+            self.exact_approvable
+        }
+    }
+
+    // Collect ALL REVIEW candidates (root + independent) with approvability.
+    // Identity resolution uses all candidates; approvability is checked after.
     let review_candidates: Vec<ReviewCandidate> = root_crs
         .iter()
         .map(|cr| (cr, GraphPosition::Root))
@@ -1840,20 +1876,25 @@ pub async fn generate_teardown_plan(
                 .iter()
                 .map(|cr| (cr, GraphPosition::Independent)),
         )
-        .filter(|(cr, position)| {
+        .filter(|(cr, _)| !matches!(cr.provenance, Provenance::Managed))
+        .map(|(cr, position)| {
             let owner_count = resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len();
-            is_exact_delete_approvable(cr, *position, owner_count)
-        })
-        .map(|(cr, position)| ReviewCandidate {
-            resource: &cr.id,
-            position,
-            approval_class: compute_approval_class(cr, position),
+            ReviewCandidate {
+                resource: &cr.id,
+                position,
+                approval_class: compute_approval_class(cr, position),
+                exact_approvable: is_exact_delete_approvable(cr, position, owner_count),
+            }
         })
         .collect();
 
-    let approvable_ids: Vec<&ResourceId> = review_candidates.iter().map(|rc| rc.resource).collect();
+    let approvable_ids: Vec<&ResourceId> = review_candidates
+        .iter()
+        .filter(|rc| rc.exact_approvable)
+        .map(|rc| rc.resource)
+        .collect();
 
-    if let Err(errors) = decisions.validate(&approvable_ids) {
+    if let Err(errors) = decisions.validate(&review_candidates) {
         for err in &errors {
             eprintln!("\x1b[1;31m⛔\x1b[0m {}", err);
         }
