@@ -1692,22 +1692,60 @@ pub async fn generate_teardown_plan(
         bfs_owner_ancestry(cr, api_to_op_indices, cr_by_uid)
     }
 
-    // For managed descendants: ownerRef ancestry determines cleanup layer
-    // (which parent's DELETE triggers this resource to disappear)
+    // For managed descendants: recursively resolve cleanup trigger layer.
+    // Walks ownerRef chain upward, and for each ancestor that is itself a
+    // descendant, recursively resolves its cleanup trigger rather than
+    // stopping at API ownership. This handles multi-level chains like
+    // C → P → R where R's layer should propagate through P to C.
     fn resolve_cleanup_trigger_indices(
         cr: &CrInstance,
         api_to_op_indices: &HashMap<String, HashSet<usize>>,
         cr_by_uid: &HashMap<&str, &CrInstance>,
+        parent_uids: &HashSet<String>,
+        visited: &mut HashSet<String>,
     ) -> HashSet<usize> {
-        let via_ancestry = bfs_owner_ancestry(cr, api_to_op_indices, cr_by_uid);
-        if !via_ancestry.is_empty() {
-            return via_ancestry;
+        let uid = cr.id.uid.as_deref().unwrap_or("");
+        if !visited.insert(uid.to_string()) {
+            return HashSet::new();
         }
-        // Fallback to API ownership if no ancestor is attributed
-        if let Some(owners) = api_to_op_indices.get(cr.api_owner_key.as_str()) {
-            return owners.clone();
+
+        let mut result = HashSet::new();
+        for (_, _, ref_uid) in &cr.owner_refs {
+            let Some(parent) = cr_by_uid.get(ref_uid.as_str()) else {
+                continue;
+            };
+            let parent_uid = parent.id.uid.as_deref().unwrap_or("");
+            let parent_is_root = parent_uids.contains(parent_uid);
+
+            if parent_is_root {
+                // Root parent: use its API ownership (it's the cleanup trigger)
+                if let Some(owners) = api_to_op_indices.get(parent.api_owner_key.as_str()) {
+                    result.extend(owners.iter().copied());
+                }
+            } else {
+                // Intermediate parent: recursively inherit its cleanup trigger
+                let inherited = resolve_cleanup_trigger_indices(
+                    parent,
+                    api_to_op_indices,
+                    cr_by_uid,
+                    parent_uids,
+                    visited,
+                );
+                if !inherited.is_empty() {
+                    result.extend(inherited);
+                } else if let Some(owners) = api_to_op_indices.get(parent.api_owner_key.as_str()) {
+                    result.extend(owners.iter().copied());
+                }
+            }
         }
-        HashSet::new()
+
+        if result.is_empty()
+            && let Some(owners) = api_to_op_indices.get(cr.api_owner_key.as_str())
+        {
+            result.extend(owners.iter().copied());
+        }
+
+        result
     }
 
     // Compute dependency layers for operand cleanup
@@ -1819,7 +1857,13 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &managed_descendants {
-                let owners = resolve_cleanup_trigger_indices(cr, &api_to_op_indices, &cr_by_uid);
+                let owners = resolve_cleanup_trigger_indices(
+                    cr,
+                    &api_to_op_indices,
+                    &cr_by_uid,
+                    &parent_uids,
+                    &mut HashSet::new(),
+                );
                 if owners.len() > 1 {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
