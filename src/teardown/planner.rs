@@ -1344,6 +1344,60 @@ async fn discover_namespace_resources(
     actions
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum GraphPosition {
+    Root,
+    Descendant,
+    Independent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DeleteApprovalClass {
+    Standard,
+    ExplicitOnly,
+}
+
+fn compute_approval_class(cr: &CrInstance, position: GraphPosition) -> DeleteApprovalClass {
+    if cr.discovery_source == DiscoverySource::RelatedLabelOnly
+        && position != GraphPosition::Descendant
+    {
+        return DeleteApprovalClass::ExplicitOnly;
+    }
+    DeleteApprovalClass::Standard
+}
+
+fn is_exact_delete_approvable(
+    cr: &CrInstance,
+    position: GraphPosition,
+    owner_count: usize,
+) -> bool {
+    if matches!(cr.provenance, Provenance::Managed) {
+        return false;
+    }
+    if owner_count > 1 {
+        return false;
+    }
+    matches!(position, GraphPosition::Root | GraphPosition::Independent)
+}
+
+struct ReviewCandidate<'a> {
+    resource: &'a ResourceId,
+    #[allow(dead_code)]
+    position: GraphPosition,
+    #[allow(dead_code)]
+    approval_class: DeleteApprovalClass,
+    exact_approvable: bool,
+}
+
+impl ReviewCandidateRef for ReviewCandidate<'_> {
+    fn resource_id(&self) -> &ResourceId {
+        self.resource
+    }
+    fn is_approvable(&self) -> bool {
+        self.exact_approvable
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
@@ -1810,61 +1864,6 @@ pub async fn generate_teardown_plan(
         .iter()
         .filter_map(|cr| cr.id.uid.as_deref().map(|uid| (uid, cr)))
         .collect();
-
-    // Build review candidates with centralized approvability logic
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    enum GraphPosition {
-        Root,
-        Descendant,
-        Independent,
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    enum DeleteApprovalClass {
-        Standard,
-        ExplicitOnly,
-    }
-
-    fn compute_approval_class(cr: &CrInstance, position: GraphPosition) -> DeleteApprovalClass {
-        if cr.discovery_source == DiscoverySource::RelatedLabelOnly
-            && position != GraphPosition::Descendant
-        {
-            return DeleteApprovalClass::ExplicitOnly;
-        }
-        DeleteApprovalClass::Standard
-    }
-
-    fn is_exact_delete_approvable(
-        cr: &CrInstance,
-        position: GraphPosition,
-        owner_count: usize,
-    ) -> bool {
-        if matches!(cr.provenance, Provenance::Managed) {
-            return false;
-        }
-        if owner_count > 1 {
-            return false;
-        }
-        matches!(position, GraphPosition::Root | GraphPosition::Independent)
-    }
-
-    struct ReviewCandidate<'a> {
-        resource: &'a ResourceId,
-        #[allow(dead_code)]
-        position: GraphPosition,
-        #[allow(dead_code)]
-        approval_class: DeleteApprovalClass,
-        exact_approvable: bool,
-    }
-
-    impl ReviewCandidateRef for ReviewCandidate<'_> {
-        fn resource_id(&self) -> &ResourceId {
-            self.resource
-        }
-        fn is_approvable(&self) -> bool {
-            self.exact_approvable
-        }
-    }
 
     // Collect ALL REVIEW candidates (root + independent) with approvability.
     // Identity resolution uses all candidates; approvability is checked after.
@@ -3162,15 +3161,11 @@ mod tests {
     }
 
     #[test]
-    fn managed_provenance_excludes_from_review_candidates() {
-        // Managed CRs should never appear in ReviewCandidate because they
-        // auto-DELETE without approval. If this invariant breaks, REVIEW
-        // actions could exist without corresponding candidates.
+    fn managed_provenance_is_not_exact_approvable() {
         let op = make_test_operator("test-op.v1", "test-op");
         let ops: Vec<&OperatorInstance> = vec![&op];
 
-        // Create a CR with Managed provenance (ownerRef to CSV)
-        let mut cr = make_cr_instance(
+        let mut cr_managed = make_cr_instance(
             "Widget",
             "managed-widget",
             "uid-managed",
@@ -3182,13 +3177,19 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
-        assert!(
-            matches!(cr.provenance, Provenance::Managed),
-            "expected Managed provenance for CSV-owned CR"
-        );
+        classify_provenance(&mut cr_managed, &ops);
+        assert!(matches!(cr_managed.provenance, Provenance::Managed));
+        assert!(!is_exact_delete_approvable(
+            &cr_managed,
+            GraphPosition::Root,
+            1
+        ));
+        assert!(!is_exact_delete_approvable(
+            &cr_managed,
+            GraphPosition::Independent,
+            1
+        ));
 
-        // Create a CR with Unknown provenance (no ownerRef)
         let mut cr_unknown = make_cr_instance(
             "Widget",
             "unknown-widget",
@@ -3199,14 +3200,76 @@ mod tests {
         );
         classify_provenance(&mut cr_unknown, &ops);
         assert!(matches!(cr_unknown.provenance, Provenance::Unknown));
+        assert!(is_exact_delete_approvable(
+            &cr_unknown,
+            GraphPosition::Root,
+            1
+        ));
+        assert!(is_exact_delete_approvable(
+            &cr_unknown,
+            GraphPosition::Independent,
+            1
+        ));
+    }
 
-        // Managed should be filtered out of review candidates
-        let crs = vec![cr, cr_unknown];
-        let non_managed: Vec<_> = crs
-            .iter()
-            .filter(|cr| !matches!(cr.provenance, Provenance::Managed))
-            .collect();
-        assert_eq!(non_managed.len(), 1);
-        assert_eq!(non_managed[0].id.name, "unknown-widget");
+    #[test]
+    fn shared_ownership_is_not_exact_approvable() {
+        let mut cr = make_cr_instance("Widget", "shared", "uid-s", vec![], HashMap::new(), vec![]);
+        cr.provenance = Provenance::Unknown;
+        assert!(!is_exact_delete_approvable(&cr, GraphPosition::Root, 2));
+        assert!(!is_exact_delete_approvable(
+            &cr,
+            GraphPosition::Independent,
+            2
+        ));
+    }
+
+    #[test]
+    fn descendant_is_not_exact_approvable() {
+        let mut cr = make_cr_instance("Widget", "child", "uid-c", vec![], HashMap::new(), vec![]);
+        cr.provenance = Provenance::Unknown;
+        assert!(!is_exact_delete_approvable(
+            &cr,
+            GraphPosition::Descendant,
+            1
+        ));
+    }
+
+    #[test]
+    fn label_only_is_explicit_only_approval_class() {
+        let mut cr = make_cr_instance(
+            "Widget",
+            "label-only",
+            "uid-l",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+        assert_eq!(
+            compute_approval_class(&cr, GraphPosition::Root),
+            DeleteApprovalClass::ExplicitOnly
+        );
+        assert_eq!(
+            compute_approval_class(&cr, GraphPosition::Independent),
+            DeleteApprovalClass::ExplicitOnly
+        );
+        assert_eq!(
+            compute_approval_class(&cr, GraphPosition::Descendant),
+            DeleteApprovalClass::Standard
+        );
+    }
+
+    #[test]
+    fn direct_cr_is_standard_approval_class() {
+        let cr = make_cr_instance("Widget", "direct", "uid-d", vec![], HashMap::new(), vec![]);
+        assert_eq!(
+            compute_approval_class(&cr, GraphPosition::Root),
+            DeleteApprovalClass::Standard
+        );
+        assert_eq!(
+            compute_approval_class(&cr, GraphPosition::Independent),
+            DeleteApprovalClass::Standard
+        );
     }
 }
