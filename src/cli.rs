@@ -145,12 +145,16 @@ pub enum TeardownAction {
     /// Check current status of resources in a teardown plan
     Status {
         /// Operator names (subscription or CSV name, partial match OK)
-        #[arg(required = true)]
+        #[arg(required_unless_present = "plan_file")]
         operators: Vec<String>,
 
         /// Skip discovery cache
         #[arg(long)]
         no_cache: bool,
+
+        /// Load plan from a saved JSON file instead of re-generating
+        #[arg(long = "plan-file", value_name = "PATH")]
+        plan_file: Option<String>,
     },
 
     /// Execute a teardown plan

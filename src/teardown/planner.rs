@@ -963,6 +963,159 @@ async fn check_controller_health(
     (all_available, details.join("; "))
 }
 
+const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca.crt"];
+
+async fn discover_namespace_resources(
+    client: &Client,
+    target_operators: &[&OperatorInstance],
+    all_operators: &[OperatorInstance],
+    kind_map: &KindMap,
+) -> Vec<Action> {
+    let mut actions = Vec::new();
+
+    let target_namespaces: HashSet<&str> = target_operators
+        .iter()
+        .map(|op| op.install_namespace.as_str())
+        .collect();
+
+    let target_csv_names: HashSet<&str> = target_operators
+        .iter()
+        .map(|op| op.csv.name.as_str())
+        .collect();
+
+    let target_deployment_names: HashSet<&str> = target_operators
+        .iter()
+        .flat_map(|op| op.deployments.iter().map(|d| d.as_str()))
+        .collect();
+
+    let csv_prefix: Vec<&str> = target_operators
+        .iter()
+        .filter_map(|op| op.csv.name.split('.').next())
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    for ns in &target_namespaces {
+        // 1. OperatorGroup cleanup
+        let og_gvk = GroupVersion::gv("operators.coreos.com", "v1").with_kind("OperatorGroup");
+        let og_ar = ApiResource::from_gvk_with_plural(&og_gvk, "operatorgroups");
+        let og_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &og_ar);
+
+        if let Ok(og_list) = og_api.list(&ListParams::default()).await {
+            // Check if any non-target CSVs remain in this namespace
+            let other_csvs_exist = all_operators.iter().any(|op| {
+                op.install_namespace == *ns && !target_csv_names.contains(op.csv.name.as_str())
+            });
+
+            for og in og_list.items {
+                let og_name = og.metadata.name.clone().unwrap_or_default();
+                let og_id = ResourceId {
+                    group: "operators.coreos.com".to_string(),
+                    version: "v1".to_string(),
+                    kind: "OperatorGroup".to_string(),
+                    namespace: Some(ns.to_string()),
+                    name: og_name.clone(),
+                    uid: og.metadata.uid.clone(),
+                };
+
+                if other_csvs_exist {
+                    actions.push(Action::Keep {
+                        resource: og_id,
+                        reason: "other operators remain in namespace".to_string(),
+                    });
+                } else {
+                    actions.push(Action::Delete {
+                        resource: og_id,
+                        reason: "no other operators in namespace".to_string(),
+                    });
+                }
+            }
+        }
+
+        // 2. Leader election Lease cleanup
+        let lease_gvk = GroupVersion::gv("coordination.k8s.io", "v1").with_kind("Lease");
+        let lease_ar = ApiResource::from_gvk_with_plural(&lease_gvk, "leases");
+        let lease_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &lease_ar);
+
+        if let Ok(lease_list) = lease_api.list(&ListParams::default()).await {
+            for lease in lease_list.items {
+                let lease_name = lease.metadata.name.clone().unwrap_or_default();
+
+                let holder = lease
+                    .data
+                    .get("spec")
+                    .and_then(|s| s.get("holderIdentity"))
+                    .and_then(|h| h.as_str())
+                    .unwrap_or("");
+
+                let holder_matches = target_deployment_names
+                    .iter()
+                    .any(|dep| holder.contains(dep));
+
+                let name_matches = csv_prefix.iter().any(|prefix| {
+                    lease_name.contains(prefix)
+                        || lease_name.contains("opendatahub")
+                        || lease_name.contains("odh")
+                });
+
+                if holder_matches || name_matches {
+                    actions.push(Action::Delete {
+                        resource: ResourceId {
+                            group: "coordination.k8s.io".to_string(),
+                            version: "v1".to_string(),
+                            kind: "Lease".to_string(),
+                            namespace: Some(ns.to_string()),
+                            name: lease_name,
+                            uid: lease.metadata.uid.clone(),
+                        },
+                        reason: if holder_matches {
+                            "leader election lease (holder references operator deployment)"
+                                .to_string()
+                        } else {
+                            "leader election lease (name matches operator)".to_string()
+                        },
+                    });
+                }
+            }
+        }
+
+        // 3. Operator ConfigMaps as REVIEW
+        if let Some(cm_info) = kind_map.get("ConfigMap") {
+            let cm_gvk = GroupVersion::gv(&cm_info.group, &cm_info.version).with_kind("ConfigMap");
+            let cm_ar = ApiResource::from_gvk_with_plural(&cm_gvk, &cm_info.plural);
+            let cm_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &cm_ar);
+
+            if let Ok(cm_list) = cm_api.list(&ListParams::default()).await {
+                for cm in cm_list.items {
+                    let cm_name = cm.metadata.name.clone().unwrap_or_default();
+
+                    if STANDARD_CONFIGMAPS.contains(&cm_name.as_str()) {
+                        continue;
+                    }
+
+                    let name_matches = csv_prefix.iter().any(|prefix| cm_name.contains(prefix));
+
+                    if name_matches {
+                        actions.push(Action::Review {
+                            resource: ResourceId {
+                                group: String::new(),
+                                version: "v1".to_string(),
+                                kind: "ConfigMap".to_string(),
+                                namespace: Some(ns.to_string()),
+                                name: cm_name,
+                                uid: cm.metadata.uid.clone(),
+                            },
+                            reason: "operator-related ConfigMap — verify before deleting"
+                                .to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    actions
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
@@ -1435,16 +1588,16 @@ pub async fn generate_teardown_plan(
             ));
         }
 
-        let mut conds: Vec<String> = root_crs
+        let conds: Vec<String> = phase_actions
             .iter()
-            .chain(independent_crs.iter())
-            .map(|cr| format!("{} is gone", cr.id))
+            .filter_map(|action| match action {
+                Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
+                Action::ExpectGone { resource, .. } => {
+                    Some(format!("{} is gone (expected)", resource))
+                }
+                _ => None,
+            })
             .collect();
-        conds.extend(
-            managed_descendants
-                .iter()
-                .map(|cr| format!("{} is gone (expected)", cr.id)),
-        );
 
         operand_phases.push(PlanPhase {
             name: "Trigger operand cleanup".to_string(),
@@ -1633,6 +1786,25 @@ pub async fn generate_teardown_plan(
         });
     }
 
+    // ── Namespace cleanup: OperatorGroup, Leases, ConfigMaps ──
+    eprint!("🔍 Discovering namespace resources...");
+    let ns_cleanup_actions =
+        discover_namespace_resources(client, target_operators, all_operators, kind_map).await;
+    eprintln!(" done");
+
+    let ns_cleanup_phase = if ns_cleanup_actions.is_empty() {
+        None
+    } else {
+        Some(PlanPhase {
+            name: "Namespace cleanup".to_string(),
+            description:
+                "Remove operator namespace resources (OperatorGroup, Leases, operator ConfigMaps)"
+                    .to_string(),
+            actions: ns_cleanup_actions,
+            barrier: None,
+        })
+    };
+
     // ── Phase 4: Remove unused APIs ──
     let mut phase4_actions = Vec::new();
     let blocked_crds: HashSet<&str> = blockers.iter().map(|b| b.resource.name.as_str()).collect();
@@ -1792,6 +1964,9 @@ pub async fn generate_teardown_plan(
     phases.extend(operand_phases);
     phases.push(phase_remaining);
     phases.extend(controller_phases);
+    if let Some(ns_phase) = ns_cleanup_phase {
+        phases.push(ns_phase);
+    }
     phases.push(phase4);
     phases.push(phase5);
 
@@ -1804,6 +1979,25 @@ pub async fn generate_teardown_plan(
         snapshot_taken_at: chrono::Utc::now().to_rfc3339(),
     };
 
+    Ok(plan)
+}
+
+pub fn save_plan_to_file(plan: &TeardownPlan) -> Result<String> {
+    let dir = std::env::temp_dir().join("oc-deps-plans");
+    std::fs::create_dir_all(&dir)?;
+    let filename = format!(
+        "teardown-{}.json",
+        plan.snapshot_taken_at.replace(':', "-").replace('+', "_")
+    );
+    let path = dir.join(&filename);
+    let json = serde_json::to_string_pretty(plan)?;
+    std::fs::write(&path, json)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+pub fn load_plan_from_file(path: &str) -> Result<TeardownPlan> {
+    let data = std::fs::read_to_string(path)?;
+    let plan: TeardownPlan = serde_json::from_str(&data)?;
     Ok(plan)
 }
 

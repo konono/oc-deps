@@ -29,7 +29,8 @@ use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::inspect::{inspect_operator, print_inspection};
 use crate::teardown::planner::{
-    ReviewDecisions, generate_teardown_plan, print_teardown_plan, resolve_operator_targets,
+    ReviewDecisions, generate_teardown_plan, load_plan_from_file, print_teardown_plan,
+    resolve_operator_targets, save_plan_to_file,
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
 
@@ -201,6 +202,11 @@ async fn main() -> Result<()> {
                         )
                         .await?;
 
+                        match save_plan_to_file(&plan) {
+                            Ok(path) => eprintln!("📄 Plan saved to {}", path),
+                            Err(e) => eprintln!("⚠ Could not save plan: {}", e),
+                        }
+
                         let result = execute_plan(
                             &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map, dry_run, force,
                         )
@@ -211,34 +217,40 @@ async fn main() -> Result<()> {
                     TeardownAction::Status {
                         operators: operator_queries,
                         no_cache,
+                        plan_file,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
-                        let (kind_map, gvr_map, gk_map, gvk_map) =
+                        let (kind_map, _gvr_map, gk_map, _gvk_map) =
                             build_kind_lookup_cached(&client, &config, no_cache).await?;
                         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
-                        eprint!("🔍 Discovering operators...");
-                        let all_operators = discover_operators(&client, &kind_map).await?;
-                        eprintln!(" found {} operators", all_operators.len());
+                        let plan = if let Some(path) = plan_file {
+                            eprintln!("📄 Loading plan from {}", path);
+                            load_plan_from_file(&path)?
+                        } else {
+                            eprint!("🔍 Discovering operators...");
+                            let all_operators = discover_operators(&client, &kind_map).await?;
+                            eprintln!(" found {} operators", all_operators.len());
 
-                        let target_indices =
-                            resolve_operator_targets(&operator_queries, &all_operators)?;
-                        let target_operators: Vec<&_> =
-                            target_indices.iter().map(|&i| &all_operators[i]).collect();
+                            let target_indices =
+                                resolve_operator_targets(&operator_queries, &all_operators)?;
+                            let target_operators: Vec<&_> =
+                                target_indices.iter().map(|&i| &all_operators[i]).collect();
 
-                        let plan = generate_teardown_plan(
-                            &client,
-                            &target_operators,
-                            &all_operators,
-                            &kind_map,
-                            &gvr_map,
-                            &gk_map,
-                            &gvk_map,
-                            false,
-                            &ReviewDecisions::empty(),
-                        )
-                        .await?;
+                            generate_teardown_plan(
+                                &client,
+                                &target_operators,
+                                &all_operators,
+                                &kind_map,
+                                &_gvr_map,
+                                &gk_map,
+                                &_gvk_map,
+                                false,
+                                &ReviewDecisions::empty(),
+                            )
+                            .await?
+                        };
 
                         eprint!("🔍 Checking resource status...");
                         let statuses = check_plan_status(&client, &plan, &kind_map, &gk_map).await;
