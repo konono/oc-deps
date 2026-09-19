@@ -1809,6 +1809,15 @@ pub async fn generate_teardown_plan(
         decisions: &ReviewDecisions,
         review_roots: &[&ResourceId],
     ) -> Action {
+        // Label-only related CRs: REVIEW regardless of graph position.
+        // Descendant is the exception — if parent triggers cleanup, child follows.
+        if cr.discovery_source == DiscoverySource::RelatedLabelOnly && action_type != "descendant" {
+            return Action::Review {
+                resource: cr.id.clone(),
+                reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+            };
+        }
+
         match (action_type, &cr.provenance) {
             ("root", Provenance::Managed) => Action::Delete {
                 resource: cr.id.clone(),
@@ -1839,14 +1848,6 @@ pub async fn generate_teardown_plan(
                 resource: cr.id.clone(),
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
-            ("independent", _)
-                if cr.discovery_source == DiscoverySource::RelatedLabelOnly =>
-            {
-                Action::Review {
-                    resource: cr.id.clone(),
-                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
-                }
-            }
             ("independent", Provenance::Managed) => Action::Delete {
                 resource: cr.id.clone(),
                 reason: "independent operand (managed via ownerRef)".to_string(),
