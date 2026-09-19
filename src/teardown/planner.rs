@@ -1581,8 +1581,7 @@ pub async fn generate_teardown_plan(
         .iter()
         .filter(|cr| {
             !matches!(cr.provenance, Provenance::Managed)
-                && !resolve_op_index(cr, &api_to_op_indices, &cr_by_uid)
-                    .is_some_and(|v| v.len() > 1)
+                && resolve_op_indices(cr, &api_to_op_indices, &cr_by_uid).len() <= 1
         })
         .map(|cr| &cr.id)
         .collect();
@@ -1650,39 +1649,38 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // Resolve operator attribution via ownerRef ancestry
-    // For CRs whose api_owner_key isn't in api_to_op_indices (e.g. related CRs),
-    // trace ownerRef chain to find an ancestor with known attribution
-    fn resolve_op_index<'a>(
+    // Resolve operator attribution via BFS over ownerRef ancestry.
+    // Returns union of all operator indices reachable from any ownerRef branch.
+    fn resolve_op_indices(
         cr: &CrInstance,
-        api_to_op_indices: &'a HashMap<String, HashSet<usize>>,
+        api_to_op_indices: &HashMap<String, HashSet<usize>>,
         cr_by_uid: &HashMap<&str, &CrInstance>,
-    ) -> Option<&'a HashSet<usize>> {
+    ) -> HashSet<usize> {
         if let Some(owners) = api_to_op_indices.get(cr.api_owner_key.as_str()) {
-            return Some(owners);
+            return owners.clone();
         }
-        // Trace ownerRef chain upward
+        let mut result = HashSet::new();
         let mut visited = HashSet::new();
-        let mut current_refs = &cr.owner_refs;
-        loop {
-            let mut found_ancestor = false;
-            for (_, _, ref_uid) in current_refs {
-                if !visited.insert(ref_uid.as_str()) {
-                    continue;
-                }
-                if let Some(ancestor) = cr_by_uid.get(ref_uid.as_str()) {
-                    if let Some(owners) = api_to_op_indices.get(ancestor.api_owner_key.as_str()) {
-                        return Some(owners);
-                    }
-                    current_refs = &ancestor.owner_refs;
-                    found_ancestor = true;
-                    break;
-                }
+        let mut queue = std::collections::VecDeque::new();
+        for (_, _, ref_uid) in &cr.owner_refs {
+            queue.push_back(ref_uid.as_str());
+        }
+        while let Some(uid) = queue.pop_front() {
+            if !visited.insert(uid) {
+                continue;
             }
-            if !found_ancestor {
-                return None;
+            let Some(ancestor) = cr_by_uid.get(uid) else {
+                continue;
+            };
+            if let Some(owners) = api_to_op_indices.get(ancestor.api_owner_key.as_str()) {
+                result.extend(owners.iter().copied());
+            } else {
+                for (_, _, parent_uid) in &ancestor.owner_refs {
+                    queue.push_back(parent_uid.as_str());
+                }
             }
         }
+        result
     }
 
     // Compute dependency layers for operand cleanup
@@ -1773,8 +1771,8 @@ pub async fn generate_teardown_plan(
             let mut phase_actions: Vec<Action> = Vec::new();
 
             for cr in &root_crs {
-                let owners = resolve_op_index(cr, &api_to_op_indices, &cr_by_uid);
-                let action = if owners.is_some_and(|v| v.len() > 1) {
+                let owners = resolve_op_indices(cr, &api_to_op_indices, &cr_by_uid);
+                let action = if owners.len() > 1 {
                     if layer_idx == 0 {
                         Action::Review {
                             resource: cr.id.clone(),
@@ -1786,7 +1784,7 @@ pub async fn generate_teardown_plan(
                 } else {
                     cr_to_action(cr, "root", decisions, &approvable_root_ids)
                 };
-                let op_idx = owners.and_then(|v| v.iter().next().copied());
+                let op_idx = owners.iter().next().copied();
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1794,8 +1792,8 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &managed_descendants {
-                let owners = resolve_op_index(cr, &api_to_op_indices, &cr_by_uid);
-                if owners.is_some_and(|v| v.len() > 1) {
+                let owners = resolve_op_indices(cr, &api_to_op_indices, &cr_by_uid);
+                if owners.len() > 1 {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
                             resource: cr.id.clone(),
@@ -1805,7 +1803,7 @@ pub async fn generate_teardown_plan(
                     }
                     continue;
                 }
-                let op_idx = owners.and_then(|v| v.iter().next().copied());
+                let op_idx = owners.iter().next().copied();
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1818,8 +1816,8 @@ pub async fn generate_teardown_plan(
                 }
             }
             for cr in &independent_crs {
-                let owners = resolve_op_index(cr, &api_to_op_indices, &cr_by_uid);
-                if owners.is_some_and(|v| v.len() > 1) {
+                let owners = resolve_op_indices(cr, &api_to_op_indices, &cr_by_uid);
+                if owners.len() > 1 {
                     if layer_idx == 0 {
                         phase_actions.push(Action::Review {
                             resource: cr.id.clone(),
@@ -1828,7 +1826,7 @@ pub async fn generate_teardown_plan(
                     }
                     continue;
                 }
-                let op_idx = owners.and_then(|v| v.iter().next().copied());
+                let op_idx = owners.iter().next().copied();
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
@@ -1869,8 +1867,7 @@ pub async fn generate_teardown_plan(
                     continue;
                 }
                 let is_shared = root_cr.is_some_and(|cr| {
-                    resolve_op_index(cr, &api_to_op_indices, &cr_by_uid)
-                        .is_some_and(|v| v.len() > 1)
+                    resolve_op_indices(cr, &api_to_op_indices, &cr_by_uid).len() > 1
                 });
                 if is_shared {
                     blockers.push(Blocker {
