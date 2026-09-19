@@ -1692,20 +1692,28 @@ pub async fn generate_teardown_plan(
         bfs_owner_ancestry(cr, api_to_op_indices, cr_by_uid)
     }
 
+    // root_uids: only actual root CRs (cleanup triggers), not all parents
+    let root_uids: HashSet<String> = root_crs.iter().filter_map(|cr| cr.id.uid.clone()).collect();
+
     // For managed descendants: recursively resolve cleanup trigger layer.
-    // Walks ownerRef chain upward, and for each ancestor that is itself a
-    // descendant, recursively resolves its cleanup trigger rather than
-    // stopping at API ownership. This handles multi-level chains like
-    // C → P → R where R's layer should propagate through P to C.
+    // Uses memoization to handle diamond graphs correctly — a node resolved
+    // via one branch returns its cached result via the other branch, instead
+    // of returning empty and causing false API-owner fallback.
     fn resolve_cleanup_trigger_indices(
         cr: &CrInstance,
         api_to_op_indices: &HashMap<String, HashSet<usize>>,
         cr_by_uid: &HashMap<&str, &CrInstance>,
-        parent_uids: &HashSet<String>,
-        visited: &mut HashSet<String>,
+        root_uids: &HashSet<String>,
+        visiting: &mut HashSet<String>,
+        memo: &mut HashMap<String, HashSet<usize>>,
     ) -> HashSet<usize> {
-        let uid = cr.id.uid.as_deref().unwrap_or("");
-        if !visited.insert(uid.to_string()) {
+        let uid = cr.id.uid.as_deref().unwrap_or("").to_string();
+
+        if let Some(cached) = memo.get(&uid) {
+            return cached.clone();
+        }
+
+        if !visiting.insert(uid.clone()) {
             return HashSet::new();
         }
 
@@ -1715,21 +1723,19 @@ pub async fn generate_teardown_plan(
                 continue;
             };
             let parent_uid = parent.id.uid.as_deref().unwrap_or("");
-            let parent_is_root = parent_uids.contains(parent_uid);
 
-            if parent_is_root {
-                // Root parent: use its API ownership (it's the cleanup trigger)
+            if root_uids.contains(parent_uid) {
                 if let Some(owners) = api_to_op_indices.get(parent.api_owner_key.as_str()) {
                     result.extend(owners.iter().copied());
                 }
             } else {
-                // Intermediate parent: recursively inherit its cleanup trigger
                 let inherited = resolve_cleanup_trigger_indices(
                     parent,
                     api_to_op_indices,
                     cr_by_uid,
-                    parent_uids,
-                    visited,
+                    root_uids,
+                    visiting,
+                    memo,
                 );
                 if !inherited.is_empty() {
                     result.extend(inherited);
@@ -1745,6 +1751,8 @@ pub async fn generate_teardown_plan(
             result.extend(owners.iter().copied());
         }
 
+        visiting.remove(&uid);
+        memo.insert(uid, result.clone());
         result
     }
 
@@ -1861,8 +1869,9 @@ pub async fn generate_teardown_plan(
                     cr,
                     &api_to_op_indices,
                     &cr_by_uid,
-                    &parent_uids,
+                    &root_uids,
                     &mut HashSet::new(),
+                    &mut HashMap::new(),
                 );
                 if owners.len() > 1 {
                     if layer_idx == 0 {
