@@ -137,9 +137,14 @@ pub enum TeardownAction {
         #[arg(long)]
         prune_apis: bool,
 
-        /// Explicitly approve deletion of a REVIEW resource (kind/name format, repeatable)
-        #[arg(long = "approve-delete", value_name = "KIND/NAME")]
+        /// Approve deletion of REVIEW resources. Use "root", "independent", "all" for bulk,
+        /// or Kind/name or group/Kind/ns/name for exact resource approval (repeatable)
+        #[arg(long = "approve-delete", value_name = "SPEC")]
         approve_delete: Vec<String>,
+
+        /// Preserve a REVIEW resource (keep instead of delete). Kind/name or group/Kind/ns/name (repeatable)
+        #[arg(long, value_name = "SPEC")]
+        preserve: Vec<String>,
     },
 
     /// Check current status of resources in a teardown plan
@@ -179,9 +184,14 @@ pub enum TeardownAction {
         #[arg(long)]
         force: bool,
 
-        /// Explicitly approve deletion of a REVIEW resource (kind/name format, repeatable)
-        #[arg(long = "approve-delete", value_name = "KIND/NAME")]
+        /// Approve deletion of REVIEW resources. Use "root", "independent", "all" for bulk,
+        /// or Kind/name or group/Kind/ns/name for exact resource approval (repeatable)
+        #[arg(long = "approve-delete", value_name = "SPEC")]
         approve_delete: Vec<String>,
+
+        /// Preserve a REVIEW resource (keep instead of delete). Kind/name or group/Kind/ns/name (repeatable)
+        #[arg(long, value_name = "SPEC")]
+        preserve: Vec<String>,
     },
 
     /// Inspect all resources belonging to an operator

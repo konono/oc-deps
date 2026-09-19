@@ -19,154 +19,274 @@ use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
 
-pub(crate) trait ReviewCandidateRef {
-    fn resource_id(&self) -> &ResourceId;
-    fn is_approvable(&self) -> bool;
+// ── Decision types ──
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BulkScope {
+    Root,
+    Independent,
+    All,
 }
 
-pub struct ReviewDecisions {
-    pub approve_delete: Vec<String>,
+#[derive(Debug, Clone)]
+pub enum DeleteApproval {
+    Bulk(BulkScope),
+    Exact(String),
 }
 
-impl ReviewDecisions {
-    pub fn from_args(args: &[String]) -> Self {
+#[derive(Debug, Clone)]
+pub struct DecisionPolicy {
+    pub approvals: Vec<DeleteApproval>,
+    pub preserves: Vec<String>,
+}
+
+impl DecisionPolicy {
+    pub fn from_args(approve_delete: &[String], preserves: &[String]) -> Self {
+        let approvals = approve_delete
+            .iter()
+            .map(|s| match s.as_str() {
+                "root" => DeleteApproval::Bulk(BulkScope::Root),
+                "independent" => DeleteApproval::Bulk(BulkScope::Independent),
+                "all" => DeleteApproval::Bulk(BulkScope::All),
+                _ => DeleteApproval::Exact(s.clone()),
+            })
+            .collect();
         Self {
-            approve_delete: args.to_vec(),
+            approvals,
+            preserves: preserves.to_vec(),
         }
     }
 
     pub fn empty() -> Self {
         Self {
-            approve_delete: vec![],
+            approvals: vec![],
+            preserves: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedDecision {
+    Delete {
+        reason: String,
+    },
+    Keep {
+        reason: String,
+    },
+    #[allow(dead_code)]
+    Review,
+}
+
+pub fn canonical_key(resource: &ResourceId) -> String {
+    let ns = resource.namespace.as_deref().unwrap_or("-");
+    format!(
+        "{}/{}/{}/{}",
+        resource.group, resource.kind, ns, resource.name
+    )
+}
+
+fn spec_matches_resource(spec: &str, resource: &ResourceId) -> bool {
+    let parts: Vec<&str> = spec.splitn(4, '/').collect();
+    match parts.len() {
+        4 => {
+            let (group, kind, ns, name) = (parts[0], parts[1], parts[2], parts[3]);
+            let ns_match = match &resource.namespace {
+                Some(rns) => rns == ns,
+                None => ns == "-",
+            };
+            resource.group.eq_ignore_ascii_case(group)
+                && resource.kind == kind
+                && ns_match
+                && resource.name == name
+        }
+        2 => {
+            let (kind, name) = (parts[0], parts[1]);
+            resource.kind == kind && resource.name == name
+        }
+        _ => false,
+    }
+}
+
+fn is_short_form(spec: &str) -> bool {
+    spec.splitn(4, '/').count() == 2
+}
+
+/// Resolve all decisions from policy + candidates. Returns a map of
+/// ResourceId → ResolvedDecision plus any validation errors.
+pub fn resolve_decisions<'a>(
+    policy: &DecisionPolicy,
+    candidates: &[ReviewCandidate<'a>],
+) -> Result<HashMap<ResourceId, ResolvedDecision>> {
+    let mut errors = Vec::new();
+    let mut resolved: HashMap<ResourceId, ResolvedDecision> = HashMap::new();
+
+    // Phase 1: Validate and resolve exact preserves
+    for spec in &policy.preserves {
+        let matching: Vec<_> = candidates
+            .iter()
+            .filter(|rc| spec_matches_resource(spec, rc.resource))
+            .collect();
+        if is_short_form(spec) && matching.len() > 1 {
+            let qualified: Vec<String> = matching
+                .iter()
+                .map(|rc| canonical_key(rc.resource))
+                .collect();
+            errors.push(format!(
+                "ambiguous --preserve {}: matches {} resources. Use qualified form:\n  {}",
+                spec,
+                matching.len(),
+                qualified.join("\n  ")
+            ));
+            continue;
+        }
+        if matching.is_empty() {
+            errors.push(format!(
+                "--preserve {}: no matching REVIEW resource found",
+                spec
+            ));
+            continue;
+        }
+        for rc in &matching {
+            resolved.insert(
+                rc.resource.clone(),
+                ResolvedDecision::Keep {
+                    reason: "explicitly preserved via --preserve".to_string(),
+                },
+            );
         }
     }
 
-    fn is_approved(&self, resource: &ResourceId, all_review_roots: &[&ResourceId]) -> bool {
-        for spec in &self.approve_delete {
-            if Self::matches_spec(spec, resource, all_review_roots) {
-                return true;
-            }
+    // Phase 2: Validate and resolve exact approvals
+    for approval in &policy.approvals {
+        let DeleteApproval::Exact(spec) = approval else {
+            continue;
+        };
+        let matching: Vec<_> = candidates
+            .iter()
+            .filter(|rc| spec_matches_resource(spec, rc.resource))
+            .collect();
+        if is_short_form(spec) && matching.len() > 1 {
+            let qualified: Vec<String> = matching
+                .iter()
+                .map(|rc| canonical_key(rc.resource))
+                .collect();
+            errors.push(format!(
+                "ambiguous --approve-delete {}: matches {} REVIEW resources. Use qualified form:\n  {}",
+                spec,
+                matching.len(),
+                qualified.join("\n  ")
+            ));
+            continue;
         }
-        false
+        if matching.is_empty() {
+            errors.push(format!(
+                "--approve-delete {}: no matching REVIEW resource found",
+                spec
+            ));
+            continue;
+        }
+        let rc = matching[0];
+        if !rc.exact_approvable {
+            errors.push(format!(
+                "--approve-delete {}: resource exists but cannot be approved for deletion",
+                spec
+            ));
+            continue;
+        }
+        // Conflict check: exact delete + exact preserve
+        if resolved
+            .get(rc.resource)
+            .is_some_and(|d| matches!(d, ResolvedDecision::Keep { .. }))
+        {
+            errors.push(format!(
+                "--approve-delete {} conflicts with --preserve for the same resource",
+                spec
+            ));
+            continue;
+        }
+        let reason = match rc.category {
+            ReviewCategory::Operand(GraphPosition::Root) => {
+                if rc.approval_class == DeleteApprovalClass::ExplicitOnly {
+                    "label-related root CR explicitly approved for deletion"
+                } else {
+                    "root CR explicitly approved for deletion"
+                }
+            }
+            ReviewCategory::Operand(GraphPosition::Independent) => {
+                if rc.approval_class == DeleteApprovalClass::ExplicitOnly {
+                    "label-related CR explicitly approved for deletion"
+                } else {
+                    "independent CR explicitly approved for deletion"
+                }
+            }
+            ReviewCategory::Ancillary => "ancillary resource explicitly approved for deletion",
+            _ => "explicitly approved for deletion",
+        };
+        resolved.insert(
+            rc.resource.clone(),
+            ResolvedDecision::Delete {
+                reason: reason.to_string(),
+            },
+        );
     }
 
-    fn matches_spec(spec: &str, resource: &ResourceId, all_review_roots: &[&ResourceId]) -> bool {
-        let parts: Vec<&str> = spec.splitn(4, '/').collect();
-        match parts.len() {
-            // Full: group/Kind/namespace/name (namespace="-" for cluster-scoped)
-            4 => {
-                let (group, kind, ns, name) = (parts[0], parts[1], parts[2], parts[3]);
-                let ns_match = match &resource.namespace {
-                    Some(rns) => rns == ns,
-                    None => ns == "-",
-                };
-                resource.group.eq_ignore_ascii_case(group)
-                    && resource.kind == kind
-                    && ns_match
-                    && resource.name == name
-            }
-            // Short: Kind/name — must match exactly one review root
-            2 => {
-                let (kind, name) = (parts[0], parts[1]);
-                if resource.kind != kind || resource.name != name {
-                    return false;
-                }
-                let matching_count = all_review_roots
-                    .iter()
-                    .filter(|r| r.kind == kind && r.name == name)
-                    .count();
-                matching_count == 1
-            }
-            _ => false,
-        }
-    }
-
-    pub(crate) fn validate<T: ReviewCandidateRef>(
-        &self,
-        all_review_candidates: &[T],
-    ) -> Result<(), Vec<String>> {
-        let mut errors = Vec::new();
-        for spec in &self.approve_delete {
-            let parts: Vec<&str> = spec.splitn(4, '/').collect();
-            match parts.len() {
-                2 => {
-                    let (kind, name) = (parts[0], parts[1]);
-                    let matching: Vec<_> = all_review_candidates
-                        .iter()
-                        .filter(|rc| rc.resource_id().kind == kind && rc.resource_id().name == name)
-                        .collect();
-                    if matching.len() > 1 {
-                        let qualified: Vec<String> = matching
-                            .iter()
-                            .map(|rc| Self::canonical_key(rc.resource_id()))
-                            .collect();
-                        errors.push(format!(
-                            "ambiguous --approve-delete {}/{}: matches {} REVIEW resources. Use qualified form:\n  {}",
-                            kind, name, matching.len(), qualified.join("\n  ")
-                        ));
-                    } else if matching.is_empty() {
-                        errors.push(format!(
-                            "--approve-delete {}/{}: no matching REVIEW resource found",
-                            kind, name
-                        ));
-                    } else if !matching[0].is_approvable() {
-                        errors.push(format!(
-                            "--approve-delete {}/{}: resource exists but cannot be approved for deletion (shared ownership or other constraint)",
-                            kind, name
-                        ));
-                    }
-                }
-                4 => {
-                    let (group, kind, ns, name) = (parts[0], parts[1], parts[2], parts[3]);
-                    let found = all_review_candidates.iter().find(|rc| {
-                        let r = rc.resource_id();
-                        let ns_match = match &r.namespace {
-                            Some(rns) => rns == ns,
-                            None => ns == "-",
-                        };
-                        r.group.eq_ignore_ascii_case(group)
-                            && r.kind == kind
-                            && ns_match
-                            && r.name == name
-                    });
-                    match found {
-                        None => {
-                            errors.push(format!(
-                                "--approve-delete {}: no matching REVIEW resource found",
-                                spec
-                            ));
-                        }
-                        Some(rc) if !rc.is_approvable() => {
-                            errors.push(format!(
-                                "--approve-delete {}: resource exists but cannot be approved for deletion",
-                                spec
-                            ));
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {
-                    errors.push(format!(
-                        "--approve-delete {}: invalid format. Use Kind/name or group/Kind/namespace/name",
-                        spec
-                    ));
-                }
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
-    }
-
-    pub fn canonical_key(resource: &ResourceId) -> String {
-        let ns = resource.namespace.as_deref().unwrap_or("-");
-        format!(
-            "{}/{}/{}/{}",
-            resource.group, resource.kind, ns, resource.name
+    // Phase 3: Resolve bulk approvals
+    let has_bulk_root = policy.approvals.iter().any(|a| {
+        matches!(
+            a,
+            DeleteApproval::Bulk(BulkScope::Root) | DeleteApproval::Bulk(BulkScope::All)
         )
+    });
+    let has_bulk_independent = policy.approvals.iter().any(|a| {
+        matches!(
+            a,
+            DeleteApproval::Bulk(BulkScope::Independent) | DeleteApproval::Bulk(BulkScope::All)
+        )
+    });
+
+    for rc in candidates {
+        if resolved.contains_key(rc.resource) {
+            continue;
+        }
+        if !rc.exact_approvable {
+            continue;
+        }
+        // Bulk only applies to Standard approval class
+        if rc.approval_class != DeleteApprovalClass::Standard {
+            continue;
+        }
+        let bulk_matches = match rc.category {
+            ReviewCategory::Operand(GraphPosition::Root) => has_bulk_root,
+            ReviewCategory::Operand(GraphPosition::Independent) => has_bulk_independent,
+            _ => false,
+        };
+        if bulk_matches {
+            let reason = match rc.category {
+                ReviewCategory::Operand(GraphPosition::Root) => {
+                    "root CR approved via --approve-delete root/all"
+                }
+                ReviewCategory::Operand(GraphPosition::Independent) => {
+                    "independent CR approved via --approve-delete independent/all"
+                }
+                _ => "approved via bulk approval",
+            };
+            resolved.insert(
+                rc.resource.clone(),
+                ResolvedDecision::Delete {
+                    reason: reason.to_string(),
+                },
+            );
+        }
     }
+
+    if !errors.is_empty() {
+        for err in &errors {
+            eprintln!("\x1b[1;31m⛔\x1b[0m {}", err);
+        }
+        bail!("{} decision argument(s) are invalid", errors.len());
+    }
+
+    Ok(resolved)
 }
 
 const DEFAULT_CONCURRENCY: usize = 16;
@@ -1345,25 +1465,42 @@ async fn discover_namespace_resources(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum GraphPosition {
+pub enum GraphPosition {
     Root,
     Descendant,
     Independent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum DeleteApprovalClass {
+pub enum ReviewCategory {
+    Operand(GraphPosition),
+    Ancillary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeleteApprovalClass {
     Standard,
     ExplicitOnly,
 }
 
-fn compute_approval_class(cr: &CrInstance, position: GraphPosition) -> DeleteApprovalClass {
-    if cr.discovery_source == DiscoverySource::RelatedLabelOnly
-        && position != GraphPosition::Descendant
-    {
+fn compute_approval_class_from_category(
+    cr: &CrInstance,
+    category: ReviewCategory,
+) -> DeleteApprovalClass {
+    if cr.discovery_source == DiscoverySource::RelatedLabelOnly {
+        if let ReviewCategory::Operand(GraphPosition::Descendant) = category {
+            return DeleteApprovalClass::Standard;
+        }
+        return DeleteApprovalClass::ExplicitOnly;
+    }
+    if matches!(category, ReviewCategory::Ancillary) {
         return DeleteApprovalClass::ExplicitOnly;
     }
     DeleteApprovalClass::Standard
+}
+
+fn compute_approval_class(cr: &CrInstance, position: GraphPosition) -> DeleteApprovalClass {
+    compute_approval_class_from_category(cr, ReviewCategory::Operand(position))
 }
 
 fn is_exact_delete_approvable(
@@ -1380,22 +1517,11 @@ fn is_exact_delete_approvable(
     matches!(position, GraphPosition::Root | GraphPosition::Independent)
 }
 
-struct ReviewCandidate<'a> {
-    resource: &'a ResourceId,
-    #[allow(dead_code)]
-    position: GraphPosition,
-    #[allow(dead_code)]
-    approval_class: DeleteApprovalClass,
-    exact_approvable: bool,
-}
-
-impl ReviewCandidateRef for ReviewCandidate<'_> {
-    fn resource_id(&self) -> &ResourceId {
-        self.resource
-    }
-    fn is_approvable(&self) -> bool {
-        self.exact_approvable
-    }
+pub struct ReviewCandidate<'a> {
+    pub resource: &'a ResourceId,
+    pub category: ReviewCategory,
+    pub approval_class: DeleteApprovalClass,
+    pub exact_approvable: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1408,7 +1534,7 @@ pub async fn generate_teardown_plan(
     gk_map: &GroupKindMap,
     gvk_map: &GvkMap,
     prune_apis: bool,
-    decisions: &ReviewDecisions,
+    policy: &DecisionPolicy,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
         .iter()
@@ -1865,9 +1991,9 @@ pub async fn generate_teardown_plan(
         .filter_map(|cr| cr.id.uid.as_deref().map(|uid| (uid, cr)))
         .collect();
 
-    // Collect ALL REVIEW candidates (root + independent) with approvability.
-    // Identity resolution uses all candidates; approvability is checked after.
-    let review_candidates: Vec<ReviewCandidate> = root_crs
+    // Collect ALL REVIEW candidates (root + independent + ancillary).
+    // Managed CRs are excluded (auto-DELETE). Ancillary added after ns_cleanup.
+    let mut review_candidates: Vec<ReviewCandidate> = root_crs
         .iter()
         .map(|cr| (cr, GraphPosition::Root))
         .chain(
@@ -1878,35 +2004,68 @@ pub async fn generate_teardown_plan(
         .filter(|(cr, _)| !matches!(cr.provenance, Provenance::Managed))
         .map(|(cr, position)| {
             let owner_count = resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len();
+            let category = ReviewCategory::Operand(position);
             ReviewCandidate {
                 resource: &cr.id,
-                position,
+                category,
                 approval_class: compute_approval_class(cr, position),
                 exact_approvable: is_exact_delete_approvable(cr, position, owner_count),
             }
         })
         .collect();
 
-    let approvable_ids: Vec<&ResourceId> = review_candidates
-        .iter()
-        .filter(|rc| rc.exact_approvable)
-        .map(|rc| rc.resource)
-        .collect();
+    // ── Namespace cleanup discovery (needed for ancillary candidate registration) ──
+    eprint!("🔍 Discovering namespace resources...");
+    let ns_cleanup_actions =
+        discover_namespace_resources(client, target_operators, all_operators, kind_map).await;
+    eprintln!(" done");
 
-    if let Err(errors) = decisions.validate(&review_candidates) {
-        for err in &errors {
-            eprintln!("\x1b[1;31m⛔\x1b[0m {}", err);
-        }
-        bail!("{} --approve-delete argument(s) are invalid", errors.len());
+    // Register ancillary REVIEW actions as candidates (ConfigMap REVIEWs etc.)
+    // These are ExplicitOnly — bulk approval cannot touch them.
+    let ancillary_review_resources: Vec<ResourceId> = ns_cleanup_actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Review { resource, .. } => Some(resource.clone()),
+            _ => None,
+        })
+        .collect();
+    for resource in &ancillary_review_resources {
+        review_candidates.push(ReviewCandidate {
+            resource,
+            category: ReviewCategory::Ancillary,
+            approval_class: DeleteApprovalClass::ExplicitOnly,
+            exact_approvable: true,
+        });
     }
+
+    // Resolve all decisions from policy + candidates
+    let resolved_decisions = resolve_decisions(policy, &review_candidates)?;
 
     fn cr_to_action(
         cr: &CrInstance,
         position: GraphPosition,
-        decisions: &ReviewDecisions,
-        review_candidates: &[&ResourceId],
+        resolved: &HashMap<ResourceId, ResolvedDecision>,
     ) -> Action {
         let approval = compute_approval_class(cr, position);
+
+        // Check pre-resolved decision
+        if let Some(decision) = resolved.get(&cr.id) {
+            match decision {
+                ResolvedDecision::Delete { reason } => {
+                    return Action::Delete {
+                        resource: cr.id.clone(),
+                        reason: reason.clone(),
+                    };
+                }
+                ResolvedDecision::Keep { reason } => {
+                    return Action::Keep {
+                        resource: cr.id.clone(),
+                        reason: reason.clone(),
+                    };
+                }
+                ResolvedDecision::Review => {}
+            }
+        }
 
         match (position, &cr.provenance) {
             (GraphPosition::Root, Provenance::Managed)
@@ -1915,16 +2074,6 @@ pub async fn generate_teardown_plan(
                 Action::Delete {
                     resource: cr.id.clone(),
                     reason: "root management CR (managed via ownerRef)".to_string(),
-                }
-            }
-            (GraphPosition::Root, _) if decisions.is_approved(&cr.id, review_candidates) => {
-                Action::Delete {
-                    resource: cr.id.clone(),
-                    reason: if approval == DeleteApprovalClass::ExplicitOnly {
-                        "label-related root CR explicitly approved for deletion".to_string()
-                    } else {
-                        "root CR explicitly approved for deletion".to_string()
-                    },
                 }
             }
             (GraphPosition::Root, _) if approval == DeleteApprovalClass::ExplicitOnly => {
@@ -1947,16 +2096,9 @@ pub async fn generate_teardown_plan(
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
             (GraphPosition::Independent, _) if approval == DeleteApprovalClass::ExplicitOnly => {
-                if decisions.is_approved(&cr.id, review_candidates) {
-                    Action::Delete {
-                        resource: cr.id.clone(),
-                        reason: "label-related CR explicitly approved for deletion".to_string(),
-                    }
-                } else {
-                    Action::Review {
-                        resource: cr.id.clone(),
-                        reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
-                    }
+                Action::Review {
+                    resource: cr.id.clone(),
+                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
                 }
             }
             (GraphPosition::Independent, Provenance::Managed) => Action::Delete {
@@ -2124,27 +2266,20 @@ pub async fn generate_teardown_plan(
         let mut phase_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Root,
-                decisions,
-                &approvable_ids,
-            ));
+            phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
         }
         for cr in &managed_descendants {
             phase_actions.push(cr_to_action(
                 cr,
                 GraphPosition::Descendant,
-                decisions,
-                &approvable_ids,
+                &resolved_decisions,
             ));
         }
         for cr in &independent_crs {
             phase_actions.push(cr_to_action(
                 cr,
                 GraphPosition::Independent,
-                decisions,
-                &approvable_ids,
+                &resolved_decisions,
             ));
         }
 
@@ -2186,7 +2321,7 @@ pub async fn generate_teardown_plan(
                         continue;
                     }
                 } else {
-                    cr_to_action(cr, GraphPosition::Root, decisions, &approvable_ids)
+                    cr_to_action(cr, GraphPosition::Root, &resolved_decisions)
                 };
                 let op_idx = owners.iter().next().copied();
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
@@ -2221,8 +2356,7 @@ pub async fn generate_teardown_plan(
                     phase_actions.push(cr_to_action(
                         cr,
                         GraphPosition::Descendant,
-                        decisions,
-                        &approvable_ids,
+                        &resolved_decisions,
                     ));
                 }
             }
@@ -2244,8 +2378,7 @@ pub async fn generate_teardown_plan(
                     phase_actions.push(cr_to_action(
                         cr,
                         GraphPosition::Independent,
-                        decisions,
-                        &approvable_ids,
+                        &resolved_decisions,
                     ));
                 }
             }
@@ -2295,7 +2428,7 @@ pub async fn generate_teardown_plan(
                         reason: format!(
                             "root operand requires explicit deletion approval: {} — use --approve-delete {}",
                             reason,
-                            ReviewDecisions::canonical_key(resource)
+                            canonical_key(resource)
                         ),
                         external_dependency: None,
                     });
@@ -2351,11 +2484,31 @@ pub async fn generate_teardown_plan(
         });
     }
 
-    // ── Namespace cleanup: OperatorGroup, Leases, ConfigMaps ──
-    eprint!("🔍 Discovering namespace resources...");
-    let ns_cleanup_actions =
-        discover_namespace_resources(client, target_operators, all_operators, kind_map).await;
-    eprintln!(" done");
+    // Apply resolved decisions to namespace cleanup actions (ancillary)
+    let ns_cleanup_actions: Vec<Action> = ns_cleanup_actions
+        .into_iter()
+        .map(|action| {
+            if let Action::Review { resource, reason } = &action
+                && let Some(decision) = resolved_decisions.get(resource)
+            {
+                return match decision {
+                    ResolvedDecision::Delete { reason } => Action::Delete {
+                        resource: resource.clone(),
+                        reason: reason.clone(),
+                    },
+                    ResolvedDecision::Keep { reason } => Action::Keep {
+                        resource: resource.clone(),
+                        reason: reason.clone(),
+                    },
+                    ResolvedDecision::Review => Action::Review {
+                        resource: resource.clone(),
+                        reason: reason.clone(),
+                    },
+                };
+            }
+            action
+        })
+        .collect();
 
     let ns_cleanup_phase = if ns_cleanup_actions.is_empty() {
         None
