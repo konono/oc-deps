@@ -1805,7 +1805,7 @@ pub async fn generate_teardown_plan(
 
     #[derive(Debug, PartialEq)]
     enum DeleteApprovalClass {
-        Automatic,
+        Standard,
         ExplicitOnly,
     }
 
@@ -1813,7 +1813,7 @@ pub async fn generate_teardown_plan(
         if cr.discovery_source == DiscoverySource::RelatedLabelOnly && action_type != "descendant" {
             return DeleteApprovalClass::ExplicitOnly;
         }
-        DeleteApprovalClass::Automatic
+        DeleteApprovalClass::Standard
     }
 
     fn cr_to_action(
@@ -1825,7 +1825,7 @@ pub async fn generate_teardown_plan(
         let approval = approval_class(cr, action_type);
 
         match (action_type, &cr.provenance) {
-            ("root", Provenance::Managed) if approval == DeleteApprovalClass::Automatic => {
+            ("root", Provenance::Managed) if approval == DeleteApprovalClass::Standard => {
                 Action::Delete {
                     resource: cr.id.clone(),
                     reason: "root management CR (managed via ownerRef)".to_string(),
