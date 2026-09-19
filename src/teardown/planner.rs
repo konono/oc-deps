@@ -2456,55 +2456,58 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // EXPECT→DELETE invariant (transitive): build the set of UIDs reachable
-    // from a scheduled DELETE via ownerRef chains. EXPECT_GONE resources
-    // not in this set are demoted to KEEP.
+    // EXPECT→DELETE invariant (phase-ordered, transitive):
+    // Process phases in execution order. Only DELETEs from the current
+    // or earlier phases can support EXPECT_GONE in the current phase.
+    // This prevents a future-phase DELETE from falsely supporting an
+    // earlier-phase EXPECT that would stall at the barrier.
     {
-        // Seed: all DELETE action UIDs
-        let mut supported_uids: HashSet<String> = operand_phases
-            .iter()
-            .flat_map(|p| &p.actions)
-            .filter_map(|a| match a {
-                Action::Delete { resource, .. } => resource.uid.clone(),
-                _ => None,
-            })
-            .collect();
+        let mut supported_uids: HashSet<String> = HashSet::new();
 
-        // Collect EXPECT_GONE resources with their ownerRef UIDs
-        let expect_crs: Vec<(String, Vec<String>)> = operand_phases
-            .iter()
-            .flat_map(|p| &p.actions)
-            .filter_map(|a| match a {
-                Action::ExpectGone { resource, .. } => {
-                    let cr = cr_instances.iter().find(|cr| cr.id == *resource)?;
-                    let uid = cr.id.uid.clone()?;
-                    let owner_uids: Vec<String> =
-                        cr.owner_refs.iter().map(|(_, _, u)| u.clone()).collect();
-                    Some((uid, owner_uids))
-                }
-                _ => None,
-            })
-            .collect();
-
-        // Fixed-point: expand supported set through EXPECT chains
-        loop {
-            let mut changed = false;
-            for (uid, owner_uids) in &expect_crs {
-                if supported_uids.contains(uid) {
-                    continue;
-                }
-                if owner_uids.iter().any(|ou| supported_uids.contains(ou)) {
-                    supported_uids.insert(uid.clone());
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-
-        // Demote unsupported EXPECT_GONE to KEEP
         for phase in &mut operand_phases {
+            // Add this phase's DELETE UIDs to the supported set
+            for action in phase.actions.iter() {
+                if let Action::Delete { resource, .. } = action
+                    && let Some(uid) = &resource.uid
+                {
+                    supported_uids.insert(uid.clone());
+                }
+            }
+
+            // Collect this phase's EXPECT_GONE with ownerRef UIDs
+            let phase_expects: Vec<(String, Vec<String>)> = phase
+                .actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::ExpectGone { resource, .. } => {
+                        let cr = cr_instances.iter().find(|cr| cr.id == *resource)?;
+                        let uid = cr.id.uid.clone()?;
+                        let owner_uids: Vec<String> =
+                            cr.owner_refs.iter().map(|(_, _, u)| u.clone()).collect();
+                        Some((uid, owner_uids))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            // Fixed-point: expand supported through this phase's EXPECT chains
+            loop {
+                let mut changed = false;
+                for (uid, owner_uids) in &phase_expects {
+                    if supported_uids.contains(uid) {
+                        continue;
+                    }
+                    if owner_uids.iter().any(|ou| supported_uids.contains(ou)) {
+                        supported_uids.insert(uid.clone());
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+
+            // Demote unsupported EXPECT_GONE to KEEP
             for action in &mut phase.actions {
                 if let Action::ExpectGone { resource, .. } = action {
                     let uid_supported = resource
