@@ -1823,8 +1823,16 @@ pub async fn generate_teardown_plan(
         matches!(position, GraphPosition::Root | GraphPosition::Independent)
     }
 
+    struct ReviewCandidate<'a> {
+        resource: &'a ResourceId,
+        #[allow(dead_code)]
+        position: GraphPosition,
+        #[allow(dead_code)]
+        approval_class: DeleteApprovalClass,
+    }
+
     // Collect approvable REVIEW candidates across all positions
-    let approvable_ids: Vec<&ResourceId> = root_crs
+    let review_candidates: Vec<ReviewCandidate> = root_crs
         .iter()
         .map(|cr| (cr, GraphPosition::Root))
         .chain(
@@ -1836,8 +1844,14 @@ pub async fn generate_teardown_plan(
             let owner_count = resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len();
             is_exact_delete_approvable(cr, *position, owner_count)
         })
-        .map(|(cr, _)| &cr.id)
+        .map(|(cr, position)| ReviewCandidate {
+            resource: &cr.id,
+            position,
+            approval_class: compute_approval_class(cr, position),
+        })
         .collect();
+
+    let approvable_ids: Vec<&ResourceId> = review_candidates.iter().map(|rc| rc.resource).collect();
 
     if let Err(errors) = decisions.validate(&approvable_ids) {
         for err in &errors {
