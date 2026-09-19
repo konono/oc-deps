@@ -2545,6 +2545,24 @@ pub async fn generate_teardown_plan(
         snapshot_taken_at: chrono::Utc::now().to_rfc3339(),
     };
 
+    // Invariant: every REVIEW action must have a corresponding ReviewCandidate.
+    // If this fires, a provenance/discovery rule change created a REVIEW action
+    // for a resource that isn't in the candidate registry.
+    debug_assert!(
+        {
+            let candidate_ids: HashSet<&ResourceId> =
+                review_candidates.iter().map(|rc| rc.resource).collect();
+            plan.phases
+                .iter()
+                .flat_map(|p| &p.actions)
+                .all(|action| match action {
+                    Action::Review { resource, .. } => candidate_ids.contains(resource),
+                    _ => true,
+                })
+        },
+        "REVIEW action exists without corresponding ReviewCandidate — provenance/discovery invariant broken"
+    );
+
     Ok(plan)
 }
 
@@ -3141,5 +3159,54 @@ mod tests {
             reason: "403".to_string(),
         };
         assert!(matches!(unavail, CrdDiscoveryResult::Unavailable { .. }));
+    }
+
+    #[test]
+    fn managed_provenance_excludes_from_review_candidates() {
+        // Managed CRs should never appear in ReviewCandidate because they
+        // auto-DELETE without approval. If this invariant breaks, REVIEW
+        // actions could exist without corresponding candidates.
+        let op = make_test_operator("test-op.v1", "test-op");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+
+        // Create a CR with Managed provenance (ownerRef to CSV)
+        let mut cr = make_cr_instance(
+            "Widget",
+            "managed-widget",
+            "uid-managed",
+            vec![(
+                "ClusterServiceVersion".to_string(),
+                "test-op.v1".to_string(),
+                "csv-uid".to_string(),
+            )],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr, &ops);
+        assert!(
+            matches!(cr.provenance, Provenance::Managed),
+            "expected Managed provenance for CSV-owned CR"
+        );
+
+        // Create a CR with Unknown provenance (no ownerRef)
+        let mut cr_unknown = make_cr_instance(
+            "Widget",
+            "unknown-widget",
+            "uid-unknown",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr_unknown, &ops);
+        assert!(matches!(cr_unknown.provenance, Provenance::Unknown));
+
+        // Managed should be filtered out of review candidates
+        let crs = vec![cr, cr_unknown];
+        let non_managed: Vec<_> = crs
+            .iter()
+            .filter(|cr| !matches!(cr.provenance, Provenance::Managed))
+            .collect();
+        assert_eq!(non_managed.len(), 1);
+        assert_eq!(non_managed[0].id.name, "unknown-widget");
     }
 }
