@@ -234,9 +234,35 @@ impl JournalStore {
             }
         }
 
+        // Re-load from disk AFTER acquiring lock to get the latest state.
+        // Another process may have written between our initial read and lock acquisition.
+        let latest = if path.exists() {
+            match load_journal(&path) {
+                Ok(j) => {
+                    if j.journal_revision != journal.journal_revision {
+                        eprintln!(
+                            "  ℹ Journal updated between read and lock \
+                             (rev {} → {}), using latest",
+                            journal.journal_revision, j.journal_revision
+                        );
+                    }
+                    j
+                }
+                Err(e) => {
+                    bail!(
+                        "Failed to re-load journal after lock acquisition: {}. \
+                         Cannot safely proceed with stale state.",
+                        e
+                    );
+                }
+            }
+        } else {
+            journal
+        };
+
         Ok(Self {
             path,
-            inner: Arc::new(Mutex::new(journal)),
+            inner: Arc::new(Mutex::new(latest)),
             lock_file: Some(lock_file),
         })
     }
