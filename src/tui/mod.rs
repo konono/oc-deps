@@ -172,7 +172,15 @@ async fn run_tui_inner(
         let operator_snapshot = &j.operator;
 
         let mut mutated = plan.clone();
-        for ovr in &app.draft_overrides {
+        let override_total = app.draft_overrides.len();
+        for (ovr_idx, ovr) in app.draft_overrides.iter().enumerate() {
+            eprintln!(
+                "  [{}/{}] Validating {}/{}...",
+                ovr_idx + 1,
+                override_total,
+                ovr.resource.kind,
+                ovr.resource.name
+            );
             let found = mutated.phases.iter().any(|p| {
                 p.actions.iter().any(|a| {
                     if let Action::Review { resource, .. } = a {

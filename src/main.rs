@@ -859,8 +859,16 @@ async fn main() -> Result<()> {
                                 if !app.draft_overrides.is_empty() {
                                     let mut mutated_plan = plan.clone();
                                     let mut approved_count = 0usize;
+                                    let ovr_total = app.draft_overrides.len();
 
-                                    for over in &app.draft_overrides {
+                                    for (ovr_idx, over) in app.draft_overrides.iter().enumerate() {
+                                        eprintln!(
+                                            "  [{}/{}] Validating {}/{}...",
+                                            ovr_idx + 1,
+                                            ovr_total,
+                                            over.resource.kind,
+                                            over.resource.name
+                                        );
                                         for phase in &mut mutated_plan.phases {
                                             for action in &mut phase.actions {
                                                 if let Action::Review {
