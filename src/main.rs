@@ -260,28 +260,41 @@ async fn main() -> Result<()> {
                                             for phase in &mut mutated.phases {
                                                 for action in &mut phase.actions {
                                                     if let Action::Review { resource, reason, .. } = action {
-                                                        if resource.kind == ovr.resource.kind
+                                                        if resource.group == ovr.resource.group
+                                                            && resource.version == ovr.resource.version
+                                                            && resource.kind == ovr.resource.kind
                                                             && resource.name == ovr.resource.name
                                                             && resource.namespace == ovr.resource.namespace
                                                         {
                                                             match ovr.new_action {
                                                                 DraftAction::Delete => {
+                                                                    let plan_uid = resource.uid.as_deref().unwrap_or("");
                                                                     if let Some((api, _)) = crate::kube::resource::resolve_api(
                                                                         &client, resource, &kind_map, &gk_map,
                                                                     ) {
                                                                         match api.get(&resource.name).await {
                                                                             Ok(obj) => {
-                                                                                let uid = obj.metadata.uid.clone();
-                                                                                if uid.is_some() {
-                                                                                    let mut bound = resource.clone();
-                                                                                    bound.uid = uid;
-                                                                                    *action = Action::Delete {
-                                                                                        resource: bound,
-                                                                                        reason: format!("{} (approved via script)", reason),
-                                                                                    };
+                                                                                let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                                                                if live_uid.is_empty() {
+                                                                                    bail!("Cannot apply override for {}/{}: live resource has no UID", resource.kind, resource.name);
                                                                                 }
+                                                                                if !plan_uid.is_empty() && live_uid != plan_uid {
+                                                                                    bail!(
+                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created. \
+                                                                                         Create a new plan to approve the current resource.",
+                                                                                        resource.kind, resource.name, plan_uid, live_uid
+                                                                                    );
+                                                                                }
+                                                                                let mut bound = resource.clone();
+                                                                                bound.uid = Some(live_uid.to_string());
+                                                                                *action = Action::Delete {
+                                                                                    resource: bound,
+                                                                                    reason: format!("{} (approved via script)", reason),
+                                                                                };
                                                                             }
-                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {}
+                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                                eprintln!("  ⚠ {}/{} no longer present — override skipped", resource.kind, resource.name);
+                                                                            }
                                                                             Err(e) => bail!("Cannot verify {}/{} for script override: {}", resource.kind, resource.name, e),
                                                                         }
                                                                     }
@@ -464,9 +477,15 @@ async fn main() -> Result<()> {
                                         for phase in &mut mutated_plan.phases {
                                             for action in &mut phase.actions {
                                                 if let Action::Review { resource, reason, .. } = action {
-                                                    if *resource == over.resource {
+                                                    if resource.group == over.resource.group
+                                                        && resource.version == over.resource.version
+                                                        && resource.kind == over.resource.kind
+                                                        && resource.name == over.resource.name
+                                                        && resource.namespace == over.resource.namespace
+                                                    {
                                                         match over.new_action {
                                                             DraftAction::Delete => {
+                                                                let plan_uid = resource.uid.as_deref().unwrap_or("");
                                                                 // Fresh GET to verify identity + bind UID
                                                                 let verified = match crate::kube::resource::resolve_api(
                                                                     &client, resource, &kind_map, &gk_map,
@@ -474,20 +493,25 @@ async fn main() -> Result<()> {
                                                                     Some((api, _)) => {
                                                                         match api.get(&resource.name).await {
                                                                             Ok(obj) => {
-                                                                                let uid = obj.metadata.uid.clone();
-                                                                                if uid.is_none() || uid.as_ref().is_some_and(|u| u.is_empty()) {
-                                                                                    eprintln!("  ⚠ {}/{} has no UID — override skipped", resource.kind, resource.name);
-                                                                                    false
-                                                                                } else {
-                                                                                    let mut bound = resource.clone();
-                                                                                    bound.uid = uid;
-                                                                                    *action = Action::Delete {
-                                                                                        resource: bound,
-                                                                                        reason: format!("{} (approved in Plan Review)", reason),
-                                                                                    };
-                                                                                    approved_count += 1;
-                                                                                    true
+                                                                                let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                                                                if live_uid.is_empty() {
+                                                                                    bail!("Cannot apply override for {}/{}: live resource has no UID — aborting start", resource.kind, resource.name);
                                                                                 }
+                                                                                if !plan_uid.is_empty() && live_uid != plan_uid {
+                                                                                    bail!(
+                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created. \
+                                                                                         Create a new plan to approve the current resource.",
+                                                                                        resource.kind, resource.name, plan_uid, live_uid
+                                                                                    );
+                                                                                }
+                                                                                let mut bound = resource.clone();
+                                                                                bound.uid = Some(live_uid.to_string());
+                                                                                *action = Action::Delete {
+                                                                                    resource: bound,
+                                                                                    reason: format!("{} (approved in Plan Review)", reason),
+                                                                                };
+                                                                                approved_count += 1;
+                                                                                true
                                                                             }
                                                                             Err(::kube::Error::Api(ref err)) if err.code == 404 => {
                                                                                 eprintln!("  ⚠ {}/{} no longer present — override skipped", resource.kind, resource.name);
@@ -676,7 +700,15 @@ async fn main() -> Result<()> {
                                                     );
 
                                                     // Interactive residual cleanup (TTY only)
-                                                    if is_tty {
+                                                    // Check schema supports cleanup authority
+                                                    let j_for_schema = store.read().await;
+                                                    if j_for_schema.schema_version < 5 {
+                                                        eprintln!(
+                                                            "  ℹ Journal schema v{} does not support residual cleanup. \
+                                                             Create a new teardown plan to enable cleanup.",
+                                                            j_for_schema.schema_version
+                                                        );
+                                                    } else if is_tty {
                                                         let residuals: Vec<&crate::teardown::audit::AttributedResidual> =
                                                             audit.likely_operator_residual.iter()
                                                                 .chain(audit.unattributed.iter())
@@ -731,19 +763,20 @@ async fn main() -> Result<()> {
                                                                                 eprintln!("  ⚠ Live audit incomplete — cleanup blocked.");
                                                                             } else {
                                                                                 // Step 2: Verify each selection is in current residual set
+                                                                                // Key includes group to prevent cross-API-group collision
                                                                                 let residual_keys: std::collections::HashSet<String> = fresh_audit.likely_operator_residual.iter()
                                                                                     .chain(fresh_audit.unattributed.iter())
-                                                                                    .map(|r| format!("{}/{}/{}", r.resource.kind,
+                                                                                    .map(|r| format!("{}/{}/{}/{}", r.resource.group, r.resource.kind,
                                                                                         r.resource.namespace.as_deref().unwrap_or("-"), r.resource.name))
                                                                                     .collect();
 
                                                                                 let valid_selected: Vec<&ResourceId> = selected.iter().filter(|res| {
-                                                                                    let key = format!("{}/{}/{}", res.kind,
+                                                                                    let key = format!("{}/{}/{}/{}", res.group, res.kind,
                                                                                         res.namespace.as_deref().unwrap_or("-"), res.name);
                                                                                     if residual_keys.contains(&key) {
                                                                                         true
                                                                                     } else {
-                                                                                        eprintln!("  ⚠ {}/{} not in current residual set — skipped", res.kind, res.name);
+                                                                                        eprintln!("  ⚠ {}/{}/{} not in current residual set — skipped", res.group, res.kind, res.name);
                                                                                         false
                                                                                     }
                                                                                 }).cloned().collect();
@@ -1025,7 +1058,7 @@ async fn main() -> Result<()> {
                             None => bail!("No teardown run found to resume"),
                         };
 
-                        // Verify cluster identity
+                        // Pre-lock sanity check (non-authoritative — will re-verify after lock)
                         if !j.cluster_identity.matches(&cluster_id) {
                             bail!(
                                 "Journal cluster identity does not match current cluster \
@@ -1036,7 +1069,45 @@ async fn main() -> Result<()> {
                         }
 
                         match j.state {
-                            RunState::Paused | RunState::Applying => {
+                            RunState::Paused | RunState::Applying => {}
+                            RunState::ApplyCompleted | RunState::Finished => {
+                                bail!("Run {} already completed — nothing to resume", j.run_id);
+                            }
+                            RunState::Failed => {
+                                bail!("Run {} has failed. Review the journal and create a new plan if needed.", j.run_id);
+                            }
+                            _ => {
+                                bail!("Run {} is in state {:?} — cannot resume", j.run_id, j.state);
+                            }
+                        }
+
+                                // Acquire process lock FIRST — fail if another executor is active
+                                let path = journal::run_path(&cluster_id, &j.run_id)?;
+                                let store = JournalStore::new_with_lock(j.clone(), path)?;
+
+                                // Re-read from store — this is the AUTHORITATIVE state after lock.
+                                // All decisions below use ONLY this `j`, not the pre-lock one.
+                                let j = store.read().await;
+
+                                // Re-verify state after lock (another process may have completed it)
+                                match j.state {
+                                    RunState::Paused | RunState::Applying => {}
+                                    RunState::ApplyCompleted | RunState::Finished => {
+                                        bail!("Run completed by another process — nothing to resume");
+                                    }
+                                    RunState::Failed => {
+                                        bail!("Run failed (possibly by another process). Create a new plan.");
+                                    }
+                                    _ => {
+                                        bail!("Run is in state {:?} after lock — cannot resume", j.state);
+                                    }
+                                }
+
+                                // Re-verify cluster identity with authoritative journal
+                                if !j.cluster_identity.matches(&cluster_id) {
+                                    bail!("Cluster identity mismatch after lock acquisition");
+                                }
+
                                 eprintln!(
                                     "Resuming run {} (state: {:?}, operator: {})",
                                     j.run_id, j.state, j.operator.csv_name
@@ -1055,7 +1126,7 @@ async fn main() -> Result<()> {
                                     build_kind_lookup_cached(&client, &config, no_cache).await?;
                                 eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
-                                // Re-verify operator generation
+                                // Re-verify operator generation with AUTHORITATIVE journal
                                 use crate::teardown::audit::{
                                     self, OperatorGenerationState,
                                 };
@@ -1067,9 +1138,7 @@ async fn main() -> Result<()> {
                                 .await;
 
                                 match gen_state {
-                                    OperatorGenerationState::SameGeneration => {
-                                        // Original operator still active — can resume
-                                    }
+                                    OperatorGenerationState::SameGeneration => {}
                                     OperatorGenerationState::Absent => {
                                         eprintln!(
                                             "  Operator generation absent — \
@@ -1090,14 +1159,6 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 }
-
-                                // Acquire process lock — fail if another executor is active
-                                let path = journal::run_path(&cluster_id, &j.run_id)?;
-                                let store = JournalStore::new_with_lock(j.clone(), path)?;
-
-                                // Re-read from store — this is the authoritative state
-                                // after lock. The pre-lock `j` may be stale.
-                                let j = store.read().await;
 
                                 // Reconcile completed phases via live GET.
                                 // Journal = hint, live GET = truth.
@@ -1290,28 +1351,6 @@ async fn main() -> Result<()> {
                                         return Err(e);
                                     }
                                 }
-                            }
-                            RunState::ApplyCompleted | RunState::Finished => {
-                                eprintln!(
-                                    "Run {} is already completed (state: {:?}). \
-                                     Nothing to resume.",
-                                    j.run_id, j.state
-                                );
-                            }
-                            RunState::Failed => {
-                                eprintln!(
-                                    "Run {} has failed. Review the journal and create a new plan \
-                                     if needed.",
-                                    j.run_id
-                                );
-                            }
-                            _ => {
-                                eprintln!(
-                                    "Run {} is in state {:?} — cannot resume from this state.",
-                                    j.run_id, j.state
-                                );
-                            }
-                        }
                     }
                     TeardownAction::Runs => {
                         let cluster_id = journal::fetch_cluster_identity(&client).await?;
