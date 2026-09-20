@@ -266,9 +266,27 @@ async fn main() -> Result<()> {
                                                             && resource.name == ovr.resource.name
                                                             && resource.namespace == ovr.resource.namespace
                                                         {
+                                                            // P0: Verify override UID matches plan UID
+                                                            let ovr_uid = ovr.resource.uid.as_deref().unwrap_or("");
+                                                            let plan_uid = resource.uid.as_deref().unwrap_or("");
+                                                            if !ovr_uid.is_empty() && !plan_uid.is_empty() && ovr_uid != plan_uid {
+                                                                bail!(
+                                                                    "Override UID {} does not match plan UID {} for {}/{}. \
+                                                                     The approval targets a different resource identity.",
+                                                                    ovr_uid, plan_uid, resource.kind, resource.name
+                                                                );
+                                                            }
+
                                                             match ovr.new_action {
                                                                 DraftAction::Delete => {
-                                                                    let plan_uid = resource.uid.as_deref().unwrap_or("");
+                                                                    // DELETE approval requires UID in the override
+                                                                    if ovr_uid.is_empty() {
+                                                                        bail!(
+                                                                            "Cannot approve DELETE for {}/{} without UID in approval",
+                                                                            resource.kind, resource.name
+                                                                        );
+                                                                    }
+
                                                                     if let Some((api, _)) = crate::kube::resource::resolve_api(
                                                                         &client, resource, &kind_map, &gk_map,
                                                                     ) {
@@ -280,10 +298,20 @@ async fn main() -> Result<()> {
                                                                                 }
                                                                                 if !plan_uid.is_empty() && live_uid != plan_uid {
                                                                                     bail!(
-                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created. \
-                                                                                         Create a new plan to approve the current resource.",
+                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created.",
                                                                                         resource.kind, resource.name, plan_uid, live_uid
                                                                                     );
+                                                                                }
+                                                                                // Basis drift: verify evidence still links to target
+                                                                                {
+                                                                                    let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
+                                                                                    if !check_target_evidence(&obj, &ctx) {
+                                                                                        bail!(
+                                                                                            "BLOCKED: {}/{} no longer has evidence linking to target operator. \
+                                                                                             Re-run 'teardown plan' for fresh evidence.",
+                                                                                            resource.kind, resource.name
+                                                                                        );
+                                                                                    }
                                                                                 }
                                                                                 let mut bound = resource.clone();
                                                                                 bound.uid = Some(live_uid.to_string());
@@ -483,10 +511,19 @@ async fn main() -> Result<()> {
                                                         && resource.name == over.resource.name
                                                         && resource.namespace == over.resource.namespace
                                                     {
+                                                        // P0: Verify override UID matches plan UID
+                                                        let ovr_uid = over.resource.uid.as_deref().unwrap_or("");
+                                                        let plan_uid = resource.uid.as_deref().unwrap_or("");
+                                                        if !ovr_uid.is_empty() && !plan_uid.is_empty() && ovr_uid != plan_uid {
+                                                            bail!(
+                                                                "Override UID {} does not match plan UID {} for {}/{}",
+                                                                ovr_uid, plan_uid, resource.kind, resource.name
+                                                            );
+                                                        }
+
                                                         match over.new_action {
                                                             DraftAction::Delete => {
-                                                                let plan_uid = resource.uid.as_deref().unwrap_or("");
-                                                                // Fresh GET to verify identity + bind UID
+                                                                // Fresh GET to verify identity + bind UID + basis drift check
                                                                 let verified = match crate::kube::resource::resolve_api(
                                                                     &client, resource, &kind_map, &gk_map,
                                                                 ) {
@@ -495,14 +532,24 @@ async fn main() -> Result<()> {
                                                                             Ok(obj) => {
                                                                                 let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
                                                                                 if live_uid.is_empty() {
-                                                                                    bail!("Cannot apply override for {}/{}: live resource has no UID — aborting start", resource.kind, resource.name);
+                                                                                    bail!("Cannot apply override for {}/{}: live resource has no UID", resource.kind, resource.name);
                                                                                 }
                                                                                 if !plan_uid.is_empty() && live_uid != plan_uid {
                                                                                     bail!(
-                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created. \
-                                                                                         Create a new plan to approve the current resource.",
+                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {}",
                                                                                         resource.kind, resource.name, plan_uid, live_uid
                                                                                     );
+                                                                                }
+                                                                                // Basis drift: verify evidence still links to target
+                                                                                {
+                                                                                    let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
+                                                                                    if !check_target_evidence(&obj, &ctx) {
+                                                                                        bail!(
+                                                                                            "BLOCKED: {}/{} no longer has evidence linking to target operator. \
+                                                                                             Re-run 'teardown plan' for fresh evidence.",
+                                                                                            resource.kind, resource.name
+                                                                                        );
+                                                                                    }
                                                                                 }
                                                                                 let mut bound = resource.clone();
                                                                                 bound.uid = Some(live_uid.to_string());
@@ -519,7 +566,7 @@ async fn main() -> Result<()> {
                                                                             }
                                                                             Err(e) => {
                                                                                 bail!(
-                                                                                    "Cannot verify {}/{} for draft override: {} — aborting start",
+                                                                                    "Cannot verify {}/{} for draft override: {}",
                                                                                     resource.kind, resource.name, e
                                                                                 );
                                                                             }
@@ -545,8 +592,7 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                     if approved_count > 0 {
-                                        eprintln!("  {} REVIEW item(s) approved for DELETE (fresh UID bound)", approved_count);
-                                        eprintln!("  ℹ Fresh UID verification only — full basis drift detection deferred to PR5\n");
+                                        eprintln!("  {} REVIEW item(s) approved for DELETE (UID + evidence verified)", approved_count);
                                     }
                                     plan = mutated_plan;
                                 }
@@ -793,6 +839,32 @@ async fn main() -> Result<()> {
                                                                                         break;
                                                                                     }
 
+                                                                                    // Per-resource fresh audit: verify still in residual set
+                                                                                    let per_res_j = store.read().await;
+                                                                                    match crate::teardown::audit::run_residual_audit(&client, &per_res_j).await {
+                                                                                        Ok(fresh_per_res) => {
+                                                                                            let still_in_set = fresh_per_res.likely_operator_residual.iter()
+                                                                                                .chain(fresh_per_res.unattributed.iter())
+                                                                                                .any(|r| r.resource.group == res.group
+                                                                                                    && r.resource.kind == res.kind
+                                                                                                    && r.resource.name == res.name
+                                                                                                    && r.resource.namespace == res.namespace);
+                                                                                            if !still_in_set {
+                                                                                                eprintln!("  ⚠ {}/{} no longer in residual set after per-resource audit — skipping", res.kind, res.name);
+                                                                                                continue;
+                                                                                            }
+                                                                                            let per_status = crate::teardown::audit::residual_status_from_audit(&fresh_per_res);
+                                                                                            if matches!(per_status, journal::ResidualStatus::AuditIncomplete) {
+                                                                                                eprintln!("  ⚠ Per-resource audit incomplete — skipping {}/{}", res.kind, res.name);
+                                                                                                continue;
+                                                                                            }
+                                                                                        }
+                                                                                        Err(e) => {
+                                                                                            eprintln!("  ⚠ Per-resource audit failed: {} — stopping cleanup", e);
+                                                                                            break;
+                                                                                        }
+                                                                                    }
+
                                                                                     // Acquire permit
                                                                                     let _permit = gate.acquire().await
                                                                                         .context("Mutation gate closed during cleanup")?;
@@ -817,7 +889,25 @@ async fn main() -> Result<()> {
                                                                                     ).await;
 
                                                                                     let result_str = match &del_result {
-                                                                                        Ok(msg) => { eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg); msg.clone() }
+                                                                                        Ok(msg) => {
+                                                                                            eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg);
+                                                                                            // Wait for Gone confirmation if Deleted
+                                                                                            if msg == "Deleted" {
+                                                                                                if let Some((api, _)) = crate::kube::resource::resolve_api(&client, res, &kind_map, &gk_map) {
+                                                                                                    for _ in 0..30 {
+                                                                                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                                                                        match api.get(&res.name).await {
+                                                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                                                                eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
+                                                                                                                break;
+                                                                                                            }
+                                                                                                            _ => continue,
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            msg.clone()
+                                                                                        }
                                                                                         Err(e) => { eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e); format!("failed: {}", e) }
                                                                                     };
 
@@ -1935,4 +2025,50 @@ async fn fetch_observed_identities(
         }
     }
     Ok(results)
+}
+
+/// Check if a resource still has evidence linking to the target operator.
+/// Returns true if ANY evidence (labels, managedFields managers, ownerRefs)
+/// connects the resource to the operator identity in the AuditContext.
+/// This prevents basis drift where a resource keeps the same UID but changes
+/// its operator affiliation.
+fn check_target_evidence(
+    obj: &::kube::api::DynamicObject,
+    audit_ctx: &crate::teardown::journal::AuditContext,
+) -> bool {
+    // Check labels for target operator patterns (csv name prefix)
+    if let Some(labels) = &obj.metadata.labels {
+        for csv_name in &audit_ctx.csv_names {
+            let prefix = csv_name.split('.').next().unwrap_or(csv_name);
+            if !prefix.is_empty() {
+                for key in labels.keys() {
+                    if key.contains(prefix) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Check managedFields for target controller deployments
+    if let Some(managed_fields) = &obj.metadata.managed_fields {
+        for mf in managed_fields {
+            if let Some(manager) = &mf.manager {
+                for dep_name in &audit_ctx.controller_deployment_names {
+                    if manager.contains(dep_name.as_str()) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Check ownerReferences for known target UIDs
+    // (CSV, controller deployments — the UID identity we saved)
+    // For safety, any ownerRef is considered evidence of operator management
+    if obj.metadata.owner_references.as_ref().is_some_and(|refs| !refs.is_empty()) {
+        return true;
+    }
+
+    false
 }

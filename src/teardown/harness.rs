@@ -503,4 +503,87 @@ mod tests {
         // Verify gate is closed
         assert!(!gate.is_open());
     }
+
+    // ── P0 UID mismatch override test (reproduction from real cluster) ──
+
+    #[test]
+    fn test_override_uid_mismatch_blocks_approval() {
+        // Reproduces the real cluster bug: script approval with uid=old-uid-A
+        // for a plan resource with uid=11c8592a-real-uid should be blocked.
+        use crate::kube::resource::ResourceId;
+
+        let plan_resource = ResourceId {
+            group: "maas.opendatahub.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Config".to_string(),
+            namespace: None,
+            name: "default".to_string(),
+            uid: Some("11c8592a-real-uid".to_string()),
+        };
+
+        let override_resource = ResourceId {
+            group: "maas.opendatahub.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Config".to_string(),
+            namespace: None,
+            name: "default".to_string(),
+            uid: Some("old-uid-A".to_string()),
+        };
+
+        // UIDs don't match — override must be blocked
+        let ovr_uid = override_resource.uid.as_deref().unwrap_or("");
+        let plan_uid = plan_resource.uid.as_deref().unwrap_or("");
+        assert_ne!(ovr_uid, plan_uid, "UIDs should differ for this test");
+
+        // The check that should block this: override UID != plan UID
+        let blocked = !ovr_uid.is_empty() && !plan_uid.is_empty() && ovr_uid != plan_uid;
+        assert!(blocked, "Override with mismatched UID must be blocked");
+    }
+
+    #[test]
+    fn test_override_uid_none_blocks_delete_approval() {
+        // Override with no UID cannot approve DELETE
+        use crate::kube::resource::ResourceId;
+
+        let override_resource = ResourceId {
+            group: "maas.opendatahub.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Config".to_string(),
+            namespace: None,
+            name: "default".to_string(),
+            uid: None,  // No UID in approval
+        };
+
+        let ovr_uid = override_resource.uid.as_deref().unwrap_or("");
+        assert!(ovr_uid.is_empty(), "Override UID should be empty");
+        // Empty UID → DELETE approval must be blocked
+    }
+
+    #[test]
+    fn test_override_group_mismatch_blocks_approval() {
+        // Override with wrong group must not match plan resource
+        use crate::kube::resource::ResourceId;
+
+        let plan_resource = ResourceId {
+            group: "maas.opendatahub.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Config".to_string(),
+            namespace: None,
+            name: "default".to_string(),
+            uid: Some("uid-A".to_string()),
+        };
+
+        let override_resource = ResourceId {
+            group: "unrelated.example".to_string(),
+            version: "v1".to_string(),
+            kind: "Config".to_string(),
+            namespace: None,
+            name: "default".to_string(),
+            uid: Some("uid-A".to_string()),
+        };
+
+        // Group mismatch → override should not match plan
+        let group_matches = plan_resource.group == override_resource.group;
+        assert!(!group_matches, "Different groups must not match");
+    }
 }

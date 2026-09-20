@@ -408,7 +408,14 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
             journal.last_residual_audit = None;
             journal.residual_status = ResidualStatus::NotAudited;
         }
-        journal.schema_version = RUN_JOURNAL_SCHEMA_VERSION;
+        // Only bump to v4 for audit migration. v4 journals stay at v4 —
+        // cleanup operations check schema_version >= 5 at runtime.
+        // v5 is only set when a NEW journal is created with cleanup support.
+        if journal.schema_version < 4 {
+            journal.schema_version = 4;
+        }
+        // v4 journals do NOT get bumped to v5 — they cannot gain manual
+        // cleanup authority that wasn't available at journal creation.
     }
 
     Ok(journal)
@@ -752,9 +759,8 @@ mod tests {
 
         let journal = load_journal(&path).unwrap();
 
-        // Schema migrated to v3
-        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
-        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
+        // Schema migrated to v4 (not v5 — old journals don't gain cleanup authority)
+        assert_eq!(journal.schema_version, 4);
 
         // Old audit discarded (operator has owned CRDs but no unresolved_crds metadata)
         assert!(journal.last_residual_audit.is_none());
@@ -839,7 +845,7 @@ mod tests {
 
         let journal = load_journal(&path).unwrap();
 
-        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
+        assert_eq!(journal.schema_version, 4);
         // v4 migration discards audit — unresolved_gvks and csv_baseline are None
         assert!(journal.last_residual_audit.is_none());
         assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
