@@ -1420,7 +1420,19 @@ async fn main() -> Result<()> {
                                                 Err(::kube::Error::Api(ref err))
                                                     if err.code == 404 =>
                                                 {
-                                                    // Gone — safe to skip
+                                                    // Verify endpoint exists before declaring Gone
+                                                    match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                        Ok(_) => {
+                                                            // Endpoint exists, resource genuinely gone
+                                                        }
+                                                        Err(_) => {
+                                                            bail!(
+                                                                "{}/{}: GET 404 but endpoint verification failed — \
+                                                                 cannot confirm absence for resume",
+                                                                resource.kind, resource.name
+                                                            );
+                                                        }
+                                                    }
                                                 }
                                                 Err(e) => {
                                                     bail!(
@@ -1859,7 +1871,12 @@ async fn main() -> Result<()> {
                                                 for _ in 0..30 {
                                                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                                     match api.get(&decision.resource.name).await {
-                                                        Err(::kube::Error::Api(ref err)) if err.code == 404 => { gone = true; break; }
+                                                        Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                            match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                                Ok(_) => { gone = true; break; }
+                                                                Err(_) => { any_retryable = true; break; }
+                                                            }
+                                                        }
                                                         Ok(_) => continue,
                                                         Err(_) => { any_retryable = true; break; }
                                                     }

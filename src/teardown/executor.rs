@@ -960,20 +960,31 @@ async fn delete_resource_inner(
         return DeleteResult::Failed(reason);
     }
 
-    // Step 2b: Subscription semantic identity check
+    // Step 2b: Subscription semantic identity check — fail-closed on empty
     if resource.kind == "Subscription" && resource.group == "operators.coreos.com" {
-        if let Some(expected_pkg) = expected_package_name {
-            let live_spec_name = current.data
-                .get("spec")
-                .and_then(|s| s.get("name"))
-                .and_then(|n| n.as_str())
-                .unwrap_or("");
-            if live_spec_name != expected_pkg {
-                return DeleteResult::Failed(format!(
-                    "Subscription spec.name changed from '{}' to '{}' — semantic identity drift",
-                    expected_pkg, live_spec_name
-                ));
+        let expected_pkg = match expected_package_name {
+            Some(pkg) if !pkg.is_empty() => pkg,
+            _ => {
+                return DeleteResult::Failed(
+                    "Subscription DELETE requires non-empty expected package name".to_string()
+                );
             }
+        };
+        let live_spec_name = current.data
+            .get("spec")
+            .and_then(|s| s.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("");
+        if live_spec_name.is_empty() {
+            return DeleteResult::Failed(
+                "Subscription has empty spec.name — cannot verify semantic identity".to_string()
+            );
+        }
+        if live_spec_name != expected_pkg {
+            return DeleteResult::Failed(format!(
+                "Subscription spec.name changed from '{}' to '{}' — semantic identity drift",
+                expected_pkg, live_spec_name
+            ));
         }
     }
 
@@ -2307,5 +2318,88 @@ mod tests {
         ];
         assert!(decisions.iter().any(|d| d.is_pending()),
             "DeleteRequested must prevent ApplyCompleted");
+    }
+
+    #[tokio::test]
+    async fn test_mock_subscription_empty_spec_name_zero_deletes() {
+        // Subscription with empty spec.name → Failed (no DELETE sent)
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_sub_resource("my-sub", Some("uid-A"));
+        let km = test_sub_kind_map();
+        let gk = test_sub_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_request, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "operators.coreos.com/v1alpha1",
+                "kind": "Subscription",
+                "metadata": {
+                    "name": "my-sub",
+                    "namespace": "test-ns",
+                    "uid": "uid-A",
+                    "resourceVersion": "100"
+                },
+                "spec": { "name": "" }
+            })));
+            // No DELETE should follow
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource_inner(
+            &client, &resource, &km, &gk, Some("target-pkg"),
+        ).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("empty spec.name")),
+            "empty spec.name should prevent DELETE: got {:?}",
+            result
+        );
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mock_subscription_inner_no_package_fails() {
+        // delete_resource_inner with None expected_package for Subscription → Failed
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_sub_resource("my-sub", Some("uid-A"));
+        let km = test_sub_kind_map();
+        let gk = test_sub_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_request, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "operators.coreos.com/v1alpha1",
+                "kind": "Subscription",
+                "metadata": {
+                    "name": "my-sub",
+                    "namespace": "test-ns",
+                    "uid": "uid-A",
+                    "resourceVersion": "100"
+                },
+                "spec": { "name": "target-pkg" }
+            })));
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource_inner(
+            &client, &resource, &km, &gk, None,
+        ).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("non-empty expected package")),
+            "None package should prevent Subscription DELETE: got {:?}",
+            result
+        );
+        spawned.await.unwrap();
     }
 }
