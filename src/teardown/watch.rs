@@ -128,14 +128,29 @@ impl WatchManager {
         stall_timeout: Duration,
         cancel: Option<&crate::teardown::permit::CancelSignal>,
     ) -> WatchWaitResult {
-        // Initial authoritative reconcile
-        self.reconcile(client, resources, kind_map, gk_map).await;
+        // Helper: run a future cancellably — returns None if cancelled
+        macro_rules! cancellable {
+            ($fut:expr, $cancel:expr) => {
+                if let Some(c) = $cancel {
+                    tokio::select! {
+                        result = $fut => Some(result),
+                        _ = c.cancelled() => None,
+                    }
+                } else {
+                    Some($fut.await)
+                }
+            };
+        }
+
+        // Initial authoritative reconcile — cancellable
+        if cancellable!(self.reconcile(client, resources, kind_map, gk_map), cancel).is_none() {
+            return WatchWaitResult::Cancelled;
+        }
 
         if self.store.all_gone_for(resources) {
             return WatchWaitResult::AllGone;
         }
 
-        // Start background WATCH tasks for low-latency hints
         let watch_handles = self.start_watch_tasks(client, resources, kind_map, gk_map);
 
         let start = Instant::now();
@@ -144,19 +159,21 @@ impl WatchManager {
         const MAX_UNKNOWN_RETRIES: u32 = 3;
 
         let result = loop {
-            // Cancel check — stop watch promptly on pause
             if cancel.is_some_and(|c| c.is_cancelled()) {
                 break WatchWaitResult::Cancelled;
             }
 
-            // Authoritative reconcile for resources needing verification
+            // Authoritative reconcile — cancellable
             let needs_verify = self.store.resources_needing_verification(resources);
             if !needs_verify.is_empty() {
-                self.reconcile(client, &needs_verify, kind_map, gk_map).await;
+                if cancellable!(self.reconcile(client, &needs_verify, kind_map, gk_map), cancel).is_none() {
+                    break WatchWaitResult::Cancelled;
+                }
             }
 
-            // Periodic full reconcile (safety fallback)
-            self.reconcile(client, resources, kind_map, gk_map).await;
+            if cancellable!(self.reconcile(client, resources, kind_map, gk_map), cancel).is_none() {
+                break WatchWaitResult::Cancelled;
+            }
 
             if self.store.all_gone_for(resources) {
                 break WatchWaitResult::AllGone;
@@ -175,7 +192,10 @@ impl WatchManager {
                         ),
                     );
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                // Cancellable sleep
+                if cancellable!(tokio::time::sleep(Duration::from_secs(5)), cancel).is_none() {
+                    break WatchWaitResult::Cancelled;
+                }
                 continue;
             }
             consecutive_unknown_cycles = 0;

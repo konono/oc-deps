@@ -462,6 +462,17 @@ async fn handle_execution_completed(
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
 ) -> Result<()> {
+    // Check if gate was closed (signal-based pause, not key-based)
+    if !gate.is_open() {
+        journal_store.update(|j| {
+            j.state = RunState::Paused;
+            j.execution.phases_total = result.phases_total;
+        }).await.context("Failed to persist Paused state after signal pause")?;
+        executor::print_execution_result(&result);
+        eprintln!("⏸ Paused (signal). Use 'teardown resume' to continue.");
+        return Ok(());
+    }
+
     let final_state = if result.phases_completed == result.phases_total
         && result.failed.is_empty()
         && result.barrier_timeout.is_none()
