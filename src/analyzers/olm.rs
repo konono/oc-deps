@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use comfy_table::Table;
@@ -243,6 +243,7 @@ pub async fn discover_operators(
     // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
     // namespaces via different Subscriptions produces separate installations
     let mut sub_by_csv: HashMap<String, Vec<&DynamicObject>> = HashMap::new();
+    let mut matched_sub_uids: HashSet<String> = HashSet::new();
     for sub in &sub_items {
         let csv_name = sub.data.get("status").and_then(|s| {
             s.get("installedCSV")
@@ -255,10 +256,57 @@ pub async fn discover_operators(
                 })
         });
         if let Some(csv_name) = csv_name {
+            if let Some(uid) = &sub.metadata.uid {
+                matched_sub_uids.insert(uid.clone());
+            }
             sub_by_csv
                 .entry(csv_name.to_string())
                 .or_default()
                 .push(sub);
+        }
+    }
+
+    // Label-based fallback: for Subscriptions not matched via status,
+    // try CSV labels. OLM CSVs carry labels like:
+    //   operators.coreos.com/<package>.<namespace> = ""
+    // where <package> = Subscription.spec.name and <namespace> = Subscription namespace.
+    for sub in &sub_items {
+        let sub_uid = sub.metadata.uid.as_deref().unwrap_or("");
+        if sub_uid.is_empty() || matched_sub_uids.contains(sub_uid) {
+            continue;
+        }
+
+        let sub_ns = sub.metadata.namespace.as_deref().unwrap_or("unknown");
+        let pkg_name = sub
+            .data
+            .get("spec")
+            .and_then(|s| s.get("name"))
+            .and_then(|n| n.as_str());
+
+        if let Some(pkg) = pkg_name {
+            let label_key = format!("operators.coreos.com/{}.{}", pkg, sub_ns);
+
+            let mut matched_csvs: Vec<String> = Vec::new();
+            for csv in &csv_items {
+                if csv.metadata.namespace.as_deref() != Some(sub_ns) {
+                    continue;
+                }
+                if let Some(labels) = &csv.metadata.labels {
+                    if labels.contains_key(&label_key) {
+                        if let Some(csv_name) = &csv.metadata.name {
+                            matched_csvs.push(csv_name.clone());
+                        }
+                    }
+                }
+            }
+
+            if matched_csvs.len() == 1 {
+                sub_by_csv
+                    .entry(matched_csvs[0].clone())
+                    .or_default()
+                    .push(sub);
+            }
+            // 0 or >1 matches: leave unmatched — will produce subscription=None
         }
     }
 

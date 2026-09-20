@@ -231,6 +231,8 @@ pub async fn check_operator_generation(
                     // Pass 2: Check surviving baseline CSVs (other than our saved CSV).
                     // If any CSV remains that cannot be attributed to a different package,
                     // it could be a same-package generation with a different CSV name.
+                    // Attribution uses both Subscription status→CSV mapping AND CSV labels
+                    // (operators.coreos.com/<package>.<namespace>).
                     for csv_obj in &csv_list.items {
                         let name = csv_obj.metadata.name.as_deref().unwrap_or("");
                         let uid = csv_obj.metadata.uid.as_deref().unwrap_or("");
@@ -240,12 +242,32 @@ pub async fn check_operator_generation(
                             continue;
                         }
 
-                        // This CSV survived. Is it attributable to a different package?
-                        let attributed_to_other = sub_csv_to_pkg
+                        // Check 1: Subscription status→CSV mapping
+                        let attributed_via_sub = sub_csv_to_pkg
                             .get(name)
                             .is_some_and(|pkg| pkg != &package_name);
 
-                        if !attributed_to_other {
+                        // Check 2: CSV labels (OLM copies carry
+                        // operators.coreos.com/<package>.<namespace>)
+                        let csv_ns = csv_obj
+                            .metadata
+                            .namespace
+                            .as_deref()
+                            .unwrap_or(&install_namespace);
+                        let attributed_via_label = csv_obj
+                            .metadata
+                            .labels
+                            .as_ref()
+                            .map(|labels| {
+                                csv_label_attributes_to_other_package(
+                                    labels,
+                                    csv_ns,
+                                    &package_name,
+                                )
+                            })
+                            .unwrap_or(false);
+
+                        if !attributed_via_sub && !attributed_via_label {
                             return OperatorGenerationState::Unknown(format!(
                                 "CSV '{}' (uid: {}) in {} survived teardown and cannot be \
                                  attributed to a different package — possible same-package \
@@ -267,6 +289,25 @@ pub async fn check_operator_generation(
 
     // All checks succeeded: saved identities gone, no new/unattributed CSVs
     OperatorGenerationState::Absent
+}
+
+/// Check if a CSV's OLM labels attribute it to a package other than `our_package`.
+/// OLM copies carry labels like `operators.coreos.com/<package>.<namespace>`.
+/// Returns true if the CSV is conclusively attributed to a DIFFERENT package.
+fn csv_label_attributes_to_other_package(
+    labels: &std::collections::BTreeMap<String, String>,
+    csv_namespace: &str,
+    our_package: &str,
+) -> bool {
+    let suffix = format!(".{}", csv_namespace);
+    labels.keys().any(|key| {
+        if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
+            if let Some(pkg) = rest.strip_suffix(&suffix) {
+                return !pkg.is_empty() && pkg != our_package;
+            }
+        }
+        false
+    })
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1832,5 +1873,78 @@ mod tests {
 
         let confidence = compute_confidence(&evidence);
         assert_eq!(confidence, ResidualConfidence::High);
+    }
+
+    // ── CSV label attribution tests ──
+
+    #[test]
+    fn test_csv_label_other_package() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "operators.coreos.com/other-operator.my-ns".to_string(),
+            String::new(),
+        );
+        assert!(csv_label_attributes_to_other_package(
+            &labels,
+            "my-ns",
+            "rhods-operator"
+        ));
+    }
+
+    #[test]
+    fn test_csv_label_same_package_not_other() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "operators.coreos.com/rhods-operator.my-ns".to_string(),
+            String::new(),
+        );
+        // Same package → should NOT be attributed to "other"
+        assert!(!csv_label_attributes_to_other_package(
+            &labels,
+            "my-ns",
+            "rhods-operator"
+        ));
+    }
+
+    #[test]
+    fn test_csv_label_no_olm_label() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("app".to_string(), "test".to_string());
+        // No OLM label → not attributed
+        assert!(!csv_label_attributes_to_other_package(
+            &labels,
+            "my-ns",
+            "rhods-operator"
+        ));
+    }
+
+    #[test]
+    fn test_csv_label_wrong_namespace_suffix() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "operators.coreos.com/other-op.different-ns".to_string(),
+            String::new(),
+        );
+        // Namespace doesn't match → not attributed (label is for a different namespace)
+        assert!(!csv_label_attributes_to_other_package(
+            &labels,
+            "my-ns",
+            "rhods-operator"
+        ));
+    }
+
+    #[test]
+    fn test_csv_label_empty_package() {
+        let mut labels = std::collections::BTreeMap::new();
+        // Edge case: label key = "operators.coreos.com/.my-ns" → empty package
+        labels.insert(
+            "operators.coreos.com/.my-ns".to_string(),
+            String::new(),
+        );
+        assert!(!csv_label_attributes_to_other_package(
+            &labels,
+            "my-ns",
+            "rhods-operator"
+        ));
     }
 }
