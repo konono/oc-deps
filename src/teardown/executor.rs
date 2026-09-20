@@ -1040,13 +1040,28 @@ async fn delete_resource_inner(
 
 /// Public wrapper for residual cleanup DELETE with MutationGate.
 /// Returns Ok(description) on success, Err on failure.
+///
+/// `expected_package_name`: required for Subscription DELETEs to verify
+/// semantic identity (spec.name) and set UID+RV precondition. Pass None
+/// only for non-Subscription resources — Subscription with None is fail-closed.
 pub async fn delete_resource_pub(
     client: &Client,
     resource: &ResourceId,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
     gate: Option<&MutationGate>,
+    expected_package_name: Option<&str>,
 ) -> Result<String> {
+    // Fail-closed: Subscription DELETE requires semantic identity
+    if resource.kind == "Subscription" && resource.group == "operators.coreos.com"
+        && expected_package_name.is_none()
+    {
+        bail!(
+            "Cannot DELETE Subscription {}/{} without verified package name",
+            resource.kind, resource.name
+        );
+    }
+
     // Acquire mutation permit
     let _permit = if let Some(g) = gate {
         Some(g.acquire().await.context("Mutation gate closed")?)
@@ -1054,7 +1069,7 @@ pub async fn delete_resource_pub(
         None
     };
 
-    match delete_resource(client, resource, kind_map, gk_map).await {
+    match delete_resource_inner(client, resource, kind_map, gk_map, expected_package_name).await {
         DeleteResult::Deleted => Ok("deleted".to_string()),
         DeleteResult::AlreadyGone => Ok("already gone".to_string()),
         DeleteResult::Failed(reason) => bail!("{}", reason),
@@ -1445,23 +1460,75 @@ pub async fn execute_residual_cleanup(
             }
         }
 
-        // Record decision BEFORE mutation (durable)
+        // For Subscription: capture live spec.name for semantic identity
+        let approved_spec_name: Option<String> = if res.kind == "Subscription"
+            && res.group == "operators.coreos.com"
+        {
+            let (api, _) = resolve_api(client, res, kind_map, gk_map)
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Cannot resolve API for Subscription {} — fail-closed",
+                    res.name
+                ))?;
+            match api.get(&res.name).await {
+                Ok(obj) => {
+                    // Verify GET UID matches resource UID
+                    let get_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                    let expected_uid = res.uid.as_deref().unwrap_or("");
+                    if get_uid.is_empty() || expected_uid.is_empty() {
+                        bail!("Subscription {} UID missing (get={:?}, expected={:?}) — fail-closed",
+                            res.name, get_uid, expected_uid);
+                    }
+                    if get_uid != expected_uid {
+                        bail!("Subscription {} UID changed ({} → {}) — cannot capture semantic identity",
+                            res.name, expected_uid, get_uid);
+                    }
+                    let spec_name = obj.data
+                        .get("spec")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
+                    if spec_name.is_empty() {
+                        bail!("Subscription {} has no spec.name — cannot establish semantic identity", res.name);
+                    }
+                    Some(spec_name.to_string())
+                }
+                Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                    // Verify endpoint exists before declaring gone
+                    match api.list(&kube::api::ListParams::default().limit(1)).await {
+                        Ok(_) => {
+                            result.skipped.push(((*res).clone(), "Subscription already gone".to_string()));
+                            drop(_permit);
+                            continue;
+                        }
+                        Err(_) => bail!("Subscription {} GET 404 but endpoint verification failed", res.name),
+                    }
+                }
+                Err(e) => bail!("Cannot GET Subscription {} for semantic identity: {}", res.name, e),
+            }
+        } else {
+            None
+        };
+
+        // Record decision BEFORE mutation (durable) — includes semantic basis
         let decision_uid = res.uid.clone();
         let res_clone = (*res).clone();
+        let spec_name_clone = approved_spec_name.clone();
         journal_store.update(|j| {
             j.cleanup_decisions.push(CleanupDecision {
                 resource: res_clone.clone(),
                 bound_uid: decision_uid.clone(),
                 action: "delete".to_string(),
                 result: None,
+                approved_spec_name: spec_name_clone,
             });
             j.audit_revision += 1;
         }).await
         .context("Failed to persist cleanup decision — no mutation")?;
 
-        // Core executor DELETE (UID-preconditioned)
+        // Core executor DELETE (UID + semantic identity preconditioned)
         let del_result = delete_resource_pub(
             client, res, kind_map, gk_map, None,
+            approved_spec_name.as_deref(),
         ).await;
 
         let cleanup_result = match &del_result {
@@ -1473,8 +1540,11 @@ pub async fn execute_residual_cleanup(
                             tokio::time::sleep(Duration::from_secs(2)).await;
                             match api.get(&res.name).await {
                                 Err(kube::Error::Api(ref err)) if err.code == 404 => {
-                                    gone_confirmed = true;
-                                    break;
+                                    // Verify endpoint exists before confirming Gone
+                                    match api.list(&ListParams::default().limit(1)).await {
+                                        Ok(_) => { gone_confirmed = true; break; }
+                                        Err(_) => break, // endpoint gone — cannot confirm
+                                    }
                                 }
                                 Ok(_) => continue,
                                 Err(_) => break,
@@ -2023,6 +2093,6 @@ mod tests {
     #[test]
     fn residual_cleanup_schema_gate_rejects_old_schema() {
         let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
-        assert_eq!(current, 6, "Schema version must be 6 for cleanup gate to work correctly");
+        assert_eq!(current, 7, "Schema version must be 7 for cleanup gate to work correctly");
     }
 }

@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 6;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -122,6 +122,8 @@ pub struct CleanupDecision {
     pub bound_uid: Option<String>,
     pub action: String,
     pub result: Option<CleanupResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_spec_name: Option<String>,
 }
 
 impl CleanupDecision {
@@ -516,11 +518,10 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
         // cleanup authority that wasn't available at journal creation.
 
         // v5 journals: keep at schema_version 5 (read-only for inspection).
-        // CleanupResult custom deserializer handles v5 string format, so
-        // cleanup_decisions are preserved and inspectable.
-        // execute_residual_cleanup requires schema_version == 6 (current),
-        // so v5 journals cannot gain new cleanup mutation authority.
-        // v5 journals stay at v5 — no schema bump.
+        // v6 journals: keep at schema_version 6 (read-only for inspection).
+        // v7 adds approved_spec_name to CleanupDecision (authority-critical).
+        // v5/v6 journals cannot gain new cleanup mutation authority.
+        // execute_residual_cleanup requires schema_version == 7 (current).
     }
 
     Ok(journal)
@@ -1082,6 +1083,10 @@ mod tests {
         // The schema gate (not is_failed) is the actual mutation barrier.
         assert_ne!(5u32, RUN_JOURNAL_SCHEMA_VERSION,
             "v5 != current schema — core cleanup gate blocks mutations on v5 journals");
+        assert_ne!(6u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "v6 != current schema — core cleanup gate blocks mutations on v6 journals");
+        assert_eq!(7u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "current schema must be v7 for approved_spec_name support");
 
         // v5 cleanup_decisions are still readable for inspection
         let result: CleanupResult = serde_json::from_str(r#""deleted""#).unwrap();

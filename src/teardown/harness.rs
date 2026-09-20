@@ -604,6 +604,7 @@ mod tests {
             bound_uid: Some("uid-1".to_string()),
             action: "delete".to_string(),
             result,
+            approved_spec_name: None,
         }
     }
 

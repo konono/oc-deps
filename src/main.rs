@@ -1282,6 +1282,15 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
+                                // Schema gate: all resume paths require current schema
+                                if j.schema_version != journal::RUN_JOURNAL_SCHEMA_VERSION {
+                                    bail!(
+                                        "Journal schema v{} does not match current v{}. \
+                                         Cannot resume on incompatible journal — create a new plan.",
+                                        j.schema_version, journal::RUN_JOURNAL_SCHEMA_VERSION
+                                    );
+                                }
+
                                 // Re-verify cluster identity with authoritative journal
                                 if !j.cluster_identity.matches(&cluster_id) {
                                     bail!("Cluster identity mismatch after lock acquisition");
@@ -1498,17 +1507,25 @@ async fn main() -> Result<()> {
                                                 ))?;
                                                 match api.get(&decision.resource.name).await {
                                                     Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                        let res_up = decision.resource.clone();
-                                                        store.update(|j| {
-                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
-                                                            { d.result = Some(CleanupResult::Gone); }
-                                                        }).await?;
-                                                        eprintln!("  {}/{}: gone (confirmed on resume)", decision.resource.kind, decision.resource.name);
+                                                        // Verify endpoint exists (404 could be endpoint gone, not object gone)
+                                                        match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                            Ok(_) => {
+                                                                let res_up = decision.resource.clone();
+                                                                store.update(|j| {
+                                                                    if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                        .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
+                                                                    { d.result = Some(CleanupResult::Gone); }
+                                                                }).await?;
+                                                                eprintln!("  {}/{}: gone (confirmed on resume)", decision.resource.kind, decision.resource.name);
+                                                            }
+                                                            Err(_) => {
+                                                                eprintln!("  ⚠ {}/{}: GET 404 but endpoint verification failed — cannot confirm Gone",
+                                                                    decision.resource.kind, decision.resource.name);
+                                                                any_failed = true;
+                                                            }
+                                                        }
                                                     }
                                                     Ok(obj) => {
-                                                        // Verify UID — new UID means old resource is
-                                                        // gone and a replacement was created
                                                         let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
                                                         let bound = decision.bound_uid.as_deref().unwrap_or("");
                                                         if bound.is_empty() || live_uid.is_empty() {
@@ -1518,7 +1535,6 @@ async fn main() -> Result<()> {
                                                             );
                                                         }
                                                         if live_uid != bound {
-                                                            // Different UID — old resource is gone (Recreated)
                                                             let res_up = decision.resource.clone();
                                                             store.update(|j| {
                                                                 if let Some(d) = j.cleanup_decisions.iter_mut().rev()
@@ -1530,12 +1546,17 @@ async fn main() -> Result<()> {
                                                         }
                                                         // Same UID — check if deleting
                                                         if obj.metadata.deletion_timestamp.is_some() {
-                                                            // Wait for Gone
                                                             let mut gone = false;
                                                             for _ in 0..30 {
                                                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                                                 match api.get(&decision.resource.name).await {
-                                                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => { gone = true; break; }
+                                                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                        // Verify endpoint for wait-loop 404 too
+                                                                        match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                                            Ok(_) => { gone = true; break; }
+                                                                            Err(_) => break,
+                                                                        }
+                                                                    }
                                                                     Ok(_) => continue,
                                                                     Err(_) => break,
                                                                 }
@@ -1553,9 +1574,89 @@ async fn main() -> Result<()> {
                                                                 any_failed = true;
                                                             }
                                                         } else {
-                                                            // No deletionTimestamp — DELETE may not have reached API
-                                                            eprintln!("  ⚠ {}/{}: exists without deletionTimestamp — DELETE may have failed", decision.resource.kind, decision.resource.name);
-                                                            any_failed = true;
+                                                            // No deletionTimestamp — UID-bound authority exists.
+                                                            // Re-DELETE requires same safety checks as fresh DELETE.
+                                                            eprintln!("  {}/{}: exists without deletionTimestamp — verifying for re-DELETE", decision.resource.kind, decision.resource.name);
+
+                                                            // Acquire permit first
+                                                            let _re_permit = gate.acquire().await
+                                                                .context("Mutation gate closed during re-DELETE")?;
+
+                                                            // Post-permit: generation + audit + membership
+                                                            let re_j = store.read().await;
+                                                            let re_gen = audit::check_operator_generation(
+                                                                &client, &re_j.operator, &re_j.audit_context.csv_baseline,
+                                                            ).await;
+                                                            if !matches!(re_gen, OperatorGenerationState::Absent) {
+                                                                eprintln!("    ⚠ Generation not Absent for re-DELETE — skipping");
+                                                                any_failed = true;
+                                                                drop(_re_permit);
+                                                            } else {
+                                                                match audit::run_residual_audit(&client, &re_j).await {
+                                                                    Ok(re_audit) => {
+                                                                        let re_status = audit::residual_status_from_audit(&re_audit);
+                                                                        let re_in_set = !matches!(re_status, journal::ResidualStatus::AuditIncomplete)
+                                                                            && re_audit.likely_operator_residual.iter()
+                                                                                .chain(re_audit.unattributed.iter())
+                                                                                .any(|r| r.resource == decision.resource);
+                                                                        if !re_in_set {
+                                                                            eprintln!("    ⚠ Not in current residual set for re-DELETE — skipping");
+                                                                            any_failed = true;
+                                                                            drop(_re_permit);
+                                                                        } else {
+                                                                            let re_del = crate::teardown::executor::delete_resource_pub(
+                                                                                &client, &decision.resource, &kind_map, &gk_map,
+                                                                                None, // permit already held
+                                                                                decision.approved_spec_name.as_deref(),
+                                                                            ).await;
+                                                                            match re_del {
+                                                                                Ok(msg) => {
+                                                                                    eprintln!("    {}/{}: {}", decision.resource.kind, decision.resource.name, msg);
+                                                                                    // Wait for Gone + checkpoint
+                                                                                    if msg == "deleted" {
+                                                                                        let mut re_gone = false;
+                                                                                        for _ in 0..30 {
+                                                                                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                                                            match api.get(&decision.resource.name).await {
+                                                                                                Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                                                    match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                                                                        Ok(_) => { re_gone = true; break; }
+                                                                                                        Err(_) => break,
+                                                                                                    }
+                                                                                                }
+                                                                                                Ok(_) => continue,
+                                                                                                Err(_) => break,
+                                                                                            }
+                                                                                        }
+                                                                                        let re_result = if re_gone { CleanupResult::Gone } else { CleanupResult::DeleteRequested };
+                                                                                        let res_up = decision.resource.clone();
+                                                                                        let re_result_clone = re_result.clone();
+                                                                                        store.update(|j| {
+                                                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                                                .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
+                                                                                            { d.result = Some(re_result_clone); }
+                                                                                        }).await
+                                                                                        .context("Failed to checkpoint re-DELETE result")?;
+                                                                                        if !re_gone {
+                                                                                            any_failed = true;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    eprintln!("    ⚠ {}/{}: re-DELETE failed: {}", decision.resource.kind, decision.resource.name, e);
+                                                                                    any_failed = true;
+                                                                                }
+                                                                            }
+                                                                            drop(_re_permit);
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        eprintln!("    ⚠ Post-permit audit failed for re-DELETE: {}", e);
+                                                                        any_failed = true;
+                                                                        drop(_re_permit);
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                     Err(e) => {
@@ -1614,14 +1715,24 @@ async fn main() -> Result<()> {
                                                 ))?;
                                                 match api.get(&decision.resource.name).await {
                                                     Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                        let res_up = decision.resource.clone();
-                                                        store.update(|j| {
-                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                .find(|d| d.resource == res_up && d.result.is_none())
-                                                            { d.result = Some(CleanupResult::AlreadyGone); }
-                                                        }).await?;
-                                                        eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
-                                                        continue;
+                                                        // Verify endpoint exists before declaring AlreadyGone
+                                                        match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                            Ok(_) => {
+                                                                let res_up = decision.resource.clone();
+                                                                store.update(|j| {
+                                                                    if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                        .find(|d| d.resource == res_up && d.result.is_none())
+                                                                    { d.result = Some(CleanupResult::AlreadyGone); }
+                                                                }).await?;
+                                                                eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
+                                                                continue;
+                                                            }
+                                                            Err(_) => {
+                                                                bail!("{}/{}: GET 404 but endpoint verification failed — \
+                                                                       cannot confirm absence vs endpoint removal",
+                                                                    decision.resource.kind, decision.resource.name);
+                                                            }
+                                                        }
                                                     }
                                                     _ => bail!("{}/{} not in current residual set and not Gone",
                                                         decision.resource.kind, decision.resource.name),
@@ -1650,14 +1761,23 @@ async fn main() -> Result<()> {
                                                     }
                                                 }
                                                 Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                    let res_up = decision.resource.clone();
-                                                    store.update(|j| {
-                                                        if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                            .find(|d| d.resource == res_up && d.result.is_none())
-                                                        { d.result = Some(CleanupResult::AlreadyGone); }
-                                                    }).await?;
-                                                    eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
-                                                    continue;
+                                                    match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                        Ok(_) => {
+                                                            let res_up = decision.resource.clone();
+                                                            store.update(|j| {
+                                                                if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                    .find(|d| d.resource == res_up && d.result.is_none())
+                                                                { d.result = Some(CleanupResult::AlreadyGone); }
+                                                            }).await?;
+                                                            eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
+                                                            continue;
+                                                        }
+                                                        Err(_) => {
+                                                            bail!("{}/{}: GET 404 but endpoint verification failed — \
+                                                                   cannot confirm absence vs endpoint removal",
+                                                                decision.resource.kind, decision.resource.name);
+                                                        }
+                                                    }
                                                 }
                                                 Err(e) => bail!("Cannot verify {}/{}: {} — aborting resume",
                                                     decision.resource.kind, decision.resource.name, e),
@@ -1703,6 +1823,7 @@ async fn main() -> Result<()> {
 
                                             let del = crate::teardown::executor::delete_resource_pub(
                                                 &client, &decision.resource, &kind_map, &gk_map, None,
+                                                decision.approved_spec_name.as_deref(),
                                             ).await;
 
                                             // Record initial result
@@ -1773,7 +1894,13 @@ async fn main() -> Result<()> {
                                                 if matches!(status, crate::teardown::journal::ResidualStatus::AuditIncomplete) {
                                                     RunState::InteractiveCleanup
                                                 } else {
-                                                    RunState::ApplyCompleted
+                                                    // Check for pending/unconfirmed decisions
+                                                    let j_final = store.read().await;
+                                                    if j_final.cleanup_decisions.iter().any(|d| d.is_pending()) {
+                                                        RunState::InteractiveCleanup
+                                                    } else {
+                                                        RunState::ApplyCompleted
+                                                    }
                                                 }
                                             }
                                             Err(e) => {
@@ -1786,7 +1913,13 @@ async fn main() -> Result<()> {
                                     };
                                     store.update(|j| { j.state = final_state.clone(); }).await?;
                                     if final_state == RunState::Failed {
-                                        bail!("Cleanup resume completed with failures");
+                                        bail!("Cleanup resume completed with hard failures");
+                                    }
+                                    if final_state == RunState::InteractiveCleanup {
+                                        bail!(
+                                            "Cleanup resume incomplete — pending decisions remain. \
+                                             State persisted as InteractiveCleanup (retryable)."
+                                        );
                                     }
                                     return Ok(());
                                 }
