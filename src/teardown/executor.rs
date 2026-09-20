@@ -1297,6 +1297,22 @@ pub fn print_execution_result(result: &ExecutionResult) {
     }
 }
 
+/// Typed error for gate-closed cancellation (not a hard failure).
+#[derive(Debug)]
+pub struct GateClosedError;
+
+impl std::fmt::Display for GateClosedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Mutation gate closed during cleanup")
+    }
+}
+
+impl std::error::Error for GateClosedError {}
+
+pub fn is_gate_closed_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<GateClosedError>().is_some()
+}
+
 /// Result of a single residual cleanup cycle.
 #[derive(Debug)]
 pub struct ResidualCleanupResult {
@@ -1484,8 +1500,10 @@ pub async fn execute_residual_cleanup_with_progress(
         }
 
         // Acquire gate permit FIRST — may block waiting for active permits
-        let _permit = gate.acquire().await
-            .context("Mutation gate closed during cleanup")?;
+        let _permit = match gate.acquire().await {
+            Ok(p) => p,
+            Err(_) => return Err(GateClosedError.into()),
+        };
 
         // Post-permit safety rechecks: generation + fresh audit + membership
         // Conditions could have changed during permit wait
@@ -1685,10 +1703,12 @@ pub async fn execute_residual_cleanup_with_progress(
         client, &post_j.operator, &post_j.audit_context.csv_baseline,
     ).await;
     if !matches!(post_gen, audit::OperatorGenerationState::Absent) {
+        // Generation change during post-cleanup audit is not a hard DELETE failure.
+        // DELETEs already completed — keep retryable state for re-audit.
         journal_store.update(|j| {
-            j.state = RunState::Failed;
-        }).await.context("Failed to persist Failed state after generation change")?;
-        bail!("Operator generation changed after cleanup — cannot verify results. State persisted as Failed.");
+            j.state = RunState::InteractiveCleanup;
+        }).await.context("Failed to persist state after generation change")?;
+        bail!("Operator generation changed after cleanup — re-audit needed. State: InteractiveCleanup.");
     }
 
     match audit::run_residual_audit(client, &post_j).await {
@@ -1703,10 +1723,11 @@ pub async fn execute_residual_cleanup_with_progress(
             result.post_audit = Some(new_audit);
         }
         Err(e) => {
+            // Audit probe failure is retryable — DELETEs already completed
             journal_store.update(|j| {
-                j.state = RunState::Failed;
-            }).await.context("Failed to persist Failed state after audit failure")?;
-            bail!("Post-cleanup re-audit failed: {}. Cannot verify cleanup results.", e);
+                j.state = RunState::InteractiveCleanup;
+            }).await.context("Failed to persist state after audit failure")?;
+            bail!("Post-cleanup re-audit failed: {}. State: InteractiveCleanup (retryable).", e);
         }
     }
 
@@ -1721,10 +1742,8 @@ pub async fn execute_residual_cleanup_with_progress(
     } else {
         match &post_j_final.residual_status {
             ResidualStatus::AuditIncomplete => {
-                journal_store.update(|j| {
-                    j.state = RunState::Failed;
-                }).await.context("Failed to persist Failed state for incomplete audit")?;
-                bail!("Post-cleanup audit incomplete — cannot confirm cleanup success. State persisted as Failed.");
+                // Incomplete audit is retryable — DELETEs may have succeeded
+                RunState::InteractiveCleanup
             }
             _ => {
                 if has_incomplete || has_unconfirmed {
@@ -2476,5 +2495,24 @@ mod tests {
             result
         );
         spawned.await.unwrap();
+    }
+
+    #[test]
+    fn gate_closed_error_is_typed() {
+        let err: anyhow::Error = GateClosedError.into();
+        assert!(is_gate_closed_error(&err), "GateClosedError must be detected by is_gate_closed_error");
+    }
+
+    #[test]
+    fn non_gate_error_is_not_gate_closed() {
+        let err = anyhow::anyhow!("some other error");
+        assert!(!is_gate_closed_error(&err), "generic error must not match gate-closed");
+    }
+
+    #[tokio::test]
+    async fn gate_closed_acquire_fails() {
+        let gate = crate::teardown::permit::MutationGate::new(4);
+        gate.close_and_drain().await;
+        assert!(gate.acquire().await.is_err(), "acquire on closed gate must fail");
     }
 }

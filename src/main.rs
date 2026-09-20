@@ -1279,8 +1279,14 @@ async fn main() -> Result<()> {
                                 // Re-verify state after lock (another process may have completed it)
                                 match j.state {
                                     RunState::Paused | RunState::Applying | RunState::InteractiveCleanup => {}
-                                    RunState::ApplyCompleted | RunState::Finished => {
-                                        bail!("Run completed by another process — nothing to resume");
+                                    RunState::ApplyCompleted => {
+                                        if j.last_residual_audit.is_some() {
+                                            bail!("Run completed by another process — nothing to resume");
+                                        }
+                                        // ApplyCompleted + no audit = crash recovery allowed
+                                    }
+                                    RunState::Finished => {
+                                        bail!("Run finished — nothing to resume");
                                     }
                                     RunState::Failed => {
                                         bail!("Run failed (possibly by another process). Create a new plan.");
@@ -1477,7 +1483,8 @@ async fn main() -> Result<()> {
                                     });
                                 }
 
-                                let resume_stage = classify_resume_stage(&j);
+                                let resume_stage = classify_resume_stage(&j)
+                                    .map_err(|e| anyhow::anyhow!("Cannot resume: {}", e))?;
                                 let paused_from_residual = j.state == RunState::Paused
                                     && j.execution.phases_completed == j.execution.phases_total
                                     && j.last_residual_audit.is_some();
@@ -3025,26 +3032,53 @@ pub enum ResumeStage {
     MainExecution,
 }
 
-pub fn classify_resume_stage(j: &journal::RunJournal) -> ResumeStage {
+pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, String> {
+    let main_complete = j.execution.phases_completed == j.execution.phases_total;
+
     let has_pending_cleanup = !j.cleanup_decisions.is_empty()
         && j.cleanup_decisions.iter().any(|d| d.is_pending());
 
     let paused_from_residual = j.state == journal::RunState::Paused
-        && j.execution.phases_completed == j.execution.phases_total
+        && main_complete
         && j.last_residual_audit.is_some();
 
-    // ApplyCompleted with no audit = crash between state persist and audit
     let needs_audit_recovery = j.state == journal::RunState::ApplyCompleted
         && j.last_residual_audit.is_none();
 
-    if j.state == journal::RunState::InteractiveCleanup
-        || ((j.state == journal::RunState::Applying || j.state == journal::RunState::Paused) && has_pending_cleanup)
+    // Inconsistent: cleanup decisions exist but main not complete
+    if !j.cleanup_decisions.is_empty() && !main_complete {
+        return Err(format!(
+            "Journal inconsistent: {} cleanup decisions but only {}/{} phases complete",
+            j.cleanup_decisions.len(),
+            j.execution.phases_completed,
+            j.execution.phases_total,
+        ));
+    }
+    // Inconsistent: InteractiveCleanup but main not complete
+    if j.state == journal::RunState::InteractiveCleanup && !main_complete {
+        return Err(format!(
+            "Journal inconsistent: InteractiveCleanup state but only {}/{} phases complete",
+            j.execution.phases_completed,
+            j.execution.phases_total,
+        ));
+    }
+    // Inconsistent: ApplyCompleted but main not complete
+    if j.state == journal::RunState::ApplyCompleted && !main_complete {
+        return Err(format!(
+            "Journal inconsistent: ApplyCompleted but only {}/{} phases complete",
+            j.execution.phases_completed,
+            j.execution.phases_total,
+        ));
+    }
+
+    if (j.state == journal::RunState::InteractiveCleanup && main_complete)
+        || (j.state == journal::RunState::Paused && main_complete && has_pending_cleanup)
         || paused_from_residual
         || needs_audit_recovery
     {
-        ResumeStage::Cleanup
+        Ok(ResumeStage::Cleanup)
     } else {
-        ResumeStage::MainExecution
+        Ok(ResumeStage::MainExecution)
     }
 }
 
@@ -3323,30 +3357,48 @@ mod basis_drift_tests {
     fn classify_resume_paused_from_residual_routes_to_cleanup() {
         use crate::teardown::journal::RunState;
         let j = make_test_journal(RunState::Paused, 7, 7, true, vec![]);
-        assert_eq!(classify_resume_stage(&j), ResumeStage::Cleanup);
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::Cleanup);
     }
 
     #[test]
     fn classify_resume_paused_from_main_routes_to_execution() {
         use crate::teardown::journal::RunState;
         let j = make_test_journal(RunState::Paused, 3, 7, false, vec![]);
-        assert_eq!(classify_resume_stage(&j), ResumeStage::MainExecution);
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::MainExecution);
     }
 
     #[test]
     fn classify_resume_interactive_cleanup_routes_to_cleanup() {
         use crate::teardown::journal::RunState;
         let j = make_test_journal(RunState::InteractiveCleanup, 7, 7, true, vec![]);
-        assert_eq!(classify_resume_stage(&j), ResumeStage::Cleanup);
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::Cleanup);
     }
 
     #[test]
-    fn classify_resume_paused_with_pending_routes_to_cleanup() {
+    fn classify_resume_paused_with_pending_complete_routes_to_cleanup() {
+        use crate::teardown::journal::{RunState, CleanupResult};
+        let j = make_test_journal(RunState::Paused, 7, 7, false, vec![
+            make_decision("a", None),
+        ]);
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::Cleanup);
+    }
+
+    #[test]
+    fn classify_resume_pending_with_incomplete_phases_is_error() {
         use crate::teardown::journal::{RunState, CleanupResult};
         let j = make_test_journal(RunState::Paused, 5, 7, false, vec![
             make_decision("a", None),
         ]);
-        assert_eq!(classify_resume_stage(&j), ResumeStage::Cleanup);
+        assert!(classify_resume_stage(&j).is_err(),
+            "Pending cleanup with incomplete main phases = inconsistent journal");
+    }
+
+    #[test]
+    fn classify_resume_interactive_cleanup_incomplete_phases_is_error() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::InteractiveCleanup, 3, 7, true, vec![]);
+        assert!(classify_resume_stage(&j).is_err(),
+            "InteractiveCleanup with incomplete phases = inconsistent journal");
     }
 
     #[test]
@@ -3364,17 +3416,15 @@ mod basis_drift_tests {
     fn classify_resume_apply_completed_no_audit_routes_to_cleanup() {
         use crate::teardown::journal::RunState;
         let j = make_test_journal(RunState::ApplyCompleted, 7, 7, false, vec![]);
-        assert_eq!(classify_resume_stage(&j), ResumeStage::Cleanup,
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::Cleanup,
             "ApplyCompleted with no audit = crash recovery → cleanup branch");
     }
 
     #[test]
     fn classify_resume_apply_completed_with_audit_goes_to_main() {
         use crate::teardown::journal::RunState;
-        // ApplyCompleted + has audit → state gate bails before classify is called.
-        // But if classify IS called, it should not route to cleanup.
         let j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![]);
-        assert_eq!(classify_resume_stage(&j), ResumeStage::MainExecution,
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::MainExecution,
             "ApplyCompleted + has audit = fully completed (gate would bail first)");
     }
 

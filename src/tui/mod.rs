@@ -614,6 +614,13 @@ async fn run_residual_screen(
                         return Ok(());
                     }
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Char('f') => {
+                        journal_store.update(|j| {
+                            j.state = RunState::Finished;
+                        }).await
+                        .context("Failed to persist Finished state")?;
+                        return Ok(());
+                    }
                     KeyCode::Up | KeyCode::Char('k') => {
                         cursor = cursor.saturating_sub(1);
                     }
@@ -714,18 +721,15 @@ async fn run_residual_screen(
                                             return Ok(());
                                         }
                                         Err(e) => {
-                                            // Gate closed + no hard failures in journal → normal pause
-                                            // Gate closed + hard failures → propagate error
-                                            let j = journal_store.read().await;
-                                            let has_hard_failures = j.cleanup_decisions.iter()
-                                                .any(|d| d.is_hard_failed());
-                                            if !gate.is_open() && !has_hard_failures {
+                                            if executor::is_gate_closed_error(&e) {
+                                                // Normal pause — gate closed caused core to stop
                                                 journal_store.update(|j| {
                                                     j.state = RunState::Paused;
                                                 }).await
                                                 .context("Failed to persist Paused during cleanup pause")?;
                                                 return Ok(());
                                             }
+                                            // Hard error — propagate
                                             return Err(e.context(
                                                 "Cleanup error during signal pause — \
                                                  journal reflects actual state"
@@ -767,6 +771,13 @@ async fn run_residual_screen(
                                 ));
                             }
                             Err(e) => {
+                                if executor::is_gate_closed_error(&e) {
+                                    journal_store.update(|j| {
+                                        j.state = RunState::Paused;
+                                    }).await
+                                    .context("Failed to persist Paused after gate-closed cleanup")?;
+                                    return Ok(());
+                                }
                                 gate.close_and_drain().await;
                                 return Err(e.context(
                                     "Residual cleanup failed — gate closed, no further mutations allowed. \

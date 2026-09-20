@@ -376,8 +376,10 @@ pub fn draw_residual(
         Span::raw(" delete selected  "),
         Span::styled("↑↓", Style::default().fg(Color::Green)),
         Span::raw(" navigate  "),
+        Span::styled("f", Style::default().fg(Color::Green)),
+        Span::raw(" finish run  "),
         Span::styled("q", Style::default().fg(Color::Green)),
-        Span::raw(" done"),
+        Span::raw(" quit"),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(help, chunks[2]);
