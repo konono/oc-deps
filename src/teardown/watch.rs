@@ -554,3 +554,183 @@ async fn observe_resource(
         Err(e) => ObserveResult::ApiError(format!("GET failed: {}", e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use crate::teardown::events::EventNotifier;
+    use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
+    use crate::teardown::permit::MutationGate;
+    use crate::kube::resource::ResourceId;
+
+    fn make_resource(kind: &str, name: &str) -> ResourceId {
+        ResourceId {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: Some(format!("uid-{}", name)),
+        }
+    }
+
+    fn test_kind_map() -> KindMap {
+        let mut km = std::collections::HashMap::new();
+        km.insert(
+            "ConfigMap".to_string(),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        km
+    }
+
+    fn test_gk_map() -> GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        gk.insert(
+            (String::new(), "ConfigMap".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        gk
+    }
+
+    #[tokio::test]
+    async fn test_barrier_cancel_returns_quickly_during_stalled_get() {
+        use kube::client::Body;
+        use std::pin::pin;
+
+        // Mock service that never responds to GET — simulates API timeout
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Accept initial GET but never send response — hangs forever
+            let _request = handle.next_request().await;
+            // Hold handle open — don't respond
+            tokio::time::sleep(Duration::from_secs(300)).await;
+        });
+
+        let notifier = Arc::new(EventNotifier::new());
+        let store = Arc::new(RuntimeStateStore::new(notifier, Duration::from_secs(120)));
+        let res = make_resource("ConfigMap", "stuck-cm");
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        let watch_mgr = WatchManager::new(store.clone());
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let gate = MutationGate::new(4);
+        let cancel = gate.cancel_signal();
+
+        // Close gate after 50ms — should cancel the barrier
+        let gate_closer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            gate.close_and_drain().await;
+        });
+
+        let client = kube::Client::new(mock_service, "test-ns");
+        let start = std::time::Instant::now();
+        let result = watch_mgr.wait_for_gone_cancellable(
+            &client,
+            &[res],
+            &km,
+            &gk,
+            Duration::from_secs(300),
+            Duration::from_secs(120),
+            Some(&cancel),
+        ).await;
+
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(result, WatchWaitResult::Cancelled),
+            "Expected Cancelled, got {:?}",
+            match &result {
+                WatchWaitResult::AllGone => "AllGone",
+                WatchWaitResult::Cancelled => "Cancelled",
+                WatchWaitResult::Stalled { .. } => "Stalled",
+            }
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "Cancel should return quickly (<5s), took {:?}",
+            elapsed
+        );
+
+        gate_closer.await.unwrap();
+        spawned.abort();
+    }
+
+    #[tokio::test]
+    async fn test_barrier_without_cancel_does_not_cancel() {
+        // Verify that without cancel signal, barrier proceeds normally (AllGone path)
+        let notifier = Arc::new(EventNotifier::new());
+        let store = Arc::new(RuntimeStateStore::new(notifier, Duration::from_secs(120)));
+        let res = make_resource("ConfigMap", "gone-cm");
+        // Register as already Gone
+        store.register(&res, ResourceRuntimeState::Gone, 0);
+
+        let watch_mgr = WatchManager::new(store.clone());
+
+        // No client needed — all_gone_for returns true immediately
+        // But wait_for_gone_cancellable does initial reconcile which needs a client.
+        // Use a mock that returns 404 for the initial GET.
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+
+        // Respond: GET 404 + LIST 200 (endpoint exists, resource Gone)
+        let spawned = tokio::spawn(async move {
+            let mut handle = std::pin::pin!(handle);
+            // GET → 404
+            let (_req, send) = handle.next_request().await.expect("GET");
+            let not_found = serde_json::json!({
+                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                "status": "Failure", "reason": "NotFound", "code": 404
+            });
+            send.send_response(http::Response::builder().status(404)
+                .body(kube::client::Body::from(serde_json::to_vec(&not_found).unwrap())).unwrap());
+            // LIST → 200 (endpoint verification)
+            let (_req, send) = handle.next_request().await.expect("LIST");
+            let empty_list = serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMapList",
+                "metadata": {"resourceVersion": "1"}, "items": []
+            });
+            send.send_response(http::Response::builder().status(200)
+                .body(kube::client::Body::from(serde_json::to_vec(&empty_list).unwrap())).unwrap());
+        });
+
+        let km = test_kind_map();
+        let gk = test_gk_map();
+        let client = kube::Client::new(mock_service, "test-ns");
+        let result = watch_mgr.wait_for_gone_cancellable(
+            &client,
+            &[res],
+            &km,
+            &gk,
+            Duration::from_secs(10),
+            Duration::from_secs(10),
+            None,
+        ).await;
+
+        assert!(
+            matches!(result, WatchWaitResult::AllGone),
+            "Expected AllGone after GET 404 + LIST 200 confirms resource Gone"
+        );
+
+        spawned.abort();
+    }
+}

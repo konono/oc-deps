@@ -656,7 +656,9 @@ async fn run_residual_screen(
                         );
 
                         // Render loop during cleanup — show per-resource progress.
-                        // Draw errors must not drop cleanup_fut — use join! to drain.
+                        // All exit paths (draw error, signal cancel, completion) must
+                        // drain cleanup_fut and checkpoint before returning.
+                        let cancel_signal = gate.cancel_signal();
                         let cleanup_result = loop {
                             if let Err(draw_err) = terminal.draw(|f| {
                                 renderer::draw_residual(
@@ -699,6 +701,38 @@ async fn run_residual_screen(
                                         cleanup_states.insert(key, state);
                                     }
                                 }
+                                _ = cancel_signal.cancelled() => {
+                                    // Signal-based pause during cleanup.
+                                    // Drain cleanup future — it will stop at next permit acquire.
+                                    let cleanup_r = (&mut cleanup_fut).await;
+                                    match cleanup_r {
+                                        Ok(_) => {
+                                            journal_store.update(|j| {
+                                                j.state = RunState::Paused;
+                                            }).await
+                                            .context("Failed to persist Paused during cleanup signal pause")?;
+                                            return Ok(());
+                                        }
+                                        Err(e) => {
+                                            // Gate closed + no hard failures in journal → normal pause
+                                            // Gate closed + hard failures → propagate error
+                                            let j = journal_store.read().await;
+                                            let has_hard_failures = j.cleanup_decisions.iter()
+                                                .any(|d| d.is_hard_failed());
+                                            if !gate.is_open() && !has_hard_failures {
+                                                journal_store.update(|j| {
+                                                    j.state = RunState::Paused;
+                                                }).await
+                                                .context("Failed to persist Paused during cleanup pause")?;
+                                                return Ok(());
+                                            }
+                                            return Err(e.context(
+                                                "Cleanup error during signal pause — \
+                                                 journal reflects actual state"
+                                            ));
+                                        }
+                                    }
+                                }
                                 _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
                                     // Tick — redraw
                                 }
@@ -707,6 +741,14 @@ async fn run_residual_screen(
 
                         match cleanup_result {
                             Ok(result) => {
+                                // If gate was closed during cleanup (signal pause after last resource)
+                                if !gate.is_open() {
+                                    journal_store.update(|j| {
+                                        j.state = RunState::Paused;
+                                    }).await
+                                    .context("Failed to persist Paused after cleanup signal")?;
+                                    return Ok(());
+                                }
                                 if let Some(ref post_audit) = result.post_audit {
                                     current_residuals = post_audit.likely_operator_residual.iter()
                                         .map(|r| (r.resource.clone(), format!("{:?} confidence", r.confidence)))
