@@ -223,6 +223,7 @@ pub struct AttributedResidual {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResidualEvidence {
+    pub owner_ref_match: bool,
     pub matching_labels: Vec<(String, String)>,
     pub matching_managers: Vec<String>,
     pub namespace_affinity: bool,
@@ -302,17 +303,32 @@ pub async fn run_residual_audit(
         scan_errors: Vec::new(),
     };
 
-    // Collect all plan resource identities for exclusion during namespace scan
-    let mut plan_resources: HashSet<(String, Option<String>, String)> = HashSet::new();
+    // Collect all plan resource identities for exclusion during namespace scan.
+    // Key includes API group to avoid hiding resources from different groups with same Kind/name.
+    let mut plan_resources: HashSet<(String, String, Option<String>, String)> = HashSet::new();
     for phase in &plan.phases {
         for action in &phase.actions {
             let rid = action_resource(action);
             plan_resources.insert((
+                rid.group.clone(),
                 rid.kind.clone(),
                 rid.namespace.clone(),
                 rid.name.clone(),
             ));
         }
+    }
+
+    // Collect target operator identity UIDs for ownerRef→HIGH attribution
+    let mut target_uids: HashSet<String> = HashSet::new();
+    target_uids.insert(journal.operator.csv.uid.clone());
+    for sub in &journal.operator.subscriptions {
+        target_uids.insert(sub.uid.clone());
+    }
+    for dep in &journal.operator.controller_deployments {
+        target_uids.insert(dep.uid.clone());
+    }
+    for sa in &journal.operator.service_accounts {
+        target_uids.insert(sa.uid.clone());
     }
 
     // Phase A: Check planned DELETE/EXPECT resources (exact GET probes)
@@ -415,23 +431,89 @@ pub async fn run_residual_audit(
         for target in &all_targets {
             scan_namespace_for_target(
                 client, target.group, target.version, target.kind, target.plural,
-                ns, ctx, &plan_resources, &mut audit,
+                ns, ctx, &target_uids, &plan_resources, &mut audit,
             ).await;
         }
     }
 
-    // Known CR API scan requires pre-execution GVR/scope metadata not yet captured at plan time.
-    // Only mark incomplete if the operator actually owns CRDs that we can't scan.
-    if !journal.operator.owned_crds.is_empty() {
-        audit.scan_errors.push(AuditScanError {
-            resource_type: "(known CR APIs)".to_string(),
-            namespace: "(all)".to_string(),
-            error: format!(
-                "Operator owns {} CRD(s) but GVR/scope metadata is not yet captured at plan time. \
-                 Residual CRs beyond plan resources are not covered.",
-                journal.operator.owned_crds.len()
-            ),
-        });
+    // Phase D: Known CR API scan using discovery-derived GVR/scope
+    let covered_gvks: HashSet<(&str, &str)> = NATIVE_WORKLOAD_TARGETS
+        .iter()
+        .chain(OLM_TARGETS.iter())
+        .chain(OPENSHIFT_TARGETS.iter())
+        .map(|t| (t.group, t.kind))
+        .collect();
+
+    match &ctx.known_gvrs {
+        None => {
+            // Old journal without GVR info — mark incomplete if operator owns CRDs
+            if !journal.operator.owned_crds.is_empty() {
+                audit.scan_errors.push(AuditScanError {
+                    resource_type: "(known CR APIs)".to_string(),
+                    namespace: "(all)".to_string(),
+                    error: "Journal lacks GVR/scope metadata (pre-v2). \
+                            Residual CRs beyond plan resources are not covered."
+                        .to_string(),
+                });
+            }
+        }
+        Some(gvrs) => {
+            for gvr in gvrs {
+                if covered_gvks.contains(&(gvr.group.as_str(), gvr.kind.as_str())) {
+                    continue;
+                }
+
+                match gvr.scope {
+                    crate::teardown::journal::GvrScope::Namespaced => {
+                        for ns in &ctx.footprint_namespaces {
+                            scan_namespace_for_target(
+                                client,
+                                &gvr.group,
+                                &gvr.version,
+                                &gvr.kind,
+                                &gvr.plural,
+                                ns,
+                                ctx,
+                                &target_uids,
+                                &plan_resources,
+                                &mut audit,
+                            )
+                            .await;
+                        }
+                    }
+                    crate::teardown::journal::GvrScope::Cluster => {
+                        audit.coverage.requested_probes += 1;
+                        let gvk =
+                            GroupVersion::gv(&gvr.group, &gvr.version).with_kind(&gvr.kind);
+                        let ar = ApiResource::from_gvk_with_plural(&gvk, &gvr.plural);
+                        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+                        match api.list(&ListParams::default()).await {
+                            Ok(list) => {
+                                audit.coverage.succeeded_probes += 1;
+                                classify_list_results(
+                                    list.items,
+                                    &gvr.kind,
+                                    &gvr.group,
+                                    &gvr.version,
+                                    "cluster",
+                                    ctx,
+                                    &target_uids,
+                                    &plan_resources,
+                                    &mut audit,
+                                );
+                            }
+                            Err(e) => {
+                                audit.scan_errors.push(AuditScanError {
+                                    resource_type: gvr.kind.clone(),
+                                    namespace: "cluster".to_string(),
+                                    error: e.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(audit)
@@ -447,7 +529,8 @@ async fn scan_namespace_for_target(
     plural: &str,
     namespace: &str,
     ctx: &AuditContext,
-    plan_resources: &HashSet<(String, Option<String>, String)>,
+    target_uids: &HashSet<String>,
+    plan_resources: &HashSet<(String, String, Option<String>, String)>,
     audit: &mut ResidualAudit,
 ) {
     audit.coverage.requested_probes += 1;
@@ -459,7 +542,9 @@ async fn scan_namespace_for_target(
     match api.list(&ListParams::default()).await {
         Ok(list) => {
             audit.coverage.succeeded_probes += 1;
-            classify_list_results(list.items, kind, group, version, namespace, ctx, plan_resources, audit);
+            classify_list_results(
+                list.items, kind, group, version, namespace, ctx, target_uids, plan_resources, audit,
+            );
         }
         Err(e) => {
             audit.scan_errors.push(AuditScanError {
@@ -478,7 +563,8 @@ fn classify_list_results(
     version: &str,
     namespace: &str,
     ctx: &AuditContext,
-    plan_resources: &HashSet<(String, Option<String>, String)>,
+    target_uids: &HashSet<String>,
+    plan_resources: &HashSet<(String, String, Option<String>, String)>,
     audit: &mut ResidualAudit,
 ) {
     for obj in items {
@@ -488,7 +574,7 @@ fn classify_list_results(
         };
 
         let obj_ns = obj.metadata.namespace.clone();
-        let key = (kind.to_string(), obj_ns.clone(), name.clone());
+        let key = (group.to_string(), kind.to_string(), obj_ns.clone(), name.clone());
         if plan_resources.contains(&key) {
             continue;
         }
@@ -502,7 +588,7 @@ fn classify_list_results(
             uid: obj.metadata.uid.clone(),
         };
 
-        let evidence = classify_evidence(&obj, ctx, namespace);
+        let evidence = classify_evidence(&obj, ctx, target_uids);
         let confidence = compute_confidence(&evidence);
 
         let residual = AttributedResidual {
@@ -527,11 +613,22 @@ fn classify_list_results(
 fn classify_evidence(
     obj: &DynamicObject,
     ctx: &AuditContext,
-    _namespace: &str,
+    target_uids: &HashSet<String>,
 ) -> ResidualEvidence {
+    let mut owner_ref_match = false;
     let mut matching_labels = Vec::new();
     let mut matching_managers = Vec::new();
     let mut service_account_match = false;
+
+    // Check ownerRefs against target operator identity UIDs
+    if let Some(owner_refs) = &obj.metadata.owner_references {
+        for oref in owner_refs {
+            if target_uids.contains(&oref.uid) {
+                owner_ref_match = true;
+                break;
+            }
+        }
+    }
 
     // Check labels
     if let Some(labels) = &obj.metadata.labels {
@@ -585,6 +682,7 @@ fn classify_evidence(
     // namespace_affinity is always true since we only scan footprint namespaces
     // but it's a supplementary signal, not classification-driving
     ResidualEvidence {
+        owner_ref_match,
         matching_labels,
         matching_managers,
         namespace_affinity: true,
@@ -593,11 +691,17 @@ fn classify_evidence(
 }
 
 /// Deterministic confidence rules:
-/// HIGH: SA match + matching manager
+/// HIGH: ownerRef UID matches target operator identity, OR SA match + matching manager
 /// MEDIUM: matching manager + matching label
 /// LOW: matching label only OR matching manager only
 /// NONE: namespace affinity only / no evidence
+///
+/// Attribution confidence is NOT deletion authority.
 fn compute_confidence(evidence: &ResidualEvidence) -> ResidualConfidence {
+    if evidence.owner_ref_match {
+        return ResidualConfidence::High;
+    }
+
     let has_managers = !evidence.matching_managers.is_empty();
     let has_labels = !evidence.matching_labels.is_empty();
     let has_sa = evidence.service_account_match;
@@ -893,6 +997,9 @@ fn ns_suffix(resource: &ResourceId) -> String {
 
 fn format_evidence(evidence: &ResidualEvidence) -> String {
     let mut parts = Vec::new();
+    if evidence.owner_ref_match {
+        parts.push("ownerRef matches operator identity".to_string());
+    }
     if !evidence.matching_managers.is_empty() {
         parts.push(format!(
             "managedFields manager: {}",
@@ -937,5 +1044,276 @@ pub fn residual_status_from_audit(audit: &ResidualAudit) -> ResidualStatus {
         ResidualStatus::NoneObservedInScope
     } else {
         ResidualStatus::ResidualsObserved { count: total }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_rid(group: &str, kind: &str, ns: Option<&str>, name: &str, uid: Option<&str>) -> ResourceId {
+        ResourceId {
+            group: group.to_string(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: ns.map(String::from),
+            name: name.to_string(),
+            uid: uid.map(String::from),
+        }
+    }
+
+    // ── RecreationState tests ──
+
+    #[test]
+    fn test_recreation_uid_match_is_same_resource() {
+        let rid = make_rid("apps", "Deployment", Some("ns"), "foo", Some("uid-aaa"));
+        let live = Some("uid-aaa".to_string());
+        assert_eq!(check_recreation(&rid, &live), RecreationState::SameResource);
+    }
+
+    #[test]
+    fn test_recreation_uid_mismatch_is_recreated() {
+        let rid = make_rid("apps", "Deployment", Some("ns"), "foo", Some("uid-aaa"));
+        let live = Some("uid-bbb".to_string());
+        assert_eq!(check_recreation(&rid, &live), RecreationState::Recreated);
+    }
+
+    #[test]
+    fn test_recreation_plan_uid_missing_is_unknown() {
+        let rid = make_rid("apps", "Deployment", Some("ns"), "foo", None);
+        let live = Some("uid-aaa".to_string());
+        assert_eq!(check_recreation(&rid, &live), RecreationState::Unknown);
+    }
+
+    #[test]
+    fn test_recreation_live_uid_missing_is_unknown() {
+        let rid = make_rid("apps", "Deployment", Some("ns"), "foo", Some("uid-aaa"));
+        let live: Option<String> = None;
+        assert_eq!(check_recreation(&rid, &live), RecreationState::Unknown);
+    }
+
+    #[test]
+    fn test_recreation_both_uid_missing_is_unknown() {
+        let rid = make_rid("apps", "Deployment", Some("ns"), "foo", None);
+        let live: Option<String> = None;
+        assert_eq!(check_recreation(&rid, &live), RecreationState::Unknown);
+    }
+
+    // ── residual_status_from_audit tests ──
+
+    #[test]
+    fn test_residual_status_scan_error_is_incomplete() {
+        let mut audit = empty_audit();
+        audit.scan_errors.push(AuditScanError {
+            resource_type: "Route".to_string(),
+            namespace: "ns".to_string(),
+            error: "403 Forbidden".to_string(),
+        });
+        assert!(matches!(residual_status_from_audit(&audit), ResidualStatus::AuditIncomplete));
+    }
+
+    #[test]
+    fn test_residual_status_uid_unknown_is_incomplete() {
+        let mut audit = empty_audit();
+        audit.planned_delete_still_present.push(ResidualItem {
+            resource: make_rid("apps", "Deployment", Some("ns"), "foo", Some("uid-a")),
+            planned_action: "DELETE".to_string(),
+            live_uid: None,
+            recreation: RecreationState::Unknown,
+        });
+        assert!(matches!(residual_status_from_audit(&audit), ResidualStatus::AuditIncomplete));
+    }
+
+    #[test]
+    fn test_residual_status_no_residuals_is_none_observed() {
+        let audit = empty_audit();
+        assert!(matches!(residual_status_from_audit(&audit), ResidualStatus::NoneObservedInScope));
+    }
+
+    #[test]
+    fn test_residual_status_with_residuals_is_observed() {
+        let mut audit = empty_audit();
+        audit.unattributed.push(AttributedResidual {
+            resource: make_rid("", "Service", Some("ns"), "svc", None),
+            evidence: empty_evidence(),
+            confidence: ResidualConfidence::None,
+        });
+        match residual_status_from_audit(&audit) {
+            ResidualStatus::ResidualsObserved { count } => assert_eq!(count, 1),
+            other => panic!("expected ResidualsObserved, got {:?}", other),
+        }
+    }
+
+    // ── compute_confidence tests ──
+
+    #[test]
+    fn test_confidence_owner_ref_is_high() {
+        let evidence = ResidualEvidence {
+            owner_ref_match: true,
+            matching_labels: vec![],
+            matching_managers: vec![],
+            namespace_affinity: true,
+            service_account_match: false,
+        };
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::High);
+    }
+
+    #[test]
+    fn test_confidence_sa_and_manager_is_high() {
+        let evidence = ResidualEvidence {
+            owner_ref_match: false,
+            matching_labels: vec![],
+            matching_managers: vec!["controller".to_string()],
+            namespace_affinity: true,
+            service_account_match: true,
+        };
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::High);
+    }
+
+    #[test]
+    fn test_confidence_manager_and_label_is_medium() {
+        let evidence = ResidualEvidence {
+            owner_ref_match: false,
+            matching_labels: vec![("app".to_string(), "test".to_string())],
+            matching_managers: vec!["controller".to_string()],
+            namespace_affinity: true,
+            service_account_match: false,
+        };
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::Medium);
+    }
+
+    #[test]
+    fn test_confidence_manager_only_is_low() {
+        let evidence = ResidualEvidence {
+            owner_ref_match: false,
+            matching_labels: vec![],
+            matching_managers: vec!["controller".to_string()],
+            namespace_affinity: true,
+            service_account_match: false,
+        };
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::Low);
+    }
+
+    #[test]
+    fn test_confidence_label_only_is_low() {
+        let evidence = ResidualEvidence {
+            owner_ref_match: false,
+            matching_labels: vec![("app".to_string(), "test".to_string())],
+            matching_managers: vec![],
+            namespace_affinity: true,
+            service_account_match: false,
+        };
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::Low);
+    }
+
+    #[test]
+    fn test_confidence_namespace_only_is_none() {
+        let evidence = ResidualEvidence {
+            owner_ref_match: false,
+            matching_labels: vec![],
+            matching_managers: vec![],
+            namespace_affinity: true,
+            service_account_match: false,
+        };
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::None);
+    }
+
+    #[test]
+    fn test_confidence_no_evidence_is_none() {
+        let evidence = empty_evidence();
+        assert_eq!(compute_confidence(&evidence), ResidualConfidence::None);
+    }
+
+    // ── known_plural_for_gvk tests ──
+
+    #[test]
+    fn test_known_plural_apps_deployment() {
+        assert_eq!(known_plural_for_gvk("apps", "Deployment"), Some("deployments"));
+    }
+
+    #[test]
+    fn test_known_plural_group_mismatch_returns_none() {
+        // A custom "Deployment" Kind in a different API group must NOT resolve to "deployments"
+        assert_eq!(known_plural_for_gvk("foo.io", "Deployment"), None);
+    }
+
+    #[test]
+    fn test_known_plural_olm_subscription() {
+        assert_eq!(
+            known_plural_for_gvk("operators.coreos.com", "Subscription"),
+            Some("subscriptions")
+        );
+    }
+
+    #[test]
+    fn test_known_plural_unknown_kind() {
+        assert_eq!(known_plural_for_gvk("custom.io", "Widget"), None);
+    }
+
+    // ── plan_resources group exclusion tests ──
+
+    #[test]
+    fn test_plan_resources_excludes_same_group() {
+        let mut plan_resources: HashSet<(String, String, Option<String>, String)> = HashSet::new();
+        plan_resources.insert(("apps".into(), "Deployment".into(), Some("ns".into()), "foo".into()));
+
+        // Same group+kind+ns+name → excluded
+        let key = ("apps".to_string(), "Deployment".to_string(), Some("ns".to_string()), "foo".to_string());
+        assert!(plan_resources.contains(&key));
+    }
+
+    #[test]
+    fn test_plan_resources_does_not_exclude_different_group() {
+        let mut plan_resources: HashSet<(String, String, Option<String>, String)> = HashSet::new();
+        plan_resources.insert(("apps".into(), "Deployment".into(), Some("ns".into()), "foo".into()));
+
+        // Different group with same Kind/name → NOT excluded
+        let key = ("custom.io".to_string(), "Deployment".to_string(), Some("ns".to_string()), "foo".to_string());
+        assert!(!plan_resources.contains(&key));
+    }
+
+    // ── Schema migration / RecreationState default tests ──
+
+    #[test]
+    fn test_recreation_state_default_is_unknown() {
+        assert_eq!(RecreationState::default_unknown(), RecreationState::Unknown);
+    }
+
+    #[test]
+    fn test_residual_item_deserialize_without_recreation_defaults_to_unknown() {
+        let json = r#"{
+            "resource": {"group":"apps","version":"v1","kind":"Deployment","namespace":"ns","name":"foo","uid":"abc"},
+            "planned_action": "DELETE"
+        }"#;
+        let item: ResidualItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.recreation, RecreationState::Unknown);
+        assert!(item.live_uid.is_none());
+    }
+
+    // ── Helpers ──
+
+    fn empty_audit() -> ResidualAudit {
+        ResidualAudit {
+            planned_delete_still_present: Vec::new(),
+            planned_expect_still_present: Vec::new(),
+            expected_preserved: Vec::new(),
+            likely_operator_residual: Vec::new(),
+            unattributed: Vec::new(),
+            coverage: AuditCoverage {
+                requested_probes: 0,
+                succeeded_probes: 0,
+            },
+            scan_errors: Vec::new(),
+        }
+    }
+
+    fn empty_evidence() -> ResidualEvidence {
+        ResidualEvidence {
+            owner_ref_match: false,
+            matching_labels: vec![],
+            matching_managers: vec![],
+            namespace_affinity: false,
+            service_account_match: false,
+        }
     }
 }

@@ -454,11 +454,49 @@ pub fn build_audit_context(
         }
     }
 
-    if !unresolved_gvks.is_empty() {
+    // Also resolve owned CRDs — residual CR instances may exist outside the plan.
+    // CRD name format: "pluralname.group" (e.g. "datascienceclusters.datasciencecluster.opendatahub.io")
+    let mut unresolved_crds: Vec<String> = Vec::new();
+    for op in operators {
+        for crd_name in &op.owned_crds {
+            let parts: Vec<&str> = crd_name.splitn(2, '.').collect();
+            if parts.len() == 2 {
+                let plural = parts[0];
+                let group = parts[1];
+                let mut found = false;
+                for ((g, k), info) in gk_map.iter() {
+                    if g == group && info.plural == plural {
+                        let gk_key = (g.clone(), k.clone());
+                        if seen_gvks.insert(gk_key) {
+                            known_gvrs.push(KnownGvr {
+                                group: info.group.clone(),
+                                version: info.version.clone(),
+                                kind: k.clone(),
+                                plural: info.plural.clone(),
+                                scope: if info.namespaced {
+                                    GvrScope::Namespaced
+                                } else {
+                                    GvrScope::Cluster
+                                },
+                            });
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    unresolved_crds.push(crd_name.clone());
+                }
+            }
+        }
+    }
+
+    if !unresolved_gvks.is_empty() || !unresolved_crds.is_empty() {
+        let total = unresolved_gvks.len() + unresolved_crds.len();
         eprintln!(
-            "  ⚠ {} plan GVK(s) could not be resolved via API discovery \
-             (audit will be incomplete for exact-GET probes of these types)",
-            unresolved_gvks.len()
+            "  ⚠ {} GVK(s) could not be resolved via API discovery \
+             (audit will be incomplete for probes of these types)",
+            total
         );
     }
 
