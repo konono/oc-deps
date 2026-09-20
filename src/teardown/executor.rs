@@ -1432,7 +1432,7 @@ pub async fn execute_residual_cleanup(
 }
 
 pub async fn execute_residual_cleanup_with_progress(
-    #[allow(clippy::too_many_arguments)] client: &Client,
+    client: &Client,
     selected: &[ResourceId],
     journal_store: &JournalStore,
     gate: &MutationGate,

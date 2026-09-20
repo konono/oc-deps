@@ -360,7 +360,6 @@ impl JournalStore {
     /// Check whether a process lock is held on a journal path without acquiring it.
     #[allow(dead_code)]
     pub fn is_locked(journal_path: &Path) -> bool {
-        #[allow(dead_code)]
         let lock_path = journal_path.with_extension("lock");
         let lock_file = match std::fs::OpenOptions::new()
             .create(false)

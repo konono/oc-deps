@@ -126,10 +126,10 @@ async fn run_tui_inner(
                 KeyCode::Up | KeyCode::Char('k') if !review_items.is_empty() => {
                     selected_index = selected_index.saturating_sub(1);
                 }
-                KeyCode::Down | KeyCode::Char('j') if !review_items.is_empty() => {
-                    if selected_index + 1 < review_items.len() {
-                        selected_index += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j')
+                    if !review_items.is_empty() && selected_index + 1 < review_items.len() =>
+                {
+                    selected_index += 1;
                 }
                 KeyCode::Char('a') if !review_items.is_empty() => {
                     let (_, _, ref res, _) = review_items[selected_index];
@@ -790,10 +790,8 @@ async fn run_residual_screen(
                 KeyCode::Up | KeyCode::Char('k') => {
                     cursor = cursor.saturating_sub(1);
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if cursor + 1 < current_residuals.len() {
-                        cursor += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if cursor + 1 < current_residuals.len() => {
+                    cursor += 1;
                 }
                 KeyCode::Char(' ') if !current_residuals.is_empty() => {
                     let res = &current_residuals[cursor].0;

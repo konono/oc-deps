@@ -1703,7 +1703,7 @@ async fn main() -> Result<()> {
                                                 );
                                             }
                                             // Same UID, still exists
-                                            if !obj.metadata.deletion_timestamp.is_some() {
+                                            if obj.metadata.deletion_timestamp.is_none() {
                                                 // No deletionTimestamp → DELETE didn't happen
                                                 eprintln!(
                                                     "  ⚠ {}/{} still exists — \
