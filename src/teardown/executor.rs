@@ -24,6 +24,10 @@ const PROTECTED_KINDS: &[&str] = &[
     "PersistentVolume",
     "PersistentVolumeClaim",
     "Node",
+    "Subscription",
+    "ClusterServiceVersion",
+    "APIService",
+    "OperatorGroup",
 ];
 
 // ── Delete result ──
@@ -1791,5 +1795,49 @@ mod tests {
         assert!(PROTECTED_KINDS.contains(&"PersistentVolumeClaim"));
         assert!(PROTECTED_KINDS.contains(&"Node"));
         assert!(!PROTECTED_KINDS.contains(&"Dashboard"));
+    }
+
+    // OLM/API infrastructure kinds are also protected from strip
+    #[test]
+    fn protected_kinds_includes_olm_infrastructure() {
+        assert!(PROTECTED_KINDS.contains(&"Subscription"));
+        assert!(PROTECTED_KINDS.contains(&"ClusterServiceVersion"));
+        assert!(PROTECTED_KINDS.contains(&"APIService"));
+        assert!(PROTECTED_KINDS.contains(&"OperatorGroup"));
+    }
+
+    // buffer_unordered completion order cannot misattribute barrier modes
+    #[test]
+    fn unordered_barrier_results_preserve_target_mode() {
+        let target_a = BarrierTarget {
+            resource: make_resource("Auth", "auth"),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-a".to_string(),
+            },
+        };
+        let target_b = BarrierTarget {
+            resource: make_resource("Ray", "default-ray"),
+            mode: BarrierMode::ObserveOnly,
+        };
+
+        // Simulate buffer_unordered returning results in reversed order
+        let results_reversed = vec![
+            (target_b.clone(), "uid-b-new".to_string(), false),
+            (target_a.clone(), "uid-a-new".to_string(), false),
+        ];
+
+        for (target, uid, has_dt) in &results_reversed {
+            let should = should_redelete(target, Some(uid.as_str()), *has_dt);
+            match &target.mode {
+                BarrierMode::ObserveOnly => {
+                    assert!(!should, "ObserveOnly must never re-delete");
+                }
+                BarrierMode::ReDeleteIfRecreated { original_uid } => {
+                    // uid changed, so re-delete is correct for this target
+                    assert!(uid != original_uid);
+                    assert!(should, "ReDelete with changed UID should re-delete");
+                }
+            }
+        }
     }
 }
