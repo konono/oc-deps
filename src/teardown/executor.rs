@@ -1052,14 +1052,17 @@ pub async fn delete_resource_pub(
     gate: Option<&MutationGate>,
     expected_package_name: Option<&str>,
 ) -> Result<String> {
-    // Fail-closed: Subscription DELETE requires semantic identity
-    if resource.kind == "Subscription" && resource.group == "operators.coreos.com"
-        && expected_package_name.is_none()
-    {
-        bail!(
-            "Cannot DELETE Subscription {}/{} without verified package name",
-            resource.kind, resource.name
-        );
+    // Fail-closed: Subscription DELETE requires non-empty semantic identity
+    if resource.kind == "Subscription" && resource.group == "operators.coreos.com" {
+        match expected_package_name {
+            None | Some("") => {
+                bail!(
+                    "Cannot DELETE Subscription {}/{} without verified package name",
+                    resource.kind, resource.name
+                );
+            }
+            _ => {}
+        }
     }
 
     // Acquire mutation permit
@@ -1355,6 +1358,13 @@ pub async fn execute_residual_cleanup(
     }).collect();
 
     if valid_selected.is_empty() {
+        if !result.skipped.is_empty() {
+            bail!(
+                "All {} selected resource(s) were skipped — none eligible for cleanup. \
+                 State unchanged (retryable).",
+                result.skipped.len()
+            );
+        }
         return Ok(result);
     }
 
@@ -2094,5 +2104,208 @@ mod tests {
     fn residual_cleanup_schema_gate_rejects_old_schema() {
         let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
         assert_eq!(current, 7, "Schema version must be 7 for cleanup gate to work correctly");
+    }
+
+    fn make_sub_resource(name: &str, uid: Option<&str>) -> ResourceId {
+        ResourceId {
+            group: "operators.coreos.com".to_string(),
+            version: "v1alpha1".to_string(),
+            kind: "Subscription".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: uid.map(String::from),
+        }
+    }
+
+    fn test_sub_kind_map() -> KindMap {
+        let mut km = test_kind_map();
+        km.insert(
+            "Subscription".to_string(),
+            crate::kube::discovery::KindInfo {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                plural: "subscriptions".to_string(),
+                namespaced: true,
+            },
+        );
+        km
+    }
+
+    fn test_sub_gk_map() -> GroupKindMap {
+        let mut gk = test_gk_map();
+        gk.insert(
+            ("operators.coreos.com".to_string(), "Subscription".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                plural: "subscriptions".to_string(),
+                namespaced: true,
+            },
+        );
+        gk
+    }
+
+    #[tokio::test]
+    async fn test_mock_subscription_spec_name_drift_zero_deletes() {
+        // Subscription has spec.name=other (expected=target) → DELETE NOT called
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_sub_resource("my-sub", Some("uid-A"));
+        let km = test_sub_kind_map();
+        let gk = test_sub_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (request, send) = handle.next_request().await.expect("expected GET");
+            assert_eq!(request.method(), http::Method::GET);
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "operators.coreos.com/v1alpha1",
+                "kind": "Subscription",
+                "metadata": {
+                    "name": "my-sub",
+                    "namespace": "test-ns",
+                    "uid": "uid-A",
+                    "resourceVersion": "100"
+                },
+                "spec": { "name": "other-package" }
+            })));
+            // No DELETE request should follow
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource_inner(
+            &client, &resource, &km, &gk, Some("target-package"),
+        ).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("semantic identity drift")),
+            "spec.name drift should prevent DELETE: got {:?}",
+            result
+        );
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mock_subscription_delete_pub_no_package_fails() {
+        // delete_resource_pub with None package for Subscription → immediate Err
+        let (mock_service, _handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+        let resource = make_sub_resource("my-sub", Some("uid-A"));
+        let km = test_sub_kind_map();
+        let gk = test_sub_gk_map();
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource_pub(
+            &client, &resource, &km, &gk, None, None,
+        ).await;
+
+        assert!(result.is_err(), "Subscription DELETE with None package must fail");
+        assert!(
+            result.unwrap_err().to_string().contains("without verified package name"),
+            "Error must mention missing package name"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_subscription_delete_pub_empty_package_fails() {
+        let (mock_service, _handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+        let resource = make_sub_resource("my-sub", Some("uid-A"));
+        let km = test_sub_kind_map();
+        let gk = test_sub_gk_map();
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource_pub(
+            &client, &resource, &km, &gk, None, Some(""),
+        ).await;
+
+        assert!(result.is_err(), "Subscription DELETE with empty package must fail");
+    }
+
+    #[tokio::test]
+    async fn test_mock_get404_list403_not_already_gone() {
+        // GET 404 + LIST 403 → Failed (not AlreadyGone)
+        // This tests the endpoint verification requirement
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_cm_resource("gone-cm", Some("uid-A"));
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_request, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(not_found_response());
+            let (_request, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(forbidden_response());
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource_inner(
+            &client, &resource, &km, &gk, None,
+        ).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("endpoint")),
+            "GET 404 + LIST 403 must not be AlreadyGone: got {:?}",
+            result
+        );
+        spawned.await.unwrap();
+    }
+
+    #[test]
+    fn hard_failed_vs_retryable() {
+        use crate::teardown::journal::{CleanupDecision, CleanupResult};
+        let hard = CleanupDecision {
+            resource: make_resource("Pod", "a"),
+            bound_uid: Some("uid".to_string()),
+            action: "delete".to_string(),
+            result: Some(CleanupResult::Failed("API error".to_string())),
+            approved_spec_name: None,
+        };
+        assert!(hard.is_hard_failed(), "Failed is a hard failure");
+
+        let retryable = CleanupDecision {
+            resource: make_resource("Pod", "b"),
+            bound_uid: Some("uid".to_string()),
+            action: "delete".to_string(),
+            result: Some(CleanupResult::DeleteRequested),
+            approved_spec_name: None,
+        };
+        assert!(!retryable.is_hard_failed(), "DeleteRequested is NOT hard failed");
+        assert!(retryable.is_pending(), "DeleteRequested IS pending (retryable)");
+    }
+
+    #[test]
+    fn pending_decisions_prevent_apply_completed() {
+        use crate::teardown::journal::{CleanupDecision, CleanupResult};
+        let decisions = vec![
+            CleanupDecision {
+                resource: make_resource("Pod", "a"),
+                bound_uid: Some("uid".to_string()),
+                action: "delete".to_string(),
+                result: Some(CleanupResult::Gone),
+                approved_spec_name: None,
+            },
+            CleanupDecision {
+                resource: make_resource("Pod", "b"),
+                bound_uid: Some("uid".to_string()),
+                action: "delete".to_string(),
+                result: Some(CleanupResult::DeleteRequested),
+                approved_spec_name: None,
+            },
+        ];
+        assert!(decisions.iter().any(|d| d.is_pending()),
+            "DeleteRequested must prevent ApplyCompleted");
     }
 }

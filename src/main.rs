@@ -1485,7 +1485,8 @@ async fn main() -> Result<()> {
                                             .cloned()
                                             .collect();
 
-                                    let mut any_failed = false;
+                                    let mut any_hard_failed = false;
+                                    let mut any_retryable = false;
                                     if pending.is_empty() {
                                         eprintln!("No pending cleanup decisions to resume.");
                                     } else {
@@ -1521,7 +1522,7 @@ async fn main() -> Result<()> {
                                                             Err(_) => {
                                                                 eprintln!("  ⚠ {}/{}: GET 404 but endpoint verification failed — cannot confirm Gone",
                                                                     decision.resource.kind, decision.resource.name);
-                                                                any_failed = true;
+                                                                any_retryable = true;
                                                             }
                                                         }
                                                     }
@@ -1571,7 +1572,7 @@ async fn main() -> Result<()> {
                                                                 eprintln!("  {}/{}: gone (waited on resume)", decision.resource.kind, decision.resource.name);
                                                             } else {
                                                                 eprintln!("  ⚠ {}/{}: still not Gone after wait", decision.resource.kind, decision.resource.name);
-                                                                any_failed = true;
+                                                                any_retryable = true;
                                                             }
                                                         } else {
                                                             // No deletionTimestamp — UID-bound authority exists.
@@ -1589,7 +1590,7 @@ async fn main() -> Result<()> {
                                                             ).await;
                                                             if !matches!(re_gen, OperatorGenerationState::Absent) {
                                                                 eprintln!("    ⚠ Generation not Absent for re-DELETE — skipping");
-                                                                any_failed = true;
+                                                                any_retryable = true;
                                                                 drop(_re_permit);
                                                             } else {
                                                                 match audit::run_residual_audit(&client, &re_j).await {
@@ -1601,9 +1602,19 @@ async fn main() -> Result<()> {
                                                                                 .any(|r| r.resource == decision.resource);
                                                                         if !re_in_set {
                                                                             eprintln!("    ⚠ Not in current residual set for re-DELETE — skipping");
-                                                                            any_failed = true;
+                                                                            any_retryable = true;
                                                                             drop(_re_permit);
                                                                         } else {
+                                                                            // Post-audit generation recheck before mutation
+                                                                            let re_gen2 = audit::check_operator_generation(
+                                                                                &client, &re_j.operator, &re_j.audit_context.csv_baseline,
+                                                                            ).await;
+                                                                            if !matches!(re_gen2, OperatorGenerationState::Absent) {
+                                                                                eprintln!("    ⚠ Generation changed during re-DELETE audit — skipping");
+                                                                                any_retryable = true;
+                                                                                drop(_re_permit);
+                                                                                continue;
+                                                                            }
                                                                             let re_del = crate::teardown::executor::delete_resource_pub(
                                                                                 &client, &decision.resource, &kind_map, &gk_map,
                                                                                 None, // permit already held
@@ -1638,13 +1649,13 @@ async fn main() -> Result<()> {
                                                                                         }).await
                                                                                         .context("Failed to checkpoint re-DELETE result")?;
                                                                                         if !re_gone {
-                                                                                            any_failed = true;
+                                                                                            any_retryable = true;
                                                                                         }
                                                                                     }
                                                                                 }
                                                                                 Err(e) => {
                                                                                     eprintln!("    ⚠ {}/{}: re-DELETE failed: {}", decision.resource.kind, decision.resource.name, e);
-                                                                                    any_failed = true;
+                                                                                    any_hard_failed = true;
                                                                                 }
                                                                             }
                                                                             drop(_re_permit);
@@ -1652,7 +1663,7 @@ async fn main() -> Result<()> {
                                                                     }
                                                                     Err(e) => {
                                                                         eprintln!("    ⚠ Post-permit audit failed for re-DELETE: {}", e);
-                                                                        any_failed = true;
+                                                                        any_retryable = true;
                                                                         drop(_re_permit);
                                                                     }
                                                                 }
@@ -1661,7 +1672,7 @@ async fn main() -> Result<()> {
                                                     }
                                                     Err(e) => {
                                                         eprintln!("  ⚠ {}/{}: cannot verify: {}", decision.resource.kind, decision.resource.name, e);
-                                                        any_failed = true;
+                                                        any_retryable = true;
                                                     }
                                                 }
                                                 continue;
@@ -1831,7 +1842,7 @@ async fn main() -> Result<()> {
                                                 Ok(msg) if msg == "deleted" => CleanupResult::DeleteRequested,
                                                 Ok(msg) if msg == "already_gone" => CleanupResult::AlreadyGone,
                                                 Ok(_) => CleanupResult::DeleteRequested,
-                                                Err(e) => { any_failed = true; CleanupResult::Failed(e.to_string()) },
+                                                Err(e) => { any_hard_failed = true; CleanupResult::Failed(e.to_string()) },
                                             };
                                             let res_up = decision.resource.clone();
                                             let initial_clone = initial_result.clone();
@@ -1850,7 +1861,7 @@ async fn main() -> Result<()> {
                                                     match api.get(&decision.resource.name).await {
                                                         Err(::kube::Error::Api(ref err)) if err.code == 404 => { gone = true; break; }
                                                         Ok(_) => continue,
-                                                        Err(_) => { any_failed = true; break; }
+                                                        Err(_) => { any_retryable = true; break; }
                                                     }
                                                 }
                                                 if gone {
@@ -1864,7 +1875,7 @@ async fn main() -> Result<()> {
                                                     eprintln!("  {}/{}: gone (confirmed)", decision.resource.kind, decision.resource.name);
                                                 } else {
                                                     eprintln!("  ⚠ {}/{}: DELETE accepted but Gone not confirmed", decision.resource.kind, decision.resource.name);
-                                                    any_failed = true;
+                                                    any_retryable = true;
                                                 }
                                             } else {
                                                 eprintln!("  {}/{}: {:?}", decision.resource.kind, decision.resource.name, initial_result);
@@ -1879,8 +1890,10 @@ async fn main() -> Result<()> {
                                     ).await;
                                     let final_state = if !gate.is_open() {
                                         RunState::Paused
-                                    } else if any_failed {
+                                    } else if any_hard_failed {
                                         RunState::Failed
+                                    } else if any_retryable {
+                                        RunState::InteractiveCleanup
                                     } else if matches!(gen_state, OperatorGenerationState::Absent) {
                                         match audit::run_residual_audit(&client, &j_cur).await {
                                             Ok(re_audit) => {
@@ -3137,4 +3150,5 @@ mod basis_drift_tests {
             .decisive_part_of_seeds.iter().cloned().collect();
         assert!(seeds.is_empty(), "empty seeds blocked by caller");
     }
+
 }
