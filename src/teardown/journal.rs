@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 2;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -83,9 +83,11 @@ pub struct AuditContext {
     #[serde(default)]
     pub known_gvrs: Option<Vec<KnownGvr>>,
     /// CRD names that could not be resolved via API discovery at plan time.
-    /// Non-empty → AuditIncomplete (cannot scan for residual CR instances).
+    /// None = info not captured (old journal) → AuditIncomplete if owned_crds non-empty.
+    /// Some([]) = all owned CRDs resolved successfully.
+    /// Some([...]) = listed CRDs unresolved → AuditIncomplete.
     #[serde(default)]
-    pub unresolved_crds: Vec<String>,
+    pub unresolved_crds: Option<Vec<String>>,
 }
 
 /// A GVR resolved during plan generation via API discovery.
@@ -114,7 +116,7 @@ impl Default for AuditContext {
             known_labels: Vec::new(),
             managed_field_managers: HashSet::new(),
             known_gvrs: None,
-            unresolved_crds: Vec::new(),
+            unresolved_crds: None,
         }
     }
 }
@@ -267,13 +269,19 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
         );
     }
 
-    // v1 → v2 migration: discard old audit data (lacks UID tracking / recreation state).
-    // The audit is non-authoritative and must be re-run with current code.
-    if journal.schema_version < 2 {
-        if journal.last_residual_audit.is_some() {
+    // v1 → v2: discard old audit data (lacks UID tracking / recreation state)
+    // v2 → v3: discard old audit if unresolved_crds is None with owned CRDs
+    //          (v2 journals lack CRD resolution tracking → false complete)
+    if journal.schema_version < RUN_JOURNAL_SCHEMA_VERSION {
+        let needs_audit_reset = journal.schema_version < 2
+            || (journal.schema_version < 3
+                && journal.audit_context.unresolved_crds.is_none()
+                && !journal.operator.owned_crds.is_empty());
+
+        if needs_audit_reset && journal.last_residual_audit.is_some() {
             eprintln!(
                 "  ℹ Migrating journal {} from schema v{} → v{}: \
-                 discarding old residual audit (lacks UID/recreation tracking)",
+                 discarding old residual audit (lacks required safety metadata)",
                 journal.run_id, journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION
             );
             journal.last_residual_audit = None;
@@ -509,6 +517,6 @@ pub fn build_audit_context(
     }
 
     ctx.known_gvrs = Some(known_gvrs);
-    ctx.unresolved_crds = unresolved_crds;
+    ctx.unresolved_crds = Some(unresolved_crds);
     ctx
 }
