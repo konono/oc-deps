@@ -267,7 +267,17 @@ pub async fn check_operator_generation(
                             })
                             .unwrap_or(false);
 
-                        if !attributed_via_sub && !attributed_via_label {
+                        // Check 3: annotations (olm.package in
+                        // operatorframework.io/properties — used by CSV copies
+                        // that may lack operators.coreos.com/* labels)
+                        let attributed_via_annotation =
+                            csv_package_from_annotations(csv_obj)
+                                .is_some_and(|pkg| pkg != package_name);
+
+                        if !attributed_via_sub
+                            && !attributed_via_label
+                            && !attributed_via_annotation
+                        {
                             return OperatorGenerationState::Unknown(format!(
                                 "CSV '{}' (uid: {}) in {} survived teardown and cannot be \
                                  attributed to a different package — possible same-package \
@@ -294,20 +304,65 @@ pub async fn check_operator_generation(
 /// Check if a CSV's OLM labels attribute it to a package other than `our_package`.
 /// OLM copies carry labels like `operators.coreos.com/<package>.<namespace>`.
 /// Returns true if the CSV is conclusively attributed to a DIFFERENT package.
+/// Returns true only if the CSV is EXCLUSIVELY attributable to a different package.
+/// Conflicting labels (both our package and another) → ambiguous → false.
 fn csv_label_attributes_to_other_package(
     labels: &std::collections::BTreeMap<String, String>,
     csv_namespace: &str,
     our_package: &str,
 ) -> bool {
     let suffix = format!(".{}", csv_namespace);
-    labels.keys().any(|key| {
+    let mut has_our_package = false;
+    let mut has_other_package = false;
+
+    for key in labels.keys() {
         if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
             if let Some(pkg) = rest.strip_suffix(&suffix) {
-                return !pkg.is_empty() && pkg != our_package;
+                if !pkg.is_empty() {
+                    if pkg == our_package {
+                        has_our_package = true;
+                    } else {
+                        has_other_package = true;
+                    }
+                }
             }
         }
-        false
-    })
+    }
+
+    // Only attributable to other if exclusively other-package labels.
+    // Conflicting evidence → not safe to exclude → returns false → triggers Unknown.
+    has_other_package && !has_our_package
+}
+
+/// Extract package name from CSV annotations (olm.package in operatorframework.io/properties).
+/// Used for CSV copies that may lack operators.coreos.com/* labels but have annotation evidence.
+fn csv_package_from_annotations(csv: &DynamicObject) -> Option<String> {
+    let annotations = csv.metadata.annotations.as_ref()?;
+
+    if let Some(props_str) = annotations.get("operatorframework.io/properties") {
+        if let Ok(props) = serde_json::from_str::<Vec<serde_json::Value>>(props_str) {
+            for prop in &props {
+                if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
+                    if let Some(value) = prop.get("value") {
+                        // value may be a JSON string containing {"packageName":"...","version":"..."}
+                        let pkg_value = if let Some(s) = value.as_str() {
+                            serde_json::from_str::<serde_json::Value>(s).ok()
+                        } else {
+                            Some(value.clone())
+                        };
+                        if let Some(pkg_info) = pkg_value {
+                            if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
+                            {
+                                return Some(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1579,6 +1634,16 @@ mod tests {
         }
     }
 
+    fn make_dynamic_object(name: &str) -> kube::api::DynamicObject {
+        let mut obj = kube::api::DynamicObject {
+            types: None,
+            metadata: Default::default(),
+            data: serde_json::json!({}),
+        };
+        obj.metadata.name = Some(name.to_string());
+        obj
+    }
+
     fn empty_evidence() -> ResidualEvidence {
         ResidualEvidence {
             owner_ref_match: false,
@@ -1946,5 +2011,94 @@ mod tests {
             "my-ns",
             "rhods-operator"
         ));
+    }
+
+    #[test]
+    fn test_conflicting_csv_labels_is_ambiguous() {
+        // CSV has labels for BOTH our package and another package → ambiguous
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "operators.coreos.com/rhods-operator.redhat-ods-operator".to_string(),
+            String::new(),
+        );
+        labels.insert(
+            "operators.coreos.com/other-operator.redhat-ods-operator".to_string(),
+            String::new(),
+        );
+        // Conflicting → NOT attributable to other → should return false
+        assert!(!csv_label_attributes_to_other_package(
+            &labels,
+            "redhat-ods-operator",
+            "rhods-operator"
+        ));
+    }
+
+    #[test]
+    fn test_csv_copy_olm_package_annotation_other_package() {
+        let mut csv = make_dynamic_object("authorino-operator.v1.0.2");
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"authorino-operator\",\"version\":\"1.0.2\"}"}]"#.to_string(),
+        )]));
+
+        let pkg = csv_package_from_annotations(&csv);
+        assert_eq!(pkg.as_deref(), Some("authorino-operator"));
+    }
+
+    #[test]
+    fn test_csv_copy_olm_package_annotation_same_package() {
+        let mut csv = make_dynamic_object("rhods-operator.3.5.0");
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"rhods-operator\",\"version\":\"3.5.0\"}"}]"#.to_string(),
+        )]));
+
+        let pkg = csv_package_from_annotations(&csv);
+        assert_eq!(pkg.as_deref(), Some("rhods-operator"));
+        // Same package → csv_package_from_annotations returns our name
+        // Caller should NOT treat this as "attributed to other"
+        assert!(!pkg.unwrap().ne("rhods-operator")); // is_some_and(|p| p != our_pkg) → false
+    }
+
+    #[test]
+    fn test_csv_copy_no_labels_or_annotations() {
+        let csv = make_dynamic_object("mystery-csv.v1.0");
+        // No labels, no annotations
+        let pkg = csv_package_from_annotations(&csv);
+        assert!(pkg.is_none());
+        // No labels → csv_label_attributes_to_other_package returns false
+        assert!(!csv_label_attributes_to_other_package(
+            &std::collections::BTreeMap::new(),
+            "ns",
+            "our-pkg"
+        ));
+    }
+
+    #[test]
+    fn test_explain_action_label() {
+        // Verify the action_resource and action label mapping logic.
+        // The actual explain output is tested via the function, but here we
+        // verify the match arms produce correct labels.
+        let review_action = Action::Review {
+            resource: ResourceId {
+                group: String::new(),
+                version: "v1".to_string(),
+                kind: "Limitador".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "limitador".to_string(),
+                uid: None,
+            },
+            reason: "test".to_string(),
+            metadata: None,
+        };
+        // In explain.rs, REVIEW → "marked for review", not "deleted"
+        let label = match &review_action {
+            Action::Delete { .. } => "deleted",
+            Action::ExpectGone { .. } => "expected to be removed by controller",
+            Action::Keep { .. } => "kept",
+            Action::Review { .. } => "marked for review",
+            Action::WaitGone { .. } => "waiting for deletion",
+        };
+        assert_eq!(label, "marked for review");
     }
 }

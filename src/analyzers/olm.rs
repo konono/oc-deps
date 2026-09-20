@@ -245,7 +245,7 @@ pub async fn discover_operators(
     let mut sub_by_csv: HashMap<String, Vec<&DynamicObject>> = HashMap::new();
     let mut matched_sub_uids: HashSet<String> = HashSet::new();
     for sub in &sub_items {
-        let csv_name = sub.data.get("status").and_then(|s| {
+        let csv_name_from_status = sub.data.get("status").and_then(|s| {
             s.get("installedCSV")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
@@ -255,14 +255,27 @@ pub async fn discover_operators(
                         .filter(|s| !s.is_empty())
                 })
         });
-        if let Some(csv_name) = csv_name {
-            if let Some(uid) = &sub.metadata.uid {
-                matched_sub_uids.insert(uid.clone());
+        if let Some(csv_name) = csv_name_from_status {
+            let sub_ns = sub.metadata.namespace.as_deref().unwrap_or("unknown");
+
+            // Verify the referenced CSV actually exists in the same namespace.
+            // Stale status (CSV renamed/removed) must not suppress label fallback.
+            let csv_exists_in_ns = csv_items.iter().any(|csv| {
+                csv.metadata.name.as_deref() == Some(csv_name)
+                    && csv.metadata.namespace.as_deref() == Some(sub_ns)
+            });
+
+            if csv_exists_in_ns {
+                if let Some(uid) = &sub.metadata.uid {
+                    matched_sub_uids.insert(uid.clone());
+                }
+                sub_by_csv
+                    .entry(csv_name.to_string())
+                    .or_default()
+                    .push(sub);
             }
-            sub_by_csv
-                .entry(csv_name.to_string())
-                .or_default()
-                .push(sub);
+            // If CSV doesn't exist in this namespace: stale status — fall through
+            // to label fallback below
         }
     }
 

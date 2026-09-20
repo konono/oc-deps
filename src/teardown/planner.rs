@@ -956,14 +956,34 @@ async fn run_preflight(
                     sub.name
                 ),
             ),
-            None => (
-                true,
-                PreflightSeverity::Warning,
-                format!(
-                    "No subscription for CSV/{} — already frozen or manually installed",
-                    op.csv.name
-                ),
-            ),
+            None => {
+                if op.package_name.is_some() {
+                    // Subscription linkage failed: package_name indicates a Subscription
+                    // SHOULD exist, but we couldn't link it to a CSV. Proceeding would
+                    // skip Subscription DELETE, breaking OLM freeze-first safety.
+                    (
+                        false,
+                        PreflightSeverity::Critical,
+                        format!(
+                            "No subscription linked to CSV/{} but package '{}' exists — \
+                             Subscription-CSV linkage may have failed (stale status or \
+                             ambiguous label match). Cannot safely proceed without \
+                             Subscription DELETE in Phase 0.",
+                            op.csv.name,
+                            op.package_name.as_deref().unwrap_or("?"),
+                        ),
+                    )
+                } else {
+                    (
+                        true,
+                        PreflightSeverity::Warning,
+                        format!(
+                            "No subscription for CSV/{} — already frozen or manually installed",
+                            op.csv.name
+                        ),
+                    )
+                }
+            }
         };
         checks.push(PreflightCheck {
             name: format!("Subscription resolved ({})", op.csv.name),
