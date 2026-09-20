@@ -82,6 +82,10 @@ pub struct AuditContext {
     /// Some(vec) = known GVRs for accurate probing.
     #[serde(default)]
     pub known_gvrs: Option<Vec<KnownGvr>>,
+    /// CRD names that could not be resolved via API discovery at plan time.
+    /// Non-empty → AuditIncomplete (cannot scan for residual CR instances).
+    #[serde(default)]
+    pub unresolved_crds: Vec<String>,
 }
 
 /// A GVR resolved during plan generation via API discovery.
@@ -110,6 +114,7 @@ impl Default for AuditContext {
             known_labels: Vec::new(),
             managed_field_managers: HashSet::new(),
             known_gvrs: None,
+            unresolved_crds: Vec::new(),
         }
     }
 }
@@ -460,33 +465,36 @@ pub fn build_audit_context(
     for op in operators {
         for crd_name in &op.owned_crds {
             let parts: Vec<&str> = crd_name.splitn(2, '.').collect();
-            if parts.len() == 2 {
-                let plural = parts[0];
-                let group = parts[1];
-                let mut found = false;
-                for ((g, k), info) in gk_map.iter() {
-                    if g == group && info.plural == plural {
-                        let gk_key = (g.clone(), k.clone());
-                        if seen_gvks.insert(gk_key) {
-                            known_gvrs.push(KnownGvr {
-                                group: info.group.clone(),
-                                version: info.version.clone(),
-                                kind: k.clone(),
-                                plural: info.plural.clone(),
-                                scope: if info.namespaced {
-                                    GvrScope::Namespaced
-                                } else {
-                                    GvrScope::Cluster
-                                },
-                            });
-                        }
-                        found = true;
-                        break;
+            if parts.len() < 2 {
+                // CRD name parse failure — cannot resolve GVR
+                unresolved_crds.push(crd_name.clone());
+                continue;
+            }
+            let plural = parts[0];
+            let group = parts[1];
+            let mut found = false;
+            for ((g, k), info) in gk_map.iter() {
+                if g == group && info.plural == plural {
+                    let gk_key = (g.clone(), k.clone());
+                    if seen_gvks.insert(gk_key) {
+                        known_gvrs.push(KnownGvr {
+                            group: info.group.clone(),
+                            version: info.version.clone(),
+                            kind: k.clone(),
+                            plural: info.plural.clone(),
+                            scope: if info.namespaced {
+                                GvrScope::Namespaced
+                            } else {
+                                GvrScope::Cluster
+                            },
+                        });
                     }
+                    found = true;
+                    break;
                 }
-                if !found {
-                    unresolved_crds.push(crd_name.clone());
-                }
+            }
+            if !found {
+                unresolved_crds.push(crd_name.clone());
             }
         }
     }
@@ -494,12 +502,13 @@ pub fn build_audit_context(
     if !unresolved_gvks.is_empty() || !unresolved_crds.is_empty() {
         let total = unresolved_gvks.len() + unresolved_crds.len();
         eprintln!(
-            "  ⚠ {} GVK(s) could not be resolved via API discovery \
+            "  ⚠ {} GVK(s)/CRD(s) could not be resolved via API discovery \
              (audit will be incomplete for probes of these types)",
             total
         );
     }
 
     ctx.known_gvrs = Some(known_gvrs);
+    ctx.unresolved_crds = unresolved_crds;
     ctx
 }

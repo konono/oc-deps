@@ -516,6 +516,21 @@ pub async fn run_residual_audit(
         }
     }
 
+    // Unresolved CRDs from plan time → cannot scan for their CR instances
+    if !ctx.unresolved_crds.is_empty() {
+        for crd_name in &ctx.unresolved_crds {
+            audit.scan_errors.push(AuditScanError {
+                resource_type: crd_name.clone(),
+                namespace: "(all)".to_string(),
+                error: format!(
+                    "Owned CRD '{}' could not be resolved via API discovery at plan time. \
+                     Residual CR instances of this type are not covered.",
+                    crd_name
+                ),
+            });
+        }
+    }
+
     Ok(audit)
 }
 
