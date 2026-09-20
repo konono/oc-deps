@@ -27,6 +27,30 @@ enum BindResult {
     Failed(String),
 }
 
+/// Probe a single resource's UID for safe DELETE binding.
+/// GET 200 + UID → Bound, GET 404 + LIST 200 → Absent, otherwise → Failed.
+pub(crate) async fn probe_uid(
+    api: &kube::api::Api<kube::api::DynamicObject>,
+    name: &str,
+) -> BindResult {
+    match api.get(name).await {
+        Ok(obj) => match obj.metadata.uid {
+            Some(uid) => BindResult::Bound(uid),
+            None => BindResult::Failed("resource has no UID".to_string()),
+        },
+        Err(kube::Error::Api(ref err)) if err.code == 404 => {
+            match api.list(&kube::api::ListParams::default().limit(1)).await {
+                Ok(_) => BindResult::Absent,
+                Err(e) => BindResult::Failed(format!(
+                    "GET 404 but endpoint verification failed: {}",
+                    e
+                )),
+            }
+        }
+        Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
+    }
+}
+
 // ── Decision types ──
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2752,22 +2776,7 @@ pub async fn generate_teardown_plan(
                 let api = crd_api.clone();
                 let name = name.clone();
                 async move {
-                    let result = match api.get(&name).await {
-                        Ok(obj) => match obj.metadata.uid {
-                            Some(uid) => BindResult::Bound(uid),
-                            None => BindResult::Failed("resource has no UID".to_string()),
-                        },
-                        Err(kube::Error::Api(ref err)) if err.code == 404 => {
-                            match api.list(&kube::api::ListParams::default().limit(1)).await {
-                                Ok(_) => BindResult::Absent,
-                                Err(e) => BindResult::Failed(format!(
-                                    "GET 404 but endpoint verification failed: {}",
-                                    e
-                                )),
-                            }
-                        }
-                        Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
-                    };
+                    let result = probe_uid(&api, &name).await;
                     (name, result)
                 }
             });
@@ -2892,22 +2901,7 @@ pub async fn generate_teardown_plan(
             let api = apisvc_api.clone();
             let name = name.clone();
             async move {
-                let result = match api.get(&name).await {
-                    Ok(obj) => match obj.metadata.uid {
-                        Some(uid) => BindResult::Bound(uid),
-                        None => BindResult::Failed("resource has no UID".to_string()),
-                    },
-                    Err(kube::Error::Api(ref err)) if err.code == 404 => {
-                        match api.list(&kube::api::ListParams::default().limit(1)).await {
-                            Ok(_) => BindResult::Absent,
-                            Err(e) => BindResult::Failed(format!(
-                                "GET 404 but endpoint verification failed: {}",
-                                e
-                            )),
-                        }
-                    }
-                    Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
-                };
+                let result = probe_uid(&api, &name).await;
                 (name, result)
             }
         });
@@ -4026,5 +4020,147 @@ mod tests {
 
         assert!(matches!(&phases[0].actions[0], Action::Keep { .. }));
         assert!(matches!(&phases[0].actions[1], Action::Keep { .. }));
+    }
+
+    // ── probe_uid mock API tests ──
+
+    use std::pin::pin;
+    use kube::client::Body;
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": reason,
+            "reason": reason,
+            "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn make_mock_api(
+        mock_service: tower_test::mock::Mock<http::Request<Body>, http::Response<Body>>,
+    ) -> kube::api::Api<kube::api::DynamicObject> {
+        let client = Client::new(mock_service, "default");
+        let gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
+            .with_kind("CustomResourceDefinition");
+        let ar = kube::api::ApiResource::from_gvk_with_plural(
+            &gvk,
+            "customresourcedefinitions",
+        );
+        kube::api::Api::all_with(client, &ar)
+    }
+
+    #[tokio::test]
+    async fn test_probe_uid_get404_list200_is_absent() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let api = make_mock_api(mock_service);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET → 404
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(status_response(404, "NotFound"));
+
+            // LIST (endpoint verification) → 200
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "CustomResourceDefinitionList",
+                "metadata": { "resourceVersion": "1" },
+                "items": []
+            })));
+        });
+
+        let result = probe_uid(&api, "test-crd.example.com").await;
+        assert!(
+            matches!(result, BindResult::Absent),
+            "GET 404 + LIST 200 should be Absent, got: {:?}",
+            std::mem::discriminant(&result)
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_probe_uid_get404_list403_is_failed() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let api = make_mock_api(mock_service);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET → 404
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(status_response(404, "NotFound"));
+
+            // LIST → 403
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        let result = probe_uid(&api, "test-crd.example.com").await;
+        assert!(
+            matches!(result, BindResult::Failed(ref msg) if msg.contains("endpoint verification failed")),
+            "GET 404 + LIST 403 should be Failed, got: {:?}",
+            std::mem::discriminant(&result)
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_probe_uid_get200_returns_bound_uid() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let api = make_mock_api(mock_service);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET → 200 with UID
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "apiextensions.k8s.io/v1",
+                "kind": "CustomResourceDefinition",
+                "metadata": {
+                    "name": "test-crd.example.com",
+                    "uid": "uid-B"
+                }
+            })));
+        });
+
+        let result = probe_uid(&api, "test-crd.example.com").await;
+        assert!(
+            matches!(result, BindResult::Bound(ref uid) if uid == "uid-B"),
+            "GET 200 with UID should be Bound(uid-B), got: {:?}",
+            std::mem::discriminant(&result)
+        );
+
+        spawned.await.unwrap();
     }
 }
