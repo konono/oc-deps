@@ -239,6 +239,41 @@ async fn run_tui_inner(
         *plan = mutated;
     }
 
+    // P0: Verify operator generation is still SameGeneration before Start.
+    // If reinstalled during Plan Review, old approvals must not apply to new generation.
+    {
+        let j = journal_store.read().await;
+        let gen_state = crate::teardown::audit::check_operator_generation(
+            client, &j.operator, &j.audit_context.csv_baseline,
+        ).await;
+        match gen_state {
+            crate::teardown::audit::OperatorGenerationState::SameGeneration => {
+                // Expected — operator is still the one we planned for
+            }
+            crate::teardown::audit::OperatorGenerationState::Absent => {
+                bail!("Operator was removed during Plan Review — cannot start execution. \
+                       Create a new teardown plan.");
+            }
+            crate::teardown::audit::OperatorGenerationState::Reappeared => {
+                bail!("Operator was reinstalled during Plan Review — approvals are invalid. \
+                       Create a new teardown plan for the current generation.");
+            }
+            crate::teardown::audit::OperatorGenerationState::Unknown(reason) => {
+                bail!("Cannot verify operator generation before Start: {}. \
+                       Create a new teardown plan.", reason);
+            }
+        }
+    }
+
+    // Re-verify cluster identity before Start
+    {
+        let j = journal_store.read().await;
+        let current_id = crate::teardown::journal::fetch_cluster_identity(client).await?;
+        if !current_id.matches(&j.cluster_identity) {
+            bail!("Cluster identity changed during Plan Review — aborting start.");
+        }
+    }
+
     // P0: Persist Bound Plan to journal BEFORE mutation.
     // Crash resume uses journal.plan_snapshot — it must reflect approved overrides.
     let bound_snapshot = plan.clone();
