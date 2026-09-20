@@ -1490,80 +1490,168 @@ async fn main() -> Result<()> {
                                         eprintln!("No pending cleanup decisions to resume.");
                                     } else {
                                         eprintln!("Resuming {} pending cleanup decision(s)...", pending.len());
+                                        let mut any_failed = false;
                                         for decision in &pending {
                                             if !gate.is_open() {
                                                 eprintln!("⏸ Gate closed — stopping cleanup resume");
                                                 break;
                                             }
-                                            // Verify generation
+
+                                            // 1. Per-resource generation check
+                                            let j_cur = store.read().await;
                                             let gen_state = audit::check_operator_generation(
-                                                &client, &j.operator, &j.audit_context.csv_baseline
+                                                &client, &j_cur.operator, &j_cur.audit_context.csv_baseline
                                             ).await;
                                             if !matches!(gen_state, OperatorGenerationState::Absent) {
                                                 bail!("Generation not Absent — cannot resume cleanup");
                                             }
-                                            // Verify bound UID matches live
-                                            let bound_uid = decision.bound_uid.as_deref().unwrap_or("");
-                                            if bound_uid.is_empty() {
-                                                eprintln!("  ⚠ Pending decision for {}/{} has no bound UID — skipping",
-                                                    decision.resource.kind, decision.resource.name);
-                                                continue;
+
+                                            // 2. Fresh complete audit + membership check
+                                            let fresh_audit = audit::run_residual_audit(&client, &j_cur).await
+                                                .context("Fresh audit failed during cleanup resume")?;
+                                            let audit_status = audit::residual_status_from_audit(&fresh_audit);
+                                            if matches!(audit_status, crate::teardown::journal::ResidualStatus::AuditIncomplete) {
+                                                bail!("Audit incomplete — cannot verify residual membership for resume");
                                             }
-                                            if let Some((api, _)) = crate::kube::resource::resolve_api(
-                                                &client, &decision.resource, &kind_map, &gk_map,
-                                            ) {
+                                            let in_set = fresh_audit.likely_operator_residual.iter()
+                                                .chain(fresh_audit.unattributed.iter())
+                                                .any(|r| r.resource.group == decision.resource.group
+                                                    && r.resource.kind == decision.resource.kind
+                                                    && r.resource.name == decision.resource.name
+                                                    && r.resource.namespace == decision.resource.namespace);
+                                            if !in_set {
+                                                // Check if already Gone
+                                                let (api, _) = crate::kube::resource::resolve_api(
+                                                    &client, &decision.resource, &kind_map, &gk_map,
+                                                ).ok_or_else(|| anyhow::anyhow!(
+                                                    "Cannot resolve API for {}/{} — aborting resume",
+                                                    decision.resource.kind, decision.resource.name
+                                                ))?;
                                                 match api.get(&decision.resource.name).await {
-                                                    Ok(obj) => {
-                                                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
-                                                        if live_uid != bound_uid {
-                                                            bail!("Resource {}/{} UID changed ({} → {}) — cannot resume cleanup",
-                                                                decision.resource.kind, decision.resource.name,
-                                                                bound_uid, live_uid);
-                                                        }
-                                                        // Execute DELETE
-                                                        let _permit = gate.acquire().await
-                                                            .context("Mutation gate closed during cleanup resume")?;
-                                                        let del = crate::teardown::executor::delete_resource_pub(
-                                                            &client, &decision.resource, &kind_map, &gk_map, None,
-                                                        ).await;
-                                                        let result_str = match &del {
-                                                            Ok(msg) => msg.clone(),
-                                                            Err(e) => format!("failed: {}", e),
-                                                        };
-                                                        eprintln!("  {}/{}: {}", decision.resource.kind, decision.resource.name, result_str);
-                                                        let res_for_update = decision.resource.clone();
-                                                        store.update(|j| {
-                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                .find(|d| d.resource == res_for_update && d.result.is_none())
-                                                            {
-                                                                d.result = Some(result_str);
-                                                            }
-                                                        }).await.context("Failed to checkpoint cleanup resume result")?;
-                                                        drop(_permit);
-                                                    }
                                                     Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                        eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
-                                                        let res_for_update = decision.resource.clone();
+                                                        let res_up = decision.resource.clone();
                                                         store.update(|j| {
                                                             if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                .find(|d| d.resource == res_for_update && d.result.is_none())
-                                                            {
-                                                                d.result = Some("already_gone".to_string());
-                                                            }
+                                                                .find(|d| d.resource == res_up && d.result.is_none())
+                                                            { d.result = Some("already_gone".to_string()); }
                                                         }).await?;
+                                                        eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
+                                                        continue;
                                                     }
-                                                    Err(e) => bail!("Cannot verify {}/{}: {}", decision.resource.kind, decision.resource.name, e),
+                                                    _ => bail!("{}/{} not in current residual set and not Gone",
+                                                        decision.resource.kind, decision.resource.name),
                                                 }
                                             }
+
+                                            // 3. Verify bound UID matches live
+                                            let bound_uid = decision.bound_uid.as_deref().unwrap_or("");
+                                            if bound_uid.is_empty() {
+                                                bail!("Pending decision for {}/{} has no bound UID — cannot verify identity",
+                                                    decision.resource.kind, decision.resource.name);
+                                            }
+                                            let (api, _) = crate::kube::resource::resolve_api(
+                                                &client, &decision.resource, &kind_map, &gk_map,
+                                            ).ok_or_else(|| anyhow::anyhow!(
+                                                "Cannot resolve API for {}/{} — aborting resume",
+                                                decision.resource.kind, decision.resource.name
+                                            ))?;
+                                            match api.get(&decision.resource.name).await {
+                                                Ok(obj) => {
+                                                    let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                                    if live_uid != bound_uid {
+                                                        bail!("Resource {}/{} UID changed ({} → {}) — cannot resume cleanup",
+                                                            decision.resource.kind, decision.resource.name,
+                                                            bound_uid, live_uid);
+                                                    }
+                                                }
+                                                Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                    let res_up = decision.resource.clone();
+                                                    store.update(|j| {
+                                                        if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                            .find(|d| d.resource == res_up && d.result.is_none())
+                                                        { d.result = Some("already_gone".to_string()); }
+                                                    }).await?;
+                                                    eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
+                                                    continue;
+                                                }
+                                                Err(e) => bail!("Cannot verify {}/{}: {} — aborting resume",
+                                                    decision.resource.kind, decision.resource.name, e),
+                                            }
+
+                                            // 4. DELETE with permit held through checkpoint
+                                            let _permit = gate.acquire().await
+                                                .context("Mutation gate closed during cleanup resume")?;
+                                            let del = crate::teardown::executor::delete_resource_pub(
+                                                &client, &decision.resource, &kind_map, &gk_map, None,
+                                            ).await;
+                                            let del_ok = del.as_ref().is_ok_and(|m| m == "deleted" || m == "already_gone");
+                                            let result_str = match &del {
+                                                Ok(msg) => msg.clone(),
+                                                Err(e) => { any_failed = true; format!("failed: {}", e) },
+                                            };
+                                            let res_up = decision.resource.clone();
+                                            store.update(|j| {
+                                                if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                    .find(|d| d.resource == res_up && d.result.is_none())
+                                                { d.result = Some(result_str.clone()); }
+                                            }).await.context("Failed to checkpoint cleanup result")?;
+                                            drop(_permit);
+
+                                            // 5. Wait for Gone
+                                            if del_ok && result_str == "deleted" {
+                                                let mut gone = false;
+                                                for _ in 0..30 {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                    match api.get(&decision.resource.name).await {
+                                                        Err(::kube::Error::Api(ref err)) if err.code == 404 => { gone = true; break; }
+                                                        Ok(_) => continue,
+                                                        Err(_) => { any_failed = true; break; }
+                                                    }
+                                                }
+                                                if !gone {
+                                                    eprintln!("  ⚠ {}/{}: Gone not confirmed within timeout", decision.resource.kind, decision.resource.name);
+                                                    any_failed = true;
+                                                }
+                                            }
+                                            eprintln!("  {}/{}: {}", decision.resource.kind, decision.resource.name, result_str);
                                         }
                                     }
-                                    // Determine final state
+
+                                    // 6. Mandatory re-audit
+                                    let j_cur = store.read().await;
+                                    let gen_state = audit::check_operator_generation(
+                                        &client, &j_cur.operator, &j_cur.audit_context.csv_baseline
+                                    ).await;
                                     let final_state = if !gate.is_open() {
                                         RunState::Paused
+                                    } else if matches!(gen_state, OperatorGenerationState::Absent) {
+                                        match audit::run_residual_audit(&client, &j_cur).await {
+                                            Ok(re_audit) => {
+                                                let status = audit::residual_status_from_audit(&re_audit);
+                                                audit::print_residual_audit(&re_audit, &j_cur);
+                                                store.update(|j| {
+                                                    j.residual_status = status.clone();
+                                                    j.audit_revision += 1;
+                                                    j.last_residual_audit = Some(re_audit);
+                                                }).await?;
+                                                if matches!(status, crate::teardown::journal::ResidualStatus::AuditIncomplete) {
+                                                    RunState::InteractiveCleanup
+                                                } else {
+                                                    RunState::ApplyCompleted
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("⚠ Re-audit failed: {}", e);
+                                                RunState::Failed
+                                            }
+                                        }
                                     } else {
-                                        RunState::ApplyCompleted
+                                        RunState::Failed
                                     };
-                                    store.update(|j| { j.state = final_state; }).await?;
+                                    store.update(|j| { j.state = final_state.clone(); }).await?;
+                                    if final_state == RunState::Failed {
+                                        bail!("Cleanup resume completed with failures");
+                                    }
                                     return Ok(());
                                 }
 
