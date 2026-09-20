@@ -247,37 +247,49 @@ pub async fn check_operator_generation(
                             .get(name)
                             .is_some_and(|pkg| pkg != &package_name);
 
-                        // Check 2: CSV labels (OLM copies carry
-                        // operators.coreos.com/<package>.<namespace>)
+                        // Collect all package evidence from labels + annotations
                         let csv_ns = csv_obj
                             .metadata
                             .namespace
                             .as_deref()
                             .unwrap_or(&install_namespace);
-                        let attributed_via_label = csv_obj
-                            .metadata
-                            .labels
-                            .as_ref()
-                            .map(|labels| {
-                                csv_label_attributes_to_other_package(
-                                    labels,
-                                    csv_ns,
-                                    &package_name,
-                                )
-                            })
-                            .unwrap_or(false);
 
-                        // Check 3: annotations (olm.package in
-                        // operatorframework.io/properties — used by CSV copies
-                        // that may lack operators.coreos.com/* labels)
-                        let attributed_via_annotation =
-                            csv_package_from_annotations(csv_obj)
-                                .is_some_and(|pkg| pkg != package_name);
+                        let mut evidence_packages: HashSet<String> = HashSet::new();
 
-                        if !attributed_via_sub
-                            && !attributed_via_label
-                            && !attributed_via_annotation
-                        {
+                        // From Subscription status
+                        if let Some(pkg) = sub_csv_to_pkg.get(name) {
+                            evidence_packages.insert(pkg.clone());
+                        }
+
+                        // From CSV labels (operators.coreos.com/<package>.<namespace>)
+                        if let Some(labels) = &csv_obj.metadata.labels {
+                            let suffix = format!(".{}", csv_ns);
+                            for key in labels.keys() {
+                                if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
+                                    if let Some(pkg) = rest.strip_suffix(&suffix) {
+                                        if !pkg.is_empty() {
+                                            evidence_packages.insert(pkg.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // From annotations (olm.package in operatorframework.io/properties)
+                        if let Some(pkg) = csv_package_from_annotations(csv_obj) {
+                            evidence_packages.insert(pkg);
+                        }
+
+                        // Determine attribution:
+                        // - If evidence is empty: unattributable → Unknown
+                        // - If evidence contains ONLY other packages: safe to skip
+                        // - If evidence contains our package: cannot exclude → Unknown
+                        // - If evidence has conflicting packages including ours: ambiguous → Unknown
+                        let has_our_package = evidence_packages.contains(&package_name);
+                        let has_other_only = !evidence_packages.is_empty()
+                            && !has_our_package;
+
+                        if !has_other_only {
                             return OperatorGenerationState::Unknown(format!(
                                 "CSV '{}' (uid: {}) in {} survived teardown and cannot be \
                                  attributed to a different package — possible same-package \
@@ -340,21 +352,35 @@ fn csv_package_from_annotations(csv: &DynamicObject) -> Option<String> {
     let annotations = csv.metadata.annotations.as_ref()?;
 
     if let Some(props_str) = annotations.get("operatorframework.io/properties") {
-        if let Ok(props) = serde_json::from_str::<Vec<serde_json::Value>>(props_str) {
-            for prop in &props {
-                if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
-                    if let Some(value) = prop.get("value") {
-                        // value may be a JSON string containing {"packageName":"...","version":"..."}
-                        let pkg_value = if let Some(s) = value.as_str() {
-                            serde_json::from_str::<serde_json::Value>(s).ok()
-                        } else {
-                            Some(value.clone())
-                        };
-                        if let Some(pkg_info) = pkg_value {
-                            if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
-                            {
-                                return Some(name.to_string());
-                            }
+        // Real OLM format can be either:
+        // - A JSON array: [{"type":"olm.package","value":...}, ...]
+        // - A JSON object: {"properties":[{"type":"olm.package","value":...}, ...]}
+        let props: Vec<serde_json::Value> =
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(props_str) {
+                arr
+            } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(props_str) {
+                obj.get("properties")
+                    .and_then(|p| p.as_array())
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+        for prop in &props {
+            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
+                if let Some(value) = prop.get("value") {
+                    // value may be a JSON string or an object with packageName
+                    let pkg_value = if let Some(s) = value.as_str() {
+                        serde_json::from_str::<serde_json::Value>(s).ok()
+                    } else {
+                        Some(value.clone())
+                    };
+                    if let Some(pkg_info) = pkg_value {
+                        if let Some(name) =
+                            pkg_info.get("packageName").and_then(|n| n.as_str())
+                        {
+                            return Some(name.to_string());
                         }
                     }
                 }
@@ -2058,6 +2084,19 @@ mod tests {
         // Same package → csv_package_from_annotations returns our name
         // Caller should NOT treat this as "attributed to other"
         assert!(!pkg.unwrap().ne("rhods-operator")); // is_some_and(|p| p != our_pkg) → false
+    }
+
+    #[test]
+    fn test_csv_copy_olm_package_annotation_object_format() {
+        // Real OLM format on some clusters: {"properties":[...]} instead of [...]
+        let mut csv = make_dynamic_object("authorino-operator.v1.0.2");
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"{"properties":[{"type":"olm.package","value":"{\"packageName\":\"authorino-operator\",\"version\":\"1.0.2\"}"}]}"#.to_string(),
+        )]));
+
+        let pkg = csv_package_from_annotations(&csv);
+        assert_eq!(pkg.as_deref(), Some("authorino-operator"));
     }
 
     #[test]

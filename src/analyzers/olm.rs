@@ -30,6 +30,10 @@ pub struct OperatorInstance {
     pub deployments: Vec<String>,
     pub service_accounts: Vec<String>,
     pub install_namespace: String,
+    /// True if Subscription(s) exist in the install namespace that could not
+    /// be linked to this CSV. Indicates broken linkage, not absence.
+    #[serde(default)]
+    pub has_unlinked_subscriptions: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -409,6 +413,12 @@ pub async fn discover_operators(
         let deployments = extract_deployment_names(&csv.data);
         let service_accounts = extract_service_account_names(&csv.data);
 
+        // Check if there are unlinked Subscriptions in this namespace
+        let has_unlinked = subscription.is_none()
+            && sub_items.iter().any(|sub| {
+                sub.metadata.namespace.as_deref() == Some(&csv_ns)
+            });
+
         operators.push(OperatorInstance {
             subscription: subscription.clone(),
             package_name: pkg_name.clone(),
@@ -428,6 +438,7 @@ pub async fn discover_operators(
             deployments,
             service_accounts,
             install_namespace: csv_ns,
+            has_unlinked_subscriptions: has_unlinked,
         });
     }
 
