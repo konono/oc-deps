@@ -2501,13 +2501,32 @@ async fn build_operator_identity_snapshot(
         csv_name: first_op.csv.name.clone(),
     };
 
+    // Fail-closed: Subscription exists but package name unknown/empty
+    if first_op.subscription.is_some() {
+        match &first_op.package_name {
+            None => {
+                bail!(
+                    "Subscription exists but package name is unknown — \
+                     cannot establish semantic identity for safe teardown."
+                );
+            }
+            Some(pkg) if pkg.trim().is_empty() => {
+                bail!(
+                    "Subscription exists but package name is empty — \
+                     cannot establish semantic identity for safe teardown."
+                );
+            }
+            _ => {}
+        }
+    }
+
     let generation_identity = match &first_op.package_name {
-        Some(name) => OperatorGenerationIdentity::OlmPackage {
+        Some(name) if !name.trim().is_empty() => OperatorGenerationIdentity::OlmPackage {
             package_name: name.clone(),
             install_namespace: first_op.install_namespace.clone(),
         },
-        None => OperatorGenerationIdentity::Unverifiable {
-            reason: "No subscription found".to_string(),
+        _ => OperatorGenerationIdentity::Unverifiable {
+            reason: "No subscription or empty package name".to_string(),
         },
     };
 
@@ -2554,16 +2573,6 @@ async fn build_operator_identity_snapshot(
         "v1",
         &first_op.install_namespace,
     ).await?;
-
-    // Fail-closed: if Subscription exists but package name is unknown,
-    // we cannot verify semantic identity for safe DELETE
-    if first_op.subscription.is_some() && first_op.package_name.is_none() {
-        bail!(
-            "Subscription exists but package name is unknown — \
-             cannot establish semantic identity for safe teardown. \
-             Verify the Subscription has spec.name set."
-        );
-    }
 
     let sub_observed: Vec<ObservedResourceIdentity> = if let Some(sub) = &first_op.subscription {
         let fresh = fetch_observed_identities(
