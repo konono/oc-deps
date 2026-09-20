@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use futures::stream::StreamExt;
@@ -13,9 +13,12 @@ use kube::{
 
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
+use crate::teardown::events::EventNotifier;
 use crate::teardown::journal::JournalStore;
 use crate::teardown::plan::PlannedPreserved;
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
+use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
+use crate::teardown::watch::{WatchManager, WatchWaitResult};
 
 const DEFAULT_CONCURRENCY: usize = 16;
 
@@ -278,6 +281,35 @@ pub async fn execute_plan(
         .context("Failed to persist Applying state — aborting before first mutation")?;
     }
 
+    // Initialize RuntimeStateStore — canonical state for all tracked resources.
+    // The store is purely observational: it never calls delete/mutation APIs.
+    let notifier = Arc::new(EventNotifier::new());
+    let store = Arc::new(RuntimeStateStore::new(
+        notifier.clone(),
+        Duration::from_secs(120),
+    ));
+    let watch_mgr = WatchManager::new(store.clone());
+
+    // Register all resources from the plan with their initial states
+    for (phase_idx, phase) in plan.phases.iter().enumerate() {
+        for action in &phase.actions {
+            match action {
+                Action::Delete { resource, .. } => {
+                    store.register(resource, ResourceRuntimeState::Planned, phase_idx);
+                }
+                Action::ExpectGone { resource, .. } | Action::WaitGone { resource } => {
+                    store.register(resource, ResourceRuntimeState::ExpectingGone, phase_idx);
+                }
+                Action::Keep { resource, .. } => {
+                    store.register(resource, ResourceRuntimeState::Keep, phase_idx);
+                }
+                Action::Review { resource, .. } => {
+                    store.register(resource, ResourceRuntimeState::Review, phase_idx);
+                }
+            }
+        }
+    }
+
     for (i, phase) in plan.phases.iter().enumerate() {
         eprintln!("\n\x1b[1mPhase {}  {}\x1b[0m", i, phase.name);
 
@@ -404,6 +436,10 @@ pub async fn execute_plan(
                                 resource.name,
                                 scope_suffix(&resource)
                             );
+                            store.update_from_executor(
+                                &resource,
+                                ResourceRuntimeState::DeleteRequested,
+                            );
                             result.deleted.push(resource.clone());
                             phase_wait_targets.push(resource);
                         }
@@ -414,6 +450,10 @@ pub async fn execute_plan(
                                 resource.name,
                                 scope_suffix(&resource)
                             );
+                            store.update_from_executor(
+                                &resource,
+                                ResourceRuntimeState::Gone,
+                            );
                             result.already_gone.push(resource);
                         }
                         DeleteResult::Failed(err) => {
@@ -423,6 +463,12 @@ pub async fn execute_plan(
                                 resource.name,
                                 err,
                                 scope_suffix(&resource)
+                            );
+                            store.update_from_executor(
+                                &resource,
+                                ResourceRuntimeState::Failed {
+                                    reason: err.clone(),
+                                },
                             );
                             result.failed.push((resource.clone(), err));
                             phase_wait_targets.push(resource);
@@ -501,13 +547,69 @@ pub async fn execute_plan(
                 eprintln!("\n  \x1b[1;33mBARRIER\x1b[0m (skipped in dry-run)");
             } else {
                 eprintln!();
-                match wait_for_barrier(client, &phase_wait_targets, kind_map, gk_map, 300).await {
-                    BarrierResult::Passed => {
+                // Use WatchManager for barrier wait — state is tracked in
+                // RuntimeStateStore, CLI renders from the store's summary.
+                let barrier_start = Instant::now();
+                let mut rx = notifier.subscribe();
+
+                let wait_result = {
+                    // Spawn a background task to render progress from the store
+                    let store_ref = store.clone();
+                    let targets_len = phase_wait_targets.len();
+                    let render_handle = tokio::spawn(async move {
+                        loop {
+                            // Wait for state change notification
+                            if rx.changed().await.is_err() {
+                                break;
+                            }
+                            let summary = store_ref.summary();
+                            let elapsed = barrier_start.elapsed().as_secs();
+                            eprint!(
+                                "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked ({}s)",
+                                summary.gone,
+                                targets_len,
+                                summary.deleting,
+                                summary.finalizer_blocked,
+                                elapsed
+                            );
+                            std::io::stderr().flush().ok();
+                        }
+                    });
+
+                    let r = watch_mgr
+                        .wait_for_gone(
+                            client,
+                            &phase_wait_targets,
+                            kind_map,
+                            gk_map,
+                            Duration::from_secs(300),
+                            Duration::from_secs(120),
+                        )
+                        .await;
+
+                    render_handle.abort();
+                    // Final status line
+                    let summary = store.summary();
+                    let elapsed = barrier_start.elapsed().as_secs();
+                    eprint!(
+                        "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked ({}s)",
+                        summary.gone,
+                        phase_wait_targets.len(),
+                        summary.deleting,
+                        summary.finalizer_blocked,
+                        elapsed
+                    );
+                    eprintln!();
+                    r
+                };
+
+                match wait_result {
+                    WatchWaitResult::AllGone => {
                         eprintln!("  \x1b[32m✅ Barrier passed\x1b[0m");
                     }
-                    BarrierResult::Stalled {
+                    WatchWaitResult::Stalled {
                         remaining,
-                        finalizers,
+                        finalizer_details,
                         reason,
                     } => {
                         eprintln!(
@@ -515,6 +617,12 @@ pub async fn execute_plan(
                             remaining.len(),
                             reason
                         );
+                        let finalizers: Vec<(ResourceId, Vec<String>)> = finalizer_details
+                            .iter()
+                            .map(|(r, count)| {
+                                (r.clone(), vec![format!("{} finalizer(s)", count)])
+                            })
+                            .collect();
                         for res in &remaining {
                             let fins: Vec<&str> = finalizers
                                 .iter()
@@ -525,7 +633,7 @@ pub async fn execute_plan(
                                 eprintln!("    {}/{}", res.kind, res.name);
                             } else {
                                 eprintln!(
-                                    "    {}/{} (finalizers: [{}])",
+                                    "    {}/{} ({})",
                                     res.kind,
                                     res.name,
                                     fins.join(", ")
@@ -658,205 +766,8 @@ async fn delete_resource(
     }
 }
 
-enum BarrierResult {
-    Passed,
-    Stalled {
-        remaining: Vec<ResourceId>,
-        finalizers: Vec<(ResourceId, Vec<String>)>,
-        reason: String,
-    },
-}
-
-struct ResourceStateInfo {
-    state: ObservationState,
-    finalizers: Vec<String>,
-}
-
-async fn check_resource_state_full(
-    client: &Client,
-    resource: &ResourceId,
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
-) -> ResourceStateInfo {
-    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
-        Some(r) => r,
-        None => {
-            return ResourceStateInfo {
-                state: ObservationState::Unknown(format!(
-                    "cannot resolve API for {}/{}",
-                    resource.kind, resource.name
-                )),
-                finalizers: vec![],
-            };
-        }
-    };
-
-    match api.get(&resource.name).await {
-        Ok(obj) => {
-            let finalizers = obj.metadata.finalizers.clone().unwrap_or_default();
-            let has_dt = obj.metadata.deletion_timestamp.is_some();
-            ResourceStateInfo {
-                state: ObservationState::Exists {
-                    finalizer_count: finalizers.len(),
-                    has_deletion_timestamp: has_dt,
-                },
-                finalizers,
-            }
-        }
-        Err(kube::Error::Api(err)) if err.code == 404 => ResourceStateInfo {
-            state: ObservationState::Gone,
-            finalizers: vec![],
-        },
-        Err(e) => ResourceStateInfo {
-            state: ObservationState::Unknown(format!("GET failed: {}", e)),
-            finalizers: vec![],
-        },
-    }
-}
-
-async fn wait_for_barrier(
-    client: &Client,
-    resources: &[ResourceId],
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
-    timeout_secs: u64,
-) -> BarrierResult {
-    let start = Instant::now();
-    let total = resources.len();
-
-    let mut prev_gone = 0usize;
-    let mut prev_total_finalizers = usize::MAX;
-    let mut last_progress = Instant::now();
-    let stall_threshold_secs = 120;
-    let mut consecutive_unknown_cycles = 0u32;
-    const MAX_UNKNOWN_RETRIES: u32 = 3;
-
-    let kind_map = Arc::new(kind_map.clone());
-    let gk_map = Arc::new(gk_map.clone());
-
-    loop {
-        let elapsed = start.elapsed().as_secs();
-
-        // Parallel state check for all resources — single GET per resource
-        let check_futs = resources.iter().map(|res| {
-            let client = client.clone();
-            let res = res.clone();
-            let km = kind_map.clone();
-            let gk = gk_map.clone();
-            async move {
-                let r = check_resource_state_full(&client, &res, &km, &gk).await;
-                (res, r)
-            }
-        });
-
-        let states: Vec<_> = futures::stream::iter(check_futs)
-            .buffer_unordered(DEFAULT_CONCURRENCY)
-            .collect()
-            .await;
-
-        let mut gone_count = 0;
-        let mut unknown_count = 0;
-        let mut deleting_count = 0;
-        let mut total_finalizers = 0;
-        let mut remaining = Vec::new();
-        let mut remaining_finalizers = Vec::new();
-        let mut unknown_reasons = Vec::new();
-
-        for (res, info) in &states {
-            match &info.state {
-                ObservationState::Gone => {
-                    gone_count += 1;
-                }
-                ObservationState::Exists {
-                    finalizer_count,
-                    has_deletion_timestamp,
-                } => {
-                    remaining.push(res.clone());
-                    total_finalizers += finalizer_count;
-                    if *has_deletion_timestamp {
-                        deleting_count += 1;
-                    }
-                    if !info.finalizers.is_empty() {
-                        remaining_finalizers.push((res.clone(), info.finalizers.clone()));
-                    }
-                }
-                ObservationState::Unknown(reason) => {
-                    unknown_count += 1;
-                    remaining.push(res.clone());
-                    unknown_reasons.push(format!("{}/{}: {}", res.kind, res.name, reason));
-                }
-            }
-        }
-
-        if unknown_count > 0 {
-            consecutive_unknown_cycles += 1;
-            if consecutive_unknown_cycles >= MAX_UNKNOWN_RETRIES {
-                eprintln!();
-                return BarrierResult::Stalled {
-                    remaining,
-                    finalizers: remaining_finalizers,
-                    reason: format!(
-                        "{} resource(s) could not be observed after {} retries: {}",
-                        unknown_count,
-                        MAX_UNKNOWN_RETRIES,
-                        unknown_reasons.first().unwrap_or(&String::new())
-                    ),
-                };
-            }
-            eprint!(
-                "\r\x1b[2K  ⚠ {} resource(s) unknown (retry {}/{}), waiting...",
-                unknown_count, consecutive_unknown_cycles, MAX_UNKNOWN_RETRIES
-            );
-            std::io::stderr().flush().ok();
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            continue;
-        }
-        consecutive_unknown_cycles = 0;
-
-        let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
-
-        if made_progress {
-            last_progress = Instant::now();
-            prev_gone = gone_count;
-            prev_total_finalizers = total_finalizers;
-        }
-
-        eprint!(
-            "\r\x1b[2K  ⏳ {}/{} gone, {} deleting, {} finalizers ({}s)",
-            gone_count, total, deleting_count, total_finalizers, elapsed
-        );
-        std::io::stderr().flush().ok();
-
-        if gone_count == total {
-            eprintln!();
-            return BarrierResult::Passed;
-        }
-
-        let stall_duration = last_progress.elapsed().as_secs();
-        if elapsed >= timeout_secs {
-            eprintln!();
-            return BarrierResult::Stalled {
-                remaining,
-                finalizers: remaining_finalizers,
-                reason: format!("timeout after {}s", elapsed),
-            };
-        }
-
-        if stall_duration >= stall_threshold_secs && deleting_count > 0 {
-            eprintln!();
-            return BarrierResult::Stalled {
-                remaining,
-                finalizers: remaining_finalizers,
-                reason: format!(
-                    "no progress for {}s — {} resources stuck in Deleting with finalizers",
-                    stall_duration, deleting_count
-                ),
-            };
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-}
+// Old wait_for_barrier removed — replaced by WatchManager::wait_for_gone
+// which uses RuntimeStateStore for state tracking and epoch-based reconciliation.
 
 // P0-adjacent: check_finalizers distinguishes Known/Gone/Unknown
 async fn check_finalizers(
@@ -1149,23 +1060,5 @@ mod tests {
         ));
     }
 
-    // ResourceStateInfo carries finalizers in single GET
-    #[test]
-    fn resource_state_info_carries_finalizers() {
-        let info = ResourceStateInfo {
-            state: ObservationState::Exists {
-                finalizer_count: 2,
-                has_deletion_timestamp: false,
-            },
-            finalizers: vec!["a".to_string(), "b".to_string()],
-        };
-        assert_eq!(info.finalizers.len(), 2);
-        assert!(matches!(
-            info.state,
-            ObservationState::Exists {
-                finalizer_count: 2,
-                ..
-            }
-        ));
-    }
+    // ResourceStateInfo test removed — struct replaced by RuntimeStateStore/RuntimeObservation
 }
