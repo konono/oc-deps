@@ -102,9 +102,23 @@ pub fn explain_resource(
     }
 
     if !child_edges.is_empty() {
+        // Determine the actual action for this resource to avoid saying "deleted"
+        // for REVIEW/KEEP resources
+        let this_action = plan.phases.iter().flat_map(|p| &p.actions).find(|a| {
+            let r = action_resource(a);
+            r.kind.eq_ignore_ascii_case(query_kind) && r.name == query_name
+        });
+        let action_desc = match this_action {
+            Some(Action::Delete { .. }) => "must be deleted AFTER its children",
+            Some(Action::Review { .. }) => "is marked for REVIEW (has children via ownerReference)",
+            Some(Action::Keep { .. }) => "is kept (has children via ownerReference)",
+            Some(Action::ExpectGone { .. }) => "is expected to be removed after its children",
+            _ => "has children via ownerReference",
+        };
+
         output.push_str(&format!("\n  {}/{}\n", query_kind, query_name));
         output.push_str("    └─ is a parent of other resources (ownerReference)   \x1b[36m[HARD: OwnerReference]\x1b[0m\n");
-        output.push_str("       └─ must be deleted AFTER its children (Phase 1)\n");
+        output.push_str(&format!("       └─ {}\n", action_desc));
     }
 
     // 3. Spec references
@@ -153,21 +167,23 @@ pub fn explain_resource(
         });
 
         if has_this_resource {
-            let action_count = phase
-                .actions
-                .iter()
-                .filter(|a| matches!(a, Action::Delete { .. }))
-                .count();
+            let this_action = phase.actions.iter().find(|a| {
+                let r = action_resource(a);
+                r.kind.eq_ignore_ascii_case(query_kind) && r.name == query_name
+            });
+
+            let action_label = match this_action {
+                Some(Action::Delete { .. }) => "deleted",
+                Some(Action::ExpectGone { .. }) => "expected to be removed by controller",
+                Some(Action::Keep { .. }) => "kept",
+                Some(Action::Review { .. }) => "marked for review",
+                Some(Action::WaitGone { .. }) => "waiting for deletion",
+                None => "scheduled",
+            };
+
             output.push_str(&format!(
                 "  Phase {}: {}/{} is {}    \x1b[1;33m◀ HERE\x1b[0m\n",
-                i,
-                query_kind,
-                query_name,
-                if action_count > 1 {
-                    format!("deleted (with {} other resources)", action_count - 1)
-                } else {
-                    "deleted".to_string()
-                }
+                i, query_kind, query_name, action_label,
             ));
         } else {
             let relevant_actions: Vec<String> = phase
@@ -225,7 +241,7 @@ fn find_in_plan(plan: &TeardownPlan, kind: &str, name: &str) -> Option<(usize, S
                     (resource, format!("EXPECT-GONE — {}", reason))
                 }
                 Action::Keep { resource, reason } => (resource, format!("KEEP — {}", reason)),
-                Action::Review { resource, reason } => (resource, format!("REVIEW — {}", reason)),
+                Action::Review { resource, reason, .. } => (resource, format!("REVIEW — {}", reason)),
                 Action::WaitGone { resource } => (resource, "WAIT for deletion".to_string()),
             };
             if resource.kind.eq_ignore_ascii_case(kind) && resource.name == name {

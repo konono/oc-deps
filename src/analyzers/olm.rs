@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use comfy_table::Table;
@@ -20,6 +20,7 @@ use crate::kube::resource::ResourceId;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperatorInstance {
     pub subscription: Option<ResourceId>,
+    pub package_name: Option<String>,
     pub csv: ResourceId,
     pub csv_phase: String,
     pub owned_crds: Vec<String>,
@@ -29,6 +30,10 @@ pub struct OperatorInstance {
     pub deployments: Vec<String>,
     pub service_accounts: Vec<String>,
     pub install_namespace: String,
+    /// True if Subscription(s) exist in the install namespace that could not
+    /// be linked to this CSV. Indicates broken linkage, not absence.
+    #[serde(default)]
+    pub has_unlinked_subscriptions: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -192,6 +197,84 @@ fn extract_service_account_names(csv_data: &serde_json::Value) -> Vec<String> {
     sa_names
 }
 
+/// Check if ALL package evidence on a CSV exclusively confirms a single package.
+/// Returns true only when evidence is absent (trust status) OR unanimously
+/// points to the expected package. Any contradictory evidence → false.
+pub fn csv_package_evidence_is_exclusive(
+    csv: &DynamicObject,
+    expected_pkg: &str,
+    csv_ns: &str,
+) -> bool {
+    let mut evidence_packages: HashSet<String> = HashSet::new();
+
+    // Collect from labels: operators.coreos.com/<pkg>.<ns>
+    if let Some(labels) = &csv.metadata.labels {
+        let suffix = format!(".{}", csv_ns);
+        for key in labels.keys() {
+            if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
+                if let Some(pkg) = rest.strip_suffix(&suffix) {
+                    if !pkg.is_empty() {
+                        evidence_packages.insert(pkg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect from annotations
+    for pkg in extract_annotation_packages(csv) {
+        evidence_packages.insert(pkg);
+    }
+
+    if evidence_packages.is_empty() {
+        // No evidence at all → trust status link
+        return true;
+    }
+
+    // Evidence must exclusively point to the expected package
+    evidence_packages.len() == 1 && evidence_packages.contains(expected_pkg)
+}
+
+fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
+    let mut packages = Vec::new();
+    let annotations = match csv.metadata.annotations.as_ref() {
+        Some(a) => a,
+        None => return packages,
+    };
+    if let Some(props_str) = annotations.get("operatorframework.io/properties") {
+        let props: Vec<serde_json::Value> =
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(props_str) {
+                arr
+            } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(props_str) {
+                obj.get("properties")
+                    .and_then(|p| p.as_array())
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+        for prop in &props {
+            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
+                if let Some(value) = prop.get("value") {
+                    let pkg_value = if let Some(s) = value.as_str() {
+                        serde_json::from_str::<serde_json::Value>(s).ok()
+                    } else {
+                        Some(value.clone())
+                    };
+                    if let Some(pkg_info) = pkg_value {
+                        if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str()) {
+                            if !packages.contains(&name.to_string()) {
+                                packages.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    packages
+}
+
 const LIST_PAGE_SIZE: u32 = 500;
 
 async fn list_all_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
@@ -242,8 +325,9 @@ pub async fn discover_operators(
     // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
     // namespaces via different Subscriptions produces separate installations
     let mut sub_by_csv: HashMap<String, Vec<&DynamicObject>> = HashMap::new();
+    let mut matched_sub_uids: HashSet<String> = HashSet::new();
     for sub in &sub_items {
-        let csv_name = sub.data.get("status").and_then(|s| {
+        let csv_name_from_status = sub.data.get("status").and_then(|s| {
             s.get("installedCSV")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
@@ -253,19 +337,95 @@ pub async fn discover_operators(
                         .filter(|s| !s.is_empty())
                 })
         });
-        if let Some(csv_name) = csv_name {
-            sub_by_csv
-                .entry(csv_name.to_string())
-                .or_default()
-                .push(sub);
+        if let Some(csv_name) = csv_name_from_status {
+            let sub_ns = sub.metadata.namespace.as_deref().unwrap_or("unknown");
+            let sub_pkg = sub
+                .data
+                .get("spec")
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str());
+
+            // Verify: CSV exists in same namespace AND package evidence is
+            // exclusively consistent with the Subscription's package.
+            let csv_exists_and_consistent = csv_items.iter().any(|csv| {
+                let name_match = csv.metadata.name.as_deref() == Some(csv_name)
+                    && csv.metadata.namespace.as_deref() == Some(sub_ns);
+                if !name_match {
+                    return false;
+                }
+                if let Some(pkg) = sub_pkg {
+                    csv_package_evidence_is_exclusive(csv, pkg, sub_ns)
+                } else {
+                    true
+                }
+            });
+
+            if csv_exists_and_consistent {
+                if let Some(uid) = &sub.metadata.uid {
+                    matched_sub_uids.insert(uid.clone());
+                }
+                sub_by_csv
+                    .entry(csv_name.to_string())
+                    .or_default()
+                    .push(sub);
+            }
+            // If CSV doesn't exist in this namespace: stale status — fall through
+            // to label fallback below
+        }
+    }
+
+    // Label-based fallback: for Subscriptions not matched via status,
+    // try CSV labels. OLM CSVs carry labels like:
+    //   operators.coreos.com/<package>.<namespace> = ""
+    // where <package> = Subscription.spec.name and <namespace> = Subscription namespace.
+    for sub in &sub_items {
+        let sub_uid = sub.metadata.uid.as_deref().unwrap_or("");
+        if sub_uid.is_empty() || matched_sub_uids.contains(sub_uid) {
+            continue;
+        }
+
+        let sub_ns = sub.metadata.namespace.as_deref().unwrap_or("unknown");
+        let pkg_name = sub
+            .data
+            .get("spec")
+            .and_then(|s| s.get("name"))
+            .and_then(|n| n.as_str());
+
+        if let Some(pkg) = pkg_name {
+            let label_key = format!("operators.coreos.com/{}.{}", pkg, sub_ns);
+
+            let mut matched_csvs: Vec<String> = Vec::new();
+            for csv in &csv_items {
+                if csv.metadata.namespace.as_deref() != Some(sub_ns) {
+                    continue;
+                }
+                if let Some(labels) = &csv.metadata.labels {
+                    if labels.contains_key(&label_key) {
+                        if let Some(csv_name) = &csv.metadata.name {
+                            matched_csvs.push(csv_name.clone());
+                        }
+                    }
+                }
+            }
+
+            if matched_csvs.len() == 1 {
+                sub_by_csv
+                    .entry(matched_csvs[0].clone())
+                    .or_default()
+                    .push(sub);
+            }
+            // 0 or >1 matches: leave unmatched — will produce subscription=None
         }
     }
 
     // Deduplicate CSV copies: OLM copies CSVs into every target namespace.
     // Key: (subscription_namespace, csv_name) — different Subscriptions = different installations.
     // For each installation, prefer the CSV copy in the Subscription's namespace.
-    let mut best_csv: HashMap<(String, String), (&DynamicObject, Option<ResourceId>, String)> =
-        HashMap::new();
+    // (csv_object, subscription_resource_id, package_name, csv_phase)
+    let mut best_csv: HashMap<
+        (String, String),
+        (&DynamicObject, Option<ResourceId>, Option<String>, String),
+    > = HashMap::new();
 
     for csv in &csv_items {
         let phase = csv
@@ -297,10 +457,17 @@ pub async fn discover_operators(
                     uid: sub.metadata.uid.clone(),
                 });
 
+                let pkg_name = sub
+                    .data
+                    .get("spec")
+                    .and_then(|s| s.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(String::from);
+
                 let key = (sub_ns.to_string(), csv_name.clone());
                 let new_matches_sub_ns = csv_ns == sub_ns;
 
-                let should_replace = if let Some((existing, _, _)) = best_csv.get(&key) {
+                let should_replace = if let Some((existing, _, _, _)) = best_csv.get(&key) {
                     let existing_ns = existing.metadata.namespace.as_deref().unwrap_or("unknown");
                     let existing_matches = existing_ns == sub_ns;
                     new_matches_sub_ns && !existing_matches
@@ -309,20 +476,20 @@ pub async fn discover_operators(
                 };
 
                 if should_replace {
-                    best_csv.insert(key, (csv, subscription, phase.clone()));
+                    best_csv.insert(key, (csv, subscription, pkg_name, phase.clone()));
                 }
             }
         } else {
             let key = (csv_ns.to_string(), csv_name.clone());
             best_csv
                 .entry(key)
-                .or_insert_with(|| (csv, None, phase.clone()));
+                .or_insert_with(|| (csv, None, None, phase.clone()));
         }
     }
 
     let mut operators = Vec::new();
 
-    for ((_, csv_name), (csv, subscription, csv_phase)) in &best_csv {
+    for ((_, csv_name), (csv, subscription, pkg_name, csv_phase)) in &best_csv {
         let csv_ns = csv
             .metadata
             .namespace
@@ -337,8 +504,38 @@ pub async fn discover_operators(
         let deployments = extract_deployment_names(&csv.data);
         let service_accounts = extract_service_account_names(&csv.data);
 
+        // Check for ambiguous Subscription linkage:
+        // 1. Multiple Subs linked to this CSV via sub_by_csv
+        // 2. No Sub linked but Subs exist in namespace
+        // 3. Sub linked but same-package Subs exist that aren't accounted for
+        let multiple_subs_for_csv = sub_by_csv
+            .get(csv_name.as_str())
+            .is_some_and(|subs| subs.len() > 1);
+
+        let same_pkg_unaccounted_subs = if let Some(pkg) = pkg_name {
+            // Count Subs in this namespace with same spec.name
+            let same_pkg_count = sub_items.iter().filter(|sub| {
+                sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
+                    && sub.data.get("spec")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str()) == Some(pkg.as_str())
+            }).count();
+            // If more than 1 Sub has the same package name, we can't prove all are in Phase 0
+            same_pkg_count > 1
+        } else {
+            false
+        };
+
+        let has_unlinked = multiple_subs_for_csv
+            || same_pkg_unaccounted_subs
+            || (subscription.is_none()
+                && sub_items.iter().any(|sub| {
+                    sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
+                }));
+
         operators.push(OperatorInstance {
             subscription: subscription.clone(),
+            package_name: pkg_name.clone(),
             csv: ResourceId {
                 group: csv_info.group.clone(),
                 version: csv_info.version.clone(),
@@ -355,6 +552,7 @@ pub async fn discover_operators(
             deployments,
             service_accounts,
             install_namespace: csv_ns,
+            has_unlinked_subscriptions: has_unlinked,
         });
     }
 
