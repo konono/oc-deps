@@ -43,6 +43,9 @@ pub struct RunJournal {
     /// (UID-bound authority). BoundTeardownPlan will replace this in PR4/5.
     pub plan_snapshot: TeardownPlan,
     pub execution: ExecutionRecord,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_residual_audit: Option<crate::teardown::audit::ResidualAudit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -257,6 +257,28 @@ async fn main() -> Result<()> {
                                 }
                                 print_execution_result(&result);
 
+                                // Run post-apply residual audit
+                                if let Some(store) = &journal_store {
+                                    if result.failed.is_empty() && result.barrier_timeout.is_none() {
+                                        eprintln!("\n🔍 Running post-apply residual audit...");
+                                        let j = store.read().await;
+                                        match crate::teardown::audit::run_residual_audit(&client, &j).await {
+                                            Ok(audit_result) => {
+                                                let status = crate::teardown::audit::residual_status_from_audit(&audit_result);
+                                                crate::teardown::audit::print_residual_audit(&audit_result, &j);
+                                                let _ = store.update(|j| {
+                                                    j.residual_status = status;
+                                                    j.audit_revision += 1;
+                                                    j.last_residual_audit = Some(audit_result);
+                                                }).await;
+                                            }
+                                            Err(e) => {
+                                                eprintln!("⚠ Post-apply residual audit failed: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 if !result.failed.is_empty() || result.barrier_timeout.is_some() {
                                     bail!(
                                         "Teardown completed with {} failed action(s){}",
@@ -410,7 +432,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    TeardownAction::Journal { operator, run } => {
+                    TeardownAction::Journal { operator, run, no_audit } => {
                         let cluster_id = journal::fetch_cluster_identity(&client).await?;
 
                         let found = if let Some(run_id) = run {
@@ -424,7 +446,62 @@ async fn main() -> Result<()> {
 
                         match found {
                             Some(j) => {
+                                use crate::teardown::audit::{
+                                    self, OperatorGenerationState,
+                                    print_residual_audit, residual_status_from_audit,
+                                };
+
                                 print_run_journal(&j);
+
+                                if no_audit {
+                                    eprintln!("\n(audit skipped via --no-audit)");
+                                } else {
+                                    let gen_state =
+                                        audit::check_operator_generation(&client, &j.operator)
+                                            .await;
+
+                                    match gen_state {
+                                        OperatorGenerationState::Absent => {
+                                            eprintln!("\n🔍 Running live residual audit...");
+                                            match audit::run_residual_audit(&client, &j).await {
+                                                Ok(result) => {
+                                                    let status = residual_status_from_audit(&result);
+                                                    print_residual_audit(&result, &j);
+
+                                                    // Best-effort: update journal with audit results
+                                                    let path = journal::run_path(&cluster_id, &j.run_id)?;
+                                                    if let Ok(mut updated) = journal::load_journal(&path) {
+                                                        updated.residual_status = status;
+                                                        updated.audit_revision += 1;
+                                                        updated.last_residual_audit = Some(result);
+                                                        let _ = journal::atomic_write_json_pub(&path, &updated);
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("\n⚠ Residual audit failed: {}", e);
+                                                }
+                                            }
+                                        }
+                                        OperatorGenerationState::SameGeneration => {
+                                            eprintln!("\n⚠ Original operator generation is still active.");
+                                            eprintln!("  Resume normal teardown instead of residual cleanup.");
+                                        }
+                                        OperatorGenerationState::Reappeared => {
+                                            eprintln!("\n⚠ A newer installation of {} exists.", j.operator.csv_name);
+                                            eprintln!("  This teardown session is historical.");
+                                            eprintln!("  Live residual attribution is unavailable because");
+                                            eprintln!("  old and new generation resources cannot be distinguished safely.");
+                                            if let Some(ref last_audit) = j.last_residual_audit {
+                                                eprintln!("\n  Last reliable residual audit:");
+                                                print_residual_audit(last_audit, &j);
+                                            }
+                                        }
+                                        OperatorGenerationState::Unknown(reason) => {
+                                            eprintln!("\n⚠ Cannot verify operator generation: {}", reason);
+                                            eprintln!("  Residual audit and cleanup are blocked.");
+                                        }
+                                    }
+                                }
                             }
                             None => {
                                 eprintln!("No teardown run found.");
@@ -815,6 +892,7 @@ async fn create_run_journal(
             phases_total: plan.phases.len(),
             ..Default::default()
         },
+        last_residual_audit: None,
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;

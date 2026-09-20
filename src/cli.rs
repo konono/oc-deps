@@ -227,7 +227,7 @@ pub enum TeardownAction {
     /// List all teardown runs for the current cluster
     Runs,
 
-    /// Show teardown run journal for an operator
+    /// Show teardown run journal for an operator (with live residual audit)
     Journal {
         /// Operator CSV name to find latest run
         operator: Option<String>,
@@ -235,6 +235,10 @@ pub enum TeardownAction {
         /// Specific run ID
         #[arg(long)]
         run: Option<String>,
+
+        /// Skip live residual audit
+        #[arg(long)]
+        no_audit: bool,
     },
 }
 
