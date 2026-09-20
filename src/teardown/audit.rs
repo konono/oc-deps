@@ -1002,10 +1002,16 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
     }
 
     // Coverage
+    let ctx = &journal.audit_context;
     eprintln!(
-        "Audit coverage: {}/{} probes succeeded",
+        "Audit coverage: {}/{} probes succeeded (scope: {} namespace(s))",
         audit.coverage.succeeded_probes,
         audit.coverage.requested_probes,
+        ctx.footprint_namespaces.len(),
+    );
+    eprintln!(
+        "  \x1b[2mScope: install namespace + plan action namespaces only.\n  \
+         Residuals in namespaces outside this footprint are not covered.\x1b[0m"
     );
 
     if !audit.scan_errors.is_empty() {
