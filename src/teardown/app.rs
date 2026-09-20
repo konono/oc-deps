@@ -106,7 +106,11 @@ pub fn validate_command(state: &AppState, cmd: &AppCommand) -> Result<()> {
                 bail!("Pause only allowed during Execution or Residual Cleanup");
             }
         }
-        AppCommand::Finish => {}
+        AppCommand::Finish => {
+            if state.screen != AppScreen::ResidualCleanup {
+                bail!("Finish only allowed from Residual Cleanup screen");
+            }
+        }
     }
     Ok(())
 }
@@ -345,17 +349,24 @@ mod tests {
     // ── Finish ──
 
     #[test]
-    fn test_finish_from_any_screen() {
+    fn test_finish_only_from_residual_cleanup() {
+        let mut s = AppState::new();
+        s.screen = AppScreen::ResidualCleanup;
+        apply_command(&mut s, &AppCommand::Finish).unwrap();
+        assert_eq!(s.screen, AppScreen::Finished);
+    }
+
+    #[test]
+    fn test_finish_rejected_from_other_screens() {
         for screen in [
             AppScreen::PlanReview,
             AppScreen::Executing,
-            AppScreen::ResidualCleanup,
             AppScreen::Paused,
         ] {
             let mut s = AppState::new();
-            s.screen = screen;
-            apply_command(&mut s, &AppCommand::Finish).unwrap();
-            assert_eq!(s.screen, AppScreen::Finished);
+            s.screen = screen.clone();
+            assert!(apply_command(&mut s, &AppCommand::Finish).is_err(),
+                "Finish must be rejected from {:?}", screen);
         }
     }
 

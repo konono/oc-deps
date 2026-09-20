@@ -558,12 +558,8 @@ async fn handle_execution_completed(
             .map(|r| (r.resource.clone(), "unattributed".to_string())))
         .collect();
 
-    if residuals.is_empty() {
-        eprintln!("✅ No residuals to clean up.");
-        return Ok(());
-    }
-
     // ── Screen 3: Residual Cleanup ──
+    // Enter even when empty — user needs 'f' to mark Finished
     enable_raw_mode().context("Failed to re-enable raw mode for residual")?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)
         .context("Failed to re-enter alternate screen for residual")?;
@@ -934,16 +930,13 @@ pub async fn run_residual_only(
             .map(|r| (r.resource.clone(), "unattributed".to_string())))
         .collect();
 
-    if residuals.is_empty() {
-        if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
-        eprintln!("✅ No residuals to clean up.");
-        return Ok(());
-    }
-
-    // Non-TTY: print audit and return
+    // Non-TTY: print audit and return (no TUI available for f/Finish)
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
         audit::print_residual_audit(&audit_result, &j);
+        if residuals.is_empty() {
+            eprintln!("✅ No residuals. Run 'teardown resume' in a TTY and press 'f' to mark as Finished.");
+        }
         return Ok(());
     }
 

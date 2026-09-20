@@ -618,12 +618,46 @@ async fn main() -> Result<()> {
                                         app.selected_residuals.clear();
                                     }
                                 }
+
+                                // Handle Finish: durable persist with guards
+                                if matches!(cmd, AppCommand::Finish)
+                                    && result.is_ok()
+                                    && app.screen == AppScreen::Finished
+                                {
+                                    if let Some(store) = &script_journal {
+                                        let j = store.read().await;
+                                        if let Err(reason) = can_finish_run(&j) {
+                                            events.push(serde_json::json!({
+                                                "finish_error": reason,
+                                            }));
+                                        } else {
+                                            // Final generation check before Finished persist
+                                            let fin_gen = crate::teardown::audit::check_operator_generation(
+                                                &client, &j.operator, &j.audit_context.csv_baseline,
+                                            ).await;
+                                            if matches!(fin_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                store.update(|j| {
+                                                    j.state = RunState::Finished;
+                                                }).await
+                                                .context("Failed to persist Finished state")?;
+                                                events.push(serde_json::json!({
+                                                    "finish": "persisted",
+                                                }));
+                                            } else {
+                                                events.push(serde_json::json!({
+                                                    "finish_error": "generation not Absent at Finish time",
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // Output full trace as JSON
                             let has_errors = events.iter().any(|e| {
                                 e.get("execution_error").is_some()
                                     || e.get("residual_cleanup_error").is_some()
+                                    || e.get("finish_error").is_some()
                                     || e.get("result")
                                         .and_then(|r| r.as_str())
                                         .is_some_and(|s| s.starts_with("error:"))
@@ -3099,6 +3133,35 @@ pub fn resume_has_blocking_hard_failure(j: &journal::RunJournal) -> bool {
     j.cleanup_decisions.iter().any(|d| d.is_hard_failed())
 }
 
+pub fn can_finish_run(j: &journal::RunJournal) -> Result<(), String> {
+    if !matches!(j.state, journal::RunState::ApplyCompleted | journal::RunState::InteractiveCleanup) {
+        return Err(format!("state {:?} does not allow Finish", j.state));
+    }
+    if j.execution.phases_completed != j.execution.phases_total {
+        return Err(format!(
+            "main execution incomplete ({}/{} phases)",
+            j.execution.phases_completed, j.execution.phases_total
+        ));
+    }
+    if j.last_residual_audit.is_none() {
+        return Err("no residual audit — cannot confirm cleanup status".to_string());
+    }
+    match j.residual_status {
+        journal::ResidualStatus::ResidualsObserved { .. }
+        | journal::ResidualStatus::NoneObservedInScope => {}
+        journal::ResidualStatus::AuditIncomplete => {
+            return Err("audit incomplete — cannot confirm cleanup status".to_string());
+        }
+        ref other => {
+            return Err(format!("residual status {:?} does not confirm audit complete", other));
+        }
+    }
+    if j.cleanup_decisions.iter().any(|d| d.is_hard_failed()) {
+        return Err("hard-failed cleanup decisions exist".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod basis_drift_tests {
     use super::*;
@@ -3346,7 +3409,7 @@ mod basis_drift_tests {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             state,
-            residual_status: ResidualStatus::NotAudited,
+            residual_status: if has_audit { ResidualStatus::NoneObservedInScope } else { ResidualStatus::NotAudited },
             audit_revision: 0,
             audit_context: AuditContext::default(),
             plan_snapshot: TeardownPlan { targets: vec![], preflight: Preflight { checks: vec![] }, phases: vec![], blockers: vec![], warnings: vec![], snapshot_taken_at: "2026-01-01T00:00:00Z".to_string() },
@@ -3450,6 +3513,67 @@ mod basis_drift_tests {
         ]);
         assert!(!resume_has_blocking_hard_failure(&j),
             "DeleteRequested is retryable, not hard failure");
+    }
+
+    // ── can_finish_run tests ──
+
+    #[test]
+    fn can_finish_apply_completed_with_audit() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![]);
+        assert!(can_finish_run(&j).is_ok());
+    }
+
+    #[test]
+    fn cannot_finish_without_audit() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::ApplyCompleted, 7, 7, false, vec![]);
+        let err = can_finish_run(&j).unwrap_err();
+        assert!(err.contains("no residual audit"));
+    }
+
+    #[test]
+    fn cannot_finish_with_incomplete_audit() {
+        use crate::teardown::journal::RunState;
+        let mut j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![]);
+        j.residual_status = crate::teardown::journal::ResidualStatus::AuditIncomplete;
+        let err = can_finish_run(&j).unwrap_err();
+        assert!(err.contains("audit incomplete"));
+    }
+
+    #[test]
+    fn cannot_finish_with_hard_failed_decision() {
+        use crate::teardown::journal::{RunState, CleanupResult};
+        let j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![
+            make_decision("failed", Some(CleanupResult::Failed("err".to_string()))),
+        ]);
+        let err = can_finish_run(&j).unwrap_err();
+        assert!(err.contains("hard-failed"));
+    }
+
+    #[test]
+    fn cannot_finish_with_not_audited_status() {
+        use crate::teardown::journal::RunState;
+        let mut j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![]);
+        j.residual_status = crate::teardown::journal::ResidualStatus::NotAudited;
+        let err = can_finish_run(&j).unwrap_err();
+        assert!(err.contains("does not confirm audit complete"));
+    }
+
+    #[test]
+    fn cannot_finish_with_incomplete_phases() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::ApplyCompleted, 5, 7, true, vec![]);
+        let err = can_finish_run(&j).unwrap_err();
+        assert!(err.contains("incomplete"));
+    }
+
+    #[test]
+    fn cannot_finish_from_paused_state() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::Paused, 7, 7, true, vec![]);
+        let err = can_finish_run(&j).unwrap_err();
+        assert!(err.contains("does not allow Finish"));
     }
 
     #[tokio::test]

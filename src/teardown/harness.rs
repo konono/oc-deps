@@ -123,18 +123,12 @@ mod tests {
 
     #[test]
     fn test_pause_and_finish_scenario() {
-        let events = run_scenario(
-            AppState::new(),
-            &[
-                AppCommand::StartExecution,
-                AppCommand::Pause,
-                AppCommand::Finish,
-            ],
-        );
-
-        assert_eq!(events.len(), 3);
-        assert_eq!(events[1].state.screen, AppScreen::Paused);
-        assert_eq!(events[2].state.screen, AppScreen::Finished);
+        let mut state = AppState::new();
+        // Finish requires ResidualCleanup screen
+        apply_command(&mut state, &AppCommand::StartExecution).unwrap();
+        state.screen = AppScreen::ResidualCleanup;
+        apply_command(&mut state, &AppCommand::Finish).unwrap();
+        assert_eq!(state.screen, AppScreen::Finished);
     }
 
     #[test]
@@ -187,25 +181,16 @@ mod tests {
 
     #[test]
     fn test_full_lifecycle_scenario() {
-        // PlanReview → approve → start → pause → finish
-        let events = run_scenario(
-            AppState::new(),
-            &[
-                AppCommand::ApproveReview { resource: res("cr1") },
-                AppCommand::StartExecution,
-                AppCommand::Pause,
-                AppCommand::Finish,
-            ],
-        );
-
-        assert_eq!(events.len(), 4);
-        assert_eq!(events[0].state.screen, AppScreen::PlanReview);
-        assert_eq!(events[1].state.screen, AppScreen::Executing);
-        assert_eq!(events[2].state.screen, AppScreen::Paused);
-        assert_eq!(events[3].state.screen, AppScreen::Finished);
-
-        // All succeeded
-        assert!(events.iter().all(|e| matches!(e.result, HarnessResult::Ok)));
+        // PlanReview → approve → start → (simulated execution) → residual → finish
+        let mut state = AppState::new();
+        apply_command(&mut state, &AppCommand::ApproveReview { resource: res("cr1") }).unwrap();
+        assert_eq!(state.screen, AppScreen::PlanReview);
+        apply_command(&mut state, &AppCommand::StartExecution).unwrap();
+        assert_eq!(state.screen, AppScreen::Executing);
+        // Simulate execution complete → transition to ResidualCleanup
+        state.screen = AppScreen::ResidualCleanup;
+        apply_command(&mut state, &AppCommand::Finish).unwrap();
+        assert_eq!(state.screen, AppScreen::Finished);
     }
 
     // ── MutationGate integration tests ──
@@ -372,25 +357,16 @@ mod tests {
 
     #[test]
     fn test_crash_resume_state_transitions() {
-        // Simulates: Execution → crash (Applying in journal) → resume
-        // The state machine should allow transitions from any screen
-        // back to Executing via the executor (not through AppCommand).
-        // Here we verify that Pause/Finish are accessible from Executing.
+        // Simulates: Execution → Pause, then ResidualCleanup → Finish
         let mut state = AppState::new();
         state.screen = AppScreen::Executing;
+        apply_command(&mut state, &AppCommand::Pause).unwrap();
+        assert_eq!(state.screen, AppScreen::Paused);
 
-        let events = run_scenario(
-            state,
-            &[
-                AppCommand::Pause,  // Ctrl-C
-                AppCommand::Finish, // After resume completes
-            ],
-        );
-
-        assert!(matches!(events[0].result, HarnessResult::Ok));
-        assert_eq!(events[0].state.screen, AppScreen::Paused);
-        assert!(matches!(events[1].result, HarnessResult::Ok));
-        assert_eq!(events[1].state.screen, AppScreen::Finished);
+        // After resume completes → Residual screen → Finish
+        state.screen = AppScreen::ResidualCleanup;
+        apply_command(&mut state, &AppCommand::Finish).unwrap();
+        assert_eq!(state.screen, AppScreen::Finished);
     }
 
     // ── Integration: BoundPlan freeze verification ──
