@@ -2578,37 +2578,90 @@ async fn revalidate_review_basis_inner(
     audit_ctx: &crate::teardown::journal::AuditContext,
     operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
 ) -> Result<(), String> {
-    use crate::teardown::plan::ProvenanceSer;
+    let fresh = classify_fresh_provenance(obj, audit_ctx, operator_snapshot);
+    match check_provenance_drift(metadata, &fresh) {
+        ProvenanceDriftResult::Ok => Ok(()),
+        ProvenanceDriftResult::Blocked(reason) => Err(reason),
+        ProvenanceDriftResult::NeedsCrdVerification => {
+            verify_governing_crd_label(client, resource, operator_snapshot).await
+        }
+    }
+}
+
+enum ProvenanceDriftResult {
+    Ok,
+    Blocked(String),
+    NeedsCrdVerification,
+}
+
+/// Pure sync provenance drift check — testable without cluster.
+fn check_provenance_drift(
+    metadata: &Option<crate::teardown::plan::ReviewMetadata>,
+    fresh: &crate::teardown::plan::ProvenanceSer,
+) -> ProvenanceDriftResult {
+    use crate::teardown::plan::{ProvenanceSer, DiscoverySourceSer};
 
     let stored_provenance = metadata
         .as_ref()
         .and_then(|m| m.provenance.as_ref());
 
-    let fresh = classify_fresh_provenance(obj, audit_ctx, operator_snapshot);
-
-    match (stored_provenance, &fresh) {
-        (Some(ProvenanceSer::Managed), ProvenanceSer::Managed) => Ok(()),
+    match (stored_provenance, fresh) {
+        (Some(ProvenanceSer::Managed), ProvenanceSer::Managed) => ProvenanceDriftResult::Ok,
         (Some(ProvenanceSer::Managed), _) => {
-            Err("provenance downgraded from Managed".to_string())
+            ProvenanceDriftResult::Blocked("provenance downgraded from Managed".to_string())
         }
-        (Some(ProvenanceSer::LikelyManaged), ProvenanceSer::Managed | ProvenanceSer::LikelyManaged) => Ok(()),
+        (Some(ProvenanceSer::LikelyManaged), ProvenanceSer::Managed | ProvenanceSer::LikelyManaged) => ProvenanceDriftResult::Ok,
         (Some(ProvenanceSer::LikelyManaged), ProvenanceSer::Unknown) => {
-            Err("provenance downgraded from LikelyManaged to Unknown".to_string())
+            ProvenanceDriftResult::Blocked("provenance downgraded from LikelyManaged to Unknown".to_string())
         }
         (Some(ProvenanceSer::Unknown), _) => {
             let discovery_source = metadata.as_ref().and_then(|m| m.discovery_source.as_ref());
             match discovery_source {
-                Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly) => {
-                    verify_governing_crd_label(client, resource, operator_snapshot).await
+                Some(DiscoverySourceSer::RelatedLabelOnly) => {
+                    ProvenanceDriftResult::NeedsCrdVerification
                 }
                 _ => {
-                    Err("stored provenance was Unknown with no verifiable discovery source — \
-                         cannot verify approval basis".to_string())
+                    ProvenanceDriftResult::Blocked(
+                        "stored provenance was Unknown with no verifiable discovery source — \
+                         cannot verify approval basis".to_string()
+                    )
                 }
             }
         }
         (None, _) => {
-            Err("no stored provenance to verify against".to_string())
+            ProvenanceDriftResult::Blocked("no stored provenance to verify against".to_string())
+        }
+    }
+}
+
+/// Pure sync CRD label value verification — testable without cluster.
+/// Checks if a CRD label value is in the target-owned seed set.
+fn verify_crd_label_value_in_seeds(
+    crd_label_value: Option<&str>,
+    seed_values: &std::collections::HashSet<String>,
+    resource_group: &str,
+    resource_kind: &str,
+) -> Result<(), String> {
+    let label_key = "platform.opendatahub.io/part-of";
+    if seed_values.is_empty() {
+        return Err("no part-of label seeds found on owned CRDs — cannot verify CRD-based evidence".to_string());
+    }
+    match crd_label_value {
+        Some(value) => {
+            if seed_values.contains(value) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "governing CRD has '{}={}' but value not in target seed set {:?} — evidence invalidated",
+                    label_key, value, seed_values
+                ))
+            }
+        }
+        None => {
+            Err(format!(
+                "governing CRD for {}/{} no longer has '{}' label — CRD-based evidence invalidated",
+                resource_group, resource_kind, label_key
+            ))
         }
     }
 }
@@ -2696,25 +2749,170 @@ async fn verify_governing_crd_label(
         }
     };
 
-    // Verify CRD has part-of label with a value in the seed set
     let crd_labels = crd.metadata.labels.as_ref();
     let crd_part_of = crd_labels.and_then(|labels| labels.get(label_key));
-    match crd_part_of {
-        Some(value) => {
-            if seed_values.contains(value.as_str()) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "governing CRD has '{}={}' but value not in target seed set {:?} — evidence invalidated",
-                    label_key, value, seed_values
-                ))
-            }
-        }
-        None => {
-            Err(format!(
-                "governing CRD for {}/{} no longer has '{}' label — CRD-based evidence invalidated",
-                resource.group, resource.kind, label_key
-            ))
-        }
+    verify_crd_label_value_in_seeds(
+        crd_part_of.map(|s| s.as_str()),
+        &seed_values,
+        &resource.group,
+        &resource.kind,
+    )
+}
+
+#[cfg(test)]
+mod basis_drift_tests {
+    use super::*;
+    use crate::teardown::plan::*;
+    use std::collections::HashSet;
+
+    fn make_metadata(
+        provenance: Option<ProvenanceSer>,
+        discovery_source: Option<DiscoverySourceSer>,
+    ) -> Option<ReviewMetadata> {
+        Some(ReviewMetadata {
+            category: None,
+            approval_class: None,
+            provenance,
+            discovery_source,
+        })
+    }
+
+    // ── check_provenance_drift ──
+
+    #[test]
+    fn managed_to_managed_ok() {
+        let meta = make_metadata(Some(ProvenanceSer::Managed), None);
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Managed),
+            ProvenanceDriftResult::Ok
+        ));
+    }
+
+    #[test]
+    fn managed_downgrade_blocked() {
+        let meta = make_metadata(Some(ProvenanceSer::Managed), None);
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn likely_to_unknown_blocked() {
+        let meta = make_metadata(Some(ProvenanceSer::LikelyManaged), None);
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn unknown_no_discovery_source_blocked() {
+        let meta = make_metadata(Some(ProvenanceSer::Unknown), None);
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn unknown_direct_source_blocked() {
+        let meta = make_metadata(
+            Some(ProvenanceSer::Unknown),
+            Some(DiscoverySourceSer::Direct),
+        );
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn unknown_related_label_only_needs_crd_verification() {
+        let meta = make_metadata(
+            Some(ProvenanceSer::Unknown),
+            Some(DiscoverySourceSer::RelatedLabelOnly),
+        );
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::NeedsCrdVerification
+        ));
+    }
+
+    #[test]
+    fn no_stored_provenance_blocked() {
+        let meta = make_metadata(None, None);
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Managed),
+            ProvenanceDriftResult::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn no_metadata_blocked() {
+        assert!(matches!(
+            check_provenance_drift(&None, &ProvenanceSer::Managed),
+            ProvenanceDriftResult::Blocked(_)
+        ));
+    }
+
+    // ── verify_crd_label_value_in_seeds ──
+
+    #[test]
+    fn crd_label_matches_seed_ok() {
+        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
+        assert!(verify_crd_label_value_in_seeds(
+            Some("platform"), &seeds, "maas.opendatahub.io", "Config"
+        ).is_ok());
+    }
+
+    #[test]
+    fn crd_label_value_not_in_seeds_blocked() {
+        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
+        let result = verify_crd_label_value_in_seeds(
+            Some("other-project"), &seeds, "maas.opendatahub.io", "Config"
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not in target seed set"));
+    }
+
+    #[test]
+    fn crd_label_missing_blocked() {
+        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
+        let result = verify_crd_label_value_in_seeds(
+            None, &seeds, "maas.opendatahub.io", "Config"
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no longer has"));
+    }
+
+    #[test]
+    fn empty_seeds_blocked() {
+        let seeds: HashSet<String> = HashSet::new();
+        let result = verify_crd_label_value_in_seeds(
+            Some("platform"), &seeds, "maas.opendatahub.io", "Config"
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no part-of label seeds"));
+    }
+
+    #[test]
+    fn candidate_self_label_does_not_seed() {
+        // Candidate CRD has label value "other" but target-owned CRDs only have "platform".
+        // Candidate's own value must NOT appear in seeds (seeds come from owned CRDs only).
+        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
+        let result = verify_crd_label_value_in_seeds(
+            Some("other"), &seeds, "components.platform.opendatahub.io", "Dashboard"
+        );
+        assert!(result.is_err(), "candidate's own label value must not match target seeds");
+    }
+
+    #[test]
+    fn multiple_seeds_match_any() {
+        let seeds: HashSet<String> = ["platform", "workbenches"]
+            .iter().map(|s| s.to_string()).collect();
+        assert!(verify_crd_label_value_in_seeds(
+            Some("workbenches"), &seeds, "x.opendatahub.io", "Notebook"
+        ).is_ok());
     }
 }
