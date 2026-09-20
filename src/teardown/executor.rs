@@ -281,6 +281,84 @@ pub async fn execute_plan(
         .context("Failed to persist Applying state — aborting before first mutation")?;
     }
 
+    // Pre-mutation UID binding: GET current UIDs for DELETE/EXPECT actions
+    // that lack them (e.g., --prune-apis CRDs). This happens ONCE before
+    // any mutation, so the plan_snapshot in journal reflects bound UIDs.
+    let mut bound_plan = plan.clone();
+    if !dry_run {
+        let km = Arc::new(kind_map.clone());
+        let gk = Arc::new(gk_map.clone());
+        let bind_futs = bound_plan.phases.iter().flat_map(|p| p.actions.iter()).filter_map(|a| {
+            match a {
+                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
+                    if resource.uid.is_none() || resource.uid.as_ref().is_some_and(|u| u.is_empty()) {
+                        Some(resource.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }).collect::<Vec<_>>();
+
+        if !bind_futs.is_empty() {
+            eprintln!("  Binding UIDs for {} plan action(s)...", bind_futs.len());
+            let futs = bind_futs.iter().map(|res| {
+                let client = client.clone();
+                let res = res.clone();
+                let km = km.clone();
+                let gk = gk.clone();
+                async move {
+                    let uid = match resolve_api(&client, &res, &km, &gk) {
+                        Some((api, _)) => match api.get(&res.name).await {
+                            Ok(obj) => obj.metadata.uid,
+                            Err(kube::Error::Api(err)) if err.code == 404 => None,
+                            Err(_) => None,
+                        },
+                        None => None,
+                    };
+                    (res, uid)
+                }
+            });
+            let results: Vec<_> = futures::stream::iter(futs)
+                .buffer_unordered(16)
+                .collect()
+                .await;
+
+            for (res, uid) in results {
+                if let Some(uid) = uid {
+                    // Update the bound_plan's action resource UID
+                    for phase in &mut bound_plan.phases {
+                        for action in &mut phase.actions {
+                            let action_res = match action {
+                                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => resource,
+                                _ => continue,
+                            };
+                            if action_res.group == res.group
+                                && action_res.kind == res.kind
+                                && action_res.namespace == res.namespace
+                                && action_res.name == res.name
+                            {
+                                action_res.uid = Some(uid.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update journal with UID-bound plan
+            if let Some(j) = journal {
+                let bound_snapshot = bound_plan.clone();
+                j.update(|journal| {
+                    journal.plan_snapshot = bound_snapshot;
+                })
+                .await
+                .context("Failed to persist UID-bound plan to journal")?;
+            }
+        }
+    }
+    let plan = &bound_plan;
+
     // Initialize RuntimeStateStore — canonical state for all tracked resources.
     // The store is purely observational: it never calls delete/mutation APIs.
     let notifier = Arc::new(EventNotifier::new());
@@ -748,10 +826,41 @@ pub async fn execute_plan(
     Ok(result)
 }
 
+/// Verify delete identity: plan UID vs live UID.
+///
+/// Both plan UID and live UID must be present and match.
+/// Plan UID should have been bound in the pre-mutation UID binding step.
+/// If either is missing/empty, return Err (no mutation).
+pub fn verify_delete_identity(
+    plan_uid: &Option<String>,
+    current_uid: &str,
+) -> Result<(), String> {
+    let plan_uid = match plan_uid {
+        Some(uid) if !uid.is_empty() => uid.as_str(),
+        _ => {
+            return Err(
+                "plan resource has no UID — cannot verify identity for safe DELETE".to_string(),
+            );
+        }
+    };
+    if current_uid.is_empty() {
+        return Err(
+            "live resource has no UID — cannot verify identity for safe DELETE".to_string(),
+        );
+    }
+    if current_uid != plan_uid {
+        return Err(format!(
+            "UID mismatch: plan expected {} but found {} — resource may have been recreated",
+            plan_uid, current_uid
+        ));
+    }
+    Ok(())
+}
+
 /// Delete a resource with UID-preconditioned safety.
 ///
-/// 1. GET current UID to verify we're deleting the right resource
-/// 2. Compare with plan UID (if available) — mismatch → Failed
+/// 1. GET current resource to verify endpoint + identity
+/// 2. Verify plan UID vs live UID (see verify_delete_identity)
 /// 3. DELETE with UID precondition to prevent TOCTOU race
 ///
 /// Failure/AlreadyGone does NOT grant re-delete authority.
@@ -775,7 +884,17 @@ async fn delete_resource(
     let current = match api.get(&resource.name).await {
         Ok(obj) => obj,
         Err(kube::Error::Api(err)) if err.code == 404 => {
-            return DeleteResult::AlreadyGone;
+            // Verify endpoint exists before declaring AlreadyGone
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => return DeleteResult::AlreadyGone,
+                Err(_) => {
+                    return DeleteResult::Failed(
+                        "pre-delete GET returned 404 but API endpoint verification failed — \
+                         cannot distinguish object absence from endpoint absence"
+                            .to_string(),
+                    );
+                }
+            }
         }
         Err(e) => {
             return DeleteResult::Failed(format!("pre-delete GET failed: {}", e));
@@ -784,14 +903,9 @@ async fn delete_resource(
 
     let current_uid = current.metadata.uid.as_deref().unwrap_or("");
 
-    // Step 2: Verify UID matches plan (if plan has UID)
-    if let Some(plan_uid) = &resource.uid {
-        if !plan_uid.is_empty() && current_uid != plan_uid.as_str() {
-            return DeleteResult::Failed(format!(
-                "UID mismatch: plan expected {} but found {} — resource may have been recreated",
-                plan_uid, current_uid
-            ));
-        }
+    // Step 2: Verify identity
+    if let Err(reason) = verify_delete_identity(&resource.uid, current_uid) {
+        return DeleteResult::Failed(reason);
     }
 
     // Step 3: Delete with UID precondition
@@ -809,7 +923,18 @@ async fn delete_resource(
 
     match api.delete(&resource.name, &dp).await {
         Ok(_) => DeleteResult::Deleted,
-        Err(kube::Error::Api(err)) if err.code == 404 => DeleteResult::AlreadyGone,
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            // Endpoint could have disappeared between GET and DELETE.
+            // Verify before declaring AlreadyGone.
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => DeleteResult::AlreadyGone,
+                Err(_) => DeleteResult::Failed(
+                    "DELETE returned 404 but endpoint verification failed — \
+                     cannot distinguish deletion from endpoint disappearance"
+                        .to_string(),
+                ),
+            }
+        }
         Err(kube::Error::Api(err)) if err.code == 409 => {
             DeleteResult::Failed(
                 "UID conflict during delete — resource was recreated between GET and DELETE"
@@ -842,7 +967,17 @@ async fn check_finalizers(
 
     match api.get(&resource.name).await {
         Ok(obj) => FinalizerCheckResult::Known(obj.metadata.finalizers.unwrap_or_default()),
-        Err(kube::Error::Api(err)) if err.code == 404 => FinalizerCheckResult::Gone,
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            // Verify endpoint exists before treating as Gone
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => FinalizerCheckResult::Gone,
+                Err(_) => FinalizerCheckResult::Unknown(
+                    "GET 404 but API endpoint verification failed — \
+                     cannot confirm resource absence"
+                        .to_string(),
+                ),
+            }
+        }
         Err(e) => FinalizerCheckResult::Unknown(format!("GET failed: {}", e)),
     }
 }
@@ -1115,4 +1250,50 @@ mod tests {
     }
 
     // ResourceStateInfo test removed — struct replaced by RuntimeStateStore/RuntimeObservation
+
+    // ── verify_delete_identity tests ──
+
+    #[test]
+    fn test_delete_identity_both_uids_match() {
+        assert!(verify_delete_identity(
+            &Some("uid-a".to_string()),
+            "uid-a"
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_delete_identity_uid_mismatch() {
+        let err = verify_delete_identity(
+            &Some("uid-a".to_string()),
+            "uid-b"
+        ).unwrap_err();
+        assert!(err.contains("UID mismatch"));
+    }
+
+    #[test]
+    fn test_delete_identity_live_uid_empty() {
+        let err = verify_delete_identity(
+            &Some("uid-a".to_string()),
+            ""
+        ).unwrap_err();
+        assert!(err.contains("no UID"));
+    }
+
+    #[test]
+    fn test_delete_identity_plan_uid_none_fails() {
+        // Plan UID absent → cannot verify, must be bound first
+        let err = verify_delete_identity(&None, "uid-x").unwrap_err();
+        assert!(err.contains("no UID"));
+    }
+
+    #[test]
+    fn test_delete_identity_plan_uid_empty_fails() {
+        let err = verify_delete_identity(&Some(String::new()), "uid-x").unwrap_err();
+        assert!(err.contains("no UID"));
+    }
+
+    #[test]
+    fn test_delete_identity_both_empty_fails() {
+        assert!(verify_delete_identity(&None, "").is_err());
+    }
 }

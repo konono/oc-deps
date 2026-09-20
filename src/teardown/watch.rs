@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use futures::stream::StreamExt;
-use futures::TryStreamExt;
 use kube::Client;
 use kube::api::{Api, ApiResource, DynamicObject, ListParams};
 use kube::core::GroupVersion;
@@ -18,20 +17,14 @@ const RECONCILE_CONCURRENCY: usize = 16;
 const WATCH_TIMEOUT_SECS: u32 = 300;
 
 // ──────────────────────────────────────────────────────────────
-//  Watch manager — epoch-based reconciliation
+//  Watch manager
 // ──────────────────────────────────────────────────────────────
 
-/// Manages resource state reconciliation via parallel GETs.
-///
-/// Each reconciliation cycle increments the epoch. RuntimeStateStore
-/// ignores observations from older epochs, preventing stale late events
-/// from reverting current state.
-///
-/// Safety: The watch manager NEVER calls delete/mutation APIs. It only
-/// observes via GET and reports to the store. The store itself also has
-/// no mutation methods.
 pub struct WatchManager {
-    epoch: Arc<AtomicU64>,
+    /// Counter for WATCH stream IDs. Each new stream gets a unique ID.
+    /// Used to reject events from old/cancelled streams.
+    /// NOT used for authoritative GET — GETs are always accepted.
+    next_stream_id: Arc<AtomicU64>,
     store: Arc<RuntimeStateStore>,
 }
 
@@ -47,18 +40,13 @@ pub enum WatchWaitResult {
 impl WatchManager {
     pub fn new(store: Arc<RuntimeStateStore>) -> Self {
         Self {
-            epoch: Arc::new(AtomicU64::new(0)),
+            next_stream_id: Arc::new(AtomicU64::new(1)),
             store,
         }
     }
 
-    /// Reconcile all tracked resources via parallel GETs.
-    ///
-    /// Increments epoch before reconciliation. Results from this cycle
-    /// are tagged with the new epoch, so old-epoch observations in the
-    /// store are automatically superseded.
-    ///
-    /// API failures (403, timeout, transport) → Unknown, NOT Gone.
+    /// Reconcile specific resources via parallel authoritative GETs.
+    /// Authoritative observations bypass stream_id checks.
     pub async fn reconcile(
         &self,
         client: &Client,
@@ -66,8 +54,6 @@ impl WatchManager {
         kind_map: &KindMap,
         gk_map: &GroupKindMap,
     ) {
-        let current_epoch = self.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-
         let km = Arc::new(kind_map.clone());
         let gk = Arc::new(gk_map.clone());
 
@@ -90,7 +76,8 @@ impl WatchManager {
         for (resource, obs) in results {
             match obs {
                 ObserveResult::Observation(o) => {
-                    self.store.update_from_observation(&resource, o, current_epoch);
+                    // stream_id=0 for authoritative GETs (always accepted)
+                    self.store.update_from_observation(&resource, o, 0);
                 }
                 ObserveResult::ApiError(reason) => {
                     self.store.update_from_executor(
@@ -110,13 +97,12 @@ impl WatchManager {
 
     /// Wait for all specified resources to reach Gone state.
     ///
-    /// Uses Kubernetes WATCH for low-latency state updates, with periodic
-    /// authoritative GET reconciliation as safety fallback.
+    /// Uses Kubernetes WATCH for low-latency hints, with periodic
+    /// authoritative GET reconciliation as safety confirmation.
     ///
-    /// WATCH events are non-authoritative (authoritative: false) and cannot
-    /// revive a Gone resource. GET reconciliation is authoritative.
-    ///
-    /// Returns AllGone or Stalled (with remaining resources and reason).
+    /// WATCH events are non-authoritative: Deleted → needs_verification hint,
+    /// UID change → needs_verification hint. Only authoritative GETs can
+    /// confirm Gone or Recreated.
     pub async fn wait_for_gone(
         &self,
         client: &Client,
@@ -129,27 +115,34 @@ impl WatchManager {
         // Initial authoritative reconcile
         self.reconcile(client, resources, kind_map, gk_map).await;
 
-        let summary = self.store.summary_for(resources);
-        if summary.gone == summary.total {
+        if self.store.all_gone_for(resources) {
             return WatchWaitResult::AllGone;
         }
 
-        // Start background WATCH tasks per (GVR, namespace) for low-latency updates.
-        // WATCH events are non-authoritative and feed into the store.
+        // Start background WATCH tasks for low-latency hints
         let watch_handles = self.start_watch_tasks(client, resources, kind_map, gk_map);
 
         let start = Instant::now();
         let mut last_progress_check = Instant::now();
-
         let mut consecutive_unknown_cycles = 0u32;
         const MAX_UNKNOWN_RETRIES: u32 = 3;
 
         let result = loop {
+            // Authoritative reconcile for resources needing verification
+            let needs_verify = self.store.resources_needing_verification(resources);
+            if !needs_verify.is_empty() {
+                self.reconcile(client, &needs_verify, kind_map, gk_map).await;
+            }
+
+            // Periodic full reconcile (safety fallback)
             self.reconcile(client, resources, kind_map, gk_map).await;
+
+            if self.store.all_gone_for(resources) {
+                break WatchWaitResult::AllGone;
+            }
 
             let summary = self.store.summary_for(resources);
 
-            // Handle unknown/unreachable resources
             if summary.unknown > 0 {
                 consecutive_unknown_cycles += 1;
                 if consecutive_unknown_cycles >= MAX_UNKNOWN_RETRIES {
@@ -166,13 +159,6 @@ impl WatchManager {
             }
             consecutive_unknown_cycles = 0;
 
-            // Check if all gone
-            if summary.gone == summary.total {
-                break WatchWaitResult::AllGone;
-            }
-
-            // Use store's meaningful progress tracking (covers finalizer
-            // decrease, state transitions, Gone — not just Gone count)
             if self
                 .store
                 .any_meaningful_progress_since(last_progress_check, resources)
@@ -180,7 +166,6 @@ impl WatchManager {
                 last_progress_check = Instant::now();
             }
 
-            // Timeout checks
             if start.elapsed() >= timeout {
                 break self.build_stalled_result(
                     resources,
@@ -205,19 +190,18 @@ impl WatchManager {
                 }
             }
 
-            // Wait with WATCH-based notification or polling fallback
+            // Wait for WATCH hint or polling interval
             let mut rx = self.store.subscribe();
             tokio::select! {
                 _ = rx.changed() => {
-                    // State changed via WATCH — re-check immediately
+                    // WATCH hint received — re-check immediately
                 }
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                    // Periodic authoritative GET reconciliation (safety fallback)
+                    // Periodic safety reconcile
                 }
             }
         };
 
-        // Cleanup: cancel all background WATCH tasks
         for handle in watch_handles {
             handle.abort();
         }
@@ -225,9 +209,6 @@ impl WatchManager {
         result
     }
 
-    /// Start background WATCH tasks per (GVR, namespace) group.
-    /// WATCH events are non-authoritative (authoritative: false).
-    /// Each task runs until cancelled, handling disconnect/410 by re-LISTing.
     fn start_watch_tasks(
         &self,
         client: &Client,
@@ -235,7 +216,6 @@ impl WatchManager {
         kind_map: &KindMap,
         gk_map: &GroupKindMap,
     ) -> Vec<JoinHandle<()>> {
-        // Group resources by (group, version, kind, namespace) for shared watches
         let mut groups: HashMap<(String, String, String, Option<String>), Vec<ResourceId>> =
             HashMap::new();
         for res in resources {
@@ -250,19 +230,28 @@ impl WatchManager {
 
         let mut handles = Vec::new();
         for ((group, version, kind, namespace), tracked_resources) in groups {
-            // Try to resolve the API
             let sample = &tracked_resources[0];
             let resolved = resolve_api(client, sample, kind_map, gk_map);
             if resolved.is_none() {
-                continue; // Can't watch what we can't resolve
+                continue;
             }
             let (api, _) = resolved.unwrap();
 
             let store = self.store.clone();
-            let epoch = self.epoch.clone();
+            let stream_id_counter = self.next_stream_id.clone();
 
             let handle = tokio::spawn(async move {
-                run_watch_loop(api, &group, &version, &kind, namespace.as_deref(), &tracked_resources, store, epoch).await;
+                run_watch_loop(
+                    api,
+                    &group,
+                    &version,
+                    &kind,
+                    namespace.as_deref(),
+                    &tracked_resources,
+                    store,
+                    stream_id_counter,
+                )
+                .await;
             });
             handles.push(handle);
         }
@@ -306,14 +295,10 @@ impl WatchManager {
             reason,
         }
     }
-
-    pub fn current_epoch(&self) -> u64 {
-        self.epoch.load(Ordering::SeqCst)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Resource observation (GET-based)
+//  Resource observation (GET-based, authoritative)
 // ──────────────────────────────────────────────────────────────
 
 enum ObserveResult {
@@ -323,8 +308,13 @@ enum ObserveResult {
 }
 
 /// Run a WATCH loop for a single (GVR, namespace) group.
-/// Handles disconnect/410 by incrementing epoch and re-LISTing.
-/// WATCH events are non-authoritative (authoritative: false).
+///
+/// WATCH events are NON-AUTHORITATIVE:
+///   - Deleted → sets needs_verification (hint for barrier to re-GET)
+///   - UID change → sets needs_verification
+///   - Matching UID + state change → updates deletionTimestamp/finalizer
+///
+/// Each reconnection gets a new stream_id to reject old-stream events.
 async fn run_watch_loop(
     api: Api<DynamicObject>,
     group: &str,
@@ -333,7 +323,7 @@ async fn run_watch_loop(
     namespace: Option<&str>,
     tracked_resources: &[ResourceId],
     store: Arc<RuntimeStateStore>,
-    epoch_counter: Arc<AtomicU64>,
+    stream_id_counter: Arc<AtomicU64>,
 ) {
     let tracked_names: std::collections::HashSet<String> = tracked_resources
         .iter()
@@ -341,11 +331,13 @@ async fn run_watch_loop(
         .collect();
 
     loop {
+        // Each reconnection gets a new stream_id
+        let stream_id = stream_id_counter.fetch_add(1, Ordering::SeqCst) + 1;
+
         // LIST to get initial resourceVersion
         let rv = match api.list(&ListParams::default()).await {
             Ok(list) => {
-                // Process initial LIST results as authoritative
-                let current_epoch = epoch_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                // Initial LIST results are authoritative
                 for obj in &list.items {
                     let name = match &obj.metadata.name {
                         Some(n) if tracked_names.contains(n.as_str()) => n,
@@ -370,18 +362,18 @@ async fn run_watch_loop(
                             .map_or(0, |f| f.len()),
                         authoritative: true,
                     };
-                    store.update_from_observation(&resource, obs, current_epoch);
+                    // Authoritative → stream_id=0 (always accepted)
+                    store.update_from_observation(&resource, obs, 0);
                 }
                 list.metadata.resource_version.unwrap_or_default()
             }
             Err(_) => {
-                // LIST failed — wait and retry
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 continue;
             }
         };
 
-        // Start WATCH from the resourceVersion
+        // Start WATCH from resourceVersion
         let wp = kube::api::WatchParams::default().timeout(WATCH_TIMEOUT_SECS);
         let watch_stream = match api.watch(&wp, &rv).await {
             Ok(s) => s,
@@ -391,7 +383,6 @@ async fn run_watch_loop(
             }
         };
 
-        let watch_epoch = epoch_counter.load(Ordering::SeqCst);
         let mut stream = watch_stream.boxed();
 
         while let Some(event) = stream.next().await {
@@ -410,7 +401,6 @@ async fn run_watch_loop(
                         name: name.clone(),
                         uid: obj.metadata.uid.clone(),
                     };
-                    // WATCH events are non-authoritative
                     let obs = RuntimeObservation {
                         exists: true,
                         uid: obj.metadata.uid.clone(),
@@ -420,9 +410,9 @@ async fn run_watch_loop(
                             .finalizers
                             .as_ref()
                             .map_or(0, |f| f.len()),
-                        authoritative: false,
+                        authoritative: false, // WATCH is non-authoritative
                     };
-                    store.update_from_observation(&resource, obs, watch_epoch);
+                    store.update_from_observation(&resource, obs, stream_id);
                 }
                 Ok(kube::api::WatchEvent::Deleted(obj)) => {
                     let name = match &obj.metadata.name {
@@ -437,42 +427,37 @@ async fn run_watch_loop(
                         name: name.clone(),
                         uid: obj.metadata.uid.clone(),
                     };
-                    // Deleted events from WATCH are reliable (the API confirmed deletion)
                     let obs = RuntimeObservation {
                         exists: false,
-                        uid: None,
+                        uid: obj.metadata.uid.clone(),
                         has_deletion_timestamp: false,
                         finalizer_count: 0,
-                        authoritative: false,
+                        authoritative: false, // WATCH Deleted = hint, not Gone
                     };
-                    store.update_from_observation(&resource, obs, watch_epoch);
+                    store.update_from_observation(&resource, obs, stream_id);
                 }
                 Ok(kube::api::WatchEvent::Error(err)) => {
                     if err.code == 410 {
-                        // 410 Gone — resourceVersion too old, need to re-LIST
+                        // 410 Gone — resourceVersion too old, re-LIST
                         break;
                     }
-                    // Other errors — break and retry
                     break;
                 }
-                Ok(kube::api::WatchEvent::Bookmark(_)) => {
-                    // Bookmark — no action needed
-                }
+                Ok(kube::api::WatchEvent::Bookmark(_)) => {}
                 Err(_) => {
-                    // Stream error — disconnect, will re-LIST
                     break;
                 }
             }
         }
 
-        // WATCH disconnected or 410 — epoch increment + re-LIST on next iteration
+        // Disconnected — new stream_id on next loop iteration
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
 /// Observe a single resource via authoritative GET.
 ///
-/// 404 → verify endpoint via LIST(limit=1) first:
+/// 404 → verify endpoint via LIST(limit=1):
 ///   - LIST success → resource genuinely absent (exists=false)
 ///   - LIST failure → API endpoint may be gone → ApiError (NOT Gone)
 /// 403/timeout/transport → ApiError (NOT Gone).
@@ -501,27 +486,19 @@ async fn observe_resource(
             authoritative: true,
         }),
         Err(kube::Error::Api(err)) if err.code == 404 => {
-            // Verify endpoint exists via LIST(limit=1) to distinguish
-            // "object absent" from "API endpoint absent (CRD removed)"
             match api.list(&kube::api::ListParams::default().limit(1)).await {
-                Ok(_) => {
-                    // Endpoint exists, resource genuinely absent
-                    ObserveResult::Observation(RuntimeObservation {
-                        exists: false,
-                        uid: None,
-                        has_deletion_timestamp: false,
-                        finalizer_count: 0,
-                        authoritative: true,
-                    })
-                }
-                Err(_) => {
-                    // Endpoint verification failed — API may be gone
-                    ObserveResult::ApiError(format!(
-                        "GET 404 but endpoint verification failed for {}/{} — \
-                         cannot distinguish object absence from endpoint absence",
-                        resource.kind, resource.name
-                    ))
-                }
+                Ok(_) => ObserveResult::Observation(RuntimeObservation {
+                    exists: false,
+                    uid: None,
+                    has_deletion_timestamp: false,
+                    finalizer_count: 0,
+                    authoritative: true,
+                }),
+                Err(_) => ObserveResult::ApiError(format!(
+                    "GET 404 but endpoint verification failed for {}/{} — \
+                     cannot distinguish object absence from endpoint absence",
+                    resource.kind, resource.name
+                )),
             }
         }
         Err(e) => ObserveResult::ApiError(format!("GET failed: {}", e)),
