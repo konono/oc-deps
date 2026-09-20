@@ -520,3 +520,191 @@ pub fn build_audit_context(
     ctx.unresolved_crds = Some(unresolved_crds);
     ctx
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_journal_v2_migration_discards_audit() {
+        // A v2 journal with last_residual_audit containing ResidualEvidence
+        // WITHOUT owner_ref_match. load_journal must:
+        // 1. Deserialize successfully (serde(default) on owner_ref_match)
+        // 2. Migrate to v3
+        // 3. Discard old audit (set to None)
+        // 4. Reset residual_status to NotAudited
+        let v2_journal = r#"{
+            "run_id": "run-test-v2",
+            "schema_version": 2,
+            "oc_deps_version": "0.1.0",
+            "journal_revision": 5,
+            "cluster_identity": {
+                "api_server": "https://api.test:6443",
+                "kube_system_uid": "test-uid"
+            },
+            "operator": {
+                "generation_identity": { "Unverifiable": { "reason": "test" } },
+                "operator_id": { "namespace": "ns", "csv_name": "test.1.0" },
+                "csv_name": "test.1.0",
+                "csv": { "resource": { "group": "operators.coreos.com", "version": "v1alpha1", "kind": "ClusterServiceVersion", "namespace": "ns", "name": "test.1.0", "uid": "csv-uid" }, "uid": "csv-uid" },
+                "subscriptions": [],
+                "controller_deployments": [],
+                "service_accounts": [],
+                "owned_crds": ["foos.example.com"],
+                "required_crds": []
+            },
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T01:00:00Z",
+            "state": "ApplyCompleted",
+            "residual_status": { "ResidualsObserved": { "count": 3 } },
+            "audit_revision": 2,
+            "audit_context": {
+                "footprint_namespaces": ["ns"],
+                "csv_names": ["test.1.0"],
+                "controller_deployment_names": [],
+                "service_account_names": [],
+                "known_labels": [],
+                "managed_field_managers": []
+            },
+            "plan_snapshot": {
+                "targets": [],
+                "preflight": { "checks": [] },
+                "phases": [],
+                "blockers": [],
+                "warnings": [],
+                "snapshot_taken_at": "2026-01-01"
+            },
+            "execution": {
+                "phases_completed": 7,
+                "phases_total": 7,
+                "deleted": [],
+                "already_gone": [],
+                "failed": [],
+                "kept": [],
+                "reviewed": []
+            },
+            "last_residual_audit": {
+                "planned_delete_still_present": [],
+                "planned_expect_still_present": [],
+                "expected_preserved": [],
+                "likely_operator_residual": [{
+                    "resource": {
+                        "group": "apps", "version": "v1", "kind": "Deployment",
+                        "namespace": "ns", "name": "old-dep", "uid": "uid-old"
+                    },
+                    "evidence": {
+                        "matching_labels": [],
+                        "matching_managers": ["test-mgr"],
+                        "namespace_affinity": true,
+                        "service_account_match": false
+                    },
+                    "confidence": "Low"
+                }],
+                "unattributed": [],
+                "coverage": { "requested_probes": 5, "succeeded_probes": 5 },
+                "scan_errors": []
+            }
+        }"#;
+
+        let dir = std::env::temp_dir().join("oc-deps-test-v2-migration");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("v2-test.json");
+        std::fs::write(&path, v2_journal).unwrap();
+
+        let journal = load_journal(&path).unwrap();
+
+        // Schema migrated to v3
+        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
+        assert_eq!(journal.schema_version, 3);
+
+        // Old audit discarded (operator has owned CRDs but no unresolved_crds metadata)
+        assert!(journal.last_residual_audit.is_none());
+        assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
+
+        // Other fields preserved
+        assert_eq!(journal.run_id, "run-test-v2");
+        assert_eq!(journal.execution.phases_completed, 7);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_journal_v3_with_no_owned_crds_keeps_audit() {
+        // A v2 journal with NO owned CRDs → audit should NOT be discarded
+        // (no CRD resolution concern)
+        let v2_journal = r#"{
+            "run_id": "run-test-no-crds",
+            "schema_version": 2,
+            "oc_deps_version": "0.1.0",
+            "journal_revision": 3,
+            "cluster_identity": {
+                "api_server": "https://api.test:6443",
+                "kube_system_uid": "test-uid-2"
+            },
+            "operator": {
+                "generation_identity": { "Unverifiable": { "reason": "test" } },
+                "operator_id": { "namespace": "ns", "csv_name": "simple.1.0" },
+                "csv_name": "simple.1.0",
+                "csv": { "resource": { "group": "operators.coreos.com", "version": "v1alpha1", "kind": "ClusterServiceVersion", "namespace": "ns", "name": "simple.1.0", "uid": "csv-uid-2" }, "uid": "csv-uid-2" },
+                "subscriptions": [],
+                "controller_deployments": [],
+                "service_accounts": [],
+                "owned_crds": [],
+                "required_crds": []
+            },
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T01:00:00Z",
+            "state": "ApplyCompleted",
+            "residual_status": "NoneObservedInScope",
+            "audit_revision": 1,
+            "audit_context": {
+                "footprint_namespaces": ["ns"],
+                "csv_names": ["simple.1.0"],
+                "controller_deployment_names": [],
+                "service_account_names": [],
+                "known_labels": [],
+                "managed_field_managers": []
+            },
+            "plan_snapshot": {
+                "targets": [],
+                "preflight": { "checks": [] },
+                "phases": [],
+                "blockers": [],
+                "warnings": [],
+                "snapshot_taken_at": "2026-01-01"
+            },
+            "execution": {
+                "phases_completed": 3,
+                "phases_total": 3,
+                "deleted": [],
+                "already_gone": [],
+                "failed": [],
+                "kept": [],
+                "reviewed": []
+            },
+            "last_residual_audit": {
+                "planned_delete_still_present": [],
+                "planned_expect_still_present": [],
+                "expected_preserved": [],
+                "likely_operator_residual": [],
+                "unattributed": [],
+                "coverage": { "requested_probes": 3, "succeeded_probes": 3 },
+                "scan_errors": []
+            }
+        }"#;
+
+        let dir = std::env::temp_dir().join("oc-deps-test-v2-no-crds");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("v2-no-crds.json");
+        std::fs::write(&path, v2_journal).unwrap();
+
+        let journal = load_journal(&path).unwrap();
+
+        assert_eq!(journal.schema_version, 3);
+        // Audit preserved — no owned CRDs, so CRD resolution concern doesn't apply
+        assert!(journal.last_residual_audit.is_some());
+        assert!(matches!(journal.residual_status, ResidualStatus::NoneObservedInScope));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
