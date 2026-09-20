@@ -281,16 +281,16 @@ pub async fn execute_plan(
         .context("Failed to persist Applying state — aborting before first mutation")?;
     }
 
-    // Verify all DELETE/EXPECT actions have bound UIDs.
+    // Verify all DELETE actions have bound UIDs.
+    // EXPECT actions are observe-only (no DELETE authority) — UID is optional.
     // UID binding happens at plan generation time (in generate_teardown_plan).
-    // If any action lacks a UID here, it means binding failed or was skipped.
     if !dry_run {
         let uid_missing: Vec<String> = plan
             .phases
             .iter()
             .flat_map(|p| &p.actions)
             .filter_map(|a| match a {
-                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
+                Action::Delete { resource, .. } => {
                     if resource.uid.is_none()
                         || resource.uid.as_ref().is_some_and(|u| u.is_empty())
                     {
@@ -305,7 +305,7 @@ pub async fn execute_plan(
 
         if !uid_missing.is_empty() {
             bail!(
-                "Cannot execute: {} action(s) have unbound UIDs \
+                "Cannot execute: {} DELETE action(s) have unbound UIDs \
                  (UID binding should happen at plan time): {}",
                 uid_missing.len(),
                 uid_missing.join(", ")

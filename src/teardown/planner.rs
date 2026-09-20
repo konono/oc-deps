@@ -2719,13 +2719,56 @@ pub async fn generate_teardown_plan(
 
     // ── Phase 4: Remove unused APIs ──
     let mut phase4_actions = Vec::new();
-    let blocked_crds: HashSet<&str> = blockers.iter().map(|b| b.resource.name.as_str()).collect();
-    let warned_crds: HashSet<&str> = warnings
+    let blocked_crds: HashSet<String> = blockers.iter().map(|b| b.resource.name.clone()).collect();
+    let warned_crds: HashSet<String> = warnings
         .iter()
-        .filter_map(|w| w.resource.as_ref().map(|r| r.name.as_str()))
+        .filter_map(|w| w.resource.as_ref().map(|r| r.name.clone()))
         .collect();
 
     let mut seen_crds = HashSet::new();
+
+    // For --prune-apis DELETE actions, GET current UIDs NOW (at evidence time).
+    // This prevents UID migration between evidence→user confirmation→execution.
+    let prune_crd_uids: HashMap<String, Option<String>> = if prune_apis {
+        let prune_candidates: Vec<String> = target_crds
+            .iter()
+            .filter(|name| {
+                !blocked_crds.contains(name.as_str()) && !warned_crds.contains(name.as_str())
+            })
+            .cloned()
+            .collect();
+
+        if !prune_candidates.is_empty() {
+            let crd_gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
+                .with_kind("CustomResourceDefinition");
+            let crd_ar = kube::api::ApiResource::from_gvk_with_plural(
+                &crd_gvk,
+                "customresourcedefinitions",
+            );
+            let crd_api: kube::api::Api<kube::api::DynamicObject> =
+                kube::api::Api::all_with(client.clone(), &crd_ar);
+
+            let futs = prune_candidates.iter().map(|name| {
+                let api = crd_api.clone();
+                let name = name.clone();
+                async move {
+                    let uid = match api.get(&name).await {
+                        Ok(obj) => obj.metadata.uid,
+                        _ => None,
+                    };
+                    (name, uid)
+                }
+            });
+            futures::stream::iter(futs)
+                .buffer_unordered(16)
+                .collect()
+                .await
+        } else {
+            HashMap::new()
+        }
+    } else {
+        HashMap::new()
+    };
 
     for crd_name in &target_crds {
         if !seen_crds.insert(crd_name.clone()) {
@@ -2757,10 +2800,31 @@ pub async fn generate_teardown_plan(
                 reason: "also owned by another operator".to_string(),
             });
         } else if prune_apis {
-            phase4_actions.push(Action::Delete {
-                resource: crd_id,
-                reason: "no remaining CRs, no external dependencies".to_string(),
-            });
+            // UID must be bound at evidence time for DELETE authority
+            match prune_crd_uids.get(crd_name) {
+                Some(Some(uid)) => {
+                    phase4_actions.push(Action::Delete {
+                        resource: ResourceId {
+                            uid: Some(uid.clone()),
+                            ..crd_id
+                        },
+                        reason: "no remaining CRs, no external dependencies".to_string(),
+                    });
+                }
+                _ => {
+                    // Cannot bind UID — blocker
+                    blockers.push(Blocker {
+                        resource: crd_id.clone(),
+                        reason: "Cannot bind CRD UID for safe deletion — API error or resource absent"
+                            .to_string(),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: crd_id,
+                        reason: "UID binding failed — cannot safely delete".to_string(),
+                    });
+                }
+            }
         } else {
             phase4_actions.push(Action::Keep {
                 resource: crd_id,
@@ -2771,6 +2835,49 @@ pub async fn generate_teardown_plan(
 
     // APIService actions — dedup by (group, version) since one APIService serves multiple kinds
     let mut seen_api_services = HashSet::new();
+
+    // Pre-fetch APIService UIDs for prune DELETE actions
+    let prune_apisvc_candidates: Vec<String> = if prune_apis {
+        target_operators
+            .iter()
+            .flat_map(|op| op.owned_api_service_defs.iter())
+            .map(|def| def.api_service_object_name())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter(|name| !blocked_crds.contains(name.as_str()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let prune_apisvc_uids: HashMap<String, Option<String>> = if !prune_apisvc_candidates.is_empty()
+    {
+        let apisvc_gvk = kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1")
+            .with_kind("APIService");
+        let apisvc_ar =
+            kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
+        let apisvc_api: kube::api::Api<kube::api::DynamicObject> =
+            kube::api::Api::all_with(client.clone(), &apisvc_ar);
+
+        let futs = prune_apisvc_candidates.iter().map(|name| {
+            let api = apisvc_api.clone();
+            let name = name.clone();
+            async move {
+                let uid = match api.get(&name).await {
+                    Ok(obj) => obj.metadata.uid,
+                    _ => None,
+                };
+                (name, uid)
+            }
+        });
+        futures::stream::iter(futs)
+            .buffer_unordered(16)
+            .collect()
+            .await
+    } else {
+        HashMap::new()
+    };
+
     for def in target_operators
         .iter()
         .flat_map(|op| op.owned_api_service_defs.iter())
@@ -2800,10 +2907,30 @@ pub async fn generate_teardown_plan(
                 reason: format!("required by unselected operator {}", blocker_op),
             });
         } else if prune_apis {
-            phase4_actions.push(Action::Delete {
-                resource: api_svc_id,
-                reason: "aggregated API owned by target operator".to_string(),
-            });
+            match prune_apisvc_uids.get(&obj_name) {
+                Some(Some(uid)) => {
+                    phase4_actions.push(Action::Delete {
+                        resource: ResourceId {
+                            uid: Some(uid.clone()),
+                            ..api_svc_id
+                        },
+                        reason: "aggregated API owned by target operator".to_string(),
+                    });
+                }
+                _ => {
+                    blockers.push(Blocker {
+                        resource: api_svc_id.clone(),
+                        reason:
+                            "Cannot bind APIService UID for safe deletion — API error or resource absent"
+                                .to_string(),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: api_svc_id,
+                        reason: "UID binding failed — cannot safely delete".to_string(),
+                    });
+                }
+            }
         } else {
             phase4_actions.push(Action::Keep {
                 resource: api_svc_id,
@@ -2893,8 +3020,9 @@ pub async fn generate_teardown_plan(
             .flat_map(|(pi, phase)| {
                 phase.actions.iter().enumerate().filter_map(move |(ai, a)| {
                     match a {
-                        Action::Delete { resource, .. }
-                        | Action::ExpectGone { resource, .. } => {
+                        // DELETE UIDs should already be bound by per-type binding above.
+                        // Only bind EXPECT actions here (observe-only, no DELETE authority).
+                        Action::ExpectGone { resource, .. } => {
                             if resource.uid.is_none()
                                 || resource.uid.as_ref().is_some_and(|u| u.is_empty())
                             {
@@ -2968,14 +3096,15 @@ pub async fn generate_teardown_plan(
                         // executor will handle as AlreadyGone
                     }
                     BindResult::Failed(reason) => {
-                        blockers.push(Blocker {
-                            resource: res.clone(),
-                            reason: format!(
-                                "Cannot bind UID for safe DELETE: {}. \
-                                 Cannot safely proceed without verified identity.",
-                                reason
+                        // EXPECT actions are observe-only — binding failure is a warning,
+                        // not a blocker (no DELETE authority involved).
+                        warnings.push(Warning {
+                            message: format!(
+                                "Cannot bind UID for {}/{}: {}. \
+                                 Observation may be less precise.",
+                                res.kind, res.name, reason
                             ),
-                            external_dependency: None,
+                            resource: Some(res.clone()),
                         });
                     }
                 }
