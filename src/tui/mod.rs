@@ -185,43 +185,49 @@ async fn run_tui_inner(
                                     if plan_uid.is_empty() {
                                         bail!("Cannot approve DELETE for {}/{}: plan resource has no UID", resource.kind, resource.name);
                                     }
-                                    if !ovr_uid.is_empty() && ovr_uid != plan_uid {
+                                    if ovr_uid.is_empty() {
+                                        bail!("Cannot approve DELETE for {}/{} without UID in approval",
+                                            resource.kind, resource.name);
+                                    }
+                                    if ovr_uid != plan_uid {
                                         bail!("Override UID {} does not match plan UID {} for {}/{}", ovr_uid, plan_uid, resource.kind, resource.name);
                                     }
-                                    if let Some((api, _)) = crate::kube::resource::resolve_api(
+                                    let (api, _) = crate::kube::resource::resolve_api(
                                         client, resource, kind_map, gk_map,
-                                    ) {
-                                        match api.get(&resource.name).await {
-                                            Ok(obj) => {
-                                                let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
-                                                if live_uid.is_empty() {
-                                                    bail!("Cannot apply override for {}/{}: live resource has no UID",
-                                                        resource.kind, resource.name);
-                                                }
-                                                if !plan_uid.is_empty() && live_uid != plan_uid {
-                                                    bail!("UID changed for {}/{}: plan {} vs live {}",
-                                                        resource.kind, resource.name, plan_uid, live_uid);
-                                                }
-                                                // Basis drift validation
-                                                let action_meta = metadata.clone();
-                                                if let Err(reason) = crate::revalidate_review_basis(
-                                                    &obj, &action_meta, &audit_ctx, operator_snapshot,
-                                                ) {
-                                                    bail!("BLOCKED: {}/{} — basis drift: {}",
-                                                        resource.kind, resource.name, reason);
-                                                }
-                                                let mut bound = resource.clone();
-                                                bound.uid = Some(live_uid.to_string());
-                                                *action = Action::Delete {
-                                                    resource: bound,
-                                                    reason: format!("{} (approved in TUI)", reason),
-                                                };
+                                    ).ok_or_else(|| anyhow::anyhow!(
+                                        "Cannot resolve API for {}/{} — refusing to skip approved DELETE override",
+                                        resource.kind, resource.name
+                                    ))?;
+                                    match api.get(&resource.name).await {
+                                        Ok(obj) => {
+                                            let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                            if live_uid.is_empty() {
+                                                bail!("Cannot apply override for {}/{}: live resource has no UID",
+                                                    resource.kind, resource.name);
                                             }
-                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                eprintln!("  ⚠ {}/{} no longer present — skipped", resource.kind, resource.name);
+                                            if live_uid != plan_uid {
+                                                bail!("UID changed for {}/{}: plan {} vs live {}",
+                                                    resource.kind, resource.name, plan_uid, live_uid);
                                             }
-                                            Err(e) => bail!("Cannot verify {}/{}: {}", resource.kind, resource.name, e),
+                                            // Basis drift validation
+                                            let action_meta = metadata.clone();
+                                            if let Err(reason) = crate::revalidate_review_basis(
+                                                &obj, &action_meta, &audit_ctx, operator_snapshot,
+                                            ) {
+                                                bail!("BLOCKED: {}/{} — basis drift: {}",
+                                                    resource.kind, resource.name, reason);
+                                            }
+                                            let mut bound = resource.clone();
+                                            bound.uid = Some(live_uid.to_string());
+                                            *action = Action::Delete {
+                                                resource: bound,
+                                                reason: format!("{} (approved in TUI)", reason),
+                                            };
                                         }
+                                        Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                            eprintln!("  ⚠ {}/{} no longer present — skipped", resource.kind, resource.name);
+                                        }
+                                        Err(e) => bail!("Cannot verify {}/{}: {}", resource.kind, resource.name, e),
                                     }
                                 }
                                 DraftAction::Keep => {

@@ -357,57 +357,58 @@ async fn main() -> Result<()> {
                                                                         );
                                                                     }
 
-                                                                    if let Some((api, _)) = crate::kube::resource::resolve_api(
+                                                                    let (api, _) = crate::kube::resource::resolve_api(
                                                                         &client, resource, &kind_map, &gk_map,
-                                                                    ) {
-                                                                        match api.get(&resource.name).await {
-                                                                            Ok(obj) => {
-                                                                                let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
-                                                                                if live_uid.is_empty() {
-                                                                                    bail!("Cannot apply override for {}/{}: live resource has no UID", resource.kind, resource.name);
-                                                                                }
-                                                                                if !plan_uid.is_empty() && live_uid != plan_uid {
+                                                                    ).ok_or_else(|| anyhow::anyhow!(
+                                                                        "Cannot resolve API for {}/{} — refusing to skip approved DELETE override",
+                                                                        resource.kind, resource.name
+                                                                    ))?;
+                                                                    match api.get(&resource.name).await {
+                                                                        Ok(obj) => {
+                                                                            let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                                                            if live_uid.is_empty() {
+                                                                                bail!("Cannot apply override for {}/{}: live resource has no UID", resource.kind, resource.name);
+                                                                            }
+                                                                            if !plan_uid.is_empty() && live_uid != plan_uid {
+                                                                                bail!(
+                                                                                    "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created.",
+                                                                                    resource.kind, resource.name, plan_uid, live_uid
+                                                                                );
+                                                                            }
+                                                                            // Basis drift: verify provenance hasn't degraded
+                                                                            {
+                                                                                let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
+                                                                                let action_metadata = metadata.clone();
+                                                                                let first_op = target_operators[0];
+                                                                                let snap = crate::teardown::plan::OperatorIdentitySnapshot {
+                                                                                    generation_identity: crate::teardown::plan::OperatorGenerationIdentity::Unverifiable { reason: "temp".to_string() },
+                                                                                    operator_id: crate::analyzers::olm::OperatorId { namespace: first_op.install_namespace.clone(), csv_name: first_op.csv.name.clone() },
+                                                                                    csv_name: first_op.csv.name.clone(),
+                                                                                    csv: crate::teardown::plan::ObservedResourceIdentity { resource: first_op.csv.clone(), uid: first_op.csv.uid.clone().unwrap_or_default() },
+                                                                                    subscriptions: vec![],
+                                                                                    controller_deployments: vec![],
+                                                                                    service_accounts: vec![],
+                                                                                    owned_crds: first_op.owned_crds.clone(),
+                                                                                    required_crds: first_op.required_crds.clone(),
+                                                                                };
+                                                                                if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
                                                                                     bail!(
-                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created.",
-                                                                                        resource.kind, resource.name, plan_uid, live_uid
+                                                                                        "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
+                                                                                        resource.kind, resource.name, reason
                                                                                     );
                                                                                 }
-                                                                                // Basis drift: verify provenance hasn't degraded
-                                                                                {
-                                                                                    let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
-                                                                                    let action_metadata = metadata.clone();
-                                                                                    // Build minimal snapshot for provenance UID check
-                                                                                    let first_op = target_operators[0];
-                                                                                    let snap = crate::teardown::plan::OperatorIdentitySnapshot {
-                                                                                        generation_identity: crate::teardown::plan::OperatorGenerationIdentity::Unverifiable { reason: "temp".to_string() },
-                                                                                        operator_id: crate::analyzers::olm::OperatorId { namespace: first_op.install_namespace.clone(), csv_name: first_op.csv.name.clone() },
-                                                                                        csv_name: first_op.csv.name.clone(),
-                                                                                        csv: crate::teardown::plan::ObservedResourceIdentity { resource: first_op.csv.clone(), uid: first_op.csv.uid.clone().unwrap_or_default() },
-                                                                                        subscriptions: vec![],
-                                                                                        controller_deployments: vec![],
-                                                                                        service_accounts: vec![],
-                                                                                        owned_crds: first_op.owned_crds.clone(),
-                                                                                        required_crds: first_op.required_crds.clone(),
-                                                                                    };
-                                                                                    if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
-                                                                                        bail!(
-                                                                                            "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
-                                                                                            resource.kind, resource.name, reason
-                                                                                        );
-                                                                                    }
-                                                                                }
-                                                                                let mut bound = resource.clone();
-                                                                                bound.uid = Some(live_uid.to_string());
-                                                                                *action = Action::Delete {
-                                                                                    resource: bound,
-                                                                                    reason: format!("{} (approved via script)", reason),
-                                                                                };
                                                                             }
-                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                                                eprintln!("  ⚠ {}/{} no longer present — override skipped", resource.kind, resource.name);
-                                                                            }
-                                                                            Err(e) => bail!("Cannot verify {}/{} for script override: {}", resource.kind, resource.name, e),
+                                                                            let mut bound = resource.clone();
+                                                                            bound.uid = Some(live_uid.to_string());
+                                                                            *action = Action::Delete {
+                                                                                resource: bound,
+                                                                                reason: format!("{} (approved via script)", reason),
+                                                                            };
                                                                         }
+                                                                        Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                            eprintln!("  ⚠ {}/{} no longer present — override skipped", resource.kind, resource.name);
+                                                                        }
+                                                                        Err(e) => bail!("Cannot verify {}/{} for script override: {}", resource.kind, resource.name, e),
                                                                     }
                                                                 }
                                                                 DraftAction::Keep => {
@@ -717,8 +718,10 @@ async fn main() -> Result<()> {
                                                                         }
                                                                     }
                                                                     None => {
-                                                                        eprintln!("  ⚠ Cannot resolve API for {}/{} — override skipped", resource.kind, resource.name);
-                                                                        false
+                                                                        bail!(
+                                                                            "Cannot resolve API for {}/{} — refusing to skip approved DELETE override",
+                                                                            resource.kind, resource.name
+                                                                        );
                                                                     }
                                                                 };
                                                                 let _ = verified;
