@@ -186,10 +186,14 @@ pub async fn check_operator_generation(
                     .get("status")
                     .and_then(|s| {
                         s.get("installedCSV")
-                            .or(s.get("currentCSV"))
-                    })
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                s.get("currentCSV")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                            })
+                    });
                 let pkg = sub
                     .data
                     .get("spec")
@@ -279,22 +283,7 @@ pub async fn check_operator_generation(
                             evidence_packages.insert(pkg);
                         }
 
-                        // Determine attribution — same principle as
-                        // csv_package_evidence_is_exclusive in olm.rs:
-                        // - Empty evidence: unattributable → Unknown
-                        // - Exactly one non-target package: exclusively other → safe skip
-                        // - Our package present: cannot exclude → Unknown
-                        // - Multiple different non-target packages (B+C): conflicting,
-                        //   cannot confirm CSV belongs to a single other operator → Unknown
-                        let has_our_package = evidence_packages.contains(&package_name);
-                        let other_packages: HashSet<&String> = evidence_packages
-                            .iter()
-                            .filter(|p| *p != &package_name)
-                            .collect();
-                        let exclusively_one_other = !has_our_package
-                            && other_packages.len() == 1;
-
-                        if !exclusively_one_other {
+                        if !is_exclusively_other_package(&evidence_packages, &package_name) {
                             return OperatorGenerationState::Unknown(format!(
                                 "CSV '{}' (uid: {}) in {} survived teardown and cannot be \
                                  attributed to a different package — possible same-package \
@@ -323,6 +312,21 @@ pub async fn check_operator_generation(
 /// Returns true if the CSV is conclusively attributed to a DIFFERENT package.
 /// Returns true only if the CSV is EXCLUSIVELY attributable to a different package.
 /// Conflicting labels (both our package and another) → ambiguous → false.
+/// Determine if evidence_packages exclusively points to a single non-target package.
+/// Returns true only when exactly one package is present and it's not the target.
+/// Empty, target-containing, or multi-package evidence → false (Unknown).
+pub fn is_exclusively_other_package(
+    evidence_packages: &HashSet<String>,
+    target_package: &str,
+) -> bool {
+    if evidence_packages.is_empty() {
+        return false;
+    }
+    let has_target = evidence_packages.contains(target_package);
+    let other_count = evidence_packages.iter().filter(|p| p.as_str() != target_package).count();
+    !has_target && other_count == 1
+}
+
 fn csv_label_attributes_to_other_package(
     labels: &std::collections::BTreeMap<String, String>,
     csv_namespace: &str,
@@ -2383,32 +2387,89 @@ mod tests {
 
     // ── Generation Step 4 evidence conflict tests ──
 
+    // ── is_exclusively_other_package tests (calls real function) ──
+
     #[test]
-    fn test_generation_evidence_two_non_target_packages_is_unknown() {
-        // CSV with label=B and annotation=C, target=A
-        // B and C are both non-target but conflict with each other
-        // → not "exclusively one other" → Unknown
-        let mut evidence: HashSet<String> = HashSet::new();
+    fn test_exclusively_other_one_non_target_is_safe() {
+        let mut evidence = HashSet::new();
         evidence.insert("pkg-b".to_string());
-        evidence.insert("pkg-c".to_string());
-
-        let has_our = evidence.contains("pkg-a");
-        let other_pkgs: HashSet<&String> = evidence.iter().filter(|p| *p != "pkg-a").collect();
-        let exclusively_one_other = !has_our && other_pkgs.len() == 1;
-
-        assert!(!exclusively_one_other, "B+C conflicting non-target should NOT be exclusively_one_other");
+        assert!(is_exclusively_other_package(&evidence, "pkg-a"));
     }
 
     #[test]
-    fn test_generation_evidence_one_non_target_is_safe() {
-        // CSV with only label=B, target=A → exclusively one other → safe skip
-        let mut evidence: HashSet<String> = HashSet::new();
+    fn test_exclusively_other_two_non_target_is_unknown() {
+        // B+C conflicting non-target → not exclusively one other
+        let mut evidence = HashSet::new();
         evidence.insert("pkg-b".to_string());
+        evidence.insert("pkg-c".to_string());
+        assert!(!is_exclusively_other_package(&evidence, "pkg-a"));
+    }
 
-        let has_our = evidence.contains("pkg-a");
-        let other_pkgs: HashSet<&String> = evidence.iter().filter(|p| *p != "pkg-a").collect();
-        let exclusively_one_other = !has_our && other_pkgs.len() == 1;
+    #[test]
+    fn test_exclusively_other_target_present_is_unknown() {
+        let mut evidence = HashSet::new();
+        evidence.insert("pkg-a".to_string());
+        evidence.insert("pkg-b".to_string());
+        assert!(!is_exclusively_other_package(&evidence, "pkg-a"));
+    }
 
-        assert!(exclusively_one_other);
+    #[test]
+    fn test_exclusively_other_empty_is_unknown() {
+        let evidence = HashSet::new();
+        assert!(!is_exclusively_other_package(&evidence, "pkg-a"));
+    }
+
+    #[test]
+    fn test_exclusively_other_only_target_is_unknown() {
+        let mut evidence = HashSet::new();
+        evidence.insert("pkg-a".to_string());
+        assert!(!is_exclusively_other_package(&evidence, "pkg-a"));
+    }
+
+    // ── Status CSV extraction fallback test ──
+
+    #[test]
+    fn test_sub_status_empty_installed_csv_falls_through_to_current() {
+        // Simulates the same extraction logic as sub_csv_to_pkgs builder:
+        // installedCSV="" should fall through to currentCSV="csv-x"
+        let status = serde_json::json!({
+            "installedCSV": "",
+            "currentCSV": "csv-x"
+        });
+
+        let csv_name = status
+            .get("installedCSV")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                status
+                    .get("currentCSV")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+            });
+
+        assert_eq!(csv_name, Some("csv-x"),
+            "empty installedCSV must fall through to currentCSV");
+    }
+
+    #[test]
+    fn test_sub_status_both_empty_is_none() {
+        let status = serde_json::json!({
+            "installedCSV": "",
+            "currentCSV": ""
+        });
+
+        let csv_name = status
+            .get("installedCSV")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                status
+                    .get("currentCSV")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+            });
+
+        assert!(csv_name.is_none());
     }
 }
