@@ -17,7 +17,39 @@ use crate::analyzers::olm::{
 use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
-use crate::kube::resource::ResourceId;
+use crate::kube::resource::{ResourceId, resolve_api};
+
+// ── UID binding result ──
+
+enum BindResult {
+    Bound(String),
+    Absent,
+    Failed(String),
+}
+
+/// Probe a single resource's UID for safe DELETE binding.
+/// GET 200 + UID → Bound, GET 404 + LIST 200 → Absent, otherwise → Failed.
+pub(crate) async fn probe_uid(
+    api: &kube::api::Api<kube::api::DynamicObject>,
+    name: &str,
+) -> BindResult {
+    match api.get(name).await {
+        Ok(obj) => match obj.metadata.uid {
+            Some(uid) => BindResult::Bound(uid),
+            None => BindResult::Failed("resource has no UID".to_string()),
+        },
+        Err(kube::Error::Api(ref err)) if err.code == 404 => {
+            match api.list(&kube::api::ListParams::default().limit(1)).await {
+                Ok(_) => BindResult::Absent,
+                Err(e) => BindResult::Failed(format!(
+                    "GET 404 but endpoint verification failed: {}",
+                    e
+                )),
+            }
+        }
+        Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
+    }
+}
 
 // ── Decision types ──
 
@@ -2711,13 +2743,53 @@ pub async fn generate_teardown_plan(
 
     // ── Phase 4: Remove unused APIs ──
     let mut phase4_actions = Vec::new();
-    let blocked_crds: HashSet<&str> = blockers.iter().map(|b| b.resource.name.as_str()).collect();
-    let warned_crds: HashSet<&str> = warnings
+    let blocked_crds: HashSet<String> = blockers.iter().map(|b| b.resource.name.clone()).collect();
+    let warned_crds: HashSet<String> = warnings
         .iter()
-        .filter_map(|w| w.resource.as_ref().map(|r| r.name.as_str()))
+        .filter_map(|w| w.resource.as_ref().map(|r| r.name.clone()))
         .collect();
 
     let mut seen_crds = HashSet::new();
+
+    // For --prune-apis DELETE actions, GET current UIDs NOW (at evidence time).
+    // This prevents UID migration between evidence→user confirmation→execution.
+    let prune_crd_uids: HashMap<String, BindResult> = if prune_apis {
+        let prune_candidates: Vec<String> = target_crds
+            .iter()
+            .filter(|name| {
+                !blocked_crds.contains(name.as_str()) && !warned_crds.contains(name.as_str())
+            })
+            .cloned()
+            .collect();
+
+        if !prune_candidates.is_empty() {
+            let crd_gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
+                .with_kind("CustomResourceDefinition");
+            let crd_ar = kube::api::ApiResource::from_gvk_with_plural(
+                &crd_gvk,
+                "customresourcedefinitions",
+            );
+            let crd_api: kube::api::Api<kube::api::DynamicObject> =
+                kube::api::Api::all_with(client.clone(), &crd_ar);
+
+            let futs = prune_candidates.iter().map(|name| {
+                let api = crd_api.clone();
+                let name = name.clone();
+                async move {
+                    let result = probe_uid(&api, &name).await;
+                    (name, result)
+                }
+            });
+            futures::stream::iter(futs)
+                .buffer_unordered(16)
+                .collect()
+                .await
+        } else {
+            HashMap::new()
+        }
+    } else {
+        HashMap::new()
+    };
 
     for crd_name in &target_crds {
         if !seen_crds.insert(crd_name.clone()) {
@@ -2749,10 +2821,48 @@ pub async fn generate_teardown_plan(
                 reason: "also owned by another operator".to_string(),
             });
         } else if prune_apis {
-            phase4_actions.push(Action::Delete {
-                resource: crd_id,
-                reason: "no remaining CRs, no external dependencies".to_string(),
-            });
+            // UID must be bound at evidence time for DELETE authority
+            match prune_crd_uids.get(crd_name) {
+                Some(BindResult::Bound(uid)) => {
+                    phase4_actions.push(Action::Delete {
+                        resource: ResourceId {
+                            uid: Some(uid.clone()),
+                            ..crd_id
+                        },
+                        reason: "no remaining CRs, no external dependencies".to_string(),
+                    });
+                }
+                Some(BindResult::Absent) => {
+                    // CRD already gone (GET 404 + endpoint verified) — skip DELETE
+                    phase4_actions.push(Action::Keep {
+                        resource: crd_id,
+                        reason: "already absent (confirmed via endpoint verification)"
+                            .to_string(),
+                    });
+                }
+                Some(BindResult::Failed(reason)) => {
+                    blockers.push(Blocker {
+                        resource: crd_id.clone(),
+                        reason: format!("Cannot bind CRD UID: {}", reason),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: crd_id,
+                        reason: "UID binding failed — cannot safely delete".to_string(),
+                    });
+                }
+                None => {
+                    blockers.push(Blocker {
+                        resource: crd_id.clone(),
+                        reason: "CRD not in binding candidates".to_string(),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: crd_id,
+                        reason: "UID binding not attempted".to_string(),
+                    });
+                }
+            }
         } else {
             phase4_actions.push(Action::Keep {
                 resource: crd_id,
@@ -2763,6 +2873,46 @@ pub async fn generate_teardown_plan(
 
     // APIService actions — dedup by (group, version) since one APIService serves multiple kinds
     let mut seen_api_services = HashSet::new();
+
+    // Pre-fetch APIService UIDs for prune DELETE actions
+    let prune_apisvc_candidates: Vec<String> = if prune_apis {
+        target_operators
+            .iter()
+            .flat_map(|op| op.owned_api_service_defs.iter())
+            .map(|def| def.api_service_object_name())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter(|name| !blocked_crds.contains(name.as_str()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty()
+    {
+        let apisvc_gvk = kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1")
+            .with_kind("APIService");
+        let apisvc_ar =
+            kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
+        let apisvc_api: kube::api::Api<kube::api::DynamicObject> =
+            kube::api::Api::all_with(client.clone(), &apisvc_ar);
+
+        let futs = prune_apisvc_candidates.iter().map(|name| {
+            let api = apisvc_api.clone();
+            let name = name.clone();
+            async move {
+                let result = probe_uid(&api, &name).await;
+                (name, result)
+            }
+        });
+        futures::stream::iter(futs)
+            .buffer_unordered(16)
+            .collect()
+            .await
+    } else {
+        HashMap::new()
+    };
+
     for def in target_operators
         .iter()
         .flat_map(|op| op.owned_api_service_defs.iter())
@@ -2792,10 +2942,46 @@ pub async fn generate_teardown_plan(
                 reason: format!("required by unselected operator {}", blocker_op),
             });
         } else if prune_apis {
-            phase4_actions.push(Action::Delete {
-                resource: api_svc_id,
-                reason: "aggregated API owned by target operator".to_string(),
-            });
+            match prune_apisvc_uids.get(&obj_name) {
+                Some(BindResult::Bound(uid)) => {
+                    phase4_actions.push(Action::Delete {
+                        resource: ResourceId {
+                            uid: Some(uid.clone()),
+                            ..api_svc_id
+                        },
+                        reason: "aggregated API owned by target operator".to_string(),
+                    });
+                }
+                Some(BindResult::Absent) => {
+                    phase4_actions.push(Action::Keep {
+                        resource: api_svc_id,
+                        reason: "already absent (confirmed via endpoint verification)"
+                            .to_string(),
+                    });
+                }
+                Some(BindResult::Failed(reason)) => {
+                    blockers.push(Blocker {
+                        resource: api_svc_id.clone(),
+                        reason: format!("Cannot bind APIService UID: {}", reason),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: api_svc_id,
+                        reason: format!("UID binding failed: {}", reason),
+                    });
+                }
+                None => {
+                    blockers.push(Blocker {
+                        resource: api_svc_id.clone(),
+                        reason: "APIService not in binding candidates".to_string(),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: api_svc_id,
+                        reason: "UID binding not attempted".to_string(),
+                    });
+                }
+            }
         } else {
             phase4_actions.push(Action::Keep {
                 resource: api_svc_id,
@@ -2873,6 +3059,109 @@ pub async fn generate_teardown_plan(
     }
     phases.push(phase4);
     phases.push(phase5);
+
+    // UID binding: bind current UIDs to all DELETE/EXPECT actions that lack them
+    // (e.g., --prune-apis CRDs). This happens at plan generation time so the plan
+    // presented to the user for confirmation includes the actual resource identities.
+    // Binding failure → blocker (no mutation allowed).
+    {
+        let needs_binding: Vec<(usize, usize, ResourceId)> = phases
+            .iter()
+            .enumerate()
+            .flat_map(|(pi, phase)| {
+                phase.actions.iter().enumerate().filter_map(move |(ai, a)| {
+                    match a {
+                        // DELETE UIDs should already be bound by per-type binding above.
+                        // Only bind EXPECT actions here (observe-only, no DELETE authority).
+                        Action::ExpectGone { resource, .. } => {
+                            if resource.uid.is_none()
+                                || resource.uid.as_ref().is_some_and(|u| u.is_empty())
+                            {
+                                Some((pi, ai, resource.clone()))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+            })
+            .collect();
+
+        if !needs_binding.is_empty() {
+            // Each future carries its phase/action indices so result ordering
+            // from buffer_unordered doesn't matter.
+            let futs = needs_binding.iter().map(|(pi, ai, res)| {
+                let client = client.clone();
+                let res = res.clone();
+                let km = kind_map.clone();
+                let gk = gk_map.clone();
+                let pi = *pi;
+                let ai = *ai;
+                async move {
+                    let result = match resolve_api(&client, &res, &km, &gk) {
+                        Some((api, _)) => match api.get(&res.name).await {
+                            Ok(obj) => match obj.metadata.uid {
+                                Some(uid) => BindResult::Bound(uid),
+                                None => BindResult::Failed(
+                                    "live resource has no UID".to_string(),
+                                ),
+                            },
+                            Err(kube::Error::Api(err)) if err.code == 404 => {
+                                match api.list(&ListParams::default().limit(1)).await {
+                                    Ok(_) => BindResult::Absent,
+                                    Err(_) => BindResult::Failed(
+                                        "GET 404 but endpoint verification failed"
+                                            .to_string(),
+                                    ),
+                                }
+                            }
+                            Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
+                        },
+                        None => BindResult::Failed(
+                            "cannot resolve API for resource".to_string(),
+                        ),
+                    };
+                    (pi, ai, res, result)
+                }
+            });
+
+            let results: Vec<_> = futures::stream::iter(futs)
+                .buffer_unordered(16)
+                .collect()
+                .await;
+
+            // Apply by carried indices — order-independent
+            for (pi, ai, res, bind_result) in &results {
+                match bind_result {
+                    BindResult::Bound(uid) => {
+                        let action_res = match &mut phases[*pi].actions[*ai] {
+                            Action::Delete { resource, .. }
+                            | Action::ExpectGone { resource, .. } => resource,
+                            _ => continue,
+                        };
+                        action_res.uid = Some(uid.clone());
+                    }
+                    BindResult::Absent => {
+                        // Resource already gone at plan time — keep in plan,
+                        // executor will handle as AlreadyGone
+                    }
+                    BindResult::Failed(reason) => {
+                        // EXPECT actions are observe-only — binding failure is a warning,
+                        // not a blocker (no DELETE authority involved).
+                        warnings.push(Warning {
+                            message: format!(
+                                "Cannot bind UID for {}/{}: {}. \
+                                 Observation may be less precise.",
+                                res.kind, res.name, reason
+                            ),
+                            resource: Some(res.clone()),
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     let plan = TeardownPlan {
         targets,
@@ -3731,5 +4020,147 @@ mod tests {
 
         assert!(matches!(&phases[0].actions[0], Action::Keep { .. }));
         assert!(matches!(&phases[0].actions[1], Action::Keep { .. }));
+    }
+
+    // ── probe_uid mock API tests ──
+
+    use std::pin::pin;
+    use kube::client::Body;
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": reason,
+            "reason": reason,
+            "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn make_mock_api(
+        mock_service: tower_test::mock::Mock<http::Request<Body>, http::Response<Body>>,
+    ) -> kube::api::Api<kube::api::DynamicObject> {
+        let client = Client::new(mock_service, "default");
+        let gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
+            .with_kind("CustomResourceDefinition");
+        let ar = kube::api::ApiResource::from_gvk_with_plural(
+            &gvk,
+            "customresourcedefinitions",
+        );
+        kube::api::Api::all_with(client, &ar)
+    }
+
+    #[tokio::test]
+    async fn test_probe_uid_get404_list200_is_absent() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let api = make_mock_api(mock_service);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET → 404
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(status_response(404, "NotFound"));
+
+            // LIST (endpoint verification) → 200
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "CustomResourceDefinitionList",
+                "metadata": { "resourceVersion": "1" },
+                "items": []
+            })));
+        });
+
+        let result = probe_uid(&api, "test-crd.example.com").await;
+        assert!(
+            matches!(result, BindResult::Absent),
+            "GET 404 + LIST 200 should be Absent, got: {:?}",
+            std::mem::discriminant(&result)
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_probe_uid_get404_list403_is_failed() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let api = make_mock_api(mock_service);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET → 404
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(status_response(404, "NotFound"));
+
+            // LIST → 403
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        let result = probe_uid(&api, "test-crd.example.com").await;
+        assert!(
+            matches!(result, BindResult::Failed(ref msg) if msg.contains("endpoint verification failed")),
+            "GET 404 + LIST 403 should be Failed, got: {:?}",
+            std::mem::discriminant(&result)
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_probe_uid_get200_returns_bound_uid() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let api = make_mock_api(mock_service);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET → 200 with UID
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "apiextensions.k8s.io/v1",
+                "kind": "CustomResourceDefinition",
+                "metadata": {
+                    "name": "test-crd.example.com",
+                    "uid": "uid-B"
+                }
+            })));
+        });
+
+        let result = probe_uid(&api, "test-crd.example.com").await;
+        assert!(
+            matches!(result, BindResult::Bound(ref uid) if uid == "uid-B"),
+            "GET 200 with UID should be Bound(uid-B), got: {:?}",
+            std::mem::discriminant(&result)
+        );
+
+        spawned.await.unwrap();
     }
 }

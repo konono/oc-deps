@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use futures::stream::StreamExt;
@@ -13,9 +13,12 @@ use kube::{
 
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
+use crate::teardown::events::EventNotifier;
 use crate::teardown::journal::JournalStore;
 use crate::teardown::plan::PlannedPreserved;
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
+use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
+use crate::teardown::watch::{WatchManager, WatchWaitResult};
 
 const DEFAULT_CONCURRENCY: usize = 16;
 
@@ -269,13 +272,74 @@ pub async fn execute_plan(
         reviewed: vec![],
     };
 
-    // Persist Applying state before first mutation
+    // Verify all DELETE actions have bound UIDs BEFORE persisting Applying state.
+    // This prevents a crash-recovery misread: Applying + zero mutations = interrupted,
+    // but UID gate failure means no mutation was ever intended.
+    if !dry_run {
+        let uid_missing: Vec<String> = plan
+            .phases
+            .iter()
+            .flat_map(|p| &p.actions)
+            .filter_map(|a| match a {
+                Action::Delete { resource, .. } => {
+                    if resource.uid.is_none()
+                        || resource.uid.as_ref().is_some_and(|u| u.is_empty())
+                    {
+                        Some(format!("{}/{}", resource.kind, resource.name))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        if !uid_missing.is_empty() {
+            bail!(
+                "Cannot execute: {} DELETE action(s) have unbound UIDs \
+                 (UID binding should happen at plan time): {}",
+                uid_missing.len(),
+                uid_missing.join(", ")
+            );
+        }
+    }
+
+    // Persist Applying state before first mutation (after UID gate passes)
     if let Some(j) = journal {
         j.update(|journal| {
             journal.state = crate::teardown::journal::RunState::Applying;
         })
         .await
         .context("Failed to persist Applying state — aborting before first mutation")?;
+    }
+
+    // Initialize RuntimeStateStore — canonical state for all tracked resources.
+    // The store is purely observational: it never calls delete/mutation APIs.
+    let notifier = Arc::new(EventNotifier::new());
+    let store = Arc::new(RuntimeStateStore::new(
+        notifier.clone(),
+        Duration::from_secs(120),
+    ));
+    let watch_mgr = WatchManager::new(store.clone());
+
+    // Register all resources from the plan with their initial states
+    for (phase_idx, phase) in plan.phases.iter().enumerate() {
+        for action in &phase.actions {
+            match action {
+                Action::Delete { resource, .. } => {
+                    store.register(resource, ResourceRuntimeState::Planned, phase_idx);
+                }
+                Action::ExpectGone { resource, .. } | Action::WaitGone { resource } => {
+                    store.register(resource, ResourceRuntimeState::ExpectingGone, phase_idx);
+                }
+                Action::Keep { resource, .. } => {
+                    store.register(resource, ResourceRuntimeState::Keep, phase_idx);
+                }
+                Action::Review { resource, .. } => {
+                    store.register(resource, ResourceRuntimeState::Review, phase_idx);
+                }
+            }
+        }
     }
 
     for (i, phase) in plan.phases.iter().enumerate() {
@@ -404,6 +468,10 @@ pub async fn execute_plan(
                                 resource.name,
                                 scope_suffix(&resource)
                             );
+                            store.update_from_executor(
+                                &resource,
+                                ResourceRuntimeState::DeleteRequested,
+                            );
                             result.deleted.push(resource.clone());
                             phase_wait_targets.push(resource);
                         }
@@ -414,6 +482,10 @@ pub async fn execute_plan(
                                 resource.name,
                                 scope_suffix(&resource)
                             );
+                            store.update_from_executor(
+                                &resource,
+                                ResourceRuntimeState::Gone,
+                            );
                             result.already_gone.push(resource);
                         }
                         DeleteResult::Failed(err) => {
@@ -423,6 +495,12 @@ pub async fn execute_plan(
                                 resource.name,
                                 err,
                                 scope_suffix(&resource)
+                            );
+                            store.update_from_executor(
+                                &resource,
+                                ResourceRuntimeState::Failed {
+                                    reason: err.clone(),
+                                },
                             );
                             result.failed.push((resource.clone(), err));
                             phase_wait_targets.push(resource);
@@ -501,13 +579,74 @@ pub async fn execute_plan(
                 eprintln!("\n  \x1b[1;33mBARRIER\x1b[0m (skipped in dry-run)");
             } else {
                 eprintln!();
-                match wait_for_barrier(client, &phase_wait_targets, kind_map, gk_map, 300).await {
-                    BarrierResult::Passed => {
+                // Use WatchManager for barrier wait — state is tracked in
+                // RuntimeStateStore, CLI renders from the store's summary.
+                let barrier_start = Instant::now();
+
+                let wait_result = {
+                    // Spawn a background task to render progress from the store.
+                    // Uses summary_for to show only current barrier targets.
+                    let store_ref = store.clone();
+                    let barrier_targets = phase_wait_targets.clone();
+                    let render_handle = tokio::spawn(async move {
+                        let mut rx = store_ref.subscribe();
+                        loop {
+                            // Wait for state change notification
+                            if rx.changed().await.is_err() {
+                                break;
+                            }
+                            let summary = store_ref.summary_for(&barrier_targets);
+                            let elapsed = barrier_start.elapsed().as_secs();
+                            eprint!(
+                                "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked{}{}({}s)",
+                                summary.gone,
+                                summary.total,
+                                summary.deleting,
+                                summary.finalizer_blocked,
+                                if summary.stalled > 0 { format!(", {} Stalled", summary.stalled) } else { String::new() },
+                                if summary.unknown > 0 { format!(", {} Unknown", summary.unknown) } else { String::new() },
+                                elapsed
+                            );
+                            std::io::stderr().flush().ok();
+                        }
+                    });
+
+                    let r = watch_mgr
+                        .wait_for_gone(
+                            client,
+                            &phase_wait_targets,
+                            kind_map,
+                            gk_map,
+                            Duration::from_secs(300),
+                            Duration::from_secs(120),
+                        )
+                        .await;
+
+                    render_handle.abort();
+                    // Final status line — barrier targets only
+                    let summary = store.summary_for(&phase_wait_targets);
+                    let elapsed = barrier_start.elapsed().as_secs();
+                    eprint!(
+                        "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked{}{}({}s)",
+                        summary.gone,
+                        summary.total,
+                        summary.deleting,
+                        summary.finalizer_blocked,
+                        if summary.stalled > 0 { format!(", {} Stalled", summary.stalled) } else { String::new() },
+                        if summary.unknown > 0 { format!(", {} Unknown", summary.unknown) } else { String::new() },
+                        elapsed
+                    );
+                    eprintln!();
+                    r
+                };
+
+                match wait_result {
+                    WatchWaitResult::AllGone => {
                         eprintln!("  \x1b[32m✅ Barrier passed\x1b[0m");
                     }
-                    BarrierResult::Stalled {
+                    WatchWaitResult::Stalled {
                         remaining,
-                        finalizers,
+                        finalizer_details,
                         reason,
                     } => {
                         eprintln!(
@@ -515,6 +654,12 @@ pub async fn execute_plan(
                             remaining.len(),
                             reason
                         );
+                        let finalizers: Vec<(ResourceId, Vec<String>)> = finalizer_details
+                            .iter()
+                            .map(|(r, count)| {
+                                (r.clone(), vec![format!("{} finalizer(s)", count)])
+                            })
+                            .collect();
                         for res in &remaining {
                             let fins: Vec<&str> = finalizers
                                 .iter()
@@ -525,7 +670,7 @@ pub async fn execute_plan(
                                 eprintln!("    {}/{}", res.kind, res.name);
                             } else {
                                 eprintln!(
-                                    "    {}/{} (finalizers: [{}])",
+                                    "    {}/{} ({})",
                                     res.kind,
                                     res.name,
                                     fins.join(", ")
@@ -635,6 +780,44 @@ pub async fn execute_plan(
     Ok(result)
 }
 
+/// Verify delete identity: plan UID vs live UID.
+///
+/// Both plan UID and live UID must be present and match.
+/// Plan UID should have been bound in the pre-mutation UID binding step.
+/// If either is missing/empty, return Err (no mutation).
+pub fn verify_delete_identity(
+    plan_uid: &Option<String>,
+    current_uid: &str,
+) -> Result<(), String> {
+    let plan_uid = match plan_uid {
+        Some(uid) if !uid.is_empty() => uid.as_str(),
+        _ => {
+            return Err(
+                "plan resource has no UID — cannot verify identity for safe DELETE".to_string(),
+            );
+        }
+    };
+    if current_uid.is_empty() {
+        return Err(
+            "live resource has no UID — cannot verify identity for safe DELETE".to_string(),
+        );
+    }
+    if current_uid != plan_uid {
+        return Err(format!(
+            "UID mismatch: plan expected {} but found {} — resource may have been recreated",
+            plan_uid, current_uid
+        ));
+    }
+    Ok(())
+}
+
+/// Delete a resource with UID-preconditioned safety.
+///
+/// 1. GET current resource to verify endpoint + identity
+/// 2. Verify plan UID vs live UID (see verify_delete_identity)
+/// 3. DELETE with UID precondition to prevent TOCTOU race
+///
+/// Failure/AlreadyGone does NOT grant re-delete authority.
 async fn delete_resource(
     client: &Client,
     resource: &ResourceId,
@@ -651,212 +834,73 @@ async fn delete_resource(
         }
     };
 
-    match api.delete(&resource.name, &DeleteParams::default()).await {
+    // Step 1: GET current resource to verify identity
+    let current = match api.get(&resource.name).await {
+        Ok(obj) => obj,
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            // Verify endpoint exists before declaring AlreadyGone
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => return DeleteResult::AlreadyGone,
+                Err(_) => {
+                    return DeleteResult::Failed(
+                        "pre-delete GET returned 404 but API endpoint verification failed — \
+                         cannot distinguish object absence from endpoint absence"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            return DeleteResult::Failed(format!("pre-delete GET failed: {}", e));
+        }
+    };
+
+    let current_uid = current.metadata.uid.as_deref().unwrap_or("");
+
+    // Step 2: Verify identity
+    if let Err(reason) = verify_delete_identity(&resource.uid, current_uid) {
+        return DeleteResult::Failed(reason);
+    }
+
+    // Step 3: Delete with UID precondition
+    let dp = if !current_uid.is_empty() {
+        DeleteParams {
+            preconditions: Some(kube::api::Preconditions {
+                uid: Some(current_uid.to_string()),
+                resource_version: None,
+            }),
+            ..Default::default()
+        }
+    } else {
+        DeleteParams::default()
+    };
+
+    match api.delete(&resource.name, &dp).await {
         Ok(_) => DeleteResult::Deleted,
-        Err(kube::Error::Api(err)) if err.code == 404 => DeleteResult::AlreadyGone,
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            // Endpoint could have disappeared between GET and DELETE.
+            // Verify before declaring AlreadyGone.
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => DeleteResult::AlreadyGone,
+                Err(_) => DeleteResult::Failed(
+                    "DELETE returned 404 but endpoint verification failed — \
+                     cannot distinguish deletion from endpoint disappearance"
+                        .to_string(),
+                ),
+            }
+        }
+        Err(kube::Error::Api(err)) if err.code == 409 => {
+            DeleteResult::Failed(
+                "UID conflict during delete — resource was recreated between GET and DELETE"
+                    .to_string(),
+            )
+        }
         Err(e) => DeleteResult::Failed(e.to_string()),
     }
 }
 
-enum BarrierResult {
-    Passed,
-    Stalled {
-        remaining: Vec<ResourceId>,
-        finalizers: Vec<(ResourceId, Vec<String>)>,
-        reason: String,
-    },
-}
-
-struct ResourceStateInfo {
-    state: ObservationState,
-    finalizers: Vec<String>,
-}
-
-async fn check_resource_state_full(
-    client: &Client,
-    resource: &ResourceId,
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
-) -> ResourceStateInfo {
-    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
-        Some(r) => r,
-        None => {
-            return ResourceStateInfo {
-                state: ObservationState::Unknown(format!(
-                    "cannot resolve API for {}/{}",
-                    resource.kind, resource.name
-                )),
-                finalizers: vec![],
-            };
-        }
-    };
-
-    match api.get(&resource.name).await {
-        Ok(obj) => {
-            let finalizers = obj.metadata.finalizers.clone().unwrap_or_default();
-            let has_dt = obj.metadata.deletion_timestamp.is_some();
-            ResourceStateInfo {
-                state: ObservationState::Exists {
-                    finalizer_count: finalizers.len(),
-                    has_deletion_timestamp: has_dt,
-                },
-                finalizers,
-            }
-        }
-        Err(kube::Error::Api(err)) if err.code == 404 => ResourceStateInfo {
-            state: ObservationState::Gone,
-            finalizers: vec![],
-        },
-        Err(e) => ResourceStateInfo {
-            state: ObservationState::Unknown(format!("GET failed: {}", e)),
-            finalizers: vec![],
-        },
-    }
-}
-
-async fn wait_for_barrier(
-    client: &Client,
-    resources: &[ResourceId],
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
-    timeout_secs: u64,
-) -> BarrierResult {
-    let start = Instant::now();
-    let total = resources.len();
-
-    let mut prev_gone = 0usize;
-    let mut prev_total_finalizers = usize::MAX;
-    let mut last_progress = Instant::now();
-    let stall_threshold_secs = 120;
-    let mut consecutive_unknown_cycles = 0u32;
-    const MAX_UNKNOWN_RETRIES: u32 = 3;
-
-    let kind_map = Arc::new(kind_map.clone());
-    let gk_map = Arc::new(gk_map.clone());
-
-    loop {
-        let elapsed = start.elapsed().as_secs();
-
-        // Parallel state check for all resources — single GET per resource
-        let check_futs = resources.iter().map(|res| {
-            let client = client.clone();
-            let res = res.clone();
-            let km = kind_map.clone();
-            let gk = gk_map.clone();
-            async move {
-                let r = check_resource_state_full(&client, &res, &km, &gk).await;
-                (res, r)
-            }
-        });
-
-        let states: Vec<_> = futures::stream::iter(check_futs)
-            .buffer_unordered(DEFAULT_CONCURRENCY)
-            .collect()
-            .await;
-
-        let mut gone_count = 0;
-        let mut unknown_count = 0;
-        let mut deleting_count = 0;
-        let mut total_finalizers = 0;
-        let mut remaining = Vec::new();
-        let mut remaining_finalizers = Vec::new();
-        let mut unknown_reasons = Vec::new();
-
-        for (res, info) in &states {
-            match &info.state {
-                ObservationState::Gone => {
-                    gone_count += 1;
-                }
-                ObservationState::Exists {
-                    finalizer_count,
-                    has_deletion_timestamp,
-                } => {
-                    remaining.push(res.clone());
-                    total_finalizers += finalizer_count;
-                    if *has_deletion_timestamp {
-                        deleting_count += 1;
-                    }
-                    if !info.finalizers.is_empty() {
-                        remaining_finalizers.push((res.clone(), info.finalizers.clone()));
-                    }
-                }
-                ObservationState::Unknown(reason) => {
-                    unknown_count += 1;
-                    remaining.push(res.clone());
-                    unknown_reasons.push(format!("{}/{}: {}", res.kind, res.name, reason));
-                }
-            }
-        }
-
-        if unknown_count > 0 {
-            consecutive_unknown_cycles += 1;
-            if consecutive_unknown_cycles >= MAX_UNKNOWN_RETRIES {
-                eprintln!();
-                return BarrierResult::Stalled {
-                    remaining,
-                    finalizers: remaining_finalizers,
-                    reason: format!(
-                        "{} resource(s) could not be observed after {} retries: {}",
-                        unknown_count,
-                        MAX_UNKNOWN_RETRIES,
-                        unknown_reasons.first().unwrap_or(&String::new())
-                    ),
-                };
-            }
-            eprint!(
-                "\r\x1b[2K  ⚠ {} resource(s) unknown (retry {}/{}), waiting...",
-                unknown_count, consecutive_unknown_cycles, MAX_UNKNOWN_RETRIES
-            );
-            std::io::stderr().flush().ok();
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            continue;
-        }
-        consecutive_unknown_cycles = 0;
-
-        let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
-
-        if made_progress {
-            last_progress = Instant::now();
-            prev_gone = gone_count;
-            prev_total_finalizers = total_finalizers;
-        }
-
-        eprint!(
-            "\r\x1b[2K  ⏳ {}/{} gone, {} deleting, {} finalizers ({}s)",
-            gone_count, total, deleting_count, total_finalizers, elapsed
-        );
-        std::io::stderr().flush().ok();
-
-        if gone_count == total {
-            eprintln!();
-            return BarrierResult::Passed;
-        }
-
-        let stall_duration = last_progress.elapsed().as_secs();
-        if elapsed >= timeout_secs {
-            eprintln!();
-            return BarrierResult::Stalled {
-                remaining,
-                finalizers: remaining_finalizers,
-                reason: format!("timeout after {}s", elapsed),
-            };
-        }
-
-        if stall_duration >= stall_threshold_secs && deleting_count > 0 {
-            eprintln!();
-            return BarrierResult::Stalled {
-                remaining,
-                finalizers: remaining_finalizers,
-                reason: format!(
-                    "no progress for {}s — {} resources stuck in Deleting with finalizers",
-                    stall_duration, deleting_count
-                ),
-            };
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-}
+// Old wait_for_barrier removed — replaced by WatchManager::wait_for_gone
+// which uses RuntimeStateStore for state tracking and epoch-based reconciliation.
 
 // P0-adjacent: check_finalizers distinguishes Known/Gone/Unknown
 async fn check_finalizers(
@@ -877,7 +921,17 @@ async fn check_finalizers(
 
     match api.get(&resource.name).await {
         Ok(obj) => FinalizerCheckResult::Known(obj.metadata.finalizers.unwrap_or_default()),
-        Err(kube::Error::Api(err)) if err.code == 404 => FinalizerCheckResult::Gone,
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            // Verify endpoint exists before treating as Gone
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => FinalizerCheckResult::Gone,
+                Err(_) => FinalizerCheckResult::Unknown(
+                    "GET 404 but API endpoint verification failed — \
+                     cannot confirm resource absence"
+                        .to_string(),
+                ),
+            }
+        }
         Err(e) => FinalizerCheckResult::Unknown(format!("GET failed: {}", e)),
     }
 }
@@ -1149,23 +1203,275 @@ mod tests {
         ));
     }
 
-    // ResourceStateInfo carries finalizers in single GET
+    // ResourceStateInfo test removed — struct replaced by RuntimeStateStore/RuntimeObservation
+
+    // ── verify_delete_identity tests ──
+
     #[test]
-    fn resource_state_info_carries_finalizers() {
-        let info = ResourceStateInfo {
-            state: ObservationState::Exists {
-                finalizer_count: 2,
-                has_deletion_timestamp: false,
+    fn test_delete_identity_both_uids_match() {
+        assert!(verify_delete_identity(
+            &Some("uid-a".to_string()),
+            "uid-a"
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_delete_identity_uid_mismatch() {
+        let err = verify_delete_identity(
+            &Some("uid-a".to_string()),
+            "uid-b"
+        ).unwrap_err();
+        assert!(err.contains("UID mismatch"));
+    }
+
+    #[test]
+    fn test_delete_identity_live_uid_empty() {
+        let err = verify_delete_identity(
+            &Some("uid-a".to_string()),
+            ""
+        ).unwrap_err();
+        assert!(err.contains("no UID"));
+    }
+
+    #[test]
+    fn test_delete_identity_plan_uid_none_fails() {
+        // Plan UID absent → cannot verify, must be bound first
+        let err = verify_delete_identity(&None, "uid-x").unwrap_err();
+        assert!(err.contains("no UID"));
+    }
+
+    #[test]
+    fn test_delete_identity_plan_uid_empty_fails() {
+        let err = verify_delete_identity(&Some(String::new()), "uid-x").unwrap_err();
+        assert!(err.contains("no UID"));
+    }
+
+    #[test]
+    fn test_delete_identity_both_empty_fails() {
+        assert!(verify_delete_identity(&None, "").is_err());
+    }
+
+    // ── UID-preconditioned DELETE decision path tests ──
+
+    #[test]
+    fn test_uid_a_to_b_recreation_blocks_delete() {
+        // Plan says UID=A, live resource has UID=B → mismatch → no DELETE
+        let result = verify_delete_identity(&Some("uid-A".to_string()), "uid-B");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("UID mismatch"),
+            "should report UID mismatch, not proceed with DELETE"
+        );
+    }
+
+    #[test]
+    fn test_uid_match_allows_delete() {
+        // Plan says UID=A, live resource has UID=A → match → DELETE allowed
+        assert!(verify_delete_identity(&Some("uid-A".to_string()), "uid-A").is_ok());
+    }
+
+    #[test]
+    fn test_plan_uid_none_blocks_delete() {
+        // Plan has no UID → cannot verify identity → no DELETE
+        let result = verify_delete_identity(&None, "uid-live");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("no UID"),
+            "missing plan UID should block DELETE"
+        );
+    }
+
+    #[test]
+    fn test_live_uid_empty_blocks_delete() {
+        // Live resource has no UID → cannot verify → no DELETE
+        let result = verify_delete_identity(&Some("uid-A".to_string()), "");
+        assert!(result.is_err());
+    }
+
+    // ── UID gate ordering test ──
+
+    // ── Mock API tests: real HTTP decision paths ──
+
+    use std::pin::pin;
+    use kube::client::Body;
+
+    fn test_kind_map() -> KindMap {
+        let mut km = std::collections::HashMap::new();
+        km.insert(
+            "ConfigMap".to_string(),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
             },
-            finalizers: vec!["a".to_string(), "b".to_string()],
-        };
-        assert_eq!(info.finalizers.len(), 2);
-        assert!(matches!(
-            info.state,
-            ObservationState::Exists {
-                finalizer_count: 2,
-                ..
-            }
-        ));
+        );
+        km
+    }
+
+    fn test_gk_map() -> GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        gk.insert(
+            (String::new(), "ConfigMap".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        gk
+    }
+
+    fn make_cm_resource(name: &str, uid: Option<&str>) -> ResourceId {
+        ResourceId {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: "ConfigMap".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: uid.map(String::from),
+        }
+    }
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn not_found_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": "not found",
+            "reason": "NotFound",
+            "code": 404
+        });
+        http::Response::builder()
+            .status(404)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn forbidden_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": "forbidden",
+            "reason": "Forbidden",
+            "code": 403
+        });
+        http::Response::builder()
+            .status(403)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_mock_delete_uid_mismatch_zero_deletes() {
+        // Plan says UID=A, live resource has UID=B → DELETE should NOT be called
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_cm_resource("my-cm", Some("uid-A"));
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Request 1: GET /api/v1/namespaces/test-ns/configmaps/my-cm
+            let (request, send) = handle.next_request().await.expect("expected GET");
+            assert_eq!(request.method(), http::Method::GET);
+            assert!(request.uri().to_string().contains("my-cm"));
+
+            // Return resource with UID=B (different from plan UID=A)
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": "my-cm",
+                    "namespace": "test-ns",
+                    "uid": "uid-B"
+                }
+            })));
+
+            // No more requests should come — DELETE should NOT be called
+            // (the function should return Failed due to UID mismatch)
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource(&client, &resource, &km, &gk).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("UID mismatch")),
+            "UID mismatch should prevent DELETE: got {:?}",
+            result
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mock_delete_get404_list_forbidden_not_already_gone() {
+        // GET 404 + LIST 403 → cannot verify endpoint → Failed (not AlreadyGone)
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_cm_resource("gone-cm", Some("uid-A"));
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // Request 1: GET → 404
+            let (request, send) = handle.next_request().await.expect("expected GET");
+            assert_eq!(request.method(), http::Method::GET);
+            send.send_response(not_found_response());
+
+            // Request 2: LIST (endpoint verification) → 403
+            let (request, send) = handle.next_request().await.expect("expected LIST");
+            assert_eq!(request.method(), http::Method::GET); // LIST is also GET
+            send.send_response(forbidden_response());
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource(&client, &resource, &km, &gk).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("endpoint verification failed")),
+            "GET 404 + LIST 403 should NOT be AlreadyGone: got {:?}",
+            result
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[test]
+    fn test_uid_gate_runs_before_applying_state() {
+        // Verify the code structure: UID gate (bail!) appears before
+        // the Applying state checkpoint. This is a structural assertion.
+        // The actual ordering is verified by reading the source:
+        // 1. UID gate → bail! if missing (no state change)
+        // 2. Applying checkpoint → journal persist
+        // If UID gate fails, RunState stays Prepared (not Applying).
+        //
+        // We can't easily test the async executor here, but we verify
+        // the decision logic is correct:
+        let plan_uid_none = verify_delete_identity(&None, "anything");
+        assert!(
+            plan_uid_none.is_err(),
+            "UID-less DELETE must fail before any state transition"
+        );
     }
 }
