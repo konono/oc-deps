@@ -1348,6 +1348,19 @@ pub async fn execute_residual_cleanup(
             }
         }
 
+        // Final generation recheck after post-permit audit, before durable decision
+        {
+            let pre_dec_j = journal_store.read().await;
+            let pre_dec_gen = audit::check_operator_generation(
+                client, &pre_dec_j.operator, &pre_dec_j.audit_context.csv_baseline,
+            ).await;
+            if !matches!(pre_dec_gen, audit::OperatorGenerationState::Absent) {
+                result.skipped.push(((*res).clone(), "generation changed during post-permit audit".to_string()));
+                drop(_permit);
+                break;
+            }
+        }
+
         // Record decision BEFORE mutation (durable)
         let decision_uid = res.uid.clone();
         let res_clone = (*res).clone();

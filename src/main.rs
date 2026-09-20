@@ -1626,6 +1626,41 @@ async fn main() -> Result<()> {
                                             // 4. DELETE with permit held through checkpoint
                                             let _permit = gate.acquire().await
                                                 .context("Mutation gate closed during cleanup resume")?;
+
+                                            // Post-permit rechecks: generation + audit + membership could have changed
+                                            {
+                                                let pp_j = store.read().await;
+                                                let pp_gen = audit::check_operator_generation(
+                                                    &client, &pp_j.operator, &pp_j.audit_context.csv_baseline,
+                                                ).await;
+                                                if !matches!(pp_gen, OperatorGenerationState::Absent) {
+                                                    bail!("Generation changed after permit acquisition — aborting resume");
+                                                }
+                                                let pp_audit = audit::run_residual_audit(&client, &pp_j).await
+                                                    .context("Post-permit audit failed during resume")?;
+                                                let pp_status = audit::residual_status_from_audit(&pp_audit);
+                                                if matches!(pp_status, journal::ResidualStatus::AuditIncomplete) {
+                                                    bail!("Post-permit audit incomplete — aborting resume");
+                                                }
+                                                let pp_in_set = pp_audit.likely_operator_residual.iter()
+                                                    .chain(pp_audit.unattributed.iter())
+                                                    .any(|r| r.resource.group == decision.resource.group
+                                                        && r.resource.kind == decision.resource.kind
+                                                        && r.resource.name == decision.resource.name
+                                                        && r.resource.namespace == decision.resource.namespace);
+                                                if !pp_in_set {
+                                                    bail!("{}/{} no longer in residual set after permit acquisition",
+                                                        decision.resource.kind, decision.resource.name);
+                                                }
+                                                // Final generation recheck after audit
+                                                let pp_gen2 = audit::check_operator_generation(
+                                                    &client, &pp_j.operator, &pp_j.audit_context.csv_baseline,
+                                                ).await;
+                                                if !matches!(pp_gen2, OperatorGenerationState::Absent) {
+                                                    bail!("Generation changed during post-permit audit — aborting resume");
+                                                }
+                                            }
+
                                             let del = crate::teardown::executor::delete_resource_pub(
                                                 &client, &decision.resource, &kind_map, &gk_map, None,
                                             ).await;
