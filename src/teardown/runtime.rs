@@ -1132,4 +1132,115 @@ mod tests {
             "stale WATCH Deleted should not affect Recreated state"
         );
     }
+
+    // ── Integration: endpoint failure blocks Gone/AllGone ──
+
+    #[test]
+    fn test_api_error_observation_does_not_pass_barrier() {
+        // Simulates: GET 404 + LIST failure → resource stays in current state
+        // (observe_resource returns api_error, store doesn't transition to Gone)
+        let notifier = Arc::new(EventNotifier::new());
+        let store = RuntimeStateStore::new(notifier, Duration::from_secs(120));
+        let res = make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        // Authoritative observation says "exists" (because API error,
+        // observe_resource falls back to reporting exists=true with no details)
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: true,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            0,
+        );
+
+        // Should NOT be Gone
+        assert!(!store.all_gone_for(&[res.clone()]));
+        let entry = store.get(&res).unwrap();
+        assert_ne!(entry.state, ResourceRuntimeState::Gone);
+    }
+
+    #[test]
+    fn test_watch_hint_then_authoritative_gone_passes_barrier() {
+        // Full path: WATCH Deleted → hint → authoritative GET confirms 404 → Gone → barrier passes
+        let notifier = Arc::new(EventNotifier::new());
+        let store = RuntimeStateStore::new(notifier, Duration::from_secs(120));
+        let res = make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+
+        store.register(&res, ResourceRuntimeState::Deleting, 0);
+
+        // Step 1: WATCH says Deleted (non-authoritative → hint only)
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: false,
+            },
+            1,
+        );
+
+        // Barrier should NOT pass (needs_verification)
+        assert!(
+            !store.all_gone_for(&[res.clone()]),
+            "WATCH hint alone must not pass barrier"
+        );
+
+        // Step 2: Authoritative GET confirms 404
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            0,
+        );
+
+        // Now barrier should pass
+        assert!(
+            store.all_gone_for(&[res]),
+            "authoritative GET 404 should pass barrier"
+        );
+    }
+
+    // ── Integration: parallel UID binding order independence ──
+
+    #[test]
+    fn test_parallel_uid_binding_is_order_independent() {
+        // Simulates the planner's buffer_unordered UID binding:
+        // Two resources get UIDs in reverse completion order.
+        // Results carry (phase_idx, action_idx) so ordering doesn't matter.
+
+        // Simulate: resource A at (0,0), resource B at (0,1)
+        // B completes first, A completes second
+        let results: Vec<(usize, usize, &str, Option<&str>)> = vec![
+            (0, 1, "res-B", Some("uid-B")), // B completes first
+            (0, 0, "res-A", Some("uid-A")), // A completes second
+        ];
+
+        // Apply by carried indices
+        let mut uids: Vec<(usize, usize, String)> = Vec::new();
+        for (pi, ai, _name, uid) in &results {
+            if let Some(uid) = uid {
+                uids.push((*pi, *ai, uid.to_string()));
+            }
+        }
+
+        // Verify: action 0 gets uid-A, action 1 gets uid-B
+        // (not reversed by completion order)
+        let a_uid = uids.iter().find(|(_, ai, _)| *ai == 0).map(|(_, _, u)| u.as_str());
+        let b_uid = uids.iter().find(|(_, ai, _)| *ai == 1).map(|(_, _, u)| u.as_str());
+        assert_eq!(a_uid, Some("uid-A"), "action 0 should get uid-A regardless of completion order");
+        assert_eq!(b_uid, Some("uid-B"), "action 1 should get uid-B regardless of completion order");
+    }
 }

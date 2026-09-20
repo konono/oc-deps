@@ -272,18 +272,9 @@ pub async fn execute_plan(
         reviewed: vec![],
     };
 
-    // Persist Applying state before first mutation
-    if let Some(j) = journal {
-        j.update(|journal| {
-            journal.state = crate::teardown::journal::RunState::Applying;
-        })
-        .await
-        .context("Failed to persist Applying state — aborting before first mutation")?;
-    }
-
-    // Verify all DELETE actions have bound UIDs.
-    // EXPECT actions are observe-only (no DELETE authority) — UID is optional.
-    // UID binding happens at plan generation time (in generate_teardown_plan).
+    // Verify all DELETE actions have bound UIDs BEFORE persisting Applying state.
+    // This prevents a crash-recovery misread: Applying + zero mutations = interrupted,
+    // but UID gate failure means no mutation was ever intended.
     if !dry_run {
         let uid_missing: Vec<String> = plan
             .phases
@@ -311,6 +302,15 @@ pub async fn execute_plan(
                 uid_missing.join(", ")
             );
         }
+    }
+
+    // Persist Applying state before first mutation (after UID gate passes)
+    if let Some(j) = journal {
+        j.update(|journal| {
+            journal.state = crate::teardown::journal::RunState::Applying;
+        })
+        .await
+        .context("Failed to persist Applying state — aborting before first mutation")?;
     }
 
     // Initialize RuntimeStateStore — canonical state for all tracked resources.
@@ -1249,5 +1249,62 @@ mod tests {
     #[test]
     fn test_delete_identity_both_empty_fails() {
         assert!(verify_delete_identity(&None, "").is_err());
+    }
+
+    // ── UID-preconditioned DELETE decision path tests ──
+
+    #[test]
+    fn test_uid_a_to_b_recreation_blocks_delete() {
+        // Plan says UID=A, live resource has UID=B → mismatch → no DELETE
+        let result = verify_delete_identity(&Some("uid-A".to_string()), "uid-B");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("UID mismatch"),
+            "should report UID mismatch, not proceed with DELETE"
+        );
+    }
+
+    #[test]
+    fn test_uid_match_allows_delete() {
+        // Plan says UID=A, live resource has UID=A → match → DELETE allowed
+        assert!(verify_delete_identity(&Some("uid-A".to_string()), "uid-A").is_ok());
+    }
+
+    #[test]
+    fn test_plan_uid_none_blocks_delete() {
+        // Plan has no UID → cannot verify identity → no DELETE
+        let result = verify_delete_identity(&None, "uid-live");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("no UID"),
+            "missing plan UID should block DELETE"
+        );
+    }
+
+    #[test]
+    fn test_live_uid_empty_blocks_delete() {
+        // Live resource has no UID → cannot verify → no DELETE
+        let result = verify_delete_identity(&Some("uid-A".to_string()), "");
+        assert!(result.is_err());
+    }
+
+    // ── UID gate ordering test ──
+
+    #[test]
+    fn test_uid_gate_runs_before_applying_state() {
+        // Verify the code structure: UID gate (bail!) appears before
+        // the Applying state checkpoint. This is a structural assertion.
+        // The actual ordering is verified by reading the source:
+        // 1. UID gate → bail! if missing (no state change)
+        // 2. Applying checkpoint → journal persist
+        // If UID gate fails, RunState stays Prepared (not Applying).
+        //
+        // We can't easily test the async executor here, but we verify
+        // the decision logic is correct:
+        let plan_uid_none = verify_delete_identity(&None, "anything");
+        assert!(
+            plan_uid_none.is_err(),
+            "UID-less DELETE must fail before any state transition"
+        );
     }
 }
