@@ -257,6 +257,28 @@ async fn main() -> Result<()> {
                                         use crate::teardown::planner::Action;
                                         let mut mutated = plan.clone();
                                         for ovr in &app.draft_overrides {
+                                            // P0: override MUST match a REVIEW action in the plan
+                                            let found_review = mutated.phases.iter().any(|phase| {
+                                                phase.actions.iter().any(|a| {
+                                                    if let Action::Review { resource, .. } = a {
+                                                        resource.group == ovr.resource.group
+                                                            && resource.version == ovr.resource.version
+                                                            && resource.kind == ovr.resource.kind
+                                                            && resource.name == ovr.resource.name
+                                                            && resource.namespace == ovr.resource.namespace
+                                                    } else {
+                                                        false
+                                                    }
+                                                })
+                                            });
+                                            if !found_review {
+                                                bail!(
+                                                    "Override for {}/{}/{} does not match any REVIEW action in the plan. \
+                                                     Only REVIEW items can be overridden.",
+                                                    ovr.resource.group, ovr.resource.kind, ovr.resource.name
+                                                );
+                                            }
+
                                             for phase in &mut mutated.phases {
                                                 for action in &mut phase.actions {
                                                     if let Action::Review { resource, reason, .. } = action {
@@ -266,24 +288,31 @@ async fn main() -> Result<()> {
                                                             && resource.name == ovr.resource.name
                                                             && resource.namespace == ovr.resource.namespace
                                                         {
-                                                            // P0: Verify override UID matches plan UID
+                                                            // P0: Three-way UID verification:
+                                                            // 1. Override UID must be provided for DELETE
+                                                            // 2. Override UID must match plan UID
+                                                            // 3. Live UID must match plan UID
                                                             let ovr_uid = ovr.resource.uid.as_deref().unwrap_or("");
                                                             let plan_uid = resource.uid.as_deref().unwrap_or("");
-                                                            if !ovr_uid.is_empty() && !plan_uid.is_empty() && ovr_uid != plan_uid {
-                                                                bail!(
-                                                                    "Override UID {} does not match plan UID {} for {}/{}. \
-                                                                     The approval targets a different resource identity.",
-                                                                    ovr_uid, plan_uid, resource.kind, resource.name
-                                                                );
-                                                            }
 
                                                             match ovr.new_action {
                                                                 DraftAction::Delete => {
-                                                                    // DELETE approval requires UID in the override
                                                                     if ovr_uid.is_empty() {
                                                                         bail!(
                                                                             "Cannot approve DELETE for {}/{} without UID in approval",
                                                                             resource.kind, resource.name
+                                                                        );
+                                                                    }
+                                                                    if plan_uid.is_empty() {
+                                                                        bail!(
+                                                                            "Cannot approve DELETE for {}/{}: plan resource has no UID",
+                                                                            resource.kind, resource.name
+                                                                        );
+                                                                    }
+                                                                    if ovr_uid != plan_uid {
+                                                                        bail!(
+                                                                            "Override UID {} does not match plan UID {} for {}/{}",
+                                                                            ovr_uid, plan_uid, resource.kind, resource.name
                                                                         );
                                                                     }
 
