@@ -498,13 +498,30 @@ pub async fn execute_plan_with_store(
 
                 let km = Arc::new(kind_map.clone());
                 let gk = Arc::new(gk_map.clone());
+                // Extract package name for Subscription semantic identity check
+                // Read from journal if available (async read)
+                let pkg_name: Option<String> = if let Some(j_ref) = journal {
+                    let j = j_ref.read().await;
+                    match &j.operator.generation_identity {
+                        crate::teardown::plan::OperatorGenerationIdentity::OlmPackage { package_name, .. } => {
+                            Some(package_name.clone())
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 let del_futs = eligible.iter().map(|(resource, _)| {
                     let client = client.clone();
                     let resource = resource.clone();
                     let km = km.clone();
                     let gk = gk.clone();
+                    let pkg = pkg_name.clone();
                     async move {
-                        let res = delete_resource(&client, &resource, &km, &gk).await;
+                        let res = delete_resource_inner(
+                            &client, &resource, &km, &gk,
+                            pkg.as_deref(),
+                        ).await;
                         (resource, res)
                     }
                 });
@@ -879,6 +896,16 @@ async fn delete_resource(
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
 ) -> DeleteResult {
+    delete_resource_inner(client, resource, kind_map, gk_map, None).await
+}
+
+async fn delete_resource_inner(
+    client: &Client,
+    resource: &ResourceId,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    expected_package_name: Option<&str>,
+) -> DeleteResult {
     let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
         Some(r) => r,
         None => {
@@ -915,6 +942,23 @@ async fn delete_resource(
     // Step 2: Verify identity
     if let Err(reason) = verify_delete_identity(&resource.uid, current_uid) {
         return DeleteResult::Failed(reason);
+    }
+
+    // Step 2b: Subscription semantic identity check
+    if resource.kind == "Subscription" && resource.group == "operators.coreos.com" {
+        if let Some(expected_pkg) = expected_package_name {
+            let live_spec_name = current.data
+                .get("spec")
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            if live_spec_name != expected_pkg {
+                return DeleteResult::Failed(format!(
+                    "Subscription spec.name changed from '{}' to '{}' — semantic identity drift",
+                    expected_pkg, live_spec_name
+                ));
+            }
+        }
     }
 
     // Step 3: Delete with UID precondition

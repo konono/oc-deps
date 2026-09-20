@@ -602,9 +602,17 @@ async fn main() -> Result<()> {
                                                 }));
                                             }
                                             Err(e) => {
+                                                // Cleanup error may include post-mutation journal failure.
+                                                // Close gate to prevent further mutations and stop script.
+                                                g.close_and_drain().await;
                                                 events.push(serde_json::json!({
-                                                    "residual_cleanup_error": format!("{:#}", e)
+                                                    "residual_cleanup_error": format!("{:#}", e),
+                                                    "gate_closed": true,
+                                                    "script_stopped": true,
                                                 }));
+                                                // Break out of script command loop — no further mutations
+                                                app.selected_residuals.clear();
+                                                break;
                                             }
                                         }
                                         app.selected_residuals.clear();
@@ -2416,6 +2424,36 @@ async fn build_operator_identity_snapshot(
                 );
             }
         }
+        // Verify spec.name matches expected package
+        if let Some(ref expected_package) = first_op.package_name {
+            let sub_gvk = ::kube::core::GroupVersion::gv("operators.coreos.com", "v1alpha1")
+                .with_kind("Subscription");
+            let sub_ar = ::kube::api::ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
+            let sub_api: ::kube::api::Api<::kube::api::DynamicObject> = ::kube::api::Api::namespaced_with(
+                client.clone(),
+                sub.namespace.as_deref().unwrap_or(&first_op.install_namespace),
+                &sub_ar,
+            );
+            match sub_api.get(&sub.name).await {
+                Ok(live_sub) => {
+                    let live_spec_name = live_sub.data
+                        .get("spec")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
+                    if live_spec_name != expected_package.as_str() {
+                        bail!(
+                            "Subscription {} spec.name changed from '{}' to '{}' — \
+                             semantic identity drift. Re-run 'teardown plan'.",
+                            sub.name, expected_package, live_spec_name
+                        );
+                    }
+                }
+                Err(e) => {
+                    bail!("Cannot verify Subscription {} spec.name: {}", sub.name, e);
+                }
+            }
+        }
         fresh
     } else {
         Vec::new()
@@ -2583,7 +2621,22 @@ async fn revalidate_review_basis_inner(
         ProvenanceDriftResult::Ok => Ok(()),
         ProvenanceDriftResult::Blocked(reason) => Err(reason),
         ProvenanceDriftResult::NeedsCrdVerification => {
-            verify_governing_crd_label(client, resource, operator_snapshot).await
+            let saved_seeds: std::collections::HashSet<String> = metadata
+                .as_ref()
+                .map(|m| m.decisive_part_of_seeds.iter().cloned().collect())
+                .unwrap_or_default();
+            if saved_seeds.is_empty() {
+                return Err("RelatedLabelOnly resource has no saved part-of seeds — \
+                            cannot verify CRD-based evidence".to_string());
+            }
+            if saved_seeds.len() > 1 {
+                return Err(format!(
+                    "RelatedLabelOnly resource has {} part-of seed values {:?} — \
+                     multi-value seed verification not yet supported (BLOCKED)",
+                    saved_seeds.len(), saved_seeds
+                ));
+            }
+            verify_governing_crd_label(client, resource, &saved_seeds).await
         }
     }
 }
@@ -2670,10 +2723,12 @@ fn verify_crd_label_value_in_seeds(
 ///
 /// Uses operator_snapshot.owned_crds to compute fresh part-of seeds and verifies
 /// the governing CRD's label value is in that set.
+/// Verify the governing CRD for a resource still has a part-of label value
+/// matching the seeds saved at plan time.
 async fn verify_governing_crd_label(
     client: &::kube::Client,
     resource: &crate::kube::resource::ResourceId,
-    operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+    saved_seeds: &std::collections::HashSet<String>,
 ) -> Result<(), String> {
     use ::kube::api::{Api, DynamicObject, ApiResource};
     use ::kube::core::GroupVersion;
@@ -2684,48 +2739,12 @@ async fn verify_governing_crd_label(
         return Err("resource has no API group — cannot determine governing CRD".to_string());
     }
 
-    // Find CRD name from operator's owned_crds that matches resource's API group
-    let matching_crds: Vec<&str> = operator_snapshot.owned_crds.iter()
-        .filter(|crd| {
-            crd.split_once('.').map(|(_, g)| g == resource.group).unwrap_or(false)
-        })
-        .map(|s| s.as_str())
-        .collect();
-
-    // Also try constructing from group (for related CRDs not in owned_crds)
-    // List all CRDs in the resource's API group
+    // Find governing CRD by matching API group + kind
     let crd_gvk = GroupVersion::gv("apiextensions.k8s.io", "v1")
         .with_kind("CustomResourceDefinition");
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, "customresourcedefinitions");
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    // Compute fresh part-of seeds from owned CRDs
-    let mut seed_values: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for crd_name in &operator_snapshot.owned_crds {
-        match crd_api.get(crd_name).await {
-            Ok(crd) => {
-                if let Some(labels) = &crd.metadata.labels {
-                    if let Some(val) = labels.get(label_key) {
-                        seed_values.insert(val.clone());
-                    }
-                }
-            }
-            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                // Owned CRD already removed — expected during teardown
-            }
-            Err(e) => {
-                return Err(format!("cannot GET owned CRD for seed computation: {} — BLOCKED", e));
-            }
-        }
-    }
-
-    if seed_values.is_empty() {
-        return Err("no part-of label seeds found on owned CRDs — cannot verify CRD-based evidence".to_string());
-    }
-
-    // Find governing CRD: the CRD in resource.group that has a matching part-of label
-    // We need to find the specific CRD for this resource's kind
-    // List CRDs and find the one matching our group + kind
     let crd_list = crd_api.list(&::kube::api::ListParams::default()).await
         .map_err(|e| format!("cannot list CRDs: {} — BLOCKED", e))?;
 
@@ -2749,11 +2768,12 @@ async fn verify_governing_crd_label(
         }
     };
 
+    // Verify CRD's label value is in the plan-time saved seed set
     let crd_labels = crd.metadata.labels.as_ref();
     let crd_part_of = crd_labels.and_then(|labels| labels.get(label_key));
     verify_crd_label_value_in_seeds(
         crd_part_of.map(|s| s.as_str()),
-        &seed_values,
+        saved_seeds,
         &resource.group,
         &resource.kind,
     )
@@ -2774,6 +2794,7 @@ mod basis_drift_tests {
             approval_class: None,
             provenance,
             discovery_source,
+            decisive_part_of_seeds: vec![],
         })
     }
 
@@ -2914,5 +2935,63 @@ mod basis_drift_tests {
         assert!(verify_crd_label_value_in_seeds(
             Some("workbenches"), &seeds, "x.opendatahub.io", "Notebook"
         ).is_ok());
+    }
+
+    // ── Multi-seed MVP restriction ──
+
+    #[test]
+    fn multi_seed_blocked_in_provenance_drift() {
+        let meta = Some(ReviewMetadata {
+            category: None,
+            approval_class: None,
+            provenance: Some(ProvenanceSer::Unknown),
+            discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
+            decisive_part_of_seeds: vec!["platform".to_string(), "workbenches".to_string()],
+        });
+        // Multi-seed → NeedsCrdVerification, but caller blocks at len() > 1
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::NeedsCrdVerification
+        ));
+        // Verify the caller-side restriction
+        let seeds: HashSet<String> = meta.as_ref().unwrap()
+            .decisive_part_of_seeds.iter().cloned().collect();
+        assert!(seeds.len() > 1, "multi-seed set must be blocked by caller");
+    }
+
+    #[test]
+    fn single_seed_allows_crd_verification() {
+        let meta = Some(ReviewMetadata {
+            category: None,
+            approval_class: None,
+            provenance: Some(ProvenanceSer::Unknown),
+            discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
+            decisive_part_of_seeds: vec!["platform".to_string()],
+        });
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::NeedsCrdVerification
+        ));
+        let seeds: HashSet<String> = meta.as_ref().unwrap()
+            .decisive_part_of_seeds.iter().cloned().collect();
+        assert_eq!(seeds.len(), 1, "single seed passes caller restriction");
+    }
+
+    #[test]
+    fn empty_seeds_in_metadata_blocked_at_caller() {
+        let meta = Some(ReviewMetadata {
+            category: None,
+            approval_class: None,
+            provenance: Some(ProvenanceSer::Unknown),
+            discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
+            decisive_part_of_seeds: vec![],
+        });
+        assert!(matches!(
+            check_provenance_drift(&meta, &ProvenanceSer::Unknown),
+            ProvenanceDriftResult::NeedsCrdVerification
+        ));
+        let seeds: HashSet<String> = meta.as_ref().unwrap()
+            .decisive_part_of_seeds.iter().cloned().collect();
+        assert!(seeds.is_empty(), "empty seeds blocked by caller");
     }
 }

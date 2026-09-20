@@ -60,6 +60,26 @@ pub async fn check_operator_generation(
         }
     };
 
+    // Check for semantic drift: saved-UID subscription with changed spec.name
+    for saved_sub in &snapshot.subscriptions {
+        if let Some(live_sub) = sub_list.iter().find(|s| {
+            s.metadata.uid.as_deref().unwrap_or("") == saved_sub.uid
+        }) {
+            let live_spec_name = live_sub.data
+                .get("spec")
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            if live_spec_name != package_name.as_str() {
+                return OperatorGenerationState::Unknown(format!(
+                    "saved Subscription UID {} still exists but spec.name changed \
+                     from '{}' to '{}' — semantic identity drift",
+                    saved_sub.uid, package_name, live_spec_name
+                ));
+            }
+        }
+    }
+
     for sub in &sub_list {
         let spec_name = sub
             .data

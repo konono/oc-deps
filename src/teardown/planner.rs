@@ -435,6 +435,7 @@ pub struct CrInstance {
     pub managed_field_managers: Vec<String>,
     pub provenance: Provenance,
     pub discovery_source: DiscoverySource,
+    pub decisive_part_of_seeds: Vec<String>,
 }
 
 pub fn resolve_operator_targets(
@@ -637,6 +638,7 @@ async fn discover_one_crd(
                 managed_field_managers,
                 provenance: Provenance::Unknown,
                 discovery_source: DiscoverySource::Direct,
+                decisive_part_of_seeds: vec![],
             })
         })
         .collect::<Vec<_>>();
@@ -772,6 +774,7 @@ async fn discover_api_service_instances(
                                 managed_field_managers,
                                 provenance: Provenance::Unknown,
                                 discovery_source: DiscoverySource::Direct,
+                                decisive_part_of_seeds: vec![],
                             })
                         })
                         .collect();
@@ -1371,6 +1374,7 @@ pub async fn discover_related_crd_instances(
                     Provenance::Unknown => Some(crate::teardown::plan::ProvenanceSer::Unknown),
                 },
                 discovery_source: Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly),
+                decisive_part_of_seeds: target_part_of_values.iter().cloned().collect(),
             }),
         });
     }
@@ -1530,6 +1534,7 @@ async fn discover_namespace_resources(
                                 approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
                                 provenance: None,
                                 discovery_source: None,
+                                decisive_part_of_seeds: vec![],
                             }),
                         });
                     }
@@ -1840,6 +1845,7 @@ pub async fn generate_teardown_plan(
                 unlinked_count += 1;
                 let mut cr = cr;
                 cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+                cr.decisive_part_of_seeds = target_part_of_values.iter().cloned().collect();
                 cr_instances.push(cr);
             }
         }
@@ -2215,6 +2221,7 @@ pub async fn generate_teardown_plan(
             approval_class: approval_ser,
             provenance,
             discovery_source: discovery,
+            decisive_part_of_seeds: cr.decisive_part_of_seeds.clone(),
         })
     }
 
@@ -3431,6 +3438,7 @@ mod tests {
             managed_field_managers: managers,
             provenance: Provenance::Unknown,
             discovery_source: DiscoverySource::Direct,
+            decisive_part_of_seeds: vec![],
         }
     }
 

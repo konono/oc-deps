@@ -186,6 +186,8 @@ pub struct ReviewMetadata {
     pub approval_class: Option<DeleteApprovalClassSer>,
     pub provenance: Option<ProvenanceSer>,
     pub discovery_source: Option<DiscoverySourceSer>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisive_part_of_seeds: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
