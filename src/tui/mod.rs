@@ -131,7 +131,7 @@ async fn run_tui_inner(
                 {
                     selected_index += 1;
                 }
-                KeyCode::Char('a') if !review_items.is_empty() => {
+                KeyCode::Char('a') | KeyCode::Char(' ') if !review_items.is_empty() => {
                     let (_, _, ref res, _) = review_items[selected_index];
                     let _ = apply_command(
                         &mut app,
@@ -171,9 +171,25 @@ async fn run_tui_inner(
         let j = journal_store.read().await;
         let operator_snapshot = &j.operator;
 
+        // Pre-fetch CRD list once for all override validations
+        eprintln!("  Fetching CRD list for basis verification...");
+        let crd_items = crate::fetch_crd_list(client)
+            .await
+            .map_err(|e| anyhow::anyhow!("CRD list fetch failed: {}", e))?;
+
         let mut mutated = plan.clone();
         let override_total = app.draft_overrides.len();
         for (ovr_idx, ovr) in app.draft_overrides.iter().enumerate() {
+            if !gate.is_open() {
+                eprintln!("  ⏸ Gate closed — stopping override validation");
+                journal_store
+                    .update(|j| {
+                        j.state = RunState::Paused;
+                    })
+                    .await
+                    .context("Failed to persist Paused during override validation")?;
+                return Ok(());
+            }
             eprintln!(
                 "  [{}/{}] Validating {}/{}...",
                 ovr_idx + 1,
@@ -269,15 +285,17 @@ async fn run_tui_inner(
                                             );
                                         }
                                         let action_meta = metadata.clone();
-                                        if let Err(drift_reason) = crate::revalidate_review_basis(
-                                            client,
-                                            &obj,
-                                            resource,
-                                            &action_meta,
-                                            &audit_ctx,
-                                            operator_snapshot,
-                                        )
-                                        .await
+                                        if let Err(drift_reason) =
+                                            crate::revalidate_review_basis_cached(
+                                                client,
+                                                &obj,
+                                                resource,
+                                                &action_meta,
+                                                &audit_ctx,
+                                                operator_snapshot,
+                                                &crd_items,
+                                            )
+                                            .await
                                         {
                                             bail!(
                                                 "BLOCKED: {}/{} — basis drift: {}",

@@ -3537,6 +3537,28 @@ pub async fn revalidate_review_basis(
         metadata,
         audit_ctx,
         operator_snapshot,
+        None,
+    )
+    .await
+}
+
+pub async fn revalidate_review_basis_cached(
+    client: &::kube::Client,
+    obj: &::kube::api::DynamicObject,
+    resource: &crate::kube::resource::ResourceId,
+    metadata: &Option<crate::teardown::plan::ReviewMetadata>,
+    audit_ctx: &crate::teardown::journal::AuditContext,
+    operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+    crd_items: &[::kube::api::DynamicObject],
+) -> Result<(), String> {
+    revalidate_review_basis_inner(
+        client,
+        obj,
+        resource,
+        metadata,
+        audit_ctx,
+        operator_snapshot,
+        Some(crd_items),
     )
     .await
 }
@@ -3548,6 +3570,7 @@ async fn revalidate_review_basis_inner(
     metadata: &Option<crate::teardown::plan::ReviewMetadata>,
     audit_ctx: &crate::teardown::journal::AuditContext,
     operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+    cached_crd_items: Option<&[::kube::api::DynamicObject]>,
 ) -> Result<(), String> {
     let fresh = classify_fresh_provenance(obj, audit_ctx, operator_snapshot);
     match check_provenance_drift(metadata, &fresh) {
@@ -3571,7 +3594,11 @@ async fn revalidate_review_basis_inner(
                     saved_seeds
                 ));
             }
-            verify_governing_crd_label(client, resource, &saved_seeds).await
+            let crd_items = match cached_crd_items {
+                Some(items) => items.to_vec(),
+                None => fetch_crd_list(client).await?,
+            };
+            verify_governing_crd_label(resource, &saved_seeds, &crd_items)
         }
     }
 }
@@ -3663,32 +3690,37 @@ fn verify_crd_label_value_in_seeds(
 /// the governing CRD's label value is in that set.
 /// Verify the governing CRD for a resource still has a part-of label value
 /// matching the seeds saved at plan time.
-async fn verify_governing_crd_label(
+/// Fetch CRD list once for reuse across multiple verify_governing_crd_label calls.
+async fn fetch_crd_list(
     client: &::kube::Client,
-    resource: &crate::kube::resource::ResourceId,
-    saved_seeds: &std::collections::HashSet<String>,
-) -> Result<(), String> {
+) -> Result<Vec<::kube::api::DynamicObject>, String> {
     use ::kube::api::{Api, ApiResource, DynamicObject};
     use ::kube::core::GroupVersion;
 
+    let crd_gvk =
+        GroupVersion::gv("apiextensions.k8s.io", "v1").with_kind("CustomResourceDefinition");
+    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, "customresourcedefinitions");
+    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+
+    crd_api
+        .list(&::kube::api::ListParams::default())
+        .await
+        .map(|list| list.items)
+        .map_err(|e| format!("cannot list CRDs: {} — BLOCKED", e))
+}
+
+fn verify_governing_crd_label(
+    resource: &crate::kube::resource::ResourceId,
+    saved_seeds: &std::collections::HashSet<String>,
+    crd_items: &[::kube::api::DynamicObject],
+) -> Result<(), String> {
     let label_key = "platform.opendatahub.io/part-of";
 
     if resource.group.is_empty() {
         return Err("resource has no API group — cannot determine governing CRD".to_string());
     }
 
-    // Find governing CRD by matching API group + kind
-    let crd_gvk =
-        GroupVersion::gv("apiextensions.k8s.io", "v1").with_kind("CustomResourceDefinition");
-    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, "customresourcedefinitions");
-    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-
-    let crd_list = crd_api
-        .list(&::kube::api::ListParams::default())
-        .await
-        .map_err(|e| format!("cannot list CRDs: {} — BLOCKED", e))?;
-
-    let governing_crd = crd_list.items.iter().find(|crd| {
+    let governing_crd = crd_items.iter().find(|crd| {
         let crd_name = crd.metadata.name.as_deref().unwrap_or("");
         crd_name
             .split_once('.')
