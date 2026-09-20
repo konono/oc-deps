@@ -117,11 +117,12 @@ ansible-playbook site.yml -i inventory/aws-sno-disconnected --tags platform,work
 # MLflow 単体
 ansible-playbook site.yml -i inventory/aws-sno-disconnected --tags mlflow -v
 
-# 4. verify
+# 4. 復旧確認（必須）— 全チェック通過で復旧完了
 ansible-playbook playbooks/verify.yml -i inventory/aws-sno-disconnected
+# verify が失敗した場合は該当コンポーネントのタグで再デプロイしてから再度 verify
 ```
 
-所要時間: teardown 約8-10分 + 復旧 約10-15分 = 1サイクル約20-25分
+所要時間: teardown 約8-10分 + 復旧 約10-15分 + verify 約2分 = 1サイクル約25-30分
 
 ### Full テスト（全 operator 削除）
 
@@ -155,9 +156,18 @@ done
 # Step 4: 残留リソース確認
 oc get subscriptions.operators.coreos.com -A --no-headers  # group-sync-operator のみ期待
 oc get pods -A --no-headers | grep -v "^openshift-\|^kube-\|Completed\|^default " | grep Running
+
+# Step 5: Ansible で全体復旧
+cd ansible
+ansible-playbook site.yml -i inventory/aws-sno-disconnected --skip-tags llm -v
+ansible-playbook site.yml -i inventory/aws-sno-disconnected --tags mlflow -v
+
+# Step 6: 復旧確認（必須）— 全チェック通過で復旧完了
+ansible-playbook playbooks/verify.yml -i inventory/aws-sno-disconnected
+# verify が失敗した場合は該当コンポーネントのタグで再デプロイしてから再度 verify
 ```
 
-所要時間: 約30-40分
+所要時間: 約30-40分（teardown） + 約15-20分（復旧 + verify）
 
 ### 残留リソースの既知事項 (Issue #4)
 
