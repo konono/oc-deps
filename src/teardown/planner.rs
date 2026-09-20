@@ -934,6 +934,50 @@ async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> 
     Ok(all_items)
 }
 
+/// Check Subscription linkage safety for a single operator.
+/// has_unlinked_subscriptions is evaluated FIRST regardless of subscription Some/None.
+pub fn check_subscription_safety(
+    op: &OperatorInstance,
+) -> (bool, PreflightSeverity, String) {
+    if op.has_unlinked_subscriptions {
+        (
+            false,
+            PreflightSeverity::Critical,
+            format!(
+                "Subscription linkage is ambiguous for CSV/{} in {} — \
+                 multiple Subscriptions or unlinked Subscriptions exist. \
+                 Cannot safely determine which Subscription to delete \
+                 in Phase 0.{}",
+                op.csv.name,
+                op.install_namespace,
+                op.subscription
+                    .as_ref()
+                    .map(|s| format!(" (currently linked to {})", s.name))
+                    .unwrap_or_default(),
+            ),
+        )
+    } else {
+        match &op.subscription {
+            Some(sub) => (
+                true,
+                PreflightSeverity::Warning,
+                format!(
+                    "Subscription/{} found — will be deleted in Phase 0",
+                    sub.name
+                ),
+            ),
+            None => (
+                true,
+                PreflightSeverity::Warning,
+                format!(
+                    "No subscription for CSV/{} — already frozen or manually installed",
+                    op.csv.name
+                ),
+            ),
+        }
+    }
+}
+
 async fn run_preflight(
     client: &Client,
     target_operators: &[&OperatorInstance],
@@ -946,46 +990,8 @@ async fn run_preflight(
     let mut checks = Vec::new();
 
     // 1. Subscription resolved (absent is OK — already frozen / manually managed)
-    // has_unlinked_subscriptions is checked FIRST regardless of subscription Some/None,
-    // because multiple Subs for the same CSV means the linked one may be wrong.
     for op in target_operators {
-        let (passed, severity, detail) = if op.has_unlinked_subscriptions {
-            (
-                false,
-                PreflightSeverity::Critical,
-                format!(
-                    "Subscription linkage is ambiguous for CSV/{} in {} — \
-                     multiple Subscriptions or unlinked Subscriptions exist. \
-                     Cannot safely determine which Subscription to delete \
-                     in Phase 0.{}",
-                    op.csv.name,
-                    op.install_namespace,
-                    op.subscription
-                        .as_ref()
-                        .map(|s| format!(" (currently linked to {})", s.name))
-                        .unwrap_or_default(),
-                ),
-            )
-        } else {
-            match &op.subscription {
-                Some(sub) => (
-                    true,
-                    PreflightSeverity::Warning,
-                    format!(
-                        "Subscription/{} found — will be deleted in Phase 0",
-                        sub.name
-                    ),
-                ),
-                None => (
-                    true,
-                    PreflightSeverity::Warning,
-                    format!(
-                        "No subscription for CSV/{} — already frozen or manually installed",
-                        op.csv.name
-                    ),
-                ),
-            }
-        };
+        let (passed, severity, detail) = check_subscription_safety(op);
         checks.push(PreflightCheck {
             name: format!("Subscription resolved ({})", op.csv.name),
             severity,

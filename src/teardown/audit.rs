@@ -177,27 +177,31 @@ pub async fn check_operator_generation(
             );
         }
         Some(baseline) => {
-            // Build map: csv_name → package_name from live Subscriptions
-            let sub_csv_to_pkg: HashMap<String, String> = sub_list
-                .iter()
-                .filter_map(|sub| {
-                    let csv = sub
-                        .data
-                        .get("status")
-                        .and_then(|s| {
-                            s.get("installedCSV")
-                                .or(s.get("currentCSV"))
-                        })
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())?;
-                    let pkg = sub
-                        .data
-                        .get("spec")
-                        .and_then(|s| s.get("name"))
-                        .and_then(|n| n.as_str())?;
-                    Some((csv.to_string(), pkg.to_string()))
-                })
-                .collect();
+            // Build map: csv_name → set of package names from live Subscriptions.
+            // Multiple Subs can point to the same CSV with different packages.
+            let mut sub_csv_to_pkgs: HashMap<String, HashSet<String>> = HashMap::new();
+            for sub in &sub_list {
+                let csv = sub
+                    .data
+                    .get("status")
+                    .and_then(|s| {
+                        s.get("installedCSV")
+                            .or(s.get("currentCSV"))
+                    })
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+                let pkg = sub
+                    .data
+                    .get("spec")
+                    .and_then(|s| s.get("name"))
+                    .and_then(|n| n.as_str());
+                if let (Some(csv), Some(pkg)) = (csv, pkg) {
+                    sub_csv_to_pkgs
+                        .entry(csv.to_string())
+                        .or_default()
+                        .insert(pkg.to_string());
+                }
+            }
 
             match csv_api.list(&ListParams::default()).await {
                 Ok(csv_list) => {
@@ -242,11 +246,6 @@ pub async fn check_operator_generation(
                             continue;
                         }
 
-                        // Check 1: Subscription status→CSV mapping
-                        let attributed_via_sub = sub_csv_to_pkg
-                            .get(name)
-                            .is_some_and(|pkg| pkg != &package_name);
-
                         // Collect all package evidence from labels + annotations
                         let csv_ns = csv_obj
                             .metadata
@@ -256,9 +255,9 @@ pub async fn check_operator_generation(
 
                         let mut evidence_packages: HashSet<String> = HashSet::new();
 
-                        // From Subscription status
-                        if let Some(pkg) = sub_csv_to_pkg.get(name) {
-                            evidence_packages.insert(pkg.clone());
+                        // From Subscription status (all packages, not just last)
+                        if let Some(pkgs) = sub_csv_to_pkgs.get(name) {
+                            evidence_packages.extend(pkgs.iter().cloned());
                         }
 
                         // From CSV labels (operators.coreos.com/<package>.<namespace>)
@@ -280,16 +279,22 @@ pub async fn check_operator_generation(
                             evidence_packages.insert(pkg);
                         }
 
-                        // Determine attribution:
-                        // - If evidence is empty: unattributable → Unknown
-                        // - If evidence contains ONLY other packages: safe to skip
-                        // - If evidence contains our package: cannot exclude → Unknown
-                        // - If evidence has conflicting packages including ours: ambiguous → Unknown
+                        // Determine attribution — same principle as
+                        // csv_package_evidence_is_exclusive in olm.rs:
+                        // - Empty evidence: unattributable → Unknown
+                        // - Exactly one non-target package: exclusively other → safe skip
+                        // - Our package present: cannot exclude → Unknown
+                        // - Multiple different non-target packages (B+C): conflicting,
+                        //   cannot confirm CSV belongs to a single other operator → Unknown
                         let has_our_package = evidence_packages.contains(&package_name);
-                        let has_other_only = !evidence_packages.is_empty()
-                            && !has_our_package;
+                        let other_packages: HashSet<&String> = evidence_packages
+                            .iter()
+                            .filter(|p| *p != &package_name)
+                            .collect();
+                        let exclusively_one_other = !has_our_package
+                            && other_packages.len() == 1;
 
-                        if !has_other_only {
+                        if !exclusively_one_other {
                             return OperatorGenerationState::Unknown(format!(
                                 "CSV '{}' (uid: {}) in {} survived teardown and cannot be \
                                  attributed to a different package — possible same-package \
@@ -2301,18 +2306,20 @@ mod tests {
         // If Sub pkg is "my-operator", annotation_contradicts → reject status link
     }
 
-    #[test]
-    fn test_has_unlinked_sub_with_linked_sub_is_critical() {
-        // OperatorInstance with subscription=Some but has_unlinked_subscriptions=true
-        // → preflight should be Critical (evaluated BEFORE subscription check)
-        let op = crate::analyzers::olm::OperatorInstance {
-            subscription: Some(crate::kube::resource::ResourceId {
+    // ── Preflight safety predicate tests (calls real check_subscription_safety) ──
+
+    fn make_test_operator(
+        sub: Option<&str>,
+        has_unlinked: bool,
+    ) -> crate::analyzers::olm::OperatorInstance {
+        crate::analyzers::olm::OperatorInstance {
+            subscription: sub.map(|name| crate::kube::resource::ResourceId {
                 group: "operators.coreos.com".to_string(),
                 version: "v1alpha1".to_string(),
                 kind: "Subscription".to_string(),
                 namespace: Some("test-ns".to_string()),
-                name: "sub-a".to_string(),
-                uid: Some("uid-a".to_string()),
+                name: name.to_string(),
+                uid: Some("uid-1".to_string()),
             }),
             package_name: Some("test-pkg".to_string()),
             csv: crate::kube::resource::ResourceId {
@@ -2331,11 +2338,77 @@ mod tests {
             deployments: vec![],
             service_accounts: vec![],
             install_namespace: "test-ns".to_string(),
-            has_unlinked_subscriptions: true,
-        };
-        // subscription is Some, but has_unlinked is true
-        // The preflight logic should evaluate has_unlinked FIRST → Critical
-        assert!(op.has_unlinked_subscriptions);
-        assert!(op.subscription.is_some());
+            has_unlinked_subscriptions: has_unlinked,
+        }
+    }
+
+    #[test]
+    fn test_preflight_linked_sub_no_unlinked_passes() {
+        let op = make_test_operator(Some("sub-a"), false);
+        let (passed, severity, _) =
+            crate::teardown::planner::check_subscription_safety(&op);
+        assert!(passed);
+        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Warning);
+    }
+
+    #[test]
+    fn test_preflight_has_unlinked_with_linked_sub_is_critical() {
+        // subscription=Some + has_unlinked=true → Critical (not passed)
+        let op = make_test_operator(Some("sub-a"), true);
+        let (passed, severity, _) =
+            crate::teardown::planner::check_subscription_safety(&op);
+        assert!(!passed, "has_unlinked_subscriptions should block even with linked Sub");
+        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Critical);
+    }
+
+    #[test]
+    fn test_preflight_no_sub_no_unlinked_passes() {
+        // No subscription, no unlinked → frozen/manual → OK
+        let op = make_test_operator(None, false);
+        let (passed, severity, _) =
+            crate::teardown::planner::check_subscription_safety(&op);
+        assert!(passed);
+        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Warning);
+    }
+
+    #[test]
+    fn test_preflight_no_sub_has_unlinked_is_critical() {
+        // No linked subscription but unlinked exist → Critical
+        let op = make_test_operator(None, true);
+        let (passed, severity, _) =
+            crate::teardown::planner::check_subscription_safety(&op);
+        assert!(!passed);
+        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Critical);
+    }
+
+    // ── Generation Step 4 evidence conflict tests ──
+
+    #[test]
+    fn test_generation_evidence_two_non_target_packages_is_unknown() {
+        // CSV with label=B and annotation=C, target=A
+        // B and C are both non-target but conflict with each other
+        // → not "exclusively one other" → Unknown
+        let mut evidence: HashSet<String> = HashSet::new();
+        evidence.insert("pkg-b".to_string());
+        evidence.insert("pkg-c".to_string());
+
+        let has_our = evidence.contains("pkg-a");
+        let other_pkgs: HashSet<&String> = evidence.iter().filter(|p| *p != "pkg-a").collect();
+        let exclusively_one_other = !has_our && other_pkgs.len() == 1;
+
+        assert!(!exclusively_one_other, "B+C conflicting non-target should NOT be exclusively_one_other");
+    }
+
+    #[test]
+    fn test_generation_evidence_one_non_target_is_safe() {
+        // CSV with only label=B, target=A → exclusively one other → safe skip
+        let mut evidence: HashSet<String> = HashSet::new();
+        evidence.insert("pkg-b".to_string());
+
+        let has_our = evidence.contains("pkg-a");
+        let other_pkgs: HashSet<&String> = evidence.iter().filter(|p| *p != "pkg-a").collect();
+        let exclusively_one_other = !has_our && other_pkgs.len() == 1;
+
+        assert!(exclusively_one_other);
     }
 }
