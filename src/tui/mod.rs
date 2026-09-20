@@ -181,8 +181,13 @@ async fn run_tui_inner(
                                 DraftAction::Delete => {
                                     let ovr_uid = ovr.resource.uid.as_deref().unwrap_or("");
                                     let plan_uid = resource.uid.as_deref().unwrap_or("");
-                                    // Interactive overrides may not carry UID — use plan UID
-                                    // and verify via fresh GET
+                                    // P0: Three-way UID check — all must be non-empty and match
+                                    if plan_uid.is_empty() {
+                                        bail!("Cannot approve DELETE for {}/{}: plan resource has no UID", resource.kind, resource.name);
+                                    }
+                                    if !ovr_uid.is_empty() && ovr_uid != plan_uid {
+                                        bail!("Override UID {} does not match plan UID {} for {}/{}", ovr_uid, plan_uid, resource.kind, resource.name);
+                                    }
                                     if let Some((api, _)) = crate::kube::resource::resolve_api(
                                         client, resource, kind_map, gk_map,
                                     ) {
@@ -233,6 +238,13 @@ async fn run_tui_inner(
         }
         *plan = mutated;
     }
+
+    // P0: Persist Bound Plan to journal BEFORE mutation.
+    // Crash resume uses journal.plan_snapshot — it must reflect approved overrides.
+    let bound_snapshot = plan.clone();
+    journal_store.update(|j| {
+        j.plan_snapshot = bound_snapshot;
+    }).await.context("Failed to persist Bound Plan to journal — aborting start")?;
 
     let _ = apply_command(&mut app, &AppCommand::StartExecution);
 
