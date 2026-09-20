@@ -3451,4 +3451,41 @@ mod basis_drift_tests {
         assert!(!resume_has_blocking_hard_failure(&j),
             "DeleteRequested is retryable, not hard failure");
     }
+
+    #[tokio::test]
+    async fn check_and_persist_paused_with_closed_gate() {
+        use crate::teardown::journal::*;
+        use crate::teardown::permit::MutationGate;
+
+        let j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![]);
+
+        let dir = std::env::temp_dir().join(format!(
+            "oc-deps-test-pause-{}-{}", std::process::id(), std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("journal.json");
+        crate::teardown::journal::atomic_write_json_pub(&path, &j).unwrap();
+
+        let store = std::sync::Arc::new(
+            JournalStore::new_with_lock(j, path.clone()).unwrap()
+        );
+        let gate = std::sync::Arc::new(MutationGate::new(4));
+
+        // Gate open → not paused
+        let paused = crate::tui::check_and_persist_paused(&store, &gate).await.unwrap();
+        assert!(!paused, "open gate must not trigger pause");
+
+        // Close gate → paused + journal state durably updated on disk
+        gate.close_and_drain().await;
+        let paused = crate::tui::check_and_persist_paused(&store, &gate).await.unwrap();
+        assert!(paused, "closed gate must trigger pause");
+
+        // Verify durable state on disk (not just in-memory)
+        let j_disk = load_journal(&path).unwrap();
+        assert_eq!(j_disk.state, RunState::Paused,
+            "journal on disk must be Paused after gate-closed persist");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

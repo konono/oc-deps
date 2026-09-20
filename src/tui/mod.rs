@@ -859,6 +859,19 @@ pub async fn run_residual_cleanup(
     Ok(())
 }
 
+/// Check gate and persist Paused if closed. Returns true if paused.
+pub async fn check_and_persist_paused(
+    journal_store: &Arc<JournalStore>,
+    gate: &Arc<MutationGate>,
+) -> Result<bool> {
+    if !gate.is_open() {
+        journal_store.update(|j| { j.state = RunState::Paused; }).await
+            .context("Failed to persist Paused on signal")?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Residual-only TUI entry for resume. Performs fresh Absent + complete audit,
 /// then opens the Residual Cleanup screen. Non-TTY prints audit results only.
 pub async fn run_residual_only(
@@ -868,29 +881,41 @@ pub async fn run_residual_only(
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
 ) -> Result<()> {
+    // Early gate check — if already closed, skip all API work
+    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+
     // Fresh generation Absent check
     let j = journal_store.read().await;
     let gen_state = audit::check_operator_generation(
         client, &j.operator, &j.audit_context.csv_baseline,
     ).await;
+    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
     if !matches!(gen_state, OperatorGenerationState::Absent) {
         bail!("Operator generation not Absent — cannot enter Residual Cleanup");
     }
 
     // Fresh complete audit
-    let audit_result = audit::run_residual_audit(client, &j).await
-        .context("Fresh residual audit failed")?;
+    let audit_result = match audit::run_residual_audit(client, &j).await {
+        Ok(a) => a,
+        Err(e) => {
+            if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+            return Err(e.context("Fresh residual audit failed"));
+        }
+    };
+    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
 
     // Post-audit generation recheck
     let gen_recheck = audit::check_operator_generation(
         client, &j.operator, &j.audit_context.csv_baseline,
     ).await;
+    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
     if !matches!(gen_recheck, OperatorGenerationState::Absent) {
         bail!("Operator generation changed during audit — cannot enter Residual Cleanup");
     }
 
     let status = audit::residual_status_from_audit(&audit_result);
     if matches!(status, journal::ResidualStatus::AuditIncomplete) {
+        if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
         audit::print_residual_audit(&audit_result, &j);
         bail!("Residual audit incomplete — cannot enter cleanup screen");
     }
@@ -910,12 +935,14 @@ pub async fn run_residual_only(
         .collect();
 
     if residuals.is_empty() {
+        if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
         eprintln!("✅ No residuals to clean up.");
         return Ok(());
     }
 
     // Non-TTY: print audit and return
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
         audit::print_residual_audit(&audit_result, &j);
         return Ok(());
     }
