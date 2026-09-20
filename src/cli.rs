@@ -223,6 +223,19 @@ pub enum TeardownAction {
         #[arg(long)]
         no_cache: bool,
     },
+
+    /// List all teardown runs for the current cluster
+    Runs,
+
+    /// Show teardown run journal for an operator
+    Journal {
+        /// Operator CSV name to find latest run
+        operator: Option<String>,
+
+        /// Specific run ID
+        #[arg(long)]
+        run: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]

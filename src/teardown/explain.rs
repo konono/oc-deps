@@ -225,7 +225,7 @@ fn find_in_plan(plan: &TeardownPlan, kind: &str, name: &str) -> Option<(usize, S
                     (resource, format!("EXPECT-GONE — {}", reason))
                 }
                 Action::Keep { resource, reason } => (resource, format!("KEEP — {}", reason)),
-                Action::Review { resource, reason } => (resource, format!("REVIEW — {}", reason)),
+                Action::Review { resource, reason, .. } => (resource, format!("REVIEW — {}", reason)),
                 Action::WaitGone { resource } => (resource, "WAIT for deletion".to_string()),
             };
             if resource.kind.eq_ignore_ascii_case(kind) && resource.name == name {

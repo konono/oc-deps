@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use futures::stream::StreamExt;
 use kube::{
     Client,
@@ -13,6 +13,8 @@ use kube::{
 
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
+use crate::teardown::journal::JournalStore;
+use crate::teardown::plan::PlannedPreserved;
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
 
 const DEFAULT_CONCURRENCY: usize = 16;
@@ -31,6 +33,8 @@ pub struct ExecutionResult {
     pub already_gone: Vec<ResourceId>,
     pub failed: Vec<(ResourceId, String)>,
     pub barrier_timeout: Option<BarrierTimeout>,
+    pub kept: Vec<PlannedPreserved>,
+    pub reviewed: Vec<PlannedPreserved>,
 }
 
 pub struct BarrierTimeout {
@@ -165,6 +169,7 @@ pub async fn execute_plan(
     gvr_map: &GvrMap,
     dry_run: bool,
     force: bool,
+    journal: Option<&JournalStore>,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -229,7 +234,7 @@ pub async fn execute_plan(
         );
         for phase in &plan.phases {
             for action in &phase.actions {
-                if let Action::Review { resource, reason } = action {
+                if let Action::Review { resource, reason, .. } = action {
                     eprintln!("  {}/{}: {}", resource.kind, resource.name, reason);
                 }
             }
@@ -248,6 +253,8 @@ pub async fn execute_plan(
             already_gone: vec![],
             failed: vec![],
             barrier_timeout: None,
+            kept: vec![],
+            reviewed: vec![],
         });
     }
 
@@ -258,7 +265,18 @@ pub async fn execute_plan(
         already_gone: vec![],
         failed: vec![],
         barrier_timeout: None,
+        kept: vec![],
+        reviewed: vec![],
     };
+
+    // Persist Applying state before first mutation
+    if let Some(j) = journal {
+        j.update(|journal| {
+            journal.state = crate::teardown::journal::RunState::Applying;
+        })
+        .await
+        .context("Failed to persist Applying state — aborting before first mutation")?;
+    }
 
     for (i, phase) in plan.phases.iter().enumerate() {
         eprintln!("\n\x1b[1mPhase {}  {}\x1b[0m", i, phase.name);
@@ -446,8 +464,13 @@ pub async fn execute_plan(
                         scope_suffix(resource)
                     );
                     eprintln!("             \x1b[2m{}\x1b[0m", reason);
+                    result.kept.push(PlannedPreserved {
+                        resource: resource.clone(),
+                        reason: reason.clone(),
+                        metadata: None,
+                    });
                 }
-                Action::Review { resource, reason } => {
+                Action::Review { resource, reason, metadata } => {
                     eprintln!(
                         "  \x1b[35mREVIEW\x1b[0m   {}/{}{}",
                         resource.kind,
@@ -455,6 +478,11 @@ pub async fn execute_plan(
                         scope_suffix(resource)
                     );
                     eprintln!("             \x1b[2m{}\x1b[0m", reason);
+                    result.reviewed.push(PlannedPreserved {
+                        resource: resource.clone(),
+                        reason: reason.clone(),
+                        metadata: metadata.clone(),
+                    });
                 }
                 Action::WaitGone { resource } => {
                     eprintln!(
@@ -582,6 +610,26 @@ pub async fn execute_plan(
         }
 
         result.phases_completed += 1;
+
+        // Checkpoint phase completion to journal
+        if let Some(j) = journal {
+            let phase_count = result.phases_completed;
+            let deleted_snapshot = result.deleted.clone();
+            let already_gone_snapshot = result.already_gone.clone();
+            let failed_snapshot = result.failed.clone();
+            let kept_snapshot: Vec<_> = result.kept.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
+            let reviewed_snapshot: Vec<_> = result.reviewed.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
+            j.update(|journal| {
+                journal.execution.phases_completed = phase_count;
+                journal.execution.deleted = deleted_snapshot;
+                journal.execution.already_gone = already_gone_snapshot;
+                journal.execution.failed = failed_snapshot;
+                journal.execution.kept = kept_snapshot;
+                journal.execution.reviewed = reviewed_snapshot;
+            })
+            .await
+            .context("Failed to checkpoint phase completion — aborting before next mutation")?;
+        }
     }
 
     Ok(result)
@@ -930,6 +978,14 @@ pub fn print_execution_result(result: &ExecutionResult) {
         }
     }
 
+    if !result.kept.is_empty() || !result.reviewed.is_empty() {
+        eprintln!(
+            "\n\x1b[1mPlanned preserved\x1b[0m: {} KEEP, {} REVIEW",
+            result.kept.len(),
+            result.reviewed.len()
+        );
+    }
+
     if let Some(timeout) = &result.barrier_timeout {
         eprintln!(
             "\n\x1b[1;33mBarrier stalled in phase '{}'\x1b[0m — {} resources remain:",
@@ -1015,6 +1071,7 @@ mod tests {
             Action::Review {
                 resource: make_resource("CR", "e"),
                 reason: "test".to_string(),
+                metadata: None,
             },
             Action::WaitGone {
                 resource: make_resource("Pod", "f"),

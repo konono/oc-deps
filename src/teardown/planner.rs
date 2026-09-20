@@ -356,6 +356,8 @@ pub enum Action {
     Review {
         resource: ResourceId,
         reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<crate::teardown::plan::ReviewMetadata>,
     },
 }
 
@@ -1301,6 +1303,16 @@ pub async fn discover_related_crd_instances(
         actions.push(Action::Review {
             resource: cr.id.clone(),
             reason: "related CRD instance (not CSV-owned, discovered via label)".to_string(),
+            metadata: Some(crate::teardown::plan::ReviewMetadata {
+                category: Some(crate::teardown::plan::ReviewCategorySer::OperandIndependent),
+                approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
+                provenance: match &cr.provenance {
+                    Provenance::Managed => Some(crate::teardown::plan::ProvenanceSer::Managed),
+                    Provenance::LikelyManaged => Some(crate::teardown::plan::ProvenanceSer::LikelyManaged),
+                    Provenance::Unknown => Some(crate::teardown::plan::ProvenanceSer::Unknown),
+                },
+                discovery_source: Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly),
+            }),
         });
     }
 
@@ -1454,6 +1466,12 @@ async fn discover_namespace_resources(
                             },
                             reason: "operator-related ConfigMap — verify before deleting"
                                 .to_string(),
+                            metadata: Some(crate::teardown::plan::ReviewMetadata {
+                                category: Some(crate::teardown::plan::ReviewCategorySer::Ancillary),
+                                approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
+                                provenance: None,
+                                discovery_source: None,
+                            }),
                         });
                     }
                 }
@@ -2105,6 +2123,42 @@ pub async fn generate_teardown_plan(
     // Resolve all decisions from policy + candidates
     let resolved_decisions = resolve_decisions(policy, &review_candidates)?;
 
+    fn build_review_metadata(
+        cr: &CrInstance,
+        position: GraphPosition,
+        approval: DeleteApprovalClass,
+    ) -> Option<crate::teardown::plan::ReviewMetadata> {
+        use crate::teardown::plan::{
+            DeleteApprovalClassSer, DiscoverySourceSer, ProvenanceSer, ReviewCategorySer,
+            ReviewMetadata,
+        };
+        let category = match (ReviewCategory::Operand(position), position) {
+            (_, GraphPosition::Root) => Some(ReviewCategorySer::OperandRoot),
+            (_, GraphPosition::Descendant) => Some(ReviewCategorySer::OperandDescendant),
+            (_, GraphPosition::Independent) => Some(ReviewCategorySer::OperandIndependent),
+        };
+        let provenance = match &cr.provenance {
+            Provenance::Managed => Some(ProvenanceSer::Managed),
+            Provenance::LikelyManaged => Some(ProvenanceSer::LikelyManaged),
+            Provenance::Unknown => Some(ProvenanceSer::Unknown),
+        };
+        let discovery = match &cr.discovery_source {
+            DiscoverySource::Direct => Some(DiscoverySourceSer::Direct),
+            DiscoverySource::RelatedLinked => Some(DiscoverySourceSer::RelatedLinked),
+            DiscoverySource::RelatedLabelOnly => Some(DiscoverySourceSer::RelatedLabelOnly),
+        };
+        let approval_ser = match approval {
+            DeleteApprovalClass::Standard => Some(DeleteApprovalClassSer::Standard),
+            DeleteApprovalClass::ExplicitOnly => Some(DeleteApprovalClassSer::ExplicitOnly),
+        };
+        Some(ReviewMetadata {
+            category,
+            approval_class: approval_ser,
+            provenance,
+            discovery_source: discovery,
+        })
+    }
+
     fn cr_to_action(
         cr: &CrInstance,
         position: GraphPosition,
@@ -2144,16 +2198,19 @@ pub async fn generate_teardown_plan(
                 Action::Review {
                     resource: cr.id.clone(),
                     reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    metadata: build_review_metadata(cr, position, approval),
                 }
             }
             (GraphPosition::Root, Provenance::LikelyManaged) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "root CR but provenance uncertain (label-based) — verify before deleting"
                     .to_string(),
+                metadata: build_review_metadata(cr, position, approval),
             },
             (GraphPosition::Root, Provenance::Unknown | Provenance::Managed) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "root CR but provenance unknown — verify before deleting".to_string(),
+                metadata: build_review_metadata(cr, position, approval),
             },
             (GraphPosition::Descendant, _) => Action::ExpectGone {
                 resource: cr.id.clone(),
@@ -2163,6 +2220,7 @@ pub async fn generate_teardown_plan(
                 Action::Review {
                     resource: cr.id.clone(),
                     reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    metadata: build_review_metadata(cr, position, approval),
                 }
             }
             (GraphPosition::Independent, Provenance::Managed) => Action::Delete {
@@ -2173,10 +2231,12 @@ pub async fn generate_teardown_plan(
                 resource: cr.id.clone(),
                 reason: "likely operator-managed but no ownerRef — verify before deleting"
                     .to_string(),
+                metadata: build_review_metadata(cr, position, approval),
             },
             (GraphPosition::Independent, Provenance::Unknown) => Action::Review {
                 resource: cr.id.clone(),
                 reason: "owned API, but provenance unknown".to_string(),
+                metadata: build_review_metadata(cr, position, approval),
             },
         }
     }
@@ -2380,6 +2440,7 @@ pub async fn generate_teardown_plan(
                         Action::Review {
                             resource: cr.id.clone(),
                             reason: "shared CRD — owned by multiple selected operators".to_string(),
+                            metadata: None,
                         }
                     } else {
                         continue;
@@ -2409,6 +2470,7 @@ pub async fn generate_teardown_plan(
                             resource: cr.id.clone(),
                             reason: "shared CRD descendant — owned by multiple selected operators"
                                 .to_string(),
+                            metadata: None,
                         });
                     }
                     continue;
@@ -2431,6 +2493,7 @@ pub async fn generate_teardown_plan(
                         phase_actions.push(Action::Review {
                             resource: cr.id.clone(),
                             reason: "shared CRD — owned by multiple selected operators".to_string(),
+                            metadata: None,
                         });
                     }
                     continue;
@@ -2468,7 +2531,7 @@ pub async fn generate_teardown_plan(
     // Root REVIEWs that are not approved become hard blockers
     for phase in &operand_phases {
         for action in &phase.actions {
-            if let Action::Review { resource, reason } = action {
+            if let Action::Review { resource, reason, .. } = action {
                 let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
                 let is_root = root_cr.is_some();
                 if !is_root {
@@ -2583,7 +2646,7 @@ pub async fn generate_teardown_plan(
     let ns_cleanup_actions: Vec<Action> = ns_cleanup_actions
         .into_iter()
         .map(|action| {
-            if let Action::Review { resource, reason } = &action
+            if let Action::Review { resource, reason, metadata } = &action
                 && let Some(decision) = resolved_decisions.get(resource)
             {
                 return match decision {
@@ -2598,6 +2661,7 @@ pub async fn generate_teardown_plan(
                     ResolvedDecision::Review => Action::Review {
                         resource: resource.clone(),
                         reason: reason.clone(),
+                        metadata: metadata.clone(),
                     },
                 };
             }
@@ -2920,7 +2984,7 @@ fn print_plan_tree(plan: &TeardownPlan) {
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
                 }
-                Action::Review { resource, reason } => {
+                Action::Review { resource, reason, .. } => {
                     println!(
                         "  \x1b[35mREVIEW\x1b[0m {}/{}{}",
                         resource.kind,
