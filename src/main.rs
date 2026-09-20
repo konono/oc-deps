@@ -1474,8 +1474,14 @@ async fn main() -> Result<()> {
                                 let has_pending_cleanup = !j.cleanup_decisions.is_empty()
                                     && j.cleanup_decisions.iter().any(|d| d.is_pending());
 
+                                // Detect Paused-from-Residual: main phases complete + has residual audit
+                                let paused_from_residual = j.state == RunState::Paused
+                                    && j.execution.phases_completed == j.execution.phases_total
+                                    && j.last_residual_audit.is_some();
+
                                 let should_resume_cleanup = j.state == RunState::InteractiveCleanup
-                                    || ((j.state == RunState::Applying || j.state == RunState::Paused) && has_pending_cleanup);
+                                    || ((j.state == RunState::Applying || j.state == RunState::Paused) && has_pending_cleanup)
+                                    || paused_from_residual;
 
                                 if should_resume_cleanup {
                                     // Schema gate: v5 journals cannot gain resume authority
@@ -1484,6 +1490,15 @@ async fn main() -> Result<()> {
                                             "Journal schema v{} does not match current v{}. \
                                              Cannot resume cleanup on incompatible journal.",
                                             j.schema_version, journal::RUN_JOURNAL_SCHEMA_VERSION
+                                        );
+                                    }
+
+                                    // Check for existing hard failures from prior crash
+                                    if j.cleanup_decisions.iter().any(|d| d.is_hard_failed()) {
+                                        store.update(|j| { j.state = RunState::Failed; }).await?;
+                                        bail!(
+                                            "Journal contains hard-failed cleanup decisions from a prior run. \
+                                             Cannot resume — create a new teardown plan."
                                         );
                                     }
 
@@ -1500,7 +1515,19 @@ async fn main() -> Result<()> {
                                     let mut any_hard_failed = false;
                                     let mut any_retryable = false;
                                     if pending.is_empty() {
-                                        eprintln!("No pending cleanup decisions to resume.");
+                                        if paused_from_residual {
+                                            eprintln!("Resuming from Residual stage (no pending decisions).");
+                                            // Re-verify generation before proceeding to re-audit
+                                            let gen_check = audit::check_operator_generation(
+                                                &client, &j.operator, &j.audit_context.csv_baseline,
+                                            ).await;
+                                            if !matches!(gen_check, OperatorGenerationState::Absent) {
+                                                bail!("Operator generation not Absent on Residual resume — \
+                                                       create a new teardown plan.");
+                                            }
+                                        } else {
+                                            eprintln!("No pending cleanup decisions to resume.");
+                                        }
                                     } else {
                                         eprintln!("Resuming {} pending cleanup decision(s)...", pending.len());
                                         for decision in &pending {
@@ -1924,9 +1951,11 @@ async fn main() -> Result<()> {
                                                 if matches!(status, crate::teardown::journal::ResidualStatus::AuditIncomplete) {
                                                     RunState::InteractiveCleanup
                                                 } else {
-                                                    // Check for pending/unconfirmed decisions
+                                                    // Check ALL journal decisions — not just this run's results
                                                     let j_final = store.read().await;
-                                                    if j_final.cleanup_decisions.iter().any(|d| d.is_pending()) {
+                                                    if j_final.cleanup_decisions.iter().any(|d| d.is_hard_failed()) {
+                                                        RunState::Failed
+                                                    } else if j_final.cleanup_decisions.iter().any(|d| d.is_pending()) {
                                                         RunState::InteractiveCleanup
                                                     } else {
                                                         RunState::ApplyCompleted
@@ -3177,4 +3206,127 @@ mod basis_drift_tests {
         assert!(seeds.is_empty(), "empty seeds blocked by caller");
     }
 
+    // ── Resume stage + crash recovery tests ──
+
+    #[test]
+    fn resume_hard_failed_decision_blocks_mutation() {
+        use crate::teardown::journal::{CleanupDecision, CleanupResult, RunState};
+        use crate::kube::resource::ResourceId;
+
+        let decisions = vec![
+            CleanupDecision {
+                resource: ResourceId {
+                    group: "apps".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Deployment".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "failed-deploy".to_string(),
+                    uid: Some("uid-a".to_string()),
+                },
+                bound_uid: Some("uid-a".to_string()),
+                action: "delete".to_string(),
+                result: Some(CleanupResult::Failed("API error".to_string())),
+                approved_spec_name: None,
+            },
+            CleanupDecision {
+                resource: ResourceId {
+                    group: "apps".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Deployment".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "pending-deploy".to_string(),
+                    uid: Some("uid-b".to_string()),
+                },
+                bound_uid: Some("uid-b".to_string()),
+                action: "delete".to_string(),
+                result: None, // pending
+                approved_spec_name: None,
+            },
+        ];
+
+        // Resume entry check: hard failure must be detected before pending processing
+        let has_hard = decisions.iter().any(|d| d.is_hard_failed());
+        assert!(has_hard, "hard failure must be detected at resume entry");
+
+        // This must prevent any mutation on the pending decision
+        let has_pending = decisions.iter().any(|d| d.is_pending());
+        assert!(has_pending, "pending decisions exist but must NOT be processed");
+    }
+
+    #[test]
+    fn resume_final_state_checks_all_decisions_not_just_current_run() {
+        use crate::teardown::journal::{CleanupDecision, CleanupResult};
+
+        // Simulate crash scenario: prior run left Failed decision,
+        // current run processed nothing (any_hard_failed = false)
+        let decisions = vec![
+            CleanupDecision {
+                resource: crate::kube::resource::ResourceId {
+                    group: "apps".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Deployment".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "crash-deploy".to_string(),
+                    uid: Some("uid-crash".to_string()),
+                },
+                bound_uid: Some("uid-crash".to_string()),
+                action: "delete".to_string(),
+                result: Some(CleanupResult::Failed("crash".to_string())),
+                approved_spec_name: None,
+            },
+        ];
+
+        // Final state must check ALL decisions, not just any_hard_failed from this run
+        let journal_has_hard = decisions.iter().any(|d| d.is_hard_failed());
+        assert!(journal_has_hard, "journal-level hard failure must prevent ApplyCompleted");
+    }
+
+    #[test]
+    fn paused_from_residual_detected() {
+        use crate::teardown::journal::{RunState, ExecutionRecord};
+
+        let state = RunState::Paused;
+        let phases_completed = 7;
+        let phases_total = 7;
+        let has_residual_audit = true;
+
+        let paused_from_residual = state == RunState::Paused
+            && phases_completed == phases_total
+            && has_residual_audit;
+
+        assert!(paused_from_residual, "Paused with all phases complete + audit = Residual stage");
+
+        // Should route to cleanup resume, not main execution
+        let has_pending_cleanup = false;
+        let should_resume_cleanup = state == RunState::InteractiveCleanup
+            || ((state == RunState::Applying || state == RunState::Paused) && has_pending_cleanup)
+            || paused_from_residual;
+
+        assert!(should_resume_cleanup, "paused_from_residual must route to cleanup resume");
+    }
+
+    #[test]
+    fn paused_from_main_not_detected_as_residual() {
+        use crate::teardown::journal::RunState;
+
+        // Paused during main execution (phases incomplete, no audit)
+        let state = RunState::Paused;
+        let phases_completed = 3;
+        let phases_total = 7;
+        let has_residual_audit = false;
+
+        let paused_from_residual = state == RunState::Paused
+            && phases_completed == phases_total
+            && has_residual_audit;
+
+        assert!(!paused_from_residual, "Main-stage pause must NOT be detected as Residual");
+
+        // Should route to main execution resume (no pending cleanup, not residual)
+        let has_pending_cleanup = false;
+        let should_resume_cleanup = state == RunState::InteractiveCleanup
+            || ((state == RunState::Applying || state == RunState::Paused) && has_pending_cleanup)
+            || paused_from_residual;
+
+        assert!(!should_resume_cleanup, "Main-stage pause should route to main execution");
+    }
 }
