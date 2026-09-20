@@ -184,6 +184,10 @@ pub enum TeardownAction {
         #[arg(long)]
         force: bool,
 
+        /// Strip finalizers from resources that stall the barrier
+        #[arg(long)]
+        strip_finalizers: bool,
+
         /// Approve deletion of REVIEW resources. Use "root", "independent", "all" for bulk,
         /// or Kind/name or group/Kind/ns/name for exact resource approval (repeatable)
         #[arg(long = "approve-delete", value_name = "SPEC")]

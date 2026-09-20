@@ -7,22 +7,69 @@ use anyhow::{Result, bail};
 use futures::stream::StreamExt;
 use kube::{
     Client,
-    api::{Api, ApiResource, DeleteParams, DynamicObject, ListParams},
+    api::{Api, ApiResource, DeleteParams, DynamicObject, ListParams, Patch, PatchParams},
     core::GroupVersion,
 };
 
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
+use crate::teardown::finalizers::{FinalizerCheck, check_finalizers_batch, requires_serialization};
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
 
 const DEFAULT_CONCURRENCY: usize = 16;
 
+const PROTECTED_KINDS: &[&str] = &[
+    "CustomResourceDefinition",
+    "Namespace",
+    "PersistentVolume",
+    "PersistentVolumeClaim",
+    "Node",
+    "Subscription",
+    "ClusterServiceVersion",
+    "APIService",
+    "OperatorGroup",
+];
+
+// ── Delete result ──
+
 #[derive(Debug)]
 enum DeleteResult {
-    Deleted,
+    Deleted { uid: String },
     AlreadyGone,
     Failed(String),
 }
+
+// ── Barrier target: separates "observe" from "authorized to re-DELETE" ──
+
+#[derive(Debug, Clone)]
+enum BarrierMode {
+    ObserveOnly,
+    ReDeleteIfRecreated { original_uid: String },
+}
+
+#[derive(Debug, Clone)]
+struct BarrierTarget {
+    resource: ResourceId,
+    mode: BarrierMode,
+}
+
+fn should_redelete(
+    target: &BarrierTarget,
+    current_uid: Option<&str>,
+    has_deletion_timestamp: bool,
+) -> bool {
+    if has_deletion_timestamp {
+        return false;
+    }
+    match &target.mode {
+        BarrierMode::ObserveOnly => false,
+        BarrierMode::ReDeleteIfRecreated { original_uid } => {
+            current_uid.is_some_and(|uid| uid != original_uid)
+        }
+    }
+}
+
+// ── Public result types ──
 
 pub struct ExecutionResult {
     pub phases_completed: usize,
@@ -47,14 +94,6 @@ pub enum ObservationState {
         finalizer_count: usize,
         has_deletion_timestamp: bool,
     },
-    Unknown(String),
-}
-
-// P0-adjacent: three-value result for finalizer checks
-#[derive(Debug, Clone)]
-pub enum FinalizerCheckResult {
-    Known(Vec<String>),
-    Gone,
     Unknown(String),
 }
 
@@ -165,6 +204,7 @@ pub async fn execute_plan(
     gvr_map: &GvrMap,
     dry_run: bool,
     force: bool,
+    strip_finalizers: bool,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -251,6 +291,19 @@ pub async fn execute_plan(
         });
     }
 
+    // Collect all plan-level DELETE/EXPECT resource IDs for strip safety checks
+    let plan_operand_resources: HashSet<ResourceId> = plan
+        .phases
+        .iter()
+        .flat_map(|p| &p.actions)
+        .filter_map(|a| match a {
+            Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
+                Some(resource.clone())
+            }
+            _ => None,
+        })
+        .collect();
+
     let mut result = ExecutionResult {
         phases_completed: 0,
         phases_total: plan.phases.len(),
@@ -269,7 +322,7 @@ pub async fn execute_plan(
             continue;
         }
 
-        let mut phase_wait_targets: Vec<ResourceId> = Vec::new();
+        let mut phase_wait_targets: Vec<BarrierTarget> = Vec::new();
 
         // Collect DELETE actions for parallel execution
         let delete_actions: Vec<_> = phase
@@ -291,7 +344,10 @@ pub async fn execute_plan(
                         scope_suffix(resource)
                     );
                     eprintln!("             \x1b[2m{}\x1b[0m", reason);
-                    phase_wait_targets.push(resource.clone());
+                    phase_wait_targets.push(BarrierTarget {
+                        resource: resource.clone(),
+                        mode: BarrierMode::ObserveOnly,
+                    });
                 }
             } else {
                 // CRD/APIService live count checks (must be sequential for safety)
@@ -353,61 +409,279 @@ pub async fn execute_plan(
                     }
                 }
 
-                // Parallel DELETE (excluding blocked APIs)
+                // Eligible DELETEs (excluding blocked APIs)
                 let eligible: Vec<_> = delete_actions
                     .iter()
                     .filter(|(r, _)| !api_blocked.contains(&r.name))
                     .collect();
+                let eligible_resources: Vec<ResourceId> =
+                    eligible.iter().map(|(r, _)| r.clone()).collect();
 
-                let km = Arc::new(kind_map.clone());
-                let gk = Arc::new(gk_map.clone());
-                let del_futs = eligible.iter().map(|(resource, _)| {
-                    let client = client.clone();
-                    let resource = resource.clone();
-                    let km = km.clone();
-                    let gk = gk.clone();
-                    async move {
-                        let res = delete_resource(&client, &resource, &km, &gk).await;
-                        (resource, res)
+                // Pre-flight: check if EXPECT targets in this phase have finalizers.
+                // If so, serialize root CR deletions to let the controller process
+                // finalizers while other root CRs still exist.
+                let expect_targets: Vec<&ResourceId> = phase
+                    .actions
+                    .iter()
+                    .filter_map(|a| match a {
+                        Action::ExpectGone { resource, .. } => Some(resource),
+                        _ => None,
+                    })
+                    .collect();
+
+                let has_finalized_descendants = if !expect_targets.is_empty()
+                    && eligible_resources.len() > 1
+                    && phase.barrier.is_some()
+                {
+                    let expect_owned: Vec<ResourceId> =
+                        expect_targets.iter().map(|r| (*r).clone()).collect();
+                    let fin_results = check_finalizers_batch(
+                        client,
+                        &expect_owned,
+                        kind_map,
+                        gk_map,
+                        DEFAULT_CONCURRENCY,
+                    )
+                    .await;
+                    let should_serialize = requires_serialization(&fin_results);
+                    if should_serialize {
+                        let finalized_count = fin_results
+                            .iter()
+                            .filter(|(_, r)| matches!(r, FinalizerCheck::KnownFinalizers(_)))
+                            .count();
+                        let unknown_count = fin_results
+                            .iter()
+                            .filter(|(_, r)| matches!(r, FinalizerCheck::Unknown(_)))
+                            .count();
+                        if unknown_count > 0 {
+                            eprintln!(
+                                "  \x1b[33m⚠ {} EXPECT target(s) have finalizers, {} unknown — serializing root CR deletions conservatively\x1b[0m",
+                                finalized_count, unknown_count
+                            );
+                        } else {
+                            eprintln!(
+                                "  \x1b[33m⚠ {} EXPECT target(s) have finalizers — serializing root CR deletions\x1b[0m",
+                                finalized_count
+                            );
+                        }
                     }
-                });
+                    should_serialize
+                } else {
+                    false
+                };
 
-                let del_results: Vec<_> = futures::stream::iter(del_futs)
-                    .buffer_unordered(DEFAULT_CONCURRENCY)
-                    .collect()
+                if has_finalized_descendants {
+                    // Collect all EXPECT + WaitGone targets upfront so intermediate
+                    // barriers can wait for descendant finalizer processing
+                    let all_expect_targets: Vec<BarrierTarget> = phase
+                        .actions
+                        .iter()
+                        .filter_map(|a| match a {
+                            Action::ExpectGone { resource, .. } => Some(BarrierTarget {
+                                resource: resource.clone(),
+                                mode: BarrierMode::ObserveOnly,
+                            }),
+                            Action::WaitGone { resource } => Some(BarrierTarget {
+                                resource: resource.clone(),
+                                mode: BarrierMode::ObserveOnly,
+                            }),
+                            _ => None,
+                        })
+                        .collect();
+
+                    // Track stalled resource sets to detect repeated stalls:
+                    // if consecutive intermediate barriers stall on the same set,
+                    // skip remaining barriers (deleting more root CRs won't help)
+                    let mut prev_stall_set: Option<HashSet<ResourceId>> = None;
+                    let mut skip_repeated_stall = false;
+
+                    // Sequential deletion: delete one root CR at a time, barrier between each
+                    for (seq_idx, resource) in eligible_resources.iter().enumerate() {
+                        let (s, d, mut errs) = execute_delete_batch(
+                            client,
+                            std::slice::from_ref(resource),
+                            kind_map,
+                            gk_map,
+                            &mut result,
+                            None,
+                        )
+                        .await;
+
+                        // Retry if webhook rejected
+                        let mut d = d;
+                        for attempt in 0..2u64 {
+                            if d.is_empty() {
+                                break;
+                            }
+                            let delay = std::time::Duration::from_secs(2 * (attempt + 1));
+                            eprintln!("  \x1b[33m⟳ Retrying in {}s...\x1b[0m", delay.as_secs());
+                            tokio::time::sleep(delay).await;
+                            let (s2, d2, e2) = execute_delete_batch(
+                                client,
+                                &d,
+                                kind_map,
+                                gk_map,
+                                &mut result,
+                                Some(attempt + 1),
+                            )
+                            .await;
+                            phase_wait_targets.extend(s2);
+                            d = d2;
+                            if !e2.is_empty() {
+                                errs = e2;
+                            }
+                        }
+
+                        phase_wait_targets.extend(s);
+                        if !d.is_empty() {
+                            for r in &d {
+                                let err = errs
+                                    .iter()
+                                    .find(|(res, _)| res == r)
+                                    .map(|(_, e)| e.clone())
+                                    .unwrap_or_else(|| "failed after retries".to_string());
+                                result.failed.push((r.clone(), err));
+                            }
+                        }
+
+                        // Intermediate barrier: wait for this root CR AND all EXPECT
+                        // descendants before deleting the next root CR.
+                        // Skip for the last root CR — main barrier handles it.
+                        // Skip if previous barrier stalled on the same set (repeated stall).
+                        if seq_idx < eligible_resources.len() - 1 && phase.barrier.is_some() {
+                            if skip_repeated_stall {
+                                eprintln!(
+                                    "\n  \x1b[2m⏭ Skipping intermediate barrier (repeated stall — same resources stalled)\x1b[0m"
+                                );
+                            } else {
+                                let mut inter_wait = phase_wait_targets.clone();
+                                for et in &all_expect_targets {
+                                    if !inter_wait.iter().any(|t| t.resource == et.resource) {
+                                        inter_wait.push(et.clone());
+                                    }
+                                }
+                                if !inter_wait.is_empty() {
+                                    eprintln!(
+                                        "\n  \x1b[33m⏳ Intermediate barrier: waiting for {}/{} + {} descendants before next root CR\x1b[0m",
+                                        resource.kind,
+                                        resource.name,
+                                        all_expect_targets.len()
+                                    );
+                                    match wait_for_barrier(
+                                        client,
+                                        &inter_wait,
+                                        kind_map,
+                                        gk_map,
+                                        300,
+                                    )
+                                    .await
+                                    {
+                                        BarrierResult::Passed => {
+                                            eprintln!(
+                                                "  \x1b[32m✅ Intermediate barrier passed\x1b[0m"
+                                            );
+                                            phase_wait_targets.clear();
+                                            prev_stall_set = None;
+                                        }
+                                        BarrierResult::Stalled {
+                                            remaining,
+                                            finalizers,
+                                            reason,
+                                        } => {
+                                            let current_stall: HashSet<ResourceId> = remaining
+                                                .iter()
+                                                .map(|t| t.resource.clone())
+                                                .collect();
+                                            if let Some(prev) = &prev_stall_set {
+                                                if *prev == current_stall {
+                                                    eprintln!(
+                                                        "  \x1b[1;33m⚠ Intermediate barrier stalled on same {} resources — skipping remaining intermediate barriers\x1b[0m",
+                                                        current_stall.len()
+                                                    );
+                                                    skip_repeated_stall = true;
+                                                } else {
+                                                    eprintln!(
+                                                        "  \x1b[1;33m⚠ Intermediate barrier stalled ({}) — continuing with next root CR\x1b[0m",
+                                                        reason
+                                                    );
+                                                }
+                                            } else {
+                                                eprintln!(
+                                                    "  \x1b[1;33m⚠ Intermediate barrier stalled ({}) — continuing with next root CR\x1b[0m",
+                                                    reason
+                                                );
+                                            }
+                                            prev_stall_set = Some(current_stall);
+                                            // Preserve remaining with their original modes
+                                            phase_wait_targets = remaining;
+                                            for (r, f) in &finalizers {
+                                                if !f.is_empty()
+                                                    && !phase_wait_targets
+                                                        .iter()
+                                                        .any(|t| t.resource == *r)
+                                                {
+                                                    phase_wait_targets.push(BarrierTarget {
+                                                        resource: r.clone(),
+                                                        mode: BarrierMode::ObserveOnly,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Standard parallel DELETE
+                    let (mut succeeded, mut deferred, mut errs) = execute_delete_batch(
+                        client,
+                        &eligible_resources,
+                        kind_map,
+                        gk_map,
+                        &mut result,
+                        None,
+                    )
                     .await;
 
-                for (resource, del_result) in del_results {
-                    match del_result {
-                        DeleteResult::Deleted => {
-                            eprintln!(
-                                "  \x1b[31mDELETED\x1b[0m  {}/{}{}",
-                                resource.kind,
-                                resource.name,
-                                scope_suffix(&resource)
-                            );
-                            result.deleted.push(resource.clone());
-                            phase_wait_targets.push(resource);
+                    // Quick retry with backoff for webhook ordering races
+                    for attempt in 0..2u64 {
+                        if deferred.is_empty() {
+                            break;
                         }
-                        DeleteResult::AlreadyGone => {
-                            eprintln!(
-                                "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
-                                resource.kind,
-                                resource.name,
-                                scope_suffix(&resource)
-                            );
-                            result.already_gone.push(resource);
+                        let delay = std::time::Duration::from_secs(2 * (attempt + 1));
+                        eprintln!(
+                            "  \x1b[33m⟳ Retrying {} failed DELETE(s) in {}s...\x1b[0m",
+                            deferred.len(),
+                            delay.as_secs()
+                        );
+                        tokio::time::sleep(delay).await;
+
+                        let (s, d, e) = execute_delete_batch(
+                            client,
+                            &deferred,
+                            kind_map,
+                            gk_map,
+                            &mut result,
+                            Some(attempt + 1),
+                        )
+                        .await;
+                        succeeded.extend(s);
+                        deferred = d;
+                        if !e.is_empty() {
+                            errs = e;
                         }
-                        DeleteResult::Failed(err) => {
-                            eprintln!(
-                                "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}",
-                                resource.kind,
-                                resource.name,
-                                err,
-                                scope_suffix(&resource)
-                            );
-                            result.failed.push((resource.clone(), err));
-                            phase_wait_targets.push(resource);
+                    }
+
+                    phase_wait_targets.extend(succeeded);
+                    if !deferred.is_empty() {
+                        for r in &deferred {
+                            let err = errs
+                                .iter()
+                                .find(|(res, _)| res == r)
+                                .map(|(_, e)| e.clone())
+                                .unwrap_or_else(|| "failed after retries".to_string());
+                            result.failed.push((r.clone(), err));
                         }
                     }
                 }
@@ -436,7 +710,10 @@ pub async fn execute_plan(
                         );
                         eprintln!("             \x1b[2m{}\x1b[0m", reason);
                     }
-                    phase_wait_targets.push(resource.clone());
+                    phase_wait_targets.push(BarrierTarget {
+                        resource: resource.clone(),
+                        mode: BarrierMode::ObserveOnly,
+                    });
                 }
                 Action::Keep { resource, reason } => {
                     eprintln!(
@@ -463,7 +740,10 @@ pub async fn execute_plan(
                         resource.name,
                         scope_suffix(resource)
                     );
-                    phase_wait_targets.push(resource.clone());
+                    phase_wait_targets.push(BarrierTarget {
+                        resource: resource.clone(),
+                        mode: BarrierMode::ObserveOnly,
+                    });
                 }
             }
         }
@@ -487,7 +767,8 @@ pub async fn execute_plan(
                             remaining.len(),
                             reason
                         );
-                        for res in &remaining {
+                        for target in &remaining {
+                            let res = &target.resource;
                             let fins: Vec<&str> = finalizers
                                 .iter()
                                 .filter(|(r, _)| r == res)
@@ -504,12 +785,135 @@ pub async fn execute_plan(
                                 );
                             }
                         }
-                        result.barrier_timeout = Some(BarrierTimeout {
-                            phase: phase.name.clone(),
-                            remaining: remaining.clone(),
-                            finalizers,
-                        });
-                        break;
+
+                        let stuck_with_finalizers: Vec<_> =
+                            finalizers.iter().filter(|(_, f)| !f.is_empty()).collect();
+
+                        if strip_finalizers && !stuck_with_finalizers.is_empty() {
+                            eprintln!(
+                                "\n  \x1b[1;33m⚠ --strip-finalizers: removing finalizers from {} resource(s)\x1b[0m",
+                                stuck_with_finalizers.len()
+                            );
+                            // Collect observed UIDs for strip safety
+                            let km = Arc::new(kind_map.clone());
+                            let gk = Arc::new(gk_map.clone());
+                            for (res, fins) in &stuck_with_finalizers {
+                                // Safety guards
+                                if PROTECTED_KINDS.contains(&res.kind.as_str()) {
+                                    eprintln!(
+                                        "  \x1b[2mSKIPPED\x1b[0m  strip {}/{}: protected resource kind",
+                                        res.kind, res.name
+                                    );
+                                    continue;
+                                }
+                                if !plan_operand_resources.contains(res) {
+                                    eprintln!(
+                                        "  \x1b[2mSKIPPED\x1b[0m  strip {}/{}: not in plan DELETE/EXPECT",
+                                        res.kind, res.name
+                                    );
+                                    continue;
+                                }
+
+                                // Get observed UID for strip race protection
+                                let state_info =
+                                    check_resource_state_full(client, res, &km, &gk).await;
+                                let is_deleting = matches!(
+                                    state_info.state,
+                                    ObservationState::Exists {
+                                        has_deletion_timestamp: true,
+                                        ..
+                                    }
+                                );
+                                if !is_deleting {
+                                    eprintln!(
+                                        "  \x1b[2mSKIPPED\x1b[0m  strip {}/{}: not in Deleting state",
+                                        res.kind, res.name
+                                    );
+                                    continue;
+                                }
+
+                                let observed_uid = match &state_info.uid {
+                                    Some(uid) => uid.clone(),
+                                    None => {
+                                        eprintln!(
+                                            "  \x1b[2mSKIPPED\x1b[0m  strip {}/{}: cannot determine UID",
+                                            res.kind, res.name
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                match strip_resource_finalizers(
+                                    client,
+                                    res,
+                                    kind_map,
+                                    gk_map,
+                                    &observed_uid,
+                                    fins,
+                                )
+                                .await
+                                {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "  \x1b[33mSTRIPPED\x1b[0m {}/{} (was: [{}])",
+                                            res.kind,
+                                            res.name,
+                                            fins.join(", ")
+                                        );
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "  \x1b[1;31mFAILED\x1b[0m   strip {}/{}: {}",
+                                            res.kind, res.name, e
+                                        );
+                                    }
+                                }
+                            }
+                            eprintln!(
+                                "  \x1b[33m⟳ Re-entering barrier after finalizer strip...\x1b[0m\n"
+                            );
+                            // Re-enter barrier — remaining already carries modes
+                            match wait_for_barrier(client, &remaining, kind_map, gk_map, 120).await
+                            {
+                                BarrierResult::Passed => {
+                                    eprintln!(
+                                        "  \x1b[32m✅ Barrier passed (after finalizer strip)\x1b[0m"
+                                    );
+                                }
+                                BarrierResult::Stalled {
+                                    remaining: remaining2,
+                                    finalizers: finalizers2,
+                                    reason: reason2,
+                                } => {
+                                    eprintln!(
+                                        "  \x1b[1;31m⚠ Barrier still stalled after strip — {} resources remain ({})\x1b[0m",
+                                        remaining2.len(),
+                                        reason2
+                                    );
+                                    result.barrier_timeout = Some(BarrierTimeout {
+                                        phase: phase.name.clone(),
+                                        remaining: remaining2
+                                            .iter()
+                                            .map(|t| t.resource.clone())
+                                            .collect(),
+                                        finalizers: finalizers2,
+                                    });
+                                    break;
+                                }
+                            }
+                        } else {
+                            if !stuck_with_finalizers.is_empty() && !strip_finalizers {
+                                eprintln!(
+                                    "\n  \x1b[2mHint: use --strip-finalizers to remove finalizers and continue\x1b[0m"
+                                );
+                            }
+                            result.barrier_timeout = Some(BarrierTimeout {
+                                phase: phase.name.clone(),
+                                remaining: remaining.iter().map(|t| t.resource.clone()).collect(),
+                                finalizers,
+                            });
+                            break;
+                        }
                     }
                 }
             }
@@ -525,42 +929,34 @@ pub async fn execute_plan(
                 })
             });
             if next_deletes_controllers {
-                let review_resources: Vec<&ResourceId> = plan
+                let review_resources: Vec<ResourceId> = plan
                     .phases
                     .iter()
                     .flat_map(|p| &p.actions)
                     .filter_map(|a| match a {
-                        Action::Review { resource, .. } => Some(resource),
+                        Action::Review { resource, .. } => Some(resource.clone()),
                         _ => None,
                     })
                     .collect();
-                let km = Arc::new(kind_map.clone());
-                let gk = Arc::new(gk_map.clone());
-                let fin_futs = review_resources.into_iter().map(|res| {
-                    let client = client.clone();
-                    let res = res.clone();
-                    let km = km.clone();
-                    let gk = gk.clone();
-                    async move {
-                        let r = check_finalizers(&client, &res, &km, &gk).await;
-                        (res, r)
-                    }
-                });
-                let fin_results: Vec<_> = futures::stream::iter(fin_futs)
-                    .buffer_unordered(DEFAULT_CONCURRENCY)
-                    .collect()
-                    .await;
+                let fin_results = check_finalizers_batch(
+                    client,
+                    &review_resources,
+                    kind_map,
+                    gk_map,
+                    DEFAULT_CONCURRENCY,
+                )
+                .await;
 
                 let mut block_reasons = Vec::new();
                 for (res, fin_result) in fin_results {
                     match fin_result {
-                        FinalizerCheckResult::Known(fins) if !fins.is_empty() => {
+                        FinalizerCheck::KnownFinalizers(fins) => {
                             block_reasons.push((res, fins));
                         }
-                        FinalizerCheckResult::Unknown(err) => {
+                        FinalizerCheck::Unknown(err) => {
                             block_reasons.push((res, vec![format!("check failed: {}", err)]));
                         }
-                        _ => {}
+                        FinalizerCheck::KnownEmpty => {}
                     }
                 }
                 if !block_reasons.is_empty() {
@@ -587,6 +983,92 @@ pub async fn execute_plan(
     Ok(result)
 }
 
+// ── Delete batch: returns BarrierTargets for succeeded, ResourceIds for deferred ──
+
+async fn execute_delete_batch(
+    client: &Client,
+    targets: &[ResourceId],
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    result: &mut ExecutionResult,
+    retry_num: Option<u64>,
+) -> (
+    Vec<BarrierTarget>,
+    Vec<ResourceId>,
+    Vec<(ResourceId, String)>,
+) {
+    let km = Arc::new(kind_map.clone());
+    let gk = Arc::new(gk_map.clone());
+    let del_futs = targets.iter().map(|resource| {
+        let client = client.clone();
+        let resource = resource.clone();
+        let km = km.clone();
+        let gk = gk.clone();
+        async move {
+            let res = delete_resource(&client, &resource, &km, &gk).await;
+            (resource, res)
+        }
+    });
+
+    let del_results: Vec<_> = futures::stream::iter(del_futs)
+        .buffer_unordered(DEFAULT_CONCURRENCY)
+        .collect()
+        .await;
+
+    let retry_suffix = match retry_num {
+        Some(n) => format!(" (retry {})", n),
+        None => String::new(),
+    };
+
+    let mut succeeded = Vec::new();
+    let mut deferred = Vec::new();
+    let mut errors: Vec<(ResourceId, String)> = Vec::new();
+
+    for (resource, del_result) in del_results {
+        match del_result {
+            DeleteResult::Deleted { uid } => {
+                eprintln!(
+                    "  \x1b[31mDELETED\x1b[0m  {}/{}{}{}",
+                    resource.kind,
+                    resource.name,
+                    retry_suffix,
+                    scope_suffix(&resource)
+                );
+                result.deleted.push(resource.clone());
+                succeeded.push(BarrierTarget {
+                    resource,
+                    mode: BarrierMode::ReDeleteIfRecreated { original_uid: uid },
+                });
+            }
+            DeleteResult::AlreadyGone => {
+                eprintln!(
+                    "  \x1b[2mSKIPPED\x1b[0m  {}/{} (already gone){}",
+                    resource.kind,
+                    resource.name,
+                    scope_suffix(&resource)
+                );
+                result.already_gone.push(resource);
+            }
+            DeleteResult::Failed(err) => {
+                eprintln!(
+                    "  \x1b[1;31mFAILED\x1b[0m   {}/{}: {}{}{}",
+                    resource.kind,
+                    resource.name,
+                    err,
+                    retry_suffix,
+                    scope_suffix(&resource)
+                );
+                errors.push((resource.clone(), err));
+                deferred.push(resource);
+            }
+        }
+    }
+
+    (succeeded, deferred, errors)
+}
+
+// ── UID-bound DELETE: GET → resolve UID → preconditioned DELETE ──
+
 async fn delete_resource(
     client: &Client,
     resource: &ResourceId,
@@ -603,17 +1085,50 @@ async fn delete_resource(
         }
     };
 
-    match api.delete(&resource.name, &DeleteParams::default()).await {
-        Ok(_) => DeleteResult::Deleted,
+    // Fail-closed: GET current UID before DELETE
+    let current_uid = match api.get(&resource.name).await {
+        Ok(obj) => match obj.metadata.uid {
+            Some(uid) => uid,
+            None => {
+                return DeleteResult::Failed(format!(
+                    "cannot resolve UID for {}/{}",
+                    resource.kind, resource.name
+                ));
+            }
+        },
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            return DeleteResult::AlreadyGone;
+        }
+        Err(e) => {
+            return DeleteResult::Failed(format!(
+                "GET failed for {}/{}: {}",
+                resource.kind, resource.name, e
+            ));
+        }
+    };
+
+    // UID-preconditioned DELETE
+    let dp = DeleteParams {
+        preconditions: Some(kube::api::Preconditions {
+            uid: Some(current_uid.clone()),
+            resource_version: None,
+        }),
+        ..Default::default()
+    };
+
+    match api.delete(&resource.name, &dp).await {
+        Ok(_) => DeleteResult::Deleted { uid: current_uid },
         Err(kube::Error::Api(err)) if err.code == 404 => DeleteResult::AlreadyGone,
         Err(e) => DeleteResult::Failed(e.to_string()),
     }
 }
 
+// ── Barrier ──
+
 enum BarrierResult {
     Passed,
     Stalled {
-        remaining: Vec<ResourceId>,
+        remaining: Vec<BarrierTarget>,
         finalizers: Vec<(ResourceId, Vec<String>)>,
         reason: String,
     },
@@ -622,6 +1137,35 @@ enum BarrierResult {
 struct ResourceStateInfo {
     state: ObservationState,
     finalizers: Vec<String>,
+    uid: Option<String>,
+}
+
+async fn strip_resource_finalizers(
+    client: &Client,
+    resource: &ResourceId,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    observed_uid: &str,
+    observed_finalizers: &[String],
+) -> Result<()> {
+    let (api, _) = resolve_api(client, resource, kind_map, gk_map).ok_or_else(|| {
+        anyhow::anyhow!("cannot resolve API for {}/{}", resource.kind, resource.name)
+    })?;
+
+    // Atomic compare-and-swap via JSON Patch test operations:
+    // verify UID and finalizer set haven't changed before stripping.
+    // If either changed (recreation or concurrent finalizer addition),
+    // the patch itself fails at the API server level — no TOCTOU race.
+    let patch_value = serde_json::json!([
+        { "op": "test", "path": "/metadata/uid", "value": observed_uid },
+        { "op": "test", "path": "/metadata/finalizers", "value": observed_finalizers },
+        { "op": "replace", "path": "/metadata/finalizers", "value": [] }
+    ]);
+    let json_patch: kube::core::params::Patch<serde_json::Value> =
+        Patch::Json(serde_json::from_value(patch_value)?);
+    api.patch(&resource.name, &PatchParams::default(), &json_patch)
+        .await?;
+    Ok(())
 }
 
 async fn check_resource_state_full(
@@ -639,6 +1183,7 @@ async fn check_resource_state_full(
                     resource.kind, resource.name
                 )),
                 finalizers: vec![],
+                uid: None,
             };
         }
     };
@@ -647,34 +1192,38 @@ async fn check_resource_state_full(
         Ok(obj) => {
             let finalizers = obj.metadata.finalizers.clone().unwrap_or_default();
             let has_dt = obj.metadata.deletion_timestamp.is_some();
+            let uid = obj.metadata.uid.clone();
             ResourceStateInfo {
                 state: ObservationState::Exists {
                     finalizer_count: finalizers.len(),
                     has_deletion_timestamp: has_dt,
                 },
                 finalizers,
+                uid,
             }
         }
         Err(kube::Error::Api(err)) if err.code == 404 => ResourceStateInfo {
             state: ObservationState::Gone,
             finalizers: vec![],
+            uid: None,
         },
         Err(e) => ResourceStateInfo {
             state: ObservationState::Unknown(format!("GET failed: {}", e)),
             finalizers: vec![],
+            uid: None,
         },
     }
 }
 
 async fn wait_for_barrier(
     client: &Client,
-    resources: &[ResourceId],
+    targets: &[BarrierTarget],
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
     timeout_secs: u64,
 ) -> BarrierResult {
     let start = Instant::now();
-    let total = resources.len();
+    let total = targets.len();
 
     let mut prev_gone = 0usize;
     let mut prev_total_finalizers = usize::MAX;
@@ -689,19 +1238,19 @@ async fn wait_for_barrier(
     loop {
         let elapsed = start.elapsed().as_secs();
 
-        // Parallel state check for all resources — single GET per resource
-        let check_futs = resources.iter().map(|res| {
+        // Parallel state check — carry BarrierTarget through the future
+        // so completion order from buffer_unordered cannot misattribute modes
+        let check_futs = targets.iter().cloned().map(|target| {
             let client = client.clone();
-            let res = res.clone();
             let km = kind_map.clone();
             let gk = gk_map.clone();
             async move {
-                let r = check_resource_state_full(&client, &res, &km, &gk).await;
-                (res, r)
+                let info = check_resource_state_full(&client, &target.resource, &km, &gk).await;
+                (target, info)
             }
         });
 
-        let states: Vec<_> = futures::stream::iter(check_futs)
+        let states: Vec<(BarrierTarget, ResourceStateInfo)> = futures::stream::iter(check_futs)
             .buffer_unordered(DEFAULT_CONCURRENCY)
             .collect()
             .await;
@@ -710,11 +1259,12 @@ async fn wait_for_barrier(
         let mut unknown_count = 0;
         let mut deleting_count = 0;
         let mut total_finalizers = 0;
-        let mut remaining = Vec::new();
+        let mut remaining: Vec<BarrierTarget> = Vec::new();
         let mut remaining_finalizers = Vec::new();
         let mut unknown_reasons = Vec::new();
 
-        for (res, info) in &states {
+        for (target, info) in &states {
+            let res = &target.resource;
             match &info.state {
                 ObservationState::Gone => {
                     gone_count += 1;
@@ -723,7 +1273,7 @@ async fn wait_for_barrier(
                     finalizer_count,
                     has_deletion_timestamp,
                 } => {
-                    remaining.push(res.clone());
+                    remaining.push(target.clone());
                     total_finalizers += finalizer_count;
                     if *has_deletion_timestamp {
                         deleting_count += 1;
@@ -734,7 +1284,7 @@ async fn wait_for_barrier(
                 }
                 ObservationState::Unknown(reason) => {
                     unknown_count += 1;
-                    remaining.push(res.clone());
+                    remaining.push(target.clone());
                     unknown_reasons.push(format!("{}/{}: {}", res.kind, res.name, reason));
                 }
             }
@@ -765,6 +1315,64 @@ async fn wait_for_barrier(
         }
         consecutive_unknown_cycles = 0;
 
+        // Re-DELETE only resources authorized via ReDeleteIfRecreated and
+        // confirmed to have a different UID (recreated by controller)
+        let mut redeleted = false;
+        for (target, info) in &states {
+            let res = &target.resource;
+            let has_dt = matches!(
+                info.state,
+                ObservationState::Exists {
+                    has_deletion_timestamp: true,
+                    ..
+                }
+            );
+            let current_uid = info.uid.as_deref();
+            if should_redelete(target, current_uid, has_dt) {
+                let original_uid = match &target.mode {
+                    BarrierMode::ReDeleteIfRecreated { original_uid } => original_uid.as_str(),
+                    _ => continue,
+                };
+                // Re-DELETE with current UID precondition
+                if let Some(cur_uid) = current_uid {
+                    let (api, _) = match resolve_api(client, res, &kind_map, &gk_map) {
+                        Some(r) => r,
+                        None => continue,
+                    };
+                    let dp = DeleteParams {
+                        preconditions: Some(kube::api::Preconditions {
+                            uid: Some(cur_uid.to_string()),
+                            resource_version: None,
+                        }),
+                        ..Default::default()
+                    };
+                    match api.delete(&res.name, &dp).await {
+                        Ok(_) => {
+                            eprint!(
+                                "\r\x1b[2K  \x1b[33m♻ RE-DELETE\x1b[0m {}/{} (recreated: uid {}→{})\n",
+                                res.kind,
+                                res.name,
+                                &original_uid[..8.min(original_uid.len())],
+                                &cur_uid[..8.min(cur_uid.len())]
+                            );
+                            redeleted = true;
+                        }
+                        Err(kube::Error::Api(err)) if err.code == 404 => {}
+                        Err(err) => {
+                            eprint!(
+                                "\r\x1b[2K  \x1b[2m♻ re-delete {}/{} failed: {}\x1b[0m\n",
+                                res.kind, res.name, err
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if redeleted {
+            std::io::stderr().flush().ok();
+        }
+
+        // re-DELETE is NOT progress — stall timer must not reset from it
         let made_progress = gone_count > prev_gone || total_finalizers < prev_total_finalizers;
 
         if made_progress {
@@ -807,30 +1415,6 @@ async fn wait_for_barrier(
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-}
-
-// P0-adjacent: check_finalizers distinguishes Known/Gone/Unknown
-async fn check_finalizers(
-    client: &Client,
-    resource: &ResourceId,
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
-) -> FinalizerCheckResult {
-    let (api, _) = match resolve_api(client, resource, kind_map, gk_map) {
-        Some(r) => r,
-        None => {
-            return FinalizerCheckResult::Unknown(format!(
-                "cannot resolve API for {}/{}",
-                resource.kind, resource.name
-            ));
-        }
-    };
-
-    match api.get(&resource.name).await {
-        Ok(obj) => FinalizerCheckResult::Known(obj.metadata.finalizers.unwrap_or_default()),
-        Err(kube::Error::Api(err)) if err.code == 404 => FinalizerCheckResult::Gone,
-        Err(e) => FinalizerCheckResult::Unknown(format!("GET failed: {}", e)),
     }
 }
 
@@ -1072,13 +1656,14 @@ mod tests {
         assert_ne!(state, ObservationState::Gone);
     }
 
-    // P0-adjacent regression: FinalizerCheckResult::Unknown is distinguishable
+    // FinalizerCheck (shared helper) regression: Unknown is distinguishable
     #[test]
     fn finalizer_check_unknown_is_not_empty_known() {
-        let result = FinalizerCheckResult::Unknown("resolve failed".to_string());
-        assert!(matches!(result, FinalizerCheckResult::Unknown(_)));
-        let empty = FinalizerCheckResult::Known(vec![]);
-        assert!(matches!(empty, FinalizerCheckResult::Known(ref v) if v.is_empty()));
+        use crate::teardown::finalizers::FinalizerCheck;
+        let result = FinalizerCheck::Unknown("resolve failed".to_string());
+        assert!(matches!(result, FinalizerCheck::Unknown(_)));
+        let empty = FinalizerCheck::KnownEmpty;
+        assert!(matches!(empty, FinalizerCheck::KnownEmpty));
     }
 
     // P0-3 (round 3): LiveCount types are distinct
@@ -1092,7 +1677,7 @@ mod tests {
         ));
     }
 
-    // ResourceStateInfo carries finalizers in single GET
+    // ResourceStateInfo carries finalizers and UID in single GET
     #[test]
     fn resource_state_info_carries_finalizers() {
         let info = ResourceStateInfo {
@@ -1101,8 +1686,10 @@ mod tests {
                 has_deletion_timestamp: false,
             },
             finalizers: vec!["a".to_string(), "b".to_string()],
+            uid: Some("test-uid".to_string()),
         };
         assert_eq!(info.finalizers.len(), 2);
+        assert_eq!(info.uid.as_deref(), Some("test-uid"));
         assert!(matches!(
             info.state,
             ObservationState::Exists {
@@ -1110,5 +1697,156 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // ── should_redelete state machine tests ──
+
+    #[test]
+    fn expect_target_is_never_redeleted() {
+        let target = BarrierTarget {
+            resource: make_resource("Pod", "a"),
+            mode: BarrierMode::ObserveOnly,
+        };
+        assert!(!should_redelete(&target, Some("uid-B"), false));
+        assert!(!should_redelete(&target, Some("uid-B"), true));
+        assert!(!should_redelete(&target, None, false));
+    }
+
+    #[test]
+    fn explicit_delete_recreated_with_new_uid_is_redeleted() {
+        let target = BarrierTarget {
+            resource: make_resource("Pod", "a"),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-A".to_string(),
+            },
+        };
+        assert!(should_redelete(&target, Some("uid-B"), false));
+    }
+
+    #[test]
+    fn same_uid_without_deletion_timestamp_is_not_redeleted() {
+        let target = BarrierTarget {
+            resource: make_resource("Pod", "a"),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-A".to_string(),
+            },
+        };
+        assert!(!should_redelete(&target, Some("uid-A"), false));
+    }
+
+    #[test]
+    fn recreated_new_uid_already_deleting_is_not_redeleted() {
+        let target = BarrierTarget {
+            resource: make_resource("Pod", "a"),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-A".to_string(),
+            },
+        };
+        // New UID but already being deleted → just wait
+        assert!(!should_redelete(&target, Some("uid-B"), true));
+    }
+
+    #[test]
+    fn redelete_with_unknown_uid_is_safe() {
+        let target = BarrierTarget {
+            resource: make_resource("Pod", "a"),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-A".to_string(),
+            },
+        };
+        // UID unknown → safe side, don't re-delete
+        assert!(!should_redelete(&target, None, false));
+    }
+
+    #[test]
+    fn redelete_does_not_apply_to_observe_only() {
+        // Even with mismatched UIDs, ObserveOnly never re-deletes
+        let target = BarrierTarget {
+            resource: make_resource("Pod", "a"),
+            mode: BarrierMode::ObserveOnly,
+        };
+        assert!(!should_redelete(&target, Some("different-uid"), false));
+    }
+
+    // ── BarrierTarget construction invariants ──
+
+    #[test]
+    fn barrier_target_from_delete_success_is_redelete_mode() {
+        let res = make_resource("Pod", "a");
+        let target = BarrierTarget {
+            resource: res.clone(),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-A".to_string(),
+            },
+        };
+        assert!(matches!(
+            target.mode,
+            BarrierMode::ReDeleteIfRecreated { .. }
+        ));
+    }
+
+    #[test]
+    fn barrier_target_from_expect_is_observe_only() {
+        let res = make_resource("Pod", "a");
+        let target = BarrierTarget {
+            resource: res,
+            mode: BarrierMode::ObserveOnly,
+        };
+        assert!(matches!(target.mode, BarrierMode::ObserveOnly));
+    }
+
+    // Protected kinds are not stripped
+    #[test]
+    fn protected_kinds_includes_critical_resources() {
+        assert!(PROTECTED_KINDS.contains(&"CustomResourceDefinition"));
+        assert!(PROTECTED_KINDS.contains(&"Namespace"));
+        assert!(PROTECTED_KINDS.contains(&"PersistentVolume"));
+        assert!(PROTECTED_KINDS.contains(&"PersistentVolumeClaim"));
+        assert!(PROTECTED_KINDS.contains(&"Node"));
+        assert!(!PROTECTED_KINDS.contains(&"Dashboard"));
+    }
+
+    // OLM/API infrastructure kinds are also protected from strip
+    #[test]
+    fn protected_kinds_includes_olm_infrastructure() {
+        assert!(PROTECTED_KINDS.contains(&"Subscription"));
+        assert!(PROTECTED_KINDS.contains(&"ClusterServiceVersion"));
+        assert!(PROTECTED_KINDS.contains(&"APIService"));
+        assert!(PROTECTED_KINDS.contains(&"OperatorGroup"));
+    }
+
+    // buffer_unordered completion order cannot misattribute barrier modes
+    #[test]
+    fn unordered_barrier_results_preserve_target_mode() {
+        let target_a = BarrierTarget {
+            resource: make_resource("Auth", "auth"),
+            mode: BarrierMode::ReDeleteIfRecreated {
+                original_uid: "uid-a".to_string(),
+            },
+        };
+        let target_b = BarrierTarget {
+            resource: make_resource("Ray", "default-ray"),
+            mode: BarrierMode::ObserveOnly,
+        };
+
+        // Simulate buffer_unordered returning results in reversed order
+        let results_reversed = vec![
+            (target_b.clone(), "uid-b-new".to_string(), false),
+            (target_a.clone(), "uid-a-new".to_string(), false),
+        ];
+
+        for (target, uid, has_dt) in &results_reversed {
+            let should = should_redelete(target, Some(uid.as_str()), *has_dt);
+            match &target.mode {
+                BarrierMode::ObserveOnly => {
+                    assert!(!should, "ObserveOnly must never re-delete");
+                }
+                BarrierMode::ReDeleteIfRecreated { original_uid } => {
+                    // uid changed, so re-delete is correct for this target
+                    assert!(uid != original_uid);
+                    assert!(should, "ReDelete with changed UID should re-delete");
+                }
+            }
+        }
     }
 }
