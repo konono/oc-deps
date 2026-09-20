@@ -3,13 +3,14 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
 
 use crate::kube::resource::ResourceId;
 use crate::teardown::app::{AppState, DraftAction};
 use crate::teardown::plan::ReviewMetadata;
 use crate::teardown::planner::{Action, TeardownPlan};
+use crate::teardown::runtime::{ResourceRuntimeState, RuntimeEntry, StateSummary};
 
 /// Draw the Plan Review screen.
 pub fn draw_plan_review(
@@ -113,4 +114,252 @@ pub fn draw_plan_review(
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(help, chunks[3]);
+}
+
+/// Draw the Execution screen — live resource state from RuntimeStateStore.
+pub fn draw_execution(
+    f: &mut Frame,
+    entries: &[RuntimeEntry],
+    summary: &StateSummary,
+    current_phase: usize,
+    total_phases: usize,
+    elapsed_secs: u64,
+    paused: bool,
+    error_msg: Option<&str>,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // title + progress
+            Constraint::Length(3),  // gauge
+            Constraint::Min(10),   // resource list
+            Constraint::Length(3),  // summary
+            Constraint::Length(3),  // help
+        ])
+        .split(f.area());
+
+    // Title
+    let status = if paused {
+        Span::styled(" PAUSED ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+    } else if let Some(err) = error_msg {
+        Span::styled(
+            format!(" ERROR: {} ", err),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(" Executing ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+    };
+
+    let title = Paragraph::new(Line::from(vec![
+        status,
+        Span::raw(format!("Phase {}/{} ", current_phase, total_phases)),
+        Span::styled(format!("({}s)", elapsed_secs), Style::default().fg(Color::DarkGray)),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, chunks[0]);
+
+    // Progress gauge — Recreated is a blocker (new UID, needs re-plan), not resolved
+    let resolved = summary.gone + summary.keep;
+    let blockers = summary.recreated + summary.failed + summary.stalled;
+    let ratio = if summary.total > 0 {
+        resolved as f64 / summary.total as f64
+    } else {
+        0.0
+    };
+    let label = if blockers > 0 {
+        format!("{}/{} resolved, {} blocked", resolved, summary.total, blockers)
+    } else {
+        format!("{}/{} resolved", resolved, summary.total)
+    };
+    let gauge_color = if blockers > 0 { Color::Yellow } else { Color::Green };
+    let gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title(" Progress "))
+        .gauge_style(Style::default().fg(gauge_color))
+        .ratio(ratio.min(1.0))
+        .label(label);
+    f.render_widget(gauge, chunks[1]);
+
+    // Resource list — sorted by phase_index, then state priority
+    let mut sorted: Vec<&RuntimeEntry> = entries.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.phase_index.cmp(&b.phase_index)
+            .then_with(|| state_priority(&a.state).cmp(&state_priority(&b.state)))
+    });
+
+    let visible_height = chunks[2].height.saturating_sub(2) as usize;
+    let items: Vec<ListItem> = sorted
+        .iter()
+        .take(visible_height.max(1))
+        .map(|entry| {
+            let (icon, color) = state_style(&entry.state);
+            let ns = entry.resource.namespace.as_deref().unwrap_or("cluster");
+            let line = Line::from(vec![
+                Span::styled(
+                    format!(" {} ", icon),
+                    Style::default().fg(color),
+                ),
+                Span::styled(
+                    format!("{}/{}", entry.resource.kind, entry.resource.name),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!(" ({}) ", ns),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{}", entry.state),
+                    Style::default().fg(color),
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let overflow = if sorted.len() > visible_height {
+        format!(" +{} more ", sorted.len() - visible_height)
+    } else {
+        String::new()
+    };
+
+    let resource_list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(format!(" Resources{}", overflow)));
+    f.render_widget(resource_list, chunks[2]);
+
+    // Summary bar
+    let summary_text = Paragraph::new(Line::from(vec![
+        Span::styled(format!(" {} Gone", summary.gone), Style::default().fg(Color::Green)),
+        Span::raw("  "),
+        Span::styled(format!("{} Deleting", summary.deleting), Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled(format!("{} FinBlocked", summary.finalizer_blocked), Style::default().fg(Color::Magenta)),
+        Span::raw("  "),
+        Span::styled(format!("{} Stalled", summary.stalled), Style::default().fg(Color::Red)),
+        Span::raw("  "),
+        Span::styled(format!("{} Failed", summary.failed), Style::default().fg(Color::Red)),
+        Span::raw("  "),
+        Span::styled(format!("{} Keep", summary.keep), Style::default().fg(Color::Cyan)),
+        Span::raw("  "),
+        Span::styled(format!("{} Recreated", summary.recreated), Style::default().fg(Color::Red)),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(summary_text, chunks[3]);
+
+    // Help
+    let help = Paragraph::new(Line::from(vec![
+        Span::styled(" p", Style::default().fg(Color::Green)),
+        Span::raw(" pause  "),
+        Span::styled("q/Esc", Style::default().fg(Color::Green)),
+        Span::raw(" abort  "),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(help, chunks[4]);
+}
+
+/// Draw the Residual Cleanup screen.
+pub fn draw_residual(
+    f: &mut Frame,
+    residuals: &[(ResourceId, String)],
+    selected: &[ResourceId],
+    cursor: usize,
+    status_msg: Option<&str>,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // title
+            Constraint::Min(10),   // residual list
+            Constraint::Length(3),  // help
+        ])
+        .split(f.area());
+
+    // Title
+    let title_text = if let Some(msg) = status_msg {
+        format!(" Residual Cleanup — {} ", msg)
+    } else {
+        format!(" Residual Cleanup — {} items ", residuals.len())
+    };
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(title_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, chunks[0]);
+
+    // Residual items
+    let items: Vec<ListItem> = residuals
+        .iter()
+        .enumerate()
+        .map(|(i, (res, reason))| {
+            let is_selected = selected.iter().any(|s| {
+                s.kind == res.kind && s.name == res.name
+                    && s.namespace == res.namespace && s.group == res.group
+            });
+            let prefix = if i == cursor { "▶ " } else { "  " };
+            let check = if is_selected { "[x]" } else { "[ ]" };
+            let style = if i == cursor {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default()
+            };
+            let ns = res.namespace.as_deref().unwrap_or("cluster");
+            let line = format!(
+                "{}{} {}/{} ({}) — {}",
+                prefix, check, res.kind, res.name, ns, reason
+            );
+            ListItem::new(Line::from(line)).style(style)
+        })
+        .collect();
+
+    let residual_list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(" Residual Resources "));
+    f.render_widget(residual_list, chunks[1]);
+
+    // Help
+    let help = Paragraph::new(Line::from(vec![
+        Span::styled(" space", Style::default().fg(Color::Green)),
+        Span::raw(" toggle  "),
+        Span::styled("d", Style::default().fg(Color::Green)),
+        Span::raw(" delete selected  "),
+        Span::styled("↑↓", Style::default().fg(Color::Green)),
+        Span::raw(" navigate  "),
+        Span::styled("q", Style::default().fg(Color::Green)),
+        Span::raw(" done"),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(help, chunks[2]);
+}
+
+fn state_priority(state: &ResourceRuntimeState) -> u8 {
+    match state {
+        ResourceRuntimeState::Failed { .. } => 0,
+        ResourceRuntimeState::Stalled => 1,
+        ResourceRuntimeState::Recreated { .. } => 2,
+        ResourceRuntimeState::FinalizerBlocked { .. } => 3,
+        ResourceRuntimeState::Deleting => 4,
+        ResourceRuntimeState::DeleteRequested => 5,
+        ResourceRuntimeState::ExpectingGone => 6,
+        ResourceRuntimeState::Planned => 7,
+        ResourceRuntimeState::Unknown { .. } => 8,
+        ResourceRuntimeState::Review => 9,
+        ResourceRuntimeState::Keep => 10,
+        ResourceRuntimeState::Gone => 11,
+    }
+}
+
+fn state_style(state: &ResourceRuntimeState) -> (&'static str, Color) {
+    match state {
+        ResourceRuntimeState::Planned => ("○", Color::DarkGray),
+        ResourceRuntimeState::DeleteRequested => ("◐", Color::Yellow),
+        ResourceRuntimeState::Deleting => ("◑", Color::Yellow),
+        ResourceRuntimeState::Gone => ("✓", Color::Green),
+        ResourceRuntimeState::ExpectingGone => ("◌", Color::Yellow),
+        ResourceRuntimeState::Recreated { .. } => ("⟲", Color::Red),
+        ResourceRuntimeState::Review => ("?", Color::Magenta),
+        ResourceRuntimeState::Keep => ("▪", Color::Cyan),
+        ResourceRuntimeState::FinalizerBlocked { .. } => ("⊘", Color::Magenta),
+        ResourceRuntimeState::Stalled => ("⏳", Color::Red),
+        ResourceRuntimeState::Failed { .. } => ("✗", Color::Red),
+        ResourceRuntimeState::Unknown { .. } => ("?", Color::DarkGray),
+    }
 }

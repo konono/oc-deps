@@ -178,6 +178,27 @@ pub async fn execute_plan(
     start_phase: usize,
     skip_confirm: bool,
 ) -> Result<ExecutionResult> {
+    execute_plan_with_store(
+        client, plan, kind_map, gk_map, gvk_map, gvr_map,
+        dry_run, force, journal, gate, start_phase, skip_confirm, None,
+    ).await
+}
+
+pub async fn execute_plan_with_store(
+    client: &Client,
+    plan: &TeardownPlan,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    gvk_map: &GvkMap,
+    gvr_map: &GvrMap,
+    dry_run: bool,
+    force: bool,
+    journal: Option<&JournalStore>,
+    gate: Option<&MutationGate>,
+    start_phase: usize,
+    skip_confirm: bool,
+    external_store: Option<Arc<RuntimeStateStore>>,
+) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
             "\x1b[1;31m⛔ Plan has {} blocker(s) — cannot execute:\x1b[0m",
@@ -319,11 +340,15 @@ pub async fn execute_plan(
 
     // Initialize RuntimeStateStore — canonical state for all tracked resources.
     // The store is purely observational: it never calls delete/mutation APIs.
-    let notifier = Arc::new(EventNotifier::new());
-    let store = Arc::new(RuntimeStateStore::new(
-        notifier.clone(),
-        Duration::from_secs(120),
-    ));
+    let store = if let Some(ext) = external_store {
+        ext
+    } else {
+        let notifier = Arc::new(EventNotifier::new());
+        Arc::new(RuntimeStateStore::new(
+            notifier.clone(),
+            Duration::from_secs(120),
+        ))
+    };
     let watch_mgr = WatchManager::new(store.clone());
 
     // Register all resources from the plan with their initial states
@@ -1066,6 +1091,15 @@ async fn count_live_api_service_instances(
     LiveCount::Zero
 }
 
+pub fn create_runtime_store() -> (Arc<RuntimeStateStore>, Arc<EventNotifier>) {
+    let notifier = Arc::new(EventNotifier::new());
+    let store = Arc::new(RuntimeStateStore::new(
+        notifier.clone(),
+        Duration::from_secs(120),
+    ));
+    (store, notifier)
+}
+
 pub fn print_execution_result(result: &ExecutionResult) {
     eprintln!(
         "\n\x1b[1mExecution Summary\x1b[0m: {}/{} phases completed",
@@ -1118,6 +1152,296 @@ pub fn print_execution_result(result: &ExecutionResult) {
             }
         }
     }
+}
+
+/// Result of a single residual cleanup cycle.
+#[derive(Debug)]
+pub struct ResidualCleanupResult {
+    pub deleted: Vec<ResourceId>,
+    pub skipped: Vec<(ResourceId, String)>,
+    pub failed: Vec<(ResourceId, String)>,
+    pub post_audit: Option<crate::teardown::audit::ResidualAudit>,
+}
+
+/// Core residual cleanup — shared by TUI, --script, and interactive CLI.
+///
+/// Safety contract enforced by this function:
+/// 1. Generation must be Absent (operator fully removed)
+/// 2. Fresh complete audit before any mutation
+/// 3. Each resource verified in current residual set
+/// 4. Per-resource: generation recheck + residual membership + gate permit + durable decision → DELETE → Gone poll → result persist
+/// 5. Post-cleanup re-audit
+///
+/// Caller provides the selected ResourceIds. This function does NOT grant DELETE
+/// authority from RuntimeStateStore — only from durable journal state.
+pub async fn execute_residual_cleanup(
+    client: &Client,
+    selected: &[ResourceId],
+    journal_store: &JournalStore,
+    gate: &MutationGate,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+) -> Result<ResidualCleanupResult> {
+    use crate::teardown::audit;
+    use crate::teardown::journal::{CleanupDecision, CleanupResult, RunState, ResidualStatus};
+
+    let mut result = ResidualCleanupResult {
+        deleted: Vec::new(),
+        skipped: Vec::new(),
+        failed: Vec::new(),
+        post_audit: None,
+    };
+
+    if selected.is_empty() {
+        return Ok(result);
+    }
+
+    // Step 0: Verify journal state allows cleanup
+    {
+        let j = journal_store.read().await;
+        if j.schema_version != crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION {
+            bail!(
+                "Journal schema version {} is not current (expected {}). \
+                 Cannot perform cleanup on incompatible journal.",
+                j.schema_version,
+                crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION
+            );
+        }
+        match j.state {
+            RunState::ApplyCompleted | RunState::InteractiveCleanup => {}
+            ref other => {
+                bail!(
+                    "Journal state is {:?} — cleanup only allowed from ApplyCompleted or InteractiveCleanup. \
+                     Resolve the current state before retrying.",
+                    other
+                );
+            }
+        }
+    }
+
+    // Step 1: Verify generation Absent
+    let j = journal_store.read().await;
+    let gen_state = audit::check_operator_generation(
+        client, &j.operator, &j.audit_context.csv_baseline,
+    ).await;
+    if !matches!(gen_state, audit::OperatorGenerationState::Absent) {
+        bail!("Operator generation is not Absent — residual cleanup blocked");
+    }
+
+    // Step 2: Fresh complete audit
+    let fresh_audit = audit::run_residual_audit(client, &j).await
+        .context("Fresh audit failed before cleanup")?;
+    let fresh_status = audit::residual_status_from_audit(&fresh_audit);
+    if matches!(fresh_status, ResidualStatus::AuditIncomplete) {
+        bail!("Fresh audit incomplete — residual cleanup blocked");
+    }
+
+    // Step 3: Build current residual set (likely_operator_residual + unattributed only)
+    let residual_keys: std::collections::HashSet<String> = fresh_audit.likely_operator_residual.iter()
+        .chain(fresh_audit.unattributed.iter())
+        .map(|r| format!("{}/{}/{}/{}", r.resource.group, r.resource.kind,
+            r.resource.namespace.as_deref().unwrap_or("-"), r.resource.name))
+        .collect();
+
+    // Validate all selections against current residual set
+    let valid_selected: Vec<&ResourceId> = selected.iter().filter(|res| {
+        let key = format!("{}/{}/{}/{}", res.group, res.kind,
+            res.namespace.as_deref().unwrap_or("-"), res.name);
+        if residual_keys.contains(&key) {
+            true
+        } else {
+            result.skipped.push(((*res).clone(), "not in current residual set".to_string()));
+            false
+        }
+    }).collect();
+
+    if valid_selected.is_empty() {
+        return Ok(result);
+    }
+
+    // Set InteractiveCleanup state
+    journal_store.update(|j| {
+        j.state = RunState::InteractiveCleanup;
+    }).await
+    .context("Failed to persist InteractiveCleanup state")?;
+
+    // Step 4: Per-resource DELETE with full safety checks
+    for res in &valid_selected {
+        // Re-check generation per resource
+        let cur_j = journal_store.read().await;
+        let gen_per_res = audit::check_operator_generation(
+            client, &cur_j.operator, &cur_j.audit_context.csv_baseline,
+        ).await;
+        if !matches!(gen_per_res, audit::OperatorGenerationState::Absent) {
+            result.skipped.push(((*res).clone(), "generation changed".to_string()));
+            break;
+        }
+
+        // Per-resource fresh audit: verify still in residual set
+        let per_res_j = journal_store.read().await;
+        match audit::run_residual_audit(client, &per_res_j).await {
+            Ok(fresh_per_res) => {
+                let still_in_set = fresh_per_res.likely_operator_residual.iter()
+                    .chain(fresh_per_res.unattributed.iter())
+                    .any(|r| r.resource.group == res.group
+                        && r.resource.kind == res.kind
+                        && r.resource.name == res.name
+                        && r.resource.namespace == res.namespace);
+                if !still_in_set {
+                    result.skipped.push(((*res).clone(), "no longer in residual set".to_string()));
+                    continue;
+                }
+                let per_status = audit::residual_status_from_audit(&fresh_per_res);
+                if matches!(per_status, ResidualStatus::AuditIncomplete) {
+                    result.skipped.push(((*res).clone(), "per-resource audit incomplete".to_string()));
+                    continue;
+                }
+            }
+            Err(e) => {
+                result.failed.push(((*res).clone(), format!("per-resource audit failed: {}", e)));
+                break;
+            }
+        }
+
+        // Final generation recheck immediately before durable decision
+        let pre_decision_j = journal_store.read().await;
+        let pre_decision_gen = audit::check_operator_generation(
+            client, &pre_decision_j.operator, &pre_decision_j.audit_context.csv_baseline,
+        ).await;
+        if !matches!(pre_decision_gen, audit::OperatorGenerationState::Absent) {
+            result.skipped.push(((*res).clone(), "generation changed before decision persist".to_string()));
+            break;
+        }
+
+        // Acquire gate permit
+        let _permit = gate.acquire().await
+            .context("Mutation gate closed during cleanup")?;
+
+        // Record decision BEFORE mutation (durable)
+        let decision_uid = res.uid.clone();
+        let res_clone = (*res).clone();
+        journal_store.update(|j| {
+            j.cleanup_decisions.push(CleanupDecision {
+                resource: res_clone.clone(),
+                bound_uid: decision_uid.clone(),
+                action: "delete".to_string(),
+                result: None,
+            });
+            j.audit_revision += 1;
+        }).await
+        .context("Failed to persist cleanup decision — no mutation")?;
+
+        // Core executor DELETE (UID-preconditioned)
+        let del_result = delete_resource_pub(
+            client, res, kind_map, gk_map, None,
+        ).await;
+
+        let cleanup_result = match &del_result {
+            Ok(msg) => {
+                if msg == "deleted" {
+                    let mut gone_confirmed = false;
+                    if let Some((api, _)) = resolve_api(client, res, kind_map, gk_map) {
+                        for _ in 0..30 {
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            match api.get(&res.name).await {
+                                Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                                    gone_confirmed = true;
+                                    break;
+                                }
+                                Ok(_) => continue,
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    if gone_confirmed {
+                        result.deleted.push((*res).clone());
+                        CleanupResult::Gone
+                    } else {
+                        CleanupResult::DeleteRequested
+                    }
+                } else if msg == "already gone" {
+                    result.deleted.push((*res).clone());
+                    CleanupResult::AlreadyGone
+                } else {
+                    CleanupResult::DeleteRequested
+                }
+            }
+            Err(e) => {
+                result.failed.push(((*res).clone(), e.to_string()));
+                CleanupResult::Failed(e.to_string())
+            }
+        };
+
+        let res_clone2 = (*res).clone();
+        journal_store.update(|j| {
+            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                .find(|d| d.resource == res_clone2 && d.result.is_none())
+            {
+                d.result = Some(cleanup_result);
+            }
+        }).await
+        .context("Failed to checkpoint cleanup result")?;
+
+        drop(_permit);
+    }
+
+    // Step 5: Re-audit after all cleanups
+    let post_j = journal_store.read().await;
+    let post_gen = audit::check_operator_generation(
+        client, &post_j.operator, &post_j.audit_context.csv_baseline,
+    ).await;
+    if !matches!(post_gen, audit::OperatorGenerationState::Absent) {
+        journal_store.update(|j| {
+            j.state = RunState::Failed;
+        }).await.context("Failed to persist Failed state after generation change")?;
+        bail!("Operator generation changed after cleanup — cannot verify results. State persisted as Failed.");
+    }
+
+    match audit::run_residual_audit(client, &post_j).await {
+        Ok(new_audit) => {
+            let new_status = audit::residual_status_from_audit(&new_audit);
+            journal_store.update(|j| {
+                j.residual_status = new_status;
+                j.audit_revision += 1;
+                j.last_residual_audit = Some(new_audit.clone());
+            }).await
+            .context("Failed to persist post-cleanup audit")?;
+            result.post_audit = Some(new_audit);
+        }
+        Err(e) => {
+            journal_store.update(|j| {
+                j.state = RunState::Failed;
+            }).await.context("Failed to persist Failed state after audit failure")?;
+            bail!("Post-cleanup re-audit failed: {}. Cannot verify cleanup results.", e);
+        }
+    }
+
+    // Determine final state
+    let post_j_final = journal_store.read().await;
+    let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| d.is_failed());
+    let final_cleanup_state = if has_failed_decisions {
+        RunState::Failed
+    } else {
+        match &post_j_final.residual_status {
+            ResidualStatus::AuditIncomplete => {
+                journal_store.update(|j| {
+                    j.state = RunState::Failed;
+                }).await.context("Failed to persist Failed state for incomplete audit")?;
+                bail!("Post-cleanup audit incomplete — cannot confirm cleanup success. State persisted as Failed.");
+            }
+            _ => RunState::ApplyCompleted,
+        }
+    };
+    journal_store.update(|j| {
+        j.state = final_cleanup_state.clone();
+    }).await
+    .context("Failed to persist final cleanup state")?;
+
+    if final_cleanup_state == RunState::Failed {
+        bail!("Cleanup completed with failed or unconfirmed decisions");
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1526,5 +1850,33 @@ mod tests {
             plan_uid_none.is_err(),
             "UID-less DELETE must fail before any state transition"
         );
+    }
+
+    #[test]
+    fn residual_cleanup_state_gate_rejects_invalid_states() {
+        use crate::teardown::journal::RunState;
+        let allowed = [RunState::ApplyCompleted, RunState::InteractiveCleanup];
+        let rejected = [
+            RunState::Prepared,
+            RunState::Applying,
+            RunState::Failed,
+            RunState::Paused,
+        ];
+
+        for state in &allowed {
+            let ok = matches!(state, RunState::ApplyCompleted | RunState::InteractiveCleanup);
+            assert!(ok, "State {:?} should be allowed for cleanup", state);
+        }
+
+        for state in &rejected {
+            let ok = matches!(state, RunState::ApplyCompleted | RunState::InteractiveCleanup);
+            assert!(!ok, "State {:?} should be rejected for cleanup", state);
+        }
+    }
+
+    #[test]
+    fn residual_cleanup_schema_gate_rejects_old_schema() {
+        let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
+        assert_eq!(current, 6, "Schema version must be 6 for cleanup gate to work correctly");
     }
 }
