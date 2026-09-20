@@ -1269,7 +1269,7 @@ async fn main() -> Result<()> {
 
                                 // Acquire process lock FIRST — fail if another executor is active
                                 let path = journal::run_path(&cluster_id, &j.run_id)?;
-                                let store = JournalStore::new_with_lock(j.clone(), path)?;
+                                let store = std::sync::Arc::new(JournalStore::new_with_lock(j.clone(), path)?);
 
                                 // Re-read from store — this is the AUTHORITATIVE state after lock.
                                 // All decisions below use ONLY this `j`, not the pre-lock one.
@@ -1988,80 +1988,12 @@ async fn main() -> Result<()> {
                                         );
                                     }
 
-                                    // Residual re-entry: offer interactive cleanup if TTY + residuals exist
+                                    // Residual re-entry: use TUI Residual screen
                                     if is_residual_reentry && final_state == RunState::ApplyCompleted {
-                                        let j_re = store.read().await;
-                                        if let Some(ref audit) = j_re.last_residual_audit {
-                                            let rs = audit::residual_status_from_audit(audit);
-                                            if let journal::ResidualStatus::ResidualsObserved { count } = rs {
-                                                let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
-                                                if count > 0 && is_tty && j_re.schema_version == journal::RUN_JOURNAL_SCHEMA_VERSION {
-                                                    let residuals: Vec<&crate::teardown::audit::AttributedResidual> =
-                                                        audit.likely_operator_residual.iter()
-                                                            .chain(audit.unattributed.iter())
-                                                            .collect();
-                                                    if !residuals.is_empty() {
-                                                        eprintln!("\n\x1b[1mResidual Cleanup\x1b[0m: {} item(s)", residuals.len());
-                                                        for (i, res) in residuals.iter().enumerate() {
-                                                            eprintln!("  [{}] {:?} {}/{}{}",
-                                                                i + 1,
-                                                                res.confidence,
-                                                                res.resource.kind,
-                                                                res.resource.name,
-                                                                res.resource.namespace.as_ref()
-                                                                    .map(|ns| format!(" ({})", ns))
-                                                                    .unwrap_or_default()
-                                                            );
-                                                        }
-                                                        eprintln!();
-                                                        eprintln!("  Enter item numbers to DELETE (comma-separated),");
-                                                        eprintln!("  'f' to finish, or press Enter to skip:");
-                                                        eprint!("  > ");
-                                                        std::io::Write::flush(&mut std::io::stderr()).ok();
-
-                                                        let mut input = String::new();
-                                                        if std::io::stdin().read_line(&mut input).is_ok() {
-                                                            let input = input.trim();
-                                                            if input == "f" {
-                                                                store.update(|j| { j.state = RunState::Finished; }).await?;
-                                                                eprintln!("Run finished.");
-                                                            } else if !input.is_empty() {
-                                                                let mut selected: Vec<crate::kube::resource::ResourceId> = Vec::new();
-                                                                for token in input.split(',') {
-                                                                    if let Ok(idx) = token.trim().parse::<usize>() {
-                                                                        if idx >= 1 && idx <= residuals.len() {
-                                                                            selected.push(residuals[idx - 1].resource.clone());
-                                                                        }
-                                                                    }
-                                                                }
-                                                                if !selected.is_empty() {
-                                                                    eprintln!("\n  Deleting {} residual(s)...", selected.len());
-                                                                    match crate::teardown::executor::execute_residual_cleanup(
-                                                                        &client, &selected, &store, gate.as_ref(),
-                                                                        &kind_map, &gk_map,
-                                                                    ).await {
-                                                                        Ok(cleanup_result) => {
-                                                                            for res in &cleanup_result.deleted {
-                                                                                eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
-                                                                            }
-                                                                            for (res, reason) in &cleanup_result.skipped {
-                                                                                eprintln!("    ⚠ {}/{}: skipped — {}", res.kind, res.name, reason);
-                                                                            }
-                                                                            for (res, reason) in &cleanup_result.failed {
-                                                                                eprintln!("    ✗ {}/{}: {}", res.kind, res.name, reason);
-                                                                            }
-                                                                        }
-                                                                        Err(e) => {
-                                                                            bail!("Residual cleanup failed: {:#}", e);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        crate::tui::run_residual_only(
+                                            &client, &store, &gate,
+                                            &kind_map, &gk_map,
+                                        ).await?;
                                     }
 
                                     return Ok(());

@@ -607,6 +607,14 @@ async fn run_residual_screen(
             );
         })?;
 
+        // Check gate closed (signal-based pause) during idle
+        if !gate.is_open() {
+            journal_store.update(|j| {
+                j.state = RunState::Paused;
+            }).await.context("Failed to persist Paused on signal in Residual screen")?;
+            return Ok(());
+        }
+
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
@@ -849,4 +857,83 @@ pub async fn run_residual_cleanup(
     }
 
     Ok(())
+}
+
+/// Residual-only TUI entry for resume. Performs fresh Absent + complete audit,
+/// then opens the Residual Cleanup screen. Non-TTY prints audit results only.
+pub async fn run_residual_only(
+    client: &::kube::Client,
+    journal_store: &Arc<JournalStore>,
+    gate: &Arc<MutationGate>,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+) -> Result<()> {
+    // Fresh generation Absent check
+    let j = journal_store.read().await;
+    let gen_state = audit::check_operator_generation(
+        client, &j.operator, &j.audit_context.csv_baseline,
+    ).await;
+    if !matches!(gen_state, OperatorGenerationState::Absent) {
+        bail!("Operator generation not Absent — cannot enter Residual Cleanup");
+    }
+
+    // Fresh complete audit
+    let audit_result = audit::run_residual_audit(client, &j).await
+        .context("Fresh residual audit failed")?;
+
+    // Post-audit generation recheck
+    let gen_recheck = audit::check_operator_generation(
+        client, &j.operator, &j.audit_context.csv_baseline,
+    ).await;
+    if !matches!(gen_recheck, OperatorGenerationState::Absent) {
+        bail!("Operator generation changed during audit — cannot enter Residual Cleanup");
+    }
+
+    let status = audit::residual_status_from_audit(&audit_result);
+    if matches!(status, journal::ResidualStatus::AuditIncomplete) {
+        audit::print_residual_audit(&audit_result, &j);
+        bail!("Residual audit incomplete — cannot enter cleanup screen");
+    }
+
+    // Persist audit
+    journal_store.update(|j| {
+        j.residual_status = status;
+        j.audit_revision += 1;
+        j.last_residual_audit = Some(audit_result.clone());
+    }).await.context("Failed to persist residual audit")?;
+
+    // Collect candidates
+    let residuals: Vec<(ResourceId, String)> = audit_result.likely_operator_residual.iter()
+        .map(|r| (r.resource.clone(), format!("{:?} confidence", r.confidence)))
+        .chain(audit_result.unattributed.iter()
+            .map(|r| (r.resource.clone(), "unattributed".to_string())))
+        .collect();
+
+    if residuals.is_empty() {
+        eprintln!("✅ No residuals to clean up.");
+        return Ok(());
+    }
+
+    // Non-TTY: print audit and return
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        audit::print_residual_audit(&audit_result, &j);
+        return Ok(());
+    }
+
+    // TTY: enter TUI Residual screen
+    enable_raw_mode().context("Failed to enable raw mode for Residual")?;
+    let mut stdout = std::io::stdout();
+    execute!(stdout, EnterAlternateScreen).context("Failed to enter alternate screen")?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
+
+    let result = run_residual_screen(
+        &mut terminal, client, &residuals, journal_store, gate, kind_map, gk_map,
+    ).await;
+
+    disable_raw_mode().ok();
+    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    terminal.show_cursor().ok();
+
+    result
 }
