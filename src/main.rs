@@ -376,20 +376,16 @@ async fn main() -> Result<()> {
                                                                                 );
                                                                             }
                                                                             // Basis drift: verify provenance hasn't degraded
+                                                                            // Use journal's operator snapshot (has full controller deployment UIDs)
                                                                             {
                                                                                 let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
                                                                                 let action_metadata = metadata.clone();
-                                                                                let first_op = target_operators[0];
-                                                                                let snap = crate::teardown::plan::OperatorIdentitySnapshot {
-                                                                                    generation_identity: crate::teardown::plan::OperatorGenerationIdentity::Unverifiable { reason: "temp".to_string() },
-                                                                                    operator_id: crate::analyzers::olm::OperatorId { namespace: first_op.install_namespace.clone(), csv_name: first_op.csv.name.clone() },
-                                                                                    csv_name: first_op.csv.name.clone(),
-                                                                                    csv: crate::teardown::plan::ObservedResourceIdentity { resource: first_op.csv.clone(), uid: first_op.csv.uid.clone().unwrap_or_default() },
-                                                                                    subscriptions: vec![],
-                                                                                    controller_deployments: vec![],
-                                                                                    service_accounts: vec![],
-                                                                                    owned_crds: first_op.owned_crds.clone(),
-                                                                                    required_crds: first_op.required_crds.clone(),
+                                                                                let snap = if let Some(ref jstore) = script_journal {
+                                                                                    let j = jstore.read().await;
+                                                                                    j.operator.clone()
+                                                                                } else {
+                                                                                    build_operator_identity_snapshot(&client, &target_operators).await
+                                                                                        .context("Cannot build identity snapshot for basis drift check")?
                                                                                 };
                                                                                 if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
                                                                                     bail!(
@@ -510,16 +506,56 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // Transition to ResidualCleanup ONLY if execution succeeded
-                                // and journal state is ApplyCompleted
+                                // Transition to ResidualCleanup: ApplyCompleted + generation Absent + complete audit
                                 if app.screen == AppScreen::Executing {
                                     if let (Some(store), true) = (&script_journal, result.is_ok()) {
                                         let j = store.read().await;
                                         if j.state == RunState::ApplyCompleted {
-                                            app.screen = AppScreen::ResidualCleanup;
-                                            events.push(serde_json::json!({
-                                                "screen_transition": "ResidualCleanup",
-                                            }));
+                                            let gen_check = crate::teardown::audit::check_operator_generation(
+                                                &client, &j.operator, &j.audit_context.csv_baseline,
+                                            ).await;
+                                            if matches!(gen_check, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                match crate::teardown::audit::run_residual_audit(&client, &j).await {
+                                                    Ok(audit_result) => {
+                                                        let status = crate::teardown::audit::residual_status_from_audit(&audit_result);
+                                                        if matches!(status, journal::ResidualStatus::AuditIncomplete) {
+                                                            events.push(serde_json::json!({
+                                                                "screen_transition_blocked": "audit incomplete",
+                                                            }));
+                                                        } else {
+                                                            // Re-verify generation after audit
+                                                            let gen_recheck = crate::teardown::audit::check_operator_generation(
+                                                                &client, &j.operator, &j.audit_context.csv_baseline,
+                                                            ).await;
+                                                            if !matches!(gen_recheck, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                                events.push(serde_json::json!({
+                                                                    "screen_transition_blocked": "generation changed during audit",
+                                                                }));
+                                                            } else {
+                                                                store.update(|j| {
+                                                                    j.residual_status = status;
+                                                                    j.audit_revision += 1;
+                                                                    j.last_residual_audit = Some(audit_result);
+                                                                }).await
+                                                                .context("Failed to persist residual audit for screen transition")?;
+                                                                app.screen = AppScreen::ResidualCleanup;
+                                                                events.push(serde_json::json!({
+                                                                    "screen_transition": "ResidualCleanup",
+                                                                }));
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        events.push(serde_json::json!({
+                                                            "screen_transition_blocked": format!("audit failed: {}", e),
+                                                        }));
+                                                    }
+                                                }
+                                            } else {
+                                                events.push(serde_json::json!({
+                                                    "screen_transition_blocked": format!("generation: {:?}", gen_check),
+                                                }));
+                                            }
                                         } else {
                                             events.push(serde_json::json!({
                                                 "screen_transition_blocked": format!("state is {:?}, not ApplyCompleted", j.state),
@@ -698,22 +734,12 @@ async fn main() -> Result<()> {
                                                                                     );
                                                                                 }
                                                                                 // Basis drift: verify provenance hasn't degraded
+                                                                                // Use journal's operator snapshot (has full controller deployment UIDs)
                                                                                 {
                                                                                     let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
                                                                                     let action_metadata = metadata.clone();
-                                                                                    // Build minimal snapshot for provenance UID check
-                                                                                    let first_op = target_operators[0];
-                                                                                    let snap = crate::teardown::plan::OperatorIdentitySnapshot {
-                                                                                        generation_identity: crate::teardown::plan::OperatorGenerationIdentity::Unverifiable { reason: "temp".to_string() },
-                                                                                        operator_id: crate::analyzers::olm::OperatorId { namespace: first_op.install_namespace.clone(), csv_name: first_op.csv.name.clone() },
-                                                                                        csv_name: first_op.csv.name.clone(),
-                                                                                        csv: crate::teardown::plan::ObservedResourceIdentity { resource: first_op.csv.clone(), uid: first_op.csv.uid.clone().unwrap_or_default() },
-                                                                                        subscriptions: vec![],
-                                                                                        controller_deployments: vec![],
-                                                                                        service_accounts: vec![],
-                                                                                        owned_crds: first_op.owned_crds.clone(),
-                                                                                        required_crds: first_op.required_crds.clone(),
-                                                                                    };
+                                                                                    let snap = build_operator_identity_snapshot(&client, &target_operators).await
+                                                                                        .context("Cannot build identity snapshot for basis drift check")?;
                                                                                     if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
                                                                                         bail!(
                                                                                             "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
@@ -2206,88 +2232,10 @@ async fn create_run_journal(
     let cluster_id = journal::fetch_cluster_identity(client).await?;
     let run_id = journal::generate_run_id();
 
+    let operator_snapshot = build_operator_identity_snapshot(client, target_operators).await
+        .context("Failed to build operator identity snapshot for journal")?;
+
     let first_op = target_operators[0];
-    let op_id = crate::analyzers::olm::OperatorId {
-        namespace: first_op.install_namespace.clone(),
-        csv_name: first_op.csv.name.clone(),
-    };
-
-    let generation_identity = match &first_op.package_name {
-        Some(name) => OperatorGenerationIdentity::OlmPackage {
-            package_name: name.clone(),
-            install_namespace: first_op.install_namespace.clone(),
-        },
-        None => OperatorGenerationIdentity::Unverifiable {
-            reason: "No subscription found; cannot establish stable package identity".to_string(),
-        },
-    };
-
-    // Re-GET CSV and Subscription at journal creation time for fresh UIDs
-    // (discovery may have happened minutes ago; resources could have been recreated)
-    let csv_observed = {
-        let fresh = fetch_observed_identities(
-            client,
-            &[first_op.csv.name.clone()],
-            "ClusterServiceVersion",
-            "operators.coreos.com/v1alpha1",
-            &first_op.install_namespace,
-        )
-        .await?;
-        fresh.into_iter().next()
-            .context("CSV not found during identity snapshot; cannot establish generation identity")?
-    };
-
-    let sub_observed: Vec<ObservedResourceIdentity> = if let Some(sub) = &first_op.subscription {
-        let fresh = fetch_observed_identities(
-            client,
-            &[sub.name.clone()],
-            "Subscription",
-            "operators.coreos.com/v1alpha1",
-            sub.namespace.as_deref().unwrap_or(&first_op.install_namespace),
-        )
-        .await?;
-        if fresh.is_empty() {
-            bail!(
-                "Subscription {} was observed during discovery but is now absent; \
-                 cannot establish reliable generation identity",
-                sub.name
-            );
-        }
-        fresh
-    } else {
-        Vec::new()
-    };
-
-    let controller_deployments = fetch_observed_identities(
-        client,
-        &first_op.deployments,
-        "Deployment",
-        "apps/v1",
-        &first_op.install_namespace,
-    )
-    .await?;
-
-    let service_accounts = fetch_observed_identities(
-        client,
-        &first_op.service_accounts,
-        "ServiceAccount",
-        "v1",
-        &first_op.install_namespace,
-    )
-    .await?;
-
-    let operator_snapshot = OperatorIdentitySnapshot {
-        generation_identity,
-        operator_id: op_id,
-        csv_name: first_op.csv.name.clone(),
-        csv: csv_observed,
-        subscriptions: sub_observed,
-        controller_deployments,
-        service_accounts,
-        owned_crds: first_op.owned_crds.clone(),
-        required_crds: first_op.required_crds.clone(),
-    };
-
     let mut audit_context = journal::build_audit_context(plan, target_operators, &gk_map);
 
     // Capture CSV baseline: all CSVs in install namespace at plan time (name → uid).
@@ -2357,6 +2305,127 @@ async fn create_run_journal(
     journal::atomic_write_json_pub(&path, &journal)?;
 
     JournalStore::new_with_lock(journal, path)
+}
+
+/// Build a fresh OperatorIdentitySnapshot with live UIDs from the cluster.
+/// Used for basis drift validation before journal creation.
+async fn build_operator_identity_snapshot(
+    client: &::kube::Client,
+    target_operators: &[&crate::analyzers::olm::OperatorInstance],
+) -> Result<crate::teardown::plan::OperatorIdentitySnapshot> {
+    use crate::teardown::plan::{
+        ObservedResourceIdentity, OperatorGenerationIdentity,
+        OperatorIdentitySnapshot,
+    };
+
+    let first_op = target_operators[0];
+    let op_id = crate::analyzers::olm::OperatorId {
+        namespace: first_op.install_namespace.clone(),
+        csv_name: first_op.csv.name.clone(),
+    };
+
+    let generation_identity = match &first_op.package_name {
+        Some(name) => OperatorGenerationIdentity::OlmPackage {
+            package_name: name.clone(),
+            install_namespace: first_op.install_namespace.clone(),
+        },
+        None => OperatorGenerationIdentity::Unverifiable {
+            reason: "No subscription found".to_string(),
+        },
+    };
+
+    let csv_observed = {
+        let fresh = fetch_observed_identities(
+            client,
+            &[first_op.csv.name.clone()],
+            "ClusterServiceVersion",
+            "operators.coreos.com/v1alpha1",
+            &first_op.install_namespace,
+        ).await?;
+        let obs = fresh.into_iter().next()
+            .context("CSV not found during identity snapshot")?;
+        // Verify discovery UID is present and matches fresh UID
+        let discovery_uid = first_op.csv.uid.as_deref().unwrap_or("");
+        if discovery_uid.is_empty() {
+            bail!(
+                "CSV {} has no UID from discovery — cannot verify identity for safe teardown",
+                first_op.csv.name
+            );
+        }
+        if obs.uid != discovery_uid {
+            bail!(
+                "CSV {} UID changed between discovery ({}) and snapshot ({}) — \
+                 operator may have been recreated. Re-run 'teardown plan'.",
+                first_op.csv.name, discovery_uid, obs.uid
+            );
+        }
+        obs
+    };
+
+    let controller_deployments = fetch_observed_identities(
+        client,
+        &first_op.deployments,
+        "Deployment",
+        "apps/v1",
+        &first_op.install_namespace,
+    ).await?;
+
+    let service_accounts = fetch_observed_identities(
+        client,
+        &first_op.service_accounts,
+        "ServiceAccount",
+        "v1",
+        &first_op.install_namespace,
+    ).await?;
+
+    let sub_observed: Vec<ObservedResourceIdentity> = if let Some(sub) = &first_op.subscription {
+        let fresh = fetch_observed_identities(
+            client,
+            &[sub.name.clone()],
+            "Subscription",
+            "operators.coreos.com/v1alpha1",
+            sub.namespace.as_deref().unwrap_or(&first_op.install_namespace),
+        ).await?;
+        if fresh.is_empty() {
+            bail!(
+                "Subscription {} was observed during discovery but is now absent — \
+                 cannot establish reliable generation identity",
+                sub.name
+            );
+        }
+        // Verify discovery UID is present and matches fresh UID
+        let discovery_uid = sub.uid.as_deref().unwrap_or("");
+        if discovery_uid.is_empty() {
+            bail!(
+                "Subscription {} has no UID from discovery — cannot verify identity",
+                sub.name
+            );
+        }
+        if let Some(obs) = fresh.first() {
+            if obs.uid != discovery_uid {
+                bail!(
+                    "Subscription {} UID changed between discovery ({}) and snapshot ({}) — \
+                     operator may have been recreated. Re-run 'teardown plan'.",
+                    sub.name, discovery_uid, obs.uid
+                );
+            }
+        }
+        fresh
+    } else {
+        Vec::new()
+    };
+
+    Ok(OperatorIdentitySnapshot {
+        generation_identity,
+        operator_id: op_id,
+        csv_name: first_op.csv.name.clone(),
+        csv: csv_observed,
+        subscriptions: sub_observed,
+        controller_deployments,
+        service_accounts,
+        owned_crds: first_op.owned_crds.clone(),
+        required_crds: first_op.required_crds.clone(),
+    })
 }
 
 /// Fetch observed identities with UIDs for pre-execution snapshot.

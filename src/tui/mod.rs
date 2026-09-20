@@ -529,10 +529,16 @@ async fn handle_execution_completed(
     // Persist audit durably
     let status = audit::residual_status_from_audit(&audit_result);
     journal_store.update(|j| {
-        j.residual_status = status;
+        j.residual_status = status.clone();
         j.audit_revision += 1;
         j.last_residual_audit = Some(audit_result.clone());
     }).await.context("Failed to persist residual audit")?;
+
+    // AuditIncomplete → cannot enter cleanup screen
+    if matches!(status, journal::ResidualStatus::AuditIncomplete) {
+        eprintln!("⚠ Residual audit incomplete — cleanup not available until audit completes.");
+        return Ok(());
+    }
 
     // Collect candidates: likely_operator_residual + unattributed only
     let residuals: Vec<(ResourceId, String)> = audit_result.likely_operator_residual.iter()

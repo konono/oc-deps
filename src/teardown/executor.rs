@@ -1462,10 +1462,11 @@ pub async fn execute_residual_cleanup(
 
     // Determine final state — consider skipped/failed resources
     let post_j_final = journal_store.read().await;
-    let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| d.is_failed());
+    let has_hard_failed = post_j_final.cleanup_decisions.iter().any(|d| d.is_hard_failed());
+    let has_unconfirmed = post_j_final.cleanup_decisions.iter().any(|d| d.is_pending());
     let has_incomplete = !result.skipped.is_empty() || !result.failed.is_empty();
 
-    let final_cleanup_state = if has_failed_decisions {
+    let final_cleanup_state = if has_hard_failed {
         RunState::Failed
     } else {
         match &post_j_final.residual_status {
@@ -1476,9 +1477,9 @@ pub async fn execute_residual_cleanup(
                 bail!("Post-cleanup audit incomplete — cannot confirm cleanup success. State persisted as Failed.");
             }
             _ => {
-                if has_incomplete {
-                    // Some resources were skipped/failed — stay in InteractiveCleanup
-                    // so the user can retry after resolving the issues
+                if has_incomplete || has_unconfirmed {
+                    // Resources skipped/failed/unconfirmed — stay in InteractiveCleanup
+                    // so the user can retry/reconcile
                     RunState::InteractiveCleanup
                 } else {
                     RunState::ApplyCompleted

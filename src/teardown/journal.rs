@@ -130,7 +130,13 @@ impl CleanupDecision {
         self.result.is_none() || matches!(self.result, Some(CleanupResult::DeleteRequested))
     }
 
-    /// Failed: DELETE error, Gone timeout, or unconfirmed DELETE
+    /// Hard failure: DELETE API error (not retryable without new authority)
+    pub fn is_hard_failed(&self) -> bool {
+        matches!(self.result, Some(CleanupResult::Failed(_)))
+    }
+
+    /// Failed or unconfirmed: includes both hard failures and unconfirmed DELETEs.
+    /// DeleteRequested = DELETE accepted but Gone not confirmed (retryable via reconciliation).
     pub fn is_failed(&self) -> bool {
         matches!(
             self.result,
