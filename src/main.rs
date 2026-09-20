@@ -1040,11 +1040,7 @@ async fn main() -> Result<()> {
 
                                                                                 // Determine final cleanup state based on audit + decision results
                                                                                 let post_j_final = store.read().await;
-                                                                                let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| {
-                                                                                    d.result.as_deref().is_some_and(|r| r.starts_with("failed:"))
-                                                                                        || d.result.as_deref() == Some("delete_requested")
-                                                                                        || d.result.as_deref() == Some("delete_requested_not_confirmed")
-                                                                                });
+                                                                                let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| d.is_failed());
                                                                                 let final_cleanup_state = if has_failed_decisions {
                                                                                     RunState::Failed
                                                                                 } else {
@@ -1056,10 +1052,14 @@ async fn main() -> Result<()> {
                                                                                         _ => RunState::ApplyCompleted,
                                                                                     }
                                                                                 };
+                                                                                let is_failed = final_cleanup_state == RunState::Failed;
                                                                                 store.update(|j| {
                                                                                     j.state = final_cleanup_state;
                                                                                 }).await
                                                                                 .context("Failed to restore state after cleanup")?;
+                                                                                if is_failed {
+                                                                                    bail!("Cleanup completed with failed or unconfirmed decisions");
+                                                                                }
                                                                             }
                                                                         } else {
                                                                             eprintln!("  ⚠ Failed to run fresh audit — cleanup blocked.");
@@ -1479,10 +1479,7 @@ async fn main() -> Result<()> {
                                 // Branch based on state: InteractiveCleanup vs main execution
                                 // Do NOT write Applying before the branch — each path manages its own state.
                                 let has_pending_cleanup = !j.cleanup_decisions.is_empty()
-                                    && j.cleanup_decisions.iter().any(|d| {
-                                        d.result.is_none()
-                                            || d.result.as_deref() == Some("delete_requested")
-                                    });
+                                    && j.cleanup_decisions.iter().any(|d| d.is_pending());
 
                                 let should_resume_cleanup = j.state == RunState::InteractiveCleanup
                                     || ((j.state == RunState::Applying || j.state == RunState::Paused) && has_pending_cleanup);
@@ -1494,10 +1491,7 @@ async fn main() -> Result<()> {
                                     }
                                     let pending: Vec<crate::teardown::journal::CleanupDecision> =
                                         j.cleanup_decisions.iter()
-                                            .filter(|d| {
-                                                d.result.is_none()
-                                                    || d.result.as_deref() == Some("delete_requested")
-                                            })
+                                            .filter(|d| d.is_pending())
                                             .cloned()
                                             .collect();
 
@@ -1536,7 +1530,13 @@ async fn main() -> Result<()> {
                                                         // gone and a replacement was created
                                                         let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
                                                         let bound = decision.bound_uid.as_deref().unwrap_or("");
-                                                        if !bound.is_empty() && !live_uid.is_empty() && live_uid != bound {
+                                                        if bound.is_empty() || live_uid.is_empty() {
+                                                            bail!(
+                                                                "Cannot verify {}/{}: UID missing (bound={:?}, live={:?})",
+                                                                decision.resource.kind, decision.resource.name, bound, live_uid
+                                                            );
+                                                        }
+                                                        if live_uid != bound {
                                                             // Different UID — old resource is gone (Recreated)
                                                             let res_up = decision.resource.clone();
                                                             store.update(|j| {

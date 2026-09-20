@@ -589,27 +589,7 @@ mod tests {
 
     // ── Cleanup decision state transition tests ──
 
-    // ── Extracted cleanup safety predicates (test real code paths) ──
-
-    /// Is this decision pending (needs resume action)?
-    fn is_cleanup_pending(decision: &crate::teardown::journal::CleanupDecision) -> bool {
-        decision.result.is_none()
-            || decision.result.as_deref() == Some("delete_requested")
-    }
-
-    /// Does this decision indicate failure?
-    fn is_cleanup_failed(decision: &crate::teardown::journal::CleanupDecision) -> bool {
-        decision.result.as_deref().is_some_and(|r| {
-            r.starts_with("failed:")
-                || r == "delete_requested"
-                || r == "delete_requested_not_confirmed"
-        })
-    }
-
-    /// Is this decision terminally complete?
-    fn is_cleanup_complete(decision: &crate::teardown::journal::CleanupDecision) -> bool {
-        matches!(decision.result.as_deref(), Some("gone") | Some("already_gone"))
-    }
+    // ── Cleanup decision predicate tests (uses CleanupDecision methods from journal.rs) ──
 
     fn make_decision(result: Option<&str>) -> crate::teardown::journal::CleanupDecision {
         crate::teardown::journal::CleanupDecision {
@@ -630,38 +610,38 @@ mod tests {
     #[test]
     fn test_delete_requested_is_pending_and_failed() {
         let d = make_decision(Some("delete_requested"));
-        assert!(is_cleanup_pending(&d), "delete_requested must be pending");
-        assert!(is_cleanup_failed(&d), "delete_requested must be failed (Gone not confirmed)");
-        assert!(!is_cleanup_complete(&d), "delete_requested must NOT be complete");
+        assert!(d.is_pending(), "delete_requested must be pending");
+        assert!(d.is_failed(), "delete_requested must be failed (Gone not confirmed)");
+        assert!(!d.is_complete(), "delete_requested must NOT be complete");
     }
 
     #[test]
     fn test_none_result_is_pending() {
         let d = make_decision(None);
-        assert!(is_cleanup_pending(&d), "None result must be pending");
+        assert!(d.is_pending(), "None result must be pending");
     }
 
     #[test]
     fn test_gone_is_complete_not_pending() {
         let d = make_decision(Some("gone"));
-        assert!(is_cleanup_complete(&d));
-        assert!(!is_cleanup_pending(&d));
-        assert!(!is_cleanup_failed(&d));
+        assert!(d.is_complete());
+        assert!(!d.is_pending());
+        assert!(!d.is_failed());
     }
 
     #[test]
     fn test_already_gone_is_complete() {
         let d = make_decision(Some("already_gone"));
-        assert!(is_cleanup_complete(&d));
-        assert!(!is_cleanup_failed(&d));
+        assert!(d.is_complete());
+        assert!(!d.is_failed());
     }
 
     #[test]
     fn test_failed_result_is_failed() {
         let d = make_decision(Some("failed: API timeout"));
-        assert!(is_cleanup_failed(&d));
-        assert!(!is_cleanup_complete(&d));
-        assert!(!is_cleanup_pending(&d));
+        assert!(d.is_failed());
+        assert!(!d.is_complete());
+        assert!(!d.is_pending());
     }
 
     #[test]
@@ -671,7 +651,7 @@ mod tests {
             make_decision(Some("gone")),
             make_decision(Some("failed: timeout")),
         ];
-        let has_failed = decisions.iter().any(|d| is_cleanup_failed(d));
+        let has_failed = decisions.iter().any(|d| d.is_failed());
         assert!(has_failed, "failed decision must be detected");
         // Final state should be Failed, not ApplyCompleted
     }
@@ -679,7 +659,7 @@ mod tests {
     #[test]
     fn test_delete_requested_not_confirmed_is_failed() {
         let d = make_decision(Some("delete_requested_not_confirmed"));
-        assert!(is_cleanup_failed(&d));
-        assert!(!is_cleanup_complete(&d));
+        assert!(d.is_failed());
+        assert!(!d.is_complete());
     }
 }

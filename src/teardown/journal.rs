@@ -61,6 +61,27 @@ pub struct CleanupDecision {
     pub result: Option<String>,
 }
 
+impl CleanupDecision {
+    /// Pending: needs resume action (not yet executed or DELETE sent but Gone not confirmed)
+    pub fn is_pending(&self) -> bool {
+        self.result.is_none() || self.result.as_deref() == Some("delete_requested")
+    }
+
+    /// Failed: DELETE error, Gone timeout, or unconfirmed DELETE
+    pub fn is_failed(&self) -> bool {
+        self.result.as_deref().is_some_and(|r| {
+            r.starts_with("failed:")
+                || r == "delete_requested"
+                || r == "delete_requested_not_confirmed"
+        })
+    }
+
+    /// Terminal success: resource confirmed Gone
+    pub fn is_complete(&self) -> bool {
+        matches!(self.result.as_deref(), Some("gone") | Some("already_gone"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunState {
     Prepared,
