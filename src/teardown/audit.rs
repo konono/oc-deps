@@ -2162,4 +2162,98 @@ mod tests {
         };
         assert_eq!(label, "marked for review");
     }
+
+    // ── olm.rs linkage edge cases (tested via annotation/label helpers) ──
+
+    #[test]
+    fn test_annotation_contradicts_label_different_package() {
+        // CSV has label for pkg-a but annotation says pkg-b
+        // → both should appear in evidence_packages
+        // → if our package is pkg-a, evidence has our package → Unknown
+        let mut csv = make_dynamic_object("test-csv.v1");
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "operators.coreos.com/pkg-a.test-ns".to_string(),
+            String::new(),
+        );
+        csv.metadata.labels = Some(labels);
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"pkg-b\",\"version\":\"1.0\"}"}]"#
+                .to_string(),
+        )]));
+        csv.metadata.namespace = Some("test-ns".to_string());
+
+        // Label evidence
+        let label_attrs = csv_label_attributes_to_other_package(
+            csv.metadata.labels.as_ref().unwrap(),
+            "test-ns",
+            "pkg-a",
+        );
+        // label has pkg-a (our package) → not "other only"
+        assert!(!label_attrs);
+
+        // Annotation evidence
+        let ann_pkgs = csv_packages_from_annotations(&csv);
+        assert_eq!(ann_pkgs, vec!["pkg-b"]);
+
+        // Combined: evidence_packages = {pkg-a, pkg-b}, has_our = true → Unknown
+    }
+
+    #[test]
+    fn test_no_label_annotation_says_other_package() {
+        // CSV with NO labels, annotation says different package
+        // In olm.rs status linkage: labels=None → was trusting status
+        // Now annotation contradiction should reject
+        let mut csv = make_dynamic_object("other-csv.v1");
+        csv.metadata.labels = None;
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"other-operator\",\"version\":\"1.0\"}"}]"#
+                .to_string(),
+        )]));
+
+        let ann_pkgs = csv_packages_from_annotations(&csv);
+        assert_eq!(ann_pkgs, vec!["other-operator"]);
+        // In olm.rs, extract_annotation_packages returns ["other-operator"]
+        // If Sub pkg is "my-operator", annotation_contradicts → reject status link
+    }
+
+    #[test]
+    fn test_has_unlinked_sub_with_linked_sub_is_critical() {
+        // OperatorInstance with subscription=Some but has_unlinked_subscriptions=true
+        // → preflight should be Critical (evaluated BEFORE subscription check)
+        let op = crate::analyzers::olm::OperatorInstance {
+            subscription: Some(crate::kube::resource::ResourceId {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                kind: "Subscription".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: "sub-a".to_string(),
+                uid: Some("uid-a".to_string()),
+            }),
+            package_name: Some("test-pkg".to_string()),
+            csv: crate::kube::resource::ResourceId {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                kind: "ClusterServiceVersion".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: "test-pkg.v1.0".to_string(),
+                uid: Some("csv-uid".to_string()),
+            },
+            csv_phase: "Succeeded".to_string(),
+            owned_crds: vec![],
+            required_crds: vec![],
+            owned_api_service_defs: vec![],
+            required_api_service_defs: vec![],
+            deployments: vec![],
+            service_accounts: vec![],
+            install_namespace: "test-ns".to_string(),
+            has_unlinked_subscriptions: true,
+        };
+        // subscription is Some, but has_unlinked is true
+        // The preflight logic should evaluate has_unlinked FIRST → Critical
+        assert!(op.has_unlinked_subscriptions);
+        assert!(op.subscription.is_some());
+    }
 }

@@ -197,6 +197,46 @@ fn extract_service_account_names(csv_data: &serde_json::Value) -> Vec<String> {
     sa_names
 }
 
+fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
+    let mut packages = Vec::new();
+    let annotations = match csv.metadata.annotations.as_ref() {
+        Some(a) => a,
+        None => return packages,
+    };
+    if let Some(props_str) = annotations.get("operatorframework.io/properties") {
+        let props: Vec<serde_json::Value> =
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(props_str) {
+                arr
+            } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(props_str) {
+                obj.get("properties")
+                    .and_then(|p| p.as_array())
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+        for prop in &props {
+            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
+                if let Some(value) = prop.get("value") {
+                    let pkg_value = if let Some(s) = value.as_str() {
+                        serde_json::from_str::<serde_json::Value>(s).ok()
+                    } else {
+                        Some(value.clone())
+                    };
+                    if let Some(pkg_info) = pkg_value {
+                        if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str()) {
+                            if !packages.contains(&name.to_string()) {
+                                packages.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    packages
+}
+
 const LIST_PAGE_SIZE: u32 = 500;
 
 async fn list_all_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
@@ -267,23 +307,40 @@ pub async fn discover_operators(
                 .and_then(|s| s.get("name"))
                 .and_then(|n| n.as_str());
 
-            // Verify: CSV exists in same namespace AND package label is consistent.
-            // Stale/corrupt status pointing to another package's CSV must not link.
+            // Verify: CSV exists in same namespace AND package evidence is consistent.
+            // Check labels AND annotations for contradictory package attribution.
             let csv_exists_and_consistent = csv_items.iter().any(|csv| {
                 let name_match = csv.metadata.name.as_deref() == Some(csv_name)
                     && csv.metadata.namespace.as_deref() == Some(sub_ns);
                 if !name_match {
                     return false;
                 }
-                // If we have a package name from the Sub, verify the CSV has a
-                // matching label. If no label info, accept the status link.
                 if let Some(pkg) = sub_pkg {
                     let label_key = format!("operators.coreos.com/{}.{}", pkg, sub_ns);
-                    csv.metadata
-                        .labels
-                        .as_ref()
-                        .map(|l| l.contains_key(&label_key))
-                        .unwrap_or(true) // no labels → trust status
+
+                    // Check label evidence
+                    let label_match = csv.metadata.labels.as_ref()
+                        .map(|l| l.contains_key(&label_key));
+
+                    // Check annotation evidence (olm.package)
+                    let annotation_pkgs = extract_annotation_packages(csv);
+                    let annotation_contradicts = !annotation_pkgs.is_empty()
+                        && !annotation_pkgs.iter().any(|p| p == pkg);
+
+                    if annotation_contradicts {
+                        // Annotation says different package → reject status link
+                        return false;
+                    }
+
+                    match label_match {
+                        Some(true) => true,   // label confirms
+                        Some(false) => false,  // label contradicts
+                        None => {
+                            // No labels. If annotations confirm, accept.
+                            // If no evidence at all, accept status link.
+                            true
+                        }
+                    }
                 } else {
                     true
                 }

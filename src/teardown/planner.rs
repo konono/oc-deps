@@ -946,42 +946,44 @@ async fn run_preflight(
     let mut checks = Vec::new();
 
     // 1. Subscription resolved (absent is OK — already frozen / manually managed)
+    // has_unlinked_subscriptions is checked FIRST regardless of subscription Some/None,
+    // because multiple Subs for the same CSV means the linked one may be wrong.
     for op in target_operators {
-        let (passed, severity, detail) = match &op.subscription {
-            Some(sub) => (
-                true,
-                PreflightSeverity::Warning,
+        let (passed, severity, detail) = if op.has_unlinked_subscriptions {
+            (
+                false,
+                PreflightSeverity::Critical,
                 format!(
-                    "Subscription/{} found — will be deleted in Phase 0",
-                    sub.name
+                    "Subscription linkage is ambiguous for CSV/{} in {} — \
+                     multiple Subscriptions or unlinked Subscriptions exist. \
+                     Cannot safely determine which Subscription to delete \
+                     in Phase 0.{}",
+                    op.csv.name,
+                    op.install_namespace,
+                    op.subscription
+                        .as_ref()
+                        .map(|s| format!(" (currently linked to {})", s.name))
+                        .unwrap_or_default(),
                 ),
-            ),
-            None => {
-                if op.has_unlinked_subscriptions {
-                    // Subscriptions exist in the install namespace but none could
-                    // be linked to this CSV. Proceeding would skip Subscription
-                    // DELETE, breaking OLM freeze-first safety.
-                    (
-                        false,
-                        PreflightSeverity::Critical,
-                        format!(
-                            "No subscription linked to CSV/{} but Subscription(s) exist \
-                             in {} — Subscription-CSV linkage failed (stale status, \
-                             ambiguous label match, or cross-namespace). Cannot safely \
-                             proceed without Subscription DELETE in Phase 0.",
-                            op.csv.name, op.install_namespace,
-                        ),
-                    )
-                } else {
-                    (
-                        true,
-                        PreflightSeverity::Warning,
-                        format!(
-                            "No subscription for CSV/{} — already frozen or manually installed",
-                            op.csv.name
-                        ),
-                    )
-                }
+            )
+        } else {
+            match &op.subscription {
+                Some(sub) => (
+                    true,
+                    PreflightSeverity::Warning,
+                    format!(
+                        "Subscription/{} found — will be deleted in Phase 0",
+                        sub.name
+                    ),
+                ),
+                None => (
+                    true,
+                    PreflightSeverity::Warning,
+                    format!(
+                        "No subscription for CSV/{} — already frozen or manually installed",
+                        op.csv.name
+                    ),
+                ),
             }
         };
         checks.push(PreflightCheck {
