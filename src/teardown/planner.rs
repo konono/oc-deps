@@ -2729,7 +2729,7 @@ pub async fn generate_teardown_plan(
 
     // For --prune-apis DELETE actions, GET current UIDs NOW (at evidence time).
     // This prevents UID migration between evidence→user confirmation→execution.
-    let prune_crd_uids: HashMap<String, Option<String>> = if prune_apis {
+    let prune_crd_uids: HashMap<String, BindResult> = if prune_apis {
         let prune_candidates: Vec<String> = target_crds
             .iter()
             .filter(|name| {
@@ -2752,11 +2752,23 @@ pub async fn generate_teardown_plan(
                 let api = crd_api.clone();
                 let name = name.clone();
                 async move {
-                    let uid = match api.get(&name).await {
-                        Ok(obj) => obj.metadata.uid,
-                        _ => None,
+                    let result = match api.get(&name).await {
+                        Ok(obj) => match obj.metadata.uid {
+                            Some(uid) => BindResult::Bound(uid),
+                            None => BindResult::Failed("resource has no UID".to_string()),
+                        },
+                        Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                            match api.list(&kube::api::ListParams::default().limit(1)).await {
+                                Ok(_) => BindResult::Absent,
+                                Err(e) => BindResult::Failed(format!(
+                                    "GET 404 but endpoint verification failed: {}",
+                                    e
+                                )),
+                            }
+                        }
+                        Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
                     };
-                    (name, uid)
+                    (name, result)
                 }
             });
             futures::stream::iter(futs)
@@ -2802,7 +2814,7 @@ pub async fn generate_teardown_plan(
         } else if prune_apis {
             // UID must be bound at evidence time for DELETE authority
             match prune_crd_uids.get(crd_name) {
-                Some(Some(uid)) => {
+                Some(BindResult::Bound(uid)) => {
                     phase4_actions.push(Action::Delete {
                         resource: ResourceId {
                             uid: Some(uid.clone()),
@@ -2811,17 +2823,34 @@ pub async fn generate_teardown_plan(
                         reason: "no remaining CRs, no external dependencies".to_string(),
                     });
                 }
-                _ => {
-                    // Cannot bind UID — blocker
+                Some(BindResult::Absent) => {
+                    // CRD already gone (GET 404 + endpoint verified) — skip DELETE
+                    phase4_actions.push(Action::Keep {
+                        resource: crd_id,
+                        reason: "already absent (confirmed via endpoint verification)"
+                            .to_string(),
+                    });
+                }
+                Some(BindResult::Failed(reason)) => {
                     blockers.push(Blocker {
                         resource: crd_id.clone(),
-                        reason: "Cannot bind CRD UID for safe deletion — API error or resource absent"
-                            .to_string(),
+                        reason: format!("Cannot bind CRD UID: {}", reason),
                         external_dependency: None,
                     });
                     phase4_actions.push(Action::Keep {
                         resource: crd_id,
                         reason: "UID binding failed — cannot safely delete".to_string(),
+                    });
+                }
+                None => {
+                    blockers.push(Blocker {
+                        resource: crd_id.clone(),
+                        reason: "CRD not in binding candidates".to_string(),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: crd_id,
+                        reason: "UID binding not attempted".to_string(),
                     });
                 }
             }
@@ -2850,7 +2879,7 @@ pub async fn generate_teardown_plan(
         Vec::new()
     };
 
-    let prune_apisvc_uids: HashMap<String, Option<String>> = if !prune_apisvc_candidates.is_empty()
+    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty()
     {
         let apisvc_gvk = kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1")
             .with_kind("APIService");
@@ -2863,11 +2892,23 @@ pub async fn generate_teardown_plan(
             let api = apisvc_api.clone();
             let name = name.clone();
             async move {
-                let uid = match api.get(&name).await {
-                    Ok(obj) => obj.metadata.uid,
-                    _ => None,
+                let result = match api.get(&name).await {
+                    Ok(obj) => match obj.metadata.uid {
+                        Some(uid) => BindResult::Bound(uid),
+                        None => BindResult::Failed("resource has no UID".to_string()),
+                    },
+                    Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                        match api.list(&kube::api::ListParams::default().limit(1)).await {
+                            Ok(_) => BindResult::Absent,
+                            Err(e) => BindResult::Failed(format!(
+                                "GET 404 but endpoint verification failed: {}",
+                                e
+                            )),
+                        }
+                    }
+                    Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
                 };
-                (name, uid)
+                (name, result)
             }
         });
         futures::stream::iter(futs)
@@ -2908,7 +2949,7 @@ pub async fn generate_teardown_plan(
             });
         } else if prune_apis {
             match prune_apisvc_uids.get(&obj_name) {
-                Some(Some(uid)) => {
+                Some(BindResult::Bound(uid)) => {
                     phase4_actions.push(Action::Delete {
                         resource: ResourceId {
                             uid: Some(uid.clone()),
@@ -2917,17 +2958,33 @@ pub async fn generate_teardown_plan(
                         reason: "aggregated API owned by target operator".to_string(),
                     });
                 }
-                _ => {
+                Some(BindResult::Absent) => {
+                    phase4_actions.push(Action::Keep {
+                        resource: api_svc_id,
+                        reason: "already absent (confirmed via endpoint verification)"
+                            .to_string(),
+                    });
+                }
+                Some(BindResult::Failed(reason)) => {
                     blockers.push(Blocker {
                         resource: api_svc_id.clone(),
-                        reason:
-                            "Cannot bind APIService UID for safe deletion — API error or resource absent"
-                                .to_string(),
+                        reason: format!("Cannot bind APIService UID: {}", reason),
                         external_dependency: None,
                     });
                     phase4_actions.push(Action::Keep {
                         resource: api_svc_id,
-                        reason: "UID binding failed — cannot safely delete".to_string(),
+                        reason: format!("UID binding failed: {}", reason),
+                    });
+                }
+                None => {
+                    blockers.push(Blocker {
+                        resource: api_svc_id.clone(),
+                        reason: "APIService not in binding candidates".to_string(),
+                        external_dependency: None,
+                    });
+                    phase4_actions.push(Action::Keep {
+                        resource: api_svc_id,
+                        reason: "UID binding not attempted".to_string(),
                     });
                 }
             }
