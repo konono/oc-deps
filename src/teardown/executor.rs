@@ -176,6 +176,7 @@ pub async fn execute_plan(
     journal: Option<&JournalStore>,
     gate: Option<&MutationGate>,
     start_phase: usize,
+    skip_confirm: bool,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -250,8 +251,7 @@ pub async fn execute_plan(
 
     if dry_run {
         eprintln!("\x1b[1;36m── DRY RUN ──\x1b[0m\n");
-    } else if start_phase == 0 && !confirm_execution(plan) {
-        // Only prompt for confirmation on fresh execution, not resume
+    } else if !skip_confirm && !confirm_execution(plan) {
         eprintln!("\nAborted.");
         return Ok(ExecutionResult {
             phases_completed: 0,

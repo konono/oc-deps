@@ -259,6 +259,20 @@ async fn main() -> Result<()> {
                                         None
                                     };
 
+                                    // Cluster identity re-check (same as normal apply path)
+                                    if let Some(store) = &journal_store {
+                                        let current_id = journal::fetch_cluster_identity(&client).await?;
+                                        let stored = store.read().await;
+                                        if !current_id.matches(&stored.cluster_identity) {
+                                            bail!(
+                                                "Cluster identity changed between journal creation and execution \
+                                                 (expected {}, got {}). Aborting.",
+                                                stored.cluster_identity.kube_system_uid,
+                                                current_id.kube_system_uid,
+                                            );
+                                        }
+                                    }
+
                                     let gate = std::sync::Arc::new(MutationGate::new(16));
                                     let exec_result = execute_plan(
                                         &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map,
@@ -266,19 +280,40 @@ async fn main() -> Result<()> {
                                         journal_store.as_deref(),
                                         Some(&gate),
                                         0,
+                                        true, // skip_confirm in script mode
                                     ).await;
 
                                     match exec_result {
                                         Ok(ref result) => {
+                                            // Determine final state using gate + all-phases check
+                                            let final_state = if !gate.is_open() {
+                                                RunState::Paused
+                                            } else if result.phases_completed == result.phases_total
+                                                && result.failed.is_empty()
+                                                && result.barrier_timeout.is_none()
+                                            {
+                                                RunState::ApplyCompleted
+                                            } else {
+                                                RunState::Failed
+                                            };
+
                                             if let Some(store) = &journal_store {
-                                                let _ = store.update(|j| {
-                                                    j.state = if result.failed.is_empty() && result.barrier_timeout.is_none() {
-                                                        RunState::ApplyCompleted
-                                                    } else {
-                                                        RunState::Failed
-                                                    };
-                                                }).await;
+                                                store.update(|j| {
+                                                    j.state = final_state.clone();
+                                                }).await
+                                                .context("Failed to persist execution state")?;
                                             }
+
+                                            if matches!(final_state, RunState::Failed) {
+                                                events.push(serde_json::json!({
+                                                    "execution_error": format!(
+                                                        "Teardown completed with {} failed, {} barrier timeout",
+                                                        result.failed.len(),
+                                                        if result.barrier_timeout.is_some() { "yes" } else { "no" }
+                                                    )
+                                                }));
+                                            }
+
                                             events.push(serde_json::json!({
                                                 "execution": {
                                                     "phases_completed": result.phases_completed,
@@ -383,7 +418,8 @@ async fn main() -> Result<()> {
                             dry_run, force,
                             journal_store.as_deref(),
                             Some(&gate),
-                            0, // start from phase 0 (fresh execution)
+                            0,     // start from phase 0 (fresh execution)
+                            false, // prompt for confirmation
                         )
                         .await;
 
@@ -817,6 +853,19 @@ async fn main() -> Result<()> {
 
                                 let gate = std::sync::Arc::new(MutationGate::new(16));
 
+                                // Ctrl-C handler for resume (same as normal apply)
+                                {
+                                    let gate_for_signal = gate.clone();
+                                    tokio::spawn(async move {
+                                        if tokio::signal::ctrl_c().await.is_ok() {
+                                            eprintln!(
+                                                "\n⏸ Pausing... waiting for active mutations..."
+                                            );
+                                            gate_for_signal.close_and_drain().await;
+                                        }
+                                    });
+                                }
+
                                 let exec_result = execute_plan(
                                     &client,
                                     &j.plan_snapshot,
@@ -829,28 +878,66 @@ async fn main() -> Result<()> {
                                     Some(&store),
                                     Some(&gate),
                                     start_phase,
+                                    true, // skip_confirm — this is a resume
                                 )
                                 .await;
 
                                 match exec_result {
                                     Ok(result) => {
-                                        store.update(|journal| {
-                                            journal.state = if result.failed.is_empty()
-                                                && result.barrier_timeout.is_none()
-                                            {
-                                                RunState::ApplyCompleted
-                                            } else {
-                                                RunState::Failed
-                                            };
-                                        }).await.context("Failed to persist final state")?;
+                                        // Same final state logic as normal apply:
+                                        // gate.is_open() + all-phases-completed
+                                        let final_state = if !gate.is_open() {
+                                            RunState::Paused
+                                        } else if result.phases_completed == result.phases_total
+                                            && result.failed.is_empty()
+                                            && result.barrier_timeout.is_none()
+                                        {
+                                            RunState::ApplyCompleted
+                                        } else {
+                                            RunState::Failed
+                                        };
+
+                                        store
+                                            .update(|journal| {
+                                                journal.state = final_state.clone();
+                                                journal.execution.phases_total = result.phases_total;
+                                            })
+                                            .await
+                                            .context("Failed to persist final state")?;
+
+                                        if final_state == RunState::Paused {
+                                            eprintln!(
+                                                "\n⏸ Paused at phase {}/{}.",
+                                                result.phases_completed, result.phases_total
+                                            );
+                                        }
+
                                         print_execution_result(&result);
+
+                                        if matches!(final_state, RunState::Failed) {
+                                            bail!(
+                                                "Resume completed with {} failed action(s){}",
+                                                result.failed.len(),
+                                                if result.barrier_timeout.is_some() {
+                                                    " and barrier timeout"
+                                                } else {
+                                                    ""
+                                                }
+                                            );
+                                        }
                                     }
                                     Err(e) => {
-                                        let _ = store
+                                        // Best-effort record Failed
+                                        if let Err(je) = store
                                             .update(|journal| {
                                                 journal.state = RunState::Failed;
                                             })
-                                            .await;
+                                            .await
+                                        {
+                                            eprintln!(
+                                                "⚠ Failed to persist Failed state: {}", je
+                                            );
+                                        }
                                         return Err(e);
                                     }
                                 }
