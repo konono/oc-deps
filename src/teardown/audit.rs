@@ -165,7 +165,8 @@ pub async fn check_operator_generation(
 
     // Step 4: All saved identities are gone. Check if any new CSVs appeared
     // since plan time by comparing against the pre-execution CSV baseline.
-    // Without prefix or label guessing — purely UID-based comparison.
+    // Also check if any surviving baseline CSVs cannot be attributed to a
+    // different package — they could be the same package under a different name.
     match csv_baseline {
         None => {
             // No baseline captured — cannot safely verify absence
@@ -176,14 +177,41 @@ pub async fn check_operator_generation(
             );
         }
         Some(baseline) => {
+            // Build map: csv_name → package_name from live Subscriptions
+            let sub_csv_to_pkg: HashMap<String, String> = sub_list
+                .iter()
+                .filter_map(|sub| {
+                    let csv = sub
+                        .data
+                        .get("status")
+                        .and_then(|s| {
+                            s.get("installedCSV")
+                                .or(s.get("currentCSV"))
+                        })
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())?;
+                    let pkg = sub
+                        .data
+                        .get("spec")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str())?;
+                    Some((csv.to_string(), pkg.to_string()))
+                })
+                .collect();
+
             match csv_api.list(&ListParams::default()).await {
                 Ok(csv_list) => {
+                    // Pass 1: Check for new CSVs not in baseline
                     for csv_obj in &csv_list.items {
                         let name = csv_obj.metadata.name.as_deref().unwrap_or("");
                         let uid = csv_obj.metadata.uid.as_deref().unwrap_or("");
 
+                        // Missing identity on a live CSV → cannot verify
                         if name.is_empty() || uid.is_empty() {
-                            continue;
+                            return OperatorGenerationState::Unknown(format!(
+                                "CSV in {} has missing name or UID — cannot verify generation",
+                                install_namespace
+                            ));
                         }
 
                         // Check if this CSV was in baseline (same name AND same UID)
@@ -199,6 +227,33 @@ pub async fn check_operator_generation(
                             ));
                         }
                     }
+
+                    // Pass 2: Check surviving baseline CSVs (other than our saved CSV).
+                    // If any CSV remains that cannot be attributed to a different package,
+                    // it could be a same-package generation with a different CSV name.
+                    for csv_obj in &csv_list.items {
+                        let name = csv_obj.metadata.name.as_deref().unwrap_or("");
+                        let uid = csv_obj.metadata.uid.as_deref().unwrap_or("");
+
+                        // Skip our own saved CSV
+                        if name == snapshot.csv_name {
+                            continue;
+                        }
+
+                        // This CSV survived. Is it attributable to a different package?
+                        let attributed_to_other = sub_csv_to_pkg
+                            .get(name)
+                            .is_some_and(|pkg| pkg != &package_name);
+
+                        if !attributed_to_other {
+                            return OperatorGenerationState::Unknown(format!(
+                                "CSV '{}' (uid: {}) in {} survived teardown and cannot be \
+                                 attributed to a different package — possible same-package \
+                                 generation",
+                                name, uid, install_namespace
+                            ));
+                        }
+                    }
                 }
                 Err(e) => {
                     return OperatorGenerationState::Unknown(format!(
@@ -210,7 +265,7 @@ pub async fn check_operator_generation(
         }
     }
 
-    // All checks succeeded: saved identities gone, no new CSVs since baseline
+    // All checks succeeded: saved identities gone, no new/unattributed CSVs
     OperatorGenerationState::Absent
 }
 
@@ -369,7 +424,10 @@ pub async fn run_residual_audit(
         }
     }
 
-    // Collect target operator identity UIDs for ownerRef→HIGH attribution
+    // Collect target operator identity UIDs for ownerRef→HIGH attribution.
+    // Includes operator control-plane UIDs AND plan DELETE/EXPECT resource UIDs
+    // so that descendants of approved root CRs are classified HIGH, not UNATTRIBUTED.
+    // Note: attribution != DELETE authority — this is for classification only.
     let mut target_uids: HashSet<String> = HashSet::new();
     target_uids.insert(journal.operator.csv.uid.clone());
     for sub in &journal.operator.subscriptions {
@@ -380,6 +438,18 @@ pub async fn run_residual_audit(
     }
     for sa in &journal.operator.service_accounts {
         target_uids.insert(sa.uid.clone());
+    }
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            match action {
+                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
+                    if let Some(uid) = &resource.uid {
+                        target_uids.insert(uid.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     // Phase A: Check planned DELETE/EXPECT resources (exact GET probes)
@@ -527,10 +597,21 @@ pub async fn run_residual_audit(
                         });
 
                     if !crd_still_present {
-                        // CRD approved for delete and confirmed gone —
-                        // CR API 404 is expected (GoneByCrdRemoval)
-                        audit.coverage.requested_probes += 1;
-                        audit.coverage.succeeded_probes += 1;
+                        // CRD was approved for delete and appears gone in Phase A.
+                        // However, we cannot prove the original CRD UID is gone
+                        // or that a replacement CRD hasn't been created between
+                        // Phase A and Phase D. Mark as incomplete rather than
+                        // claiming probe success.
+                        audit.scan_errors.push(AuditScanError {
+                            resource_type: format!("{} (CRD pruned)", gvr.kind),
+                            namespace: "(all)".to_string(),
+                            error: format!(
+                                "CRD '{}' was approved for deletion and appears gone, \
+                                 but CR API probe is skipped — CRD UID verification \
+                                 not yet implemented",
+                                crd_name
+                            ),
+                        });
                         continue;
                     }
                 }
@@ -1627,5 +1708,129 @@ mod tests {
         assert!(audit.scan_errors.iter().any(|e| e.error.contains("no UID")));
         // Resource should still be classified (not silently dropped)
         assert_eq!(audit.unattributed.len(), 1);
+    }
+
+    #[test]
+    fn test_residual_status_crd_pruned_is_incomplete() {
+        // GoneByCrdRemoval should produce AuditIncomplete via scan_error,
+        // not a false probe-success
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 5,
+                succeeded_probes: 5,
+            },
+            scan_errors: vec![AuditScanError {
+                resource_type: "Foo (CRD pruned)".to_string(),
+                namespace: "(all)".to_string(),
+                error: "CRD pruned, UID verification not implemented".to_string(),
+            }],
+        };
+
+        let status = residual_status_from_audit(&audit);
+        assert!(
+            matches!(status, ResidualStatus::AuditIncomplete),
+            "CRD pruned scan_error should make audit incomplete"
+        );
+    }
+
+    #[test]
+    fn test_target_uids_includes_plan_delete_resources() {
+        // target_uids should include UIDs from plan DELETE/EXPECT actions
+        // so ownerRef descendants of approved root CRs are classified HIGH
+        use crate::teardown::planner::{Action, PlanPhase, TeardownPlan, Preflight};
+        use crate::kube::resource::ResourceId;
+
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "test".to_string(),
+                actions: vec![
+                    Action::Delete {
+                        resource: ResourceId {
+                            group: "example.com".to_string(),
+                            version: "v1".to_string(),
+                            kind: "Foo".to_string(),
+                            namespace: Some("ns".to_string()),
+                            name: "root-cr".to_string(),
+                            uid: Some("root-uid-123".to_string()),
+                        },
+                        reason: "test".to_string(),
+                    },
+                    Action::ExpectGone {
+                        resource: ResourceId {
+                            group: "example.com".to_string(),
+                            version: "v1".to_string(),
+                            kind: "Bar".to_string(),
+                            namespace: Some("ns".to_string()),
+                            name: "descendant".to_string(),
+                            uid: Some("desc-uid-456".to_string()),
+                        },
+                        reason: "test".to_string(),
+                    },
+                    Action::Keep {
+                        resource: ResourceId {
+                            group: "".to_string(),
+                            version: "v1".to_string(),
+                            kind: "Namespace".to_string(),
+                            namespace: None,
+                            name: "ns".to_string(),
+                            uid: Some("keep-uid-789".to_string()),
+                        },
+                        reason: "test".to_string(),
+                    },
+                ],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+        };
+
+        let mut target_uids: HashSet<String> = HashSet::new();
+        // Simulate what run_residual_audit does
+        for phase in &plan.phases {
+            for action in &phase.actions {
+                match action {
+                    Action::Delete { resource, .. }
+                    | Action::ExpectGone { resource, .. } => {
+                        if let Some(uid) = &resource.uid {
+                            target_uids.insert(uid.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(target_uids.contains("root-uid-123"));
+        assert!(target_uids.contains("desc-uid-456"));
+        // KEEP actions should NOT be in target_uids
+        assert!(!target_uids.contains("keep-uid-789"));
+    }
+
+    #[test]
+    fn test_ownerref_to_plan_root_cr_is_high() {
+        // An object whose ownerRef points to a plan DELETE resource's UID
+        // should be classified HIGH (not UNATTRIBUTED)
+        let mut target_uids = HashSet::new();
+        target_uids.insert("root-cr-uid-123".to_string());
+
+        let evidence = ResidualEvidence {
+            owner_ref_match: true, // matches root-cr-uid-123
+            matching_labels: vec![],
+            matching_managers: vec![],
+            namespace_affinity: false,
+            service_account_match: false,
+        };
+
+        let confidence = compute_confidence(&evidence);
+        assert_eq!(confidence, ResidualConfidence::High);
     }
 }

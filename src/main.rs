@@ -906,16 +906,24 @@ async fn create_run_journal(
             Api::namespaced_with(client.clone(), &first_op.install_namespace, &csv_ar);
 
         audit_context.csv_baseline = match csv_api.list(&ListParams::default()).await {
-            Ok(list) => Some(
-                list.items
-                    .iter()
-                    .filter_map(|csv| {
-                        let name = csv.metadata.name.clone()?;
-                        let uid = csv.metadata.uid.clone()?;
-                        Some(journal::CsvBaselineEntry { name, uid })
-                    })
-                    .collect(),
-            ),
+            Ok(list) => {
+                let mut baseline_entries = Vec::new();
+                for csv in &list.items {
+                    let name = csv.metadata.name.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "CSV in install namespace has no name — cannot build baseline"
+                        )
+                    })?;
+                    let uid = csv.metadata.uid.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "CSV '{}' has no UID — cannot build baseline",
+                            name
+                        )
+                    })?;
+                    baseline_entries.push(journal::CsvBaselineEntry { name, uid });
+                }
+                Some(baseline_entries)
+            }
             Err(e) => {
                 bail!(
                     "Failed to capture CSV baseline for generation safety: {}. \
