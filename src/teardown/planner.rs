@@ -17,7 +17,7 @@ use crate::analyzers::olm::{
 use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
-use crate::kube::resource::{ResourceId, resolve_api};
+use crate::kube::resource::ResourceId;
 
 // ── Decision types ──
 
@@ -395,7 +395,6 @@ pub enum DiscoverySource {
 pub struct CrInstance {
     pub id: ResourceId,
     pub owner_refs: Vec<(String, String, String)>, // (kind, name, uid)
-    #[allow(dead_code)]
     pub api_owner_key: String,
     pub labels: HashMap<String, String>,
     pub managed_field_managers: Vec<String>,
@@ -1743,12 +1742,6 @@ pub async fn generate_teardown_plan(
             false
         }
 
-        // Build set of API groups owned by target operators for CRD-ownership fallback
-        let target_owned_groups: HashSet<&str> = target_crd_set
-            .iter()
-            .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
-            .collect();
-
         let mut linked_count = 0;
         let mut unlinked_count = 0;
         for cr in related_instances {
@@ -1762,11 +1755,12 @@ pub async fn generate_teardown_plan(
             });
 
             // Fallback: if no ownerRef chain, check if the CR's CRD is directly
-            // owned by the target operator's CSV. Resources whose API group matches
-            // a target-owned CRD and whose provenance indicates operator management
-            // are treated as linked (managed operands created without ownerRef).
+            // owned by the target operator's CSV (exact CRD name match via
+            // api_owner_key). Resources whose CRD is target-owned and whose
+            // provenance indicates operator management are treated as linked
+            // (managed operands created without ownerRef).
             let linked_by_crd_ownership = !linked_by_owner_ref
-                && target_owned_groups.contains(cr.id.group.as_str())
+                && target_crd_set.contains(cr.api_owner_key.as_str())
                 && matches!(
                     cr.provenance,
                     Provenance::Managed | Provenance::LikelyManaged
@@ -2824,60 +2818,50 @@ pub async fn generate_teardown_plan(
             continue;
         }
 
-        let km_arc = Arc::new(kind_map.clone());
-        let gk_arc = Arc::new(gk_map.clone());
-        let fin_futs = expect_resources.iter().take(50).map(|res| {
-            let client = client.clone();
-            let res = (*res).clone();
-            let km = km_arc.clone();
-            let gk = gk_arc.clone();
-            async move {
-                let Some((api, _)) = resolve_api(&client, &res, &km, &gk) else {
-                    return Err(None);
-                };
-                match api.get(&res.name).await {
-                    Ok(obj) => {
-                        let fins = obj.metadata.finalizers.unwrap_or_default();
-                        if fins.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some((res, fins)))
-                        }
+        let expect_owned: Vec<ResourceId> = expect_resources.iter().map(|r| (*r).clone()).collect();
+        let fin_results = crate::teardown::finalizers::check_finalizers_batch(
+            client,
+            &expect_owned,
+            kind_map,
+            gk_map,
+            16,
+        )
+        .await;
+
+        if crate::teardown::finalizers::requires_serialization(&fin_results) {
+            let mut detail_parts = Vec::new();
+            let mut finalized_count = 0usize;
+            let mut unknown_count = 0usize;
+            for (r, check) in &fin_results {
+                match check {
+                    crate::teardown::finalizers::FinalizerCheck::KnownFinalizers(f) => {
+                        finalized_count += 1;
+                        detail_parts.push(format!("{}/{} [{}]", r.kind, r.name, f.join(", ")));
                     }
-                    Err(kube::Error::Api(err)) if err.code == 404 => Ok(None),
-                    Err(e) => Err(Some((res, format!("{}", e)))),
+                    crate::teardown::finalizers::FinalizerCheck::Unknown(err) => {
+                        unknown_count += 1;
+                        detail_parts.push(format!("{}/{} [unknown: {}]", r.kind, r.name, err));
+                    }
+                    crate::teardown::finalizers::FinalizerCheck::KnownEmpty => {}
                 }
             }
-        });
-
-        let fin_results: Vec<_> = futures::stream::iter(fin_futs)
-            .buffer_unordered(16)
-            .collect()
-            .await;
-
-        let finalized: Vec<(ResourceId, Vec<String>)> = fin_results
-            .into_iter()
-            .filter_map(|r| match r {
-                Ok(Some(pair)) => Some(pair),
-                _ => None,
-            })
-            .collect();
-
-        if !finalized.is_empty() {
-            let detail = finalized
-                .iter()
-                .map(|(r, f)| format!("{}/{} [{}]", r.kind, r.name, f.join(", ")))
-                .collect::<Vec<_>>()
-                .join("; ");
+            let detail = detail_parts.join("; ");
+            let summary = if unknown_count > 0 {
+                format!(
+                    "{} EXPECT target(s) have finalizers, {} unknown — root CR deletions will be serialized conservatively. {}",
+                    finalized_count, unknown_count, detail
+                )
+            } else {
+                format!(
+                    "{} EXPECT target(s) have finalizers — root CR deletions will be serialized. {}",
+                    finalized_count, detail
+                )
+            };
             preflight.checks.push(PreflightCheck {
                 name: format!("Finalizers in phase '{}'", phase.name),
                 severity: PreflightSeverity::Warning,
                 passed: false,
-                detail: format!(
-                    "{} EXPECT target(s) have finalizers — root CR deletions will be serialized. {}",
-                    finalized.len(),
-                    detail
-                ),
+                detail: summary,
             });
         }
     }
@@ -3737,5 +3721,37 @@ mod tests {
 
         assert!(matches!(&phases[0].actions[0], Action::Keep { .. }));
         assert!(matches!(&phases[0].actions[1], Action::Keep { .. }));
+    }
+
+    #[test]
+    fn same_group_non_owned_crd_remains_review() {
+        // A CrInstance whose CRD shares an API group parent domain with a
+        // target-owned CRD, but is NOT the same CRD, should NOT be promoted
+        // to linked. Only exact api_owner_key match qualifies.
+        let target_crd_set: HashSet<&str> = ["foos.example.com"].into_iter().collect();
+
+        let cr = CrInstance {
+            id: ResourceId {
+                group: "example.com".to_string(),
+                version: "v1".to_string(),
+                kind: "Bar".to_string(),
+                namespace: None,
+                name: "my-bar".to_string(),
+                uid: Some("uid-bar".to_string()),
+            },
+            owner_refs: vec![],
+            api_owner_key: "bars.example.com".to_string(),
+            labels: HashMap::new(),
+            managed_field_managers: vec![],
+            provenance: Provenance::LikelyManaged,
+            discovery_source: DiscoverySource::RelatedLabelOnly,
+        };
+
+        // Exact CRD match must fail — bars.example.com is not in target_crd_set
+        let linked_by_crd = target_crd_set.contains(cr.api_owner_key.as_str());
+        assert!(
+            !linked_by_crd,
+            "same-group but non-owned CRD should NOT be linked"
+        );
     }
 }
