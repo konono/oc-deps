@@ -281,7 +281,7 @@ async fn main() -> Result<()> {
 
                                             for phase in &mut mutated.phases {
                                                 for action in &mut phase.actions {
-                                                    if let Action::Review { resource, reason, .. } = action {
+                                                    if let Action::Review { resource, reason, metadata } = action {
                                                         if resource.group == ovr.resource.group
                                                             && resource.version == ovr.resource.version
                                                             && resource.kind == ovr.resource.kind
@@ -331,14 +331,27 @@ async fn main() -> Result<()> {
                                                                                         resource.kind, resource.name, plan_uid, live_uid
                                                                                     );
                                                                                 }
-                                                                                // Basis drift: verify evidence still links to target
+                                                                                // Basis drift: verify provenance hasn't degraded
                                                                                 {
                                                                                     let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
-                                                                                    if !check_target_evidence(&obj, &ctx) {
+                                                                                    let action_metadata = metadata.clone();
+                                                                                    // Build minimal snapshot for provenance UID check
+                                                                                    let first_op = target_operators[0];
+                                                                                    let snap = crate::teardown::plan::OperatorIdentitySnapshot {
+                                                                                        generation_identity: crate::teardown::plan::OperatorGenerationIdentity::Unverifiable { reason: "temp".to_string() },
+                                                                                        operator_id: crate::analyzers::olm::OperatorId { namespace: first_op.install_namespace.clone(), csv_name: first_op.csv.name.clone() },
+                                                                                        csv_name: first_op.csv.name.clone(),
+                                                                                        csv: crate::teardown::plan::ObservedResourceIdentity { resource: first_op.csv.clone(), uid: first_op.csv.uid.clone().unwrap_or_default() },
+                                                                                        subscriptions: vec![],
+                                                                                        controller_deployments: vec![],
+                                                                                        service_accounts: vec![],
+                                                                                        owned_crds: first_op.owned_crds.clone(),
+                                                                                        required_crds: first_op.required_crds.clone(),
+                                                                                    };
+                                                                                    if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
                                                                                         bail!(
-                                                                                            "BLOCKED: {}/{} no longer has evidence linking to target operator. \
-                                                                                             Re-run 'teardown plan' for fresh evidence.",
-                                                                                            resource.kind, resource.name
+                                                                                            "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
+                                                                                            resource.kind, resource.name, reason
                                                                                         );
                                                                                     }
                                                                                 }
@@ -533,25 +546,36 @@ async fn main() -> Result<()> {
                                     for over in &app.draft_overrides {
                                         for phase in &mut mutated_plan.phases {
                                             for action in &mut phase.actions {
-                                                if let Action::Review { resource, reason, .. } = action {
+                                                if let Action::Review { resource, reason, metadata } = action {
                                                     if resource.group == over.resource.group
                                                         && resource.version == over.resource.version
                                                         && resource.kind == over.resource.kind
                                                         && resource.name == over.resource.name
                                                         && resource.namespace == over.resource.namespace
                                                     {
-                                                        // P0: Verify override UID matches plan UID
-                                                        let ovr_uid = over.resource.uid.as_deref().unwrap_or("");
-                                                        let plan_uid = resource.uid.as_deref().unwrap_or("");
-                                                        if !ovr_uid.is_empty() && !plan_uid.is_empty() && ovr_uid != plan_uid {
-                                                            bail!(
-                                                                "Override UID {} does not match plan UID {} for {}/{}",
-                                                                ovr_uid, plan_uid, resource.kind, resource.name
-                                                            );
-                                                        }
-
                                                         match over.new_action {
                                                             DraftAction::Delete => {
+                                                                // P0: Three-way UID check — all must be non-empty and match
+                                                                let ovr_uid = over.resource.uid.as_deref().unwrap_or("");
+                                                                let plan_uid = resource.uid.as_deref().unwrap_or("");
+                                                                if ovr_uid.is_empty() {
+                                                                    bail!(
+                                                                        "Cannot approve DELETE for {}/{} without UID in approval",
+                                                                        resource.kind, resource.name
+                                                                    );
+                                                                }
+                                                                if plan_uid.is_empty() {
+                                                                    bail!(
+                                                                        "Cannot approve DELETE for {}/{}: plan resource has no UID",
+                                                                        resource.kind, resource.name
+                                                                    );
+                                                                }
+                                                                if ovr_uid != plan_uid {
+                                                                    bail!(
+                                                                        "Override UID {} does not match plan UID {} for {}/{}",
+                                                                        ovr_uid, plan_uid, resource.kind, resource.name
+                                                                    );
+                                                                }
                                                                 // Fresh GET to verify identity + bind UID + basis drift check
                                                                 let verified = match crate::kube::resource::resolve_api(
                                                                     &client, resource, &kind_map, &gk_map,
@@ -569,14 +593,27 @@ async fn main() -> Result<()> {
                                                                                         resource.kind, resource.name, plan_uid, live_uid
                                                                                     );
                                                                                 }
-                                                                                // Basis drift: verify evidence still links to target
+                                                                                // Basis drift: verify provenance hasn't degraded
                                                                                 {
                                                                                     let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
-                                                                                    if !check_target_evidence(&obj, &ctx) {
+                                                                                    let action_metadata = metadata.clone();
+                                                                                    // Build minimal snapshot for provenance UID check
+                                                                                    let first_op = target_operators[0];
+                                                                                    let snap = crate::teardown::plan::OperatorIdentitySnapshot {
+                                                                                        generation_identity: crate::teardown::plan::OperatorGenerationIdentity::Unverifiable { reason: "temp".to_string() },
+                                                                                        operator_id: crate::analyzers::olm::OperatorId { namespace: first_op.install_namespace.clone(), csv_name: first_op.csv.name.clone() },
+                                                                                        csv_name: first_op.csv.name.clone(),
+                                                                                        csv: crate::teardown::plan::ObservedResourceIdentity { resource: first_op.csv.clone(), uid: first_op.csv.uid.clone().unwrap_or_default() },
+                                                                                        subscriptions: vec![],
+                                                                                        controller_deployments: vec![],
+                                                                                        service_accounts: vec![],
+                                                                                        owned_crds: first_op.owned_crds.clone(),
+                                                                                        required_crds: first_op.required_crds.clone(),
+                                                                                    };
+                                                                                    if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
                                                                                         bail!(
-                                                                                            "BLOCKED: {}/{} no longer has evidence linking to target operator. \
-                                                                                             Re-run 'teardown plan' for fresh evidence.",
-                                                                                            resource.kind, resource.name
+                                                                                            "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
+                                                                                            resource.kind, resource.name, reason
                                                                                         );
                                                                                     }
                                                                                 }
@@ -929,20 +966,34 @@ async fn main() -> Result<()> {
                                                                                             eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg);
                                                                                             // Wait for Gone confirmation after DELETE accepted
                                                                                             if msg == "deleted" {
+                                                                                                let mut gone_confirmed = false;
                                                                                                 if let Some((api, _)) = crate::kube::resource::resolve_api(&client, res, &kind_map, &gk_map) {
                                                                                                     for _ in 0..30 {
                                                                                                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                                                                                         match api.get(&res.name).await {
                                                                                                             Err(::kube::Error::Api(ref err)) if err.code == 404 => {
                                                                                                                 eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
+                                                                                                                gone_confirmed = true;
                                                                                                                 break;
                                                                                                             }
-                                                                                                            _ => continue,
+                                                                                                            Ok(_) => continue,
+                                                                                                            Err(e) => {
+                                                                                                                eprintln!("    ⚠ Cannot verify Gone for {}/{}: {}", res.kind, res.name, e);
+                                                                                                                break;
+                                                                                                            }
                                                                                                         }
                                                                                                     }
                                                                                                 }
+                                                                                                if gone_confirmed {
+                                                                                                    "gone".to_string()
+                                                                                                } else {
+                                                                                                    "delete_requested_not_confirmed".to_string()
+                                                                                                }
+                                                                                            } else if msg == "already_gone" {
+                                                                                                "already_gone".to_string()
+                                                                                            } else {
+                                                                                                msg.clone()
                                                                                             }
-                                                                                            msg.clone()
                                                                                         }
                                                                                         Err(e) => { eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e); format!("failed: {}", e) }
                                                                                     };
@@ -987,9 +1038,17 @@ async fn main() -> Result<()> {
                                                                                     }
                                                                                 }
 
-                                                                                // Restore state after cleanup
+                                                                                // Determine final cleanup state based on audit result
+                                                                                let post_j_final = store.read().await;
+                                                                                let final_cleanup_state = match &post_j_final.residual_status {
+                                                                                    crate::teardown::journal::ResidualStatus::AuditIncomplete => {
+                                                                                        eprintln!("  ⚠ Audit incomplete after cleanup — staying in InteractiveCleanup");
+                                                                                        RunState::InteractiveCleanup
+                                                                                    }
+                                                                                    _ => RunState::ApplyCompleted,
+                                                                                };
                                                                                 store.update(|j| {
-                                                                                    j.state = RunState::ApplyCompleted;
+                                                                                    j.state = final_cleanup_state;
                                                                                 }).await
                                                                                 .context("Failed to restore state after cleanup")?;
                                                                             }
@@ -1208,7 +1267,7 @@ async fn main() -> Result<()> {
                         }
 
                         match j.state {
-                            RunState::Paused | RunState::Applying => {}
+                            RunState::Paused | RunState::Applying | RunState::InteractiveCleanup => {}
                             RunState::ApplyCompleted | RunState::Finished => {
                                 bail!("Run {} already completed — nothing to resume", j.run_id);
                             }
@@ -1230,7 +1289,7 @@ async fn main() -> Result<()> {
 
                                 // Re-verify state after lock (another process may have completed it)
                                 match j.state {
-                                    RunState::Paused | RunState::Applying => {}
+                                    RunState::Paused | RunState::Applying | RunState::InteractiveCleanup => {}
                                     RunState::ApplyCompleted | RunState::Finished => {
                                         bail!("Run completed by another process — nothing to resume");
                                     }
@@ -1393,16 +1452,9 @@ async fn main() -> Result<()> {
                                     start_phase, j.plan_snapshot.phases.len()
                                 );
 
-                                store
-                                    .update(|journal| {
-                                        journal.state = RunState::Applying;
-                                    })
-                                    .await
-                                    .context("Failed to persist Applying state for resume")?;
-
                                 let gate = std::sync::Arc::new(MutationGate::new(16));
 
-                                // Ctrl-C handler for resume (same as normal apply)
+                                // Ctrl-C handler for resume
                                 {
                                     let gate_for_signal = gate.clone();
                                     tokio::spawn(async move {
@@ -1414,6 +1466,114 @@ async fn main() -> Result<()> {
                                         }
                                     });
                                 }
+
+                                // Branch based on state: InteractiveCleanup vs main execution
+                                // Do NOT write Applying before the branch — each path manages its own state.
+                                let has_pending_cleanup = !j.cleanup_decisions.is_empty()
+                                    && j.cleanup_decisions.iter().any(|d| d.result.is_none());
+
+                                let should_resume_cleanup = j.state == RunState::InteractiveCleanup
+                                    || ((j.state == RunState::Applying || j.state == RunState::Paused) && has_pending_cleanup);
+
+                                if should_resume_cleanup {
+                                    // Write InteractiveCleanup state for crash safety
+                                    if j.state != RunState::InteractiveCleanup {
+                                        store.update(|j| { j.state = RunState::InteractiveCleanup; }).await?;
+                                    }
+                                    let pending: Vec<crate::teardown::journal::CleanupDecision> =
+                                        j.cleanup_decisions.iter()
+                                            .filter(|d| d.result.is_none())
+                                            .cloned()
+                                            .collect();
+
+                                    if pending.is_empty() {
+                                        eprintln!("No pending cleanup decisions to resume.");
+                                    } else {
+                                        eprintln!("Resuming {} pending cleanup decision(s)...", pending.len());
+                                        for decision in &pending {
+                                            if !gate.is_open() {
+                                                eprintln!("⏸ Gate closed — stopping cleanup resume");
+                                                break;
+                                            }
+                                            // Verify generation
+                                            let gen_state = audit::check_operator_generation(
+                                                &client, &j.operator, &j.audit_context.csv_baseline
+                                            ).await;
+                                            if !matches!(gen_state, OperatorGenerationState::Absent) {
+                                                bail!("Generation not Absent — cannot resume cleanup");
+                                            }
+                                            // Verify bound UID matches live
+                                            let bound_uid = decision.bound_uid.as_deref().unwrap_or("");
+                                            if bound_uid.is_empty() {
+                                                eprintln!("  ⚠ Pending decision for {}/{} has no bound UID — skipping",
+                                                    decision.resource.kind, decision.resource.name);
+                                                continue;
+                                            }
+                                            if let Some((api, _)) = crate::kube::resource::resolve_api(
+                                                &client, &decision.resource, &kind_map, &gk_map,
+                                            ) {
+                                                match api.get(&decision.resource.name).await {
+                                                    Ok(obj) => {
+                                                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                                        if live_uid != bound_uid {
+                                                            bail!("Resource {}/{} UID changed ({} → {}) — cannot resume cleanup",
+                                                                decision.resource.kind, decision.resource.name,
+                                                                bound_uid, live_uid);
+                                                        }
+                                                        // Execute DELETE
+                                                        let _permit = gate.acquire().await
+                                                            .context("Mutation gate closed during cleanup resume")?;
+                                                        let del = crate::teardown::executor::delete_resource_pub(
+                                                            &client, &decision.resource, &kind_map, &gk_map, None,
+                                                        ).await;
+                                                        let result_str = match &del {
+                                                            Ok(msg) => msg.clone(),
+                                                            Err(e) => format!("failed: {}", e),
+                                                        };
+                                                        eprintln!("  {}/{}: {}", decision.resource.kind, decision.resource.name, result_str);
+                                                        let res_for_update = decision.resource.clone();
+                                                        store.update(|j| {
+                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                .find(|d| d.resource == res_for_update && d.result.is_none())
+                                                            {
+                                                                d.result = Some(result_str);
+                                                            }
+                                                        }).await.context("Failed to checkpoint cleanup resume result")?;
+                                                        drop(_permit);
+                                                    }
+                                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                        eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
+                                                        let res_for_update = decision.resource.clone();
+                                                        store.update(|j| {
+                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                .find(|d| d.resource == res_for_update && d.result.is_none())
+                                                            {
+                                                                d.result = Some("already_gone".to_string());
+                                                            }
+                                                        }).await?;
+                                                    }
+                                                    Err(e) => bail!("Cannot verify {}/{}: {}", decision.resource.kind, decision.resource.name, e),
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Determine final state
+                                    let final_state = if !gate.is_open() {
+                                        RunState::Paused
+                                    } else {
+                                        RunState::ApplyCompleted
+                                    };
+                                    store.update(|j| { j.state = final_state; }).await?;
+                                    return Ok(());
+                                }
+
+                                // Main execution resume: write Applying before first mutation
+                                store
+                                    .update(|journal| {
+                                        journal.state = RunState::Applying;
+                                    })
+                                    .await
+                                    .context("Failed to persist Applying state for resume")?;
 
                                 let exec_result = execute_plan(
                                     &client,
@@ -2083,75 +2243,88 @@ async fn fetch_observed_identities(
 /// - target label alone → insufficient for DELETE authority
 /// - target manager alone → insufficient for DELETE authority
 /// - arbitrary ownerRef without target match → insufficient
-fn check_target_evidence(
+/// Re-classify fresh provenance from a live GET result using UID-based identity.
+fn classify_fresh_provenance(
     obj: &::kube::api::DynamicObject,
     audit_ctx: &crate::teardown::journal::AuditContext,
-) -> bool {
-    let mut has_target_label = false;
-    let mut has_target_manager = false;
-    let mut has_target_ownerref = false;
+    operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+) -> crate::teardown::plan::ProvenanceSer {
+    use crate::teardown::plan::ProvenanceSer;
 
-    // Check labels for target operator CSV name patterns
-    if let Some(labels) = &obj.metadata.labels {
-        for csv_name in &audit_ctx.csv_names {
-            let prefix = csv_name.split('.').next().unwrap_or(csv_name);
-            if !prefix.is_empty() {
-                for key in labels.keys() {
-                    if key.contains(prefix) {
-                        has_target_label = true;
-                        break;
-                    }
-                }
-            }
-            if has_target_label {
-                break;
-            }
-        }
-    }
-
-    // Check managedFields for target controller deployment names
-    if let Some(managed_fields) = &obj.metadata.managed_fields {
-        for mf in managed_fields {
-            if let Some(manager) = &mf.manager {
-                for dep_name in &audit_ctx.controller_deployment_names {
-                    if manager.contains(dep_name.as_str()) {
-                        has_target_manager = true;
-                        break;
-                    }
-                }
-            }
-            if has_target_manager {
-                break;
-            }
-        }
-    }
-
-    // Check ownerRefs specifically for target operator identity (deployment/CSV names)
-    // NOT any arbitrary ownerRef
+    // ownerRef → Managed ONLY if ownerRef UID matches saved CSV/controller UID
     if let Some(owner_refs) = &obj.metadata.owner_references {
         for oref in owner_refs {
-            for dep_name in &audit_ctx.controller_deployment_names {
-                if oref.name.contains(dep_name.as_str()) {
-                    has_target_ownerref = true;
-                    break;
+            let oref_uid = &oref.uid;
+            if !oref_uid.is_empty() {
+                if *oref_uid == operator_snapshot.csv.uid {
+                    return ProvenanceSer::Managed;
                 }
-            }
-            if !has_target_ownerref {
-                for csv_name in &audit_ctx.csv_names {
-                    if oref.name == *csv_name {
-                        has_target_ownerref = true;
-                        break;
+                for dep in &operator_snapshot.controller_deployments {
+                    if *oref_uid == dep.uid {
+                        return ProvenanceSer::Managed;
                     }
                 }
-            }
-            if has_target_ownerref {
-                break;
             }
         }
     }
 
-    // ownerRef to target → sufficient
-    // target manager + target label → sufficient
-    // either alone → insufficient
-    has_target_ownerref || (has_target_manager && has_target_label)
+    let has_label = obj.metadata.labels.as_ref().map(|labels| {
+        audit_ctx.csv_names.iter().any(|csv| {
+            let prefix = csv.split('.').next().unwrap_or(csv);
+            !prefix.is_empty()
+                && labels
+                    .keys()
+                    .any(|k| k.starts_with(&format!("operators.coreos.com/{}", prefix)))
+        })
+    }).unwrap_or(false);
+
+    let has_manager = obj.metadata.managed_fields.as_ref().map(|mfs| {
+        mfs.iter().any(|mf| {
+            mf.manager
+                .as_ref()
+                .is_some_and(|m| audit_ctx.controller_deployment_names.iter().any(|d| m.contains(d.as_str())))
+        })
+    }).unwrap_or(false);
+
+    // LikelyManaged requires BOTH label AND manager
+    if has_label && has_manager {
+        ProvenanceSer::LikelyManaged
+    } else {
+        ProvenanceSer::Unknown
+    }
+}
+
+/// Validate that fresh provenance hasn't degraded from the stored review metadata.
+/// Provenance downgrade → BLOCK (basis drift detected).
+fn revalidate_review_basis(
+    obj: &::kube::api::DynamicObject,
+    metadata: &Option<crate::teardown::plan::ReviewMetadata>,
+    audit_ctx: &crate::teardown::journal::AuditContext,
+    operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+) -> Result<(), String> {
+    use crate::teardown::plan::ProvenanceSer;
+
+    let stored_provenance = metadata
+        .as_ref()
+        .and_then(|m| m.provenance.as_ref());
+
+    let fresh = classify_fresh_provenance(obj, audit_ctx, operator_snapshot);
+
+    match (stored_provenance, &fresh) {
+        (Some(ProvenanceSer::Managed), ProvenanceSer::Managed) => Ok(()),
+        (Some(ProvenanceSer::Managed), _) => {
+            Err("provenance downgraded from Managed".to_string())
+        }
+        (Some(ProvenanceSer::LikelyManaged), ProvenanceSer::Managed | ProvenanceSer::LikelyManaged) => Ok(()),
+        (Some(ProvenanceSer::LikelyManaged), ProvenanceSer::Unknown) => {
+            Err("provenance downgraded from LikelyManaged to Unknown".to_string())
+        }
+        (Some(ProvenanceSer::Unknown), _) => {
+            // Stored was Unknown — cannot verify basis, BLOCK
+            Err("stored provenance was Unknown — cannot verify approval basis".to_string())
+        }
+        (None, _) => {
+            Err("no stored provenance to verify against".to_string())
+        }
+    }
 }
