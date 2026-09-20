@@ -511,6 +511,22 @@ pub async fn execute_plan_with_store(
                 } else {
                     None
                 };
+                // Fail-closed: Subscription DELETE requires known package name
+                let has_sub_delete = eligible.iter().any(|(r, _)| {
+                    r.kind == "Subscription" && r.group == "operators.coreos.com"
+                });
+                if has_sub_delete && pkg_name.is_none() {
+                    for (resource, _) in &eligible {
+                        if resource.kind == "Subscription" && resource.group == "operators.coreos.com" {
+                            result.failed.push((resource.clone(),
+                                "cannot DELETE Subscription without verified package name \
+                                 (generation_identity is Unverifiable)".to_string()));
+                        }
+                    }
+                    // Skip all DELETEs in this phase — Subscription blocks phase
+                    break;
+                }
+
                 let del_futs = eligible.iter().map(|(resource, _)| {
                     let client = client.clone();
                     let resource = resource.clone();

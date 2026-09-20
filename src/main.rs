@@ -2392,6 +2392,16 @@ async fn build_operator_identity_snapshot(
         &first_op.install_namespace,
     ).await?;
 
+    // Fail-closed: if Subscription exists but package name is unknown,
+    // we cannot verify semantic identity for safe DELETE
+    if first_op.subscription.is_some() && first_op.package_name.is_none() {
+        bail!(
+            "Subscription exists but package name is unknown — \
+             cannot establish semantic identity for safe teardown. \
+             Verify the Subscription has spec.name set."
+        );
+    }
+
     let sub_observed: Vec<ObservedResourceIdentity> = if let Some(sub) = &first_op.subscription {
         let fresh = fetch_observed_identities(
             client,
