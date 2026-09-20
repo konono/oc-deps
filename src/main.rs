@@ -1038,14 +1038,23 @@ async fn main() -> Result<()> {
                                                                                     }
                                                                                 }
 
-                                                                                // Determine final cleanup state based on audit result
+                                                                                // Determine final cleanup state based on audit + decision results
                                                                                 let post_j_final = store.read().await;
-                                                                                let final_cleanup_state = match &post_j_final.residual_status {
-                                                                                    crate::teardown::journal::ResidualStatus::AuditIncomplete => {
-                                                                                        eprintln!("  ⚠ Audit incomplete after cleanup — staying in InteractiveCleanup");
-                                                                                        RunState::InteractiveCleanup
+                                                                                let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| {
+                                                                                    d.result.as_deref().is_some_and(|r| r.starts_with("failed:"))
+                                                                                        || d.result.as_deref() == Some("delete_requested")
+                                                                                        || d.result.as_deref() == Some("delete_requested_not_confirmed")
+                                                                                });
+                                                                                let final_cleanup_state = if has_failed_decisions {
+                                                                                    RunState::Failed
+                                                                                } else {
+                                                                                    match &post_j_final.residual_status {
+                                                                                        crate::teardown::journal::ResidualStatus::AuditIncomplete => {
+                                                                                            eprintln!("  ⚠ Audit incomplete after cleanup — staying in InteractiveCleanup");
+                                                                                            RunState::InteractiveCleanup
+                                                                                        }
+                                                                                        _ => RunState::ApplyCompleted,
                                                                                     }
-                                                                                    _ => RunState::ApplyCompleted,
                                                                                 };
                                                                                 store.update(|j| {
                                                                                     j.state = final_cleanup_state;
@@ -1523,7 +1532,22 @@ async fn main() -> Result<()> {
                                                         eprintln!("  {}/{}: gone (confirmed on resume)", decision.resource.kind, decision.resource.name);
                                                     }
                                                     Ok(obj) => {
-                                                        // Still exists — check if deleting
+                                                        // Verify UID — new UID means old resource is
+                                                        // gone and a replacement was created
+                                                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                                        let bound = decision.bound_uid.as_deref().unwrap_or("");
+                                                        if !bound.is_empty() && !live_uid.is_empty() && live_uid != bound {
+                                                            // Different UID — old resource is gone (Recreated)
+                                                            let res_up = decision.resource.clone();
+                                                            store.update(|j| {
+                                                                if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                    .find(|d| d.resource == res_up && d.result.as_deref() == Some("delete_requested"))
+                                                                { d.result = Some("gone".to_string()); }
+                                                            }).await?;
+                                                            eprintln!("  {}/{}: old UID gone (new UID {} = recreated)", decision.resource.kind, decision.resource.name, live_uid);
+                                                            continue;
+                                                        }
+                                                        // Same UID — check if deleting
                                                         if obj.metadata.deletion_timestamp.is_some() {
                                                             // Wait for Gone
                                                             let mut gone = false;
