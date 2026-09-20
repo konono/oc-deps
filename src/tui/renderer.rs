@@ -23,16 +23,21 @@ pub fn draw_plan_review(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // title
+            Constraint::Length(3), // title
             Constraint::Min(10),   // plan actions
             Constraint::Length(5), // review items
-            Constraint::Length(3),  // help
+            Constraint::Length(3), // help
         ])
         .split(f.area());
 
     // Title
     let title = Paragraph::new(Line::from(vec![
-        Span::styled(" Plan Review ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Plan Review ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(format!("— {} phases, ", plan.phases.len())),
         Span::raw(format!("{} REVIEW items", review_items.len())),
     ]))
@@ -61,8 +66,8 @@ pub fn draw_plan_review(
         );
         summary_items.push(ListItem::new(Line::from(line)));
     }
-    let summary = List::new(summary_items)
-        .block(Block::default().borders(Borders::ALL).title(" Phases "));
+    let summary =
+        List::new(summary_items).block(Block::default().borders(Borders::ALL).title(" Phases "));
     f.render_widget(summary, chunks[1]);
 
     // Review items (navigable)
@@ -83,7 +88,9 @@ pub fn draw_plan_review(
 
         let prefix = if i == selected_index { "▶ " } else { "  " };
         let style = if i == selected_index {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -95,8 +102,11 @@ pub fn draw_plan_review(
         );
         review_list_items.push(ListItem::new(Line::from(line)).style(style));
     }
-    let review_list = List::new(review_list_items)
-        .block(Block::default().borders(Borders::ALL).title(" REVIEW Items "));
+    let review_list = List::new(review_list_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" REVIEW Items "),
+    );
     f.render_widget(review_list, chunks[2]);
 
     // Help
@@ -130,30 +140,43 @@ pub fn draw_execution(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // title + progress
-            Constraint::Length(3),  // gauge
+            Constraint::Length(3), // title + progress
+            Constraint::Length(3), // gauge
             Constraint::Min(10),   // resource list
-            Constraint::Length(3),  // summary
-            Constraint::Length(3),  // help
+            Constraint::Length(3), // summary
+            Constraint::Length(3), // help
         ])
         .split(f.area());
 
     // Title
     let status = if paused {
-        Span::styled(" PAUSED ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        Span::styled(
+            " PAUSED ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
     } else if let Some(err) = error_msg {
         Span::styled(
             format!(" ERROR: {} ", err),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::styled(" Executing ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        Span::styled(
+            " Executing ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
     };
 
     let title = Paragraph::new(Line::from(vec![
         status,
         Span::raw(format!("Phase {}/{} ", current_phase, total_phases)),
-        Span::styled(format!("({}s)", elapsed_secs), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("({}s)", elapsed_secs),
+            Style::default().fg(Color::DarkGray),
+        ),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -167,11 +190,18 @@ pub fn draw_execution(
         0.0
     };
     let label = if blockers > 0 {
-        format!("{}/{} resolved, {} blocked", resolved, summary.total, blockers)
+        format!(
+            "{}/{} resolved, {} blocked",
+            resolved, summary.total, blockers
+        )
     } else {
         format!("{}/{} resolved", resolved, summary.total)
     };
-    let gauge_color = if blockers > 0 { Color::Yellow } else { Color::Green };
+    let gauge_color = if blockers > 0 {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title(" Progress "))
         .gauge_style(Style::default().fg(gauge_color))
@@ -182,7 +212,8 @@ pub fn draw_execution(
     // Resource list — sorted by phase_index, then state priority
     let mut sorted: Vec<&RuntimeEntry> = entries.iter().collect();
     sorted.sort_by(|a, b| {
-        a.phase_index.cmp(&b.phase_index)
+        a.phase_index
+            .cmp(&b.phase_index)
             .then_with(|| state_priority(&a.state).cmp(&state_priority(&b.state)))
     });
 
@@ -194,22 +225,13 @@ pub fn draw_execution(
             let (icon, color) = state_style(&entry.state);
             let ns = entry.resource.namespace.as_deref().unwrap_or("cluster");
             let line = Line::from(vec![
-                Span::styled(
-                    format!(" {} ", icon),
-                    Style::default().fg(color),
-                ),
+                Span::styled(format!(" {} ", icon), Style::default().fg(color)),
                 Span::styled(
                     format!("{}/{}", entry.resource.kind, entry.resource.name),
                     Style::default().fg(Color::White),
                 ),
-                Span::styled(
-                    format!(" ({}) ", ns),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(
-                    format!("{}", entry.state),
-                    Style::default().fg(color),
-                ),
+                Span::styled(format!(" ({}) ", ns), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}", entry.state), Style::default().fg(color)),
             ]);
             ListItem::new(line)
         })
@@ -221,25 +243,49 @@ pub fn draw_execution(
         String::new()
     };
 
-    let resource_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(format!(" Resources{}", overflow)));
+    let resource_list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Resources{}", overflow)),
+    );
     f.render_widget(resource_list, chunks[2]);
 
     // Summary bar
     let summary_text = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} Gone", summary.gone), Style::default().fg(Color::Green)),
+        Span::styled(
+            format!(" {} Gone", summary.gone),
+            Style::default().fg(Color::Green),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{} Deleting", summary.deleting), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            format!("{} Deleting", summary.deleting),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{} FinBlocked", summary.finalizer_blocked), Style::default().fg(Color::Magenta)),
+        Span::styled(
+            format!("{} FinBlocked", summary.finalizer_blocked),
+            Style::default().fg(Color::Magenta),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{} Stalled", summary.stalled), Style::default().fg(Color::Red)),
+        Span::styled(
+            format!("{} Stalled", summary.stalled),
+            Style::default().fg(Color::Red),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{} Failed", summary.failed), Style::default().fg(Color::Red)),
+        Span::styled(
+            format!("{} Failed", summary.failed),
+            Style::default().fg(Color::Red),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{} Keep", summary.keep), Style::default().fg(Color::Cyan)),
+        Span::styled(
+            format!("{} Keep", summary.keep),
+            Style::default().fg(Color::Cyan),
+        ),
         Span::raw("  "),
-        Span::styled(format!("{} Recreated", summary.recreated), Style::default().fg(Color::Red)),
+        Span::styled(
+            format!("{} Recreated", summary.recreated),
+            Style::default().fg(Color::Red),
+        ),
     ]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(summary_text, chunks[3]);
@@ -280,9 +326,9 @@ pub fn draw_residual(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // title
+            Constraint::Length(3), // title
             Constraint::Min(10),   // residual list
-            Constraint::Length(3),  // help
+            Constraint::Length(3), // help
         ])
         .split(f.area());
 
@@ -292,9 +338,12 @@ pub fn draw_residual(
     } else {
         format!(" Residual Cleanup — {} items ", residuals.len())
     };
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled(title_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-    ]))
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        title_text,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )]))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
@@ -304,43 +353,41 @@ pub fn draw_residual(
         .enumerate()
         .map(|(i, (res, reason))| {
             let is_selected = selected.iter().any(|s| {
-                s.kind == res.kind && s.name == res.name
-                    && s.namespace == res.namespace && s.group == res.group
+                s.kind == res.kind
+                    && s.name == res.name
+                    && s.namespace == res.namespace
+                    && s.group == res.group
             });
             let prefix = if i == cursor { "▶ " } else { "  " };
 
-            let cleanup_state = cleanup_states
-                .and_then(|states| states.get(res));
+            let cleanup_state = cleanup_states.and_then(|states| states.get(res));
 
             let (state_marker, style) = match cleanup_state {
-                Some(ResidualResourceState::Validating) => (
-                    "⏳ VALIDATING",
-                    Style::default().fg(Color::Yellow),
-                ),
+                Some(ResidualResourceState::Validating) => {
+                    ("⏳ VALIDATING", Style::default().fg(Color::Yellow))
+                }
                 Some(ResidualResourceState::DeleteRequested) => (
                     "◐ DELETE SENT",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Some(ResidualResourceState::WaitingGone) => (
-                    "◑ WAITING GONE",
-                    Style::default().fg(Color::Yellow),
-                ),
-                Some(ResidualResourceState::Gone) => (
-                    "✓ GONE",
-                    Style::default().fg(Color::Green),
-                ),
-                Some(ResidualResourceState::Skipped(_)) => (
-                    "⚠ SKIPPED",
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Some(ResidualResourceState::Failed(_)) => (
-                    "✗ FAILED",
-                    Style::default().fg(Color::Red),
-                ),
+                Some(ResidualResourceState::WaitingGone) => {
+                    ("◑ WAITING GONE", Style::default().fg(Color::Yellow))
+                }
+                Some(ResidualResourceState::Gone) => ("✓ GONE", Style::default().fg(Color::Green)),
+                Some(ResidualResourceState::Skipped(_)) => {
+                    ("⚠ SKIPPED", Style::default().fg(Color::DarkGray))
+                }
+                Some(ResidualResourceState::Failed(_)) => {
+                    ("✗ FAILED", Style::default().fg(Color::Red))
+                }
                 _ => {
                     let check = if is_selected { "[x]" } else { "[ ]" };
                     let s = if i == cursor {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
                     } else if is_selected {
                         Style::default().fg(Color::Red)
                     } else {
@@ -364,8 +411,11 @@ pub fn draw_residual(
         })
         .collect();
 
-    let residual_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Residual Resources "));
+    let residual_list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Residual Resources "),
+    );
     f.render_widget(residual_list, chunks[1]);
 
     // Help

@@ -100,9 +100,7 @@ pub fn validate_command(state: &AppState, cmd: &AppCommand) -> Result<()> {
             }
         }
         AppCommand::Pause => {
-            if state.screen != AppScreen::Executing
-                && state.screen != AppScreen::ResidualCleanup
-            {
+            if state.screen != AppScreen::Executing && state.screen != AppScreen::ResidualCleanup {
                 bail!("Pause only allowed during Execution or Residual Cleanup");
             }
         }
@@ -125,9 +123,7 @@ pub fn apply_command(state: &mut AppState, cmd: &AppCommand) -> Result<()> {
     match cmd {
         AppCommand::ApproveReview { resource } => {
             // Remove any existing override for the same resource
-            state
-                .draft_overrides
-                .retain(|o| o.resource != *resource);
+            state.draft_overrides.retain(|o| o.resource != *resource);
             state.draft_overrides.push(DraftOverride {
                 resource: resource.clone(),
                 original_action: "Review".to_string(),
@@ -135,9 +131,7 @@ pub fn apply_command(state: &mut AppState, cmd: &AppCommand) -> Result<()> {
             });
         }
         AppCommand::KeepReview { resource } => {
-            state
-                .draft_overrides
-                .retain(|o| o.resource != *resource);
+            state.draft_overrides.retain(|o| o.resource != *resource);
             state.draft_overrides.push(DraftOverride {
                 resource: resource.clone(),
                 original_action: "Review".to_string(),
@@ -365,8 +359,11 @@ mod tests {
         ] {
             let mut s = AppState::new();
             s.screen = screen.clone();
-            assert!(apply_command(&mut s, &AppCommand::Finish).is_err(),
-                "Finish must be rejected from {:?}", screen);
+            assert!(
+                apply_command(&mut s, &AppCommand::Finish).is_err(),
+                "Finish must be rejected from {:?}",
+                screen
+            );
         }
     }
 

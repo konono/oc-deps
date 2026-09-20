@@ -123,9 +123,7 @@ impl ResourceMatch {
                 return false;
             }
         }
-        self.kind == rid.kind
-            && self.namespace == rid.namespace
-            && self.name == rid.name
+        self.kind == rid.kind && self.namespace == rid.namespace && self.name == rid.name
     }
 }
 

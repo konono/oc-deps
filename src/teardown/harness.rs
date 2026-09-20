@@ -139,9 +139,15 @@ mod tests {
         let events = run_scenario(
             state,
             &[
-                AppCommand::SelectResidual { resource: res("r1") },
-                AppCommand::SelectResidual { resource: res("r2") },
-                AppCommand::DeselectResidual { resource: res("r1") },
+                AppCommand::SelectResidual {
+                    resource: res("r1"),
+                },
+                AppCommand::SelectResidual {
+                    resource: res("r2"),
+                },
+                AppCommand::DeselectResidual {
+                    resource: res("r1"),
+                },
                 AppCommand::DeleteSelected,
             ],
         );
@@ -183,7 +189,13 @@ mod tests {
     fn test_full_lifecycle_scenario() {
         // PlanReview → approve → start → (simulated execution) → residual → finish
         let mut state = AppState::new();
-        apply_command(&mut state, &AppCommand::ApproveReview { resource: res("cr1") }).unwrap();
+        apply_command(
+            &mut state,
+            &AppCommand::ApproveReview {
+                resource: res("cr1"),
+            },
+        )
+        .unwrap();
         assert_eq!(state.screen, AppScreen::PlanReview);
         apply_command(&mut state, &AppCommand::StartExecution).unwrap();
         assert_eq!(state.screen, AppScreen::Executing);
@@ -378,9 +390,12 @@ mod tests {
         let mut state = AppState::new();
 
         // Pre-start: approve a REVIEW → OK
-        let r = apply_command(&mut state, &AppCommand::ApproveReview {
-            resource: res("cr-a"),
-        });
+        let r = apply_command(
+            &mut state,
+            &AppCommand::ApproveReview {
+                resource: res("cr-a"),
+            },
+        );
         assert!(r.is_ok(), "approve should work in PlanReview");
         assert_eq!(state.draft_overrides.len(), 1);
 
@@ -390,9 +405,12 @@ mod tests {
         assert_eq!(state.screen, AppScreen::Executing);
 
         // Post-start: approve must be rejected
-        let r = apply_command(&mut state, &AppCommand::ApproveReview {
-            resource: res("cr-b"),
-        });
+        let r = apply_command(
+            &mut state,
+            &AppCommand::ApproveReview {
+                resource: res("cr-b"),
+            },
+        );
         assert!(r.is_err(), "approve must be rejected after Start");
         // Original overrides unchanged
         assert_eq!(state.draft_overrides.len(), 1);
@@ -407,13 +425,22 @@ mod tests {
         let mut state = AppState::new();
         state.screen = AppScreen::Executing;
 
-        let r = apply_command(&mut state, &AppCommand::SelectResidual {
-            resource: res("residual-a"),
-        });
-        assert!(r.is_err(), "residual select must fail outside ResidualCleanup");
+        let r = apply_command(
+            &mut state,
+            &AppCommand::SelectResidual {
+                resource: res("residual-a"),
+            },
+        );
+        assert!(
+            r.is_err(),
+            "residual select must fail outside ResidualCleanup"
+        );
 
         let r = apply_command(&mut state, &AppCommand::DeleteSelected);
-        assert!(r.is_err(), "residual delete must fail outside ResidualCleanup");
+        assert!(
+            r.is_err(),
+            "residual delete must fail outside ResidualCleanup"
+        );
     }
 
     // ── Integration: Screen transition chain ──
@@ -432,14 +459,20 @@ mod tests {
         state.screen = AppScreen::ResidualCleanup;
 
         // Select and deselect residuals
-        let _ = apply_command(&mut state, &AppCommand::SelectResidual {
-            resource: res("res-a"),
-        });
+        let _ = apply_command(
+            &mut state,
+            &AppCommand::SelectResidual {
+                resource: res("res-a"),
+            },
+        );
         assert_eq!(state.selected_residuals.len(), 1);
 
-        let _ = apply_command(&mut state, &AppCommand::DeselectResidual {
-            resource: res("res-a"),
-        });
+        let _ = apply_command(
+            &mut state,
+            &AppCommand::DeselectResidual {
+                resource: res("res-a"),
+            },
+        );
         assert_eq!(state.selected_residuals.len(), 0);
 
         let _ = apply_command(&mut state, &AppCommand::Finish);
@@ -470,7 +503,10 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // New permit should be rejected
-        assert!(gate.acquire().await.is_err(), "new permit must fail after close");
+        assert!(
+            gate.acquire().await.is_err(),
+            "new permit must fail after close"
+        );
 
         // Drop the active permit → drain should complete
         drop(permit);
@@ -527,7 +563,7 @@ mod tests {
             kind: "Config".to_string(),
             namespace: None,
             name: "default".to_string(),
-            uid: None,  // No UID in approval
+            uid: None, // No UID in approval
         };
 
         let ovr_uid = override_resource.uid.as_deref().unwrap_or("");
@@ -567,7 +603,9 @@ mod tests {
 
     // ── Cleanup decision predicate tests (uses CleanupDecision methods from journal.rs) ──
 
-    fn make_decision(result: Option<crate::teardown::journal::CleanupResult>) -> crate::teardown::journal::CleanupDecision {
+    fn make_decision(
+        result: Option<crate::teardown::journal::CleanupResult>,
+    ) -> crate::teardown::journal::CleanupDecision {
         crate::teardown::journal::CleanupDecision {
             resource: ResourceId {
                 group: "apps".to_string(),
@@ -586,9 +624,14 @@ mod tests {
 
     #[test]
     fn test_delete_requested_is_pending_and_failed() {
-        let d = make_decision(Some(crate::teardown::journal::CleanupResult::DeleteRequested));
+        let d = make_decision(Some(
+            crate::teardown::journal::CleanupResult::DeleteRequested,
+        ));
         assert!(d.is_pending(), "delete_requested must be pending");
-        assert!(d.is_failed(), "delete_requested must be failed (Gone not confirmed)");
+        assert!(
+            d.is_failed(),
+            "delete_requested must be failed (Gone not confirmed)"
+        );
         assert!(!d.is_complete(), "delete_requested must NOT be complete");
     }
 
@@ -615,7 +658,9 @@ mod tests {
 
     #[test]
     fn test_failed_result_is_failed() {
-        let d = make_decision(Some(crate::teardown::journal::CleanupResult::Failed("API timeout".to_string())));
+        let d = make_decision(Some(crate::teardown::journal::CleanupResult::Failed(
+            "API timeout".to_string(),
+        )));
         assert!(d.is_failed());
         assert!(!d.is_complete());
         assert!(!d.is_pending());
@@ -626,7 +671,9 @@ mod tests {
         // Simulate final_state logic: any failed/unconfirmed → not ApplyCompleted
         let decisions = vec![
             make_decision(Some(crate::teardown::journal::CleanupResult::Gone)),
-            make_decision(Some(crate::teardown::journal::CleanupResult::Failed("timeout".to_string()))),
+            make_decision(Some(crate::teardown::journal::CleanupResult::Failed(
+                "timeout".to_string(),
+            ))),
         ];
         let has_failed = decisions.iter().any(|d| d.is_failed());
         assert!(has_failed, "failed decision must be detected");
@@ -635,7 +682,9 @@ mod tests {
 
     #[test]
     fn test_delete_requested_not_confirmed_is_failed() {
-        let d = make_decision(Some(crate::teardown::journal::CleanupResult::DeleteRequested));
+        let d = make_decision(Some(
+            crate::teardown::journal::CleanupResult::DeleteRequested,
+        ));
         assert!(d.is_failed());
         assert!(!d.is_complete());
     }

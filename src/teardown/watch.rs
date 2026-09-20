@@ -81,16 +81,12 @@ impl WatchManager {
                     self.store.update_from_observation(&resource, o, 0);
                 }
                 ObserveResult::ApiError(reason) => {
-                    self.store.update_from_executor(
-                        &resource,
-                        ResourceRuntimeState::Unknown { reason },
-                    );
+                    self.store
+                        .update_from_executor(&resource, ResourceRuntimeState::Unknown { reason });
                 }
                 ObserveResult::Unresolvable(reason) => {
-                    self.store.update_from_executor(
-                        &resource,
-                        ResourceRuntimeState::Unknown { reason },
-                    );
+                    self.store
+                        .update_from_executor(&resource, ResourceRuntimeState::Unknown { reason });
                 }
             }
         }
@@ -114,8 +110,15 @@ impl WatchManager {
         stall_timeout: Duration,
     ) -> WatchWaitResult {
         self.wait_for_gone_cancellable(
-            client, resources, kind_map, gk_map, timeout, stall_timeout, None,
-        ).await
+            client,
+            resources,
+            kind_map,
+            gk_map,
+            timeout,
+            stall_timeout,
+            None,
+        )
+        .await
     }
 
     pub async fn wait_for_gone_cancellable(
@@ -166,7 +169,12 @@ impl WatchManager {
             // Authoritative reconcile — cancellable
             let needs_verify = self.store.resources_needing_verification(resources);
             if !needs_verify.is_empty() {
-                if cancellable!(self.reconcile(client, &needs_verify, kind_map, gk_map), cancel).is_none() {
+                if cancellable!(
+                    self.reconcile(client, &needs_verify, kind_map, gk_map),
+                    cancel
+                )
+                .is_none()
+                {
                     break WatchWaitResult::Cancelled;
                 }
             }
@@ -215,9 +223,8 @@ impl WatchManager {
             }
 
             if last_progress_check.elapsed() >= stall_timeout {
-                let has_stuck = summary.deleting > 0
-                    || summary.finalizer_blocked > 0
-                    || summary.stalled > 0;
+                let has_stuck =
+                    summary.deleting > 0 || summary.finalizer_blocked > 0 || summary.stalled > 0;
                 if has_stuck {
                     break self.build_stalled_result(
                         resources,
@@ -308,11 +315,7 @@ impl WatchManager {
         handles
     }
 
-    fn build_stalled_result(
-        &self,
-        resources: &[ResourceId],
-        reason: String,
-    ) -> WatchWaitResult {
+    fn build_stalled_result(&self, resources: &[ResourceId], reason: String) -> WatchWaitResult {
         let snapshot = self.store.snapshot();
         let remaining: Vec<_> = snapshot
             .iter()
@@ -375,10 +378,8 @@ async fn run_watch_loop(
     store: Arc<RuntimeStateStore>,
     stream_id_counter: Arc<AtomicU64>,
 ) {
-    let tracked_names: std::collections::HashSet<String> = tracked_resources
-        .iter()
-        .map(|r| r.name.clone())
-        .collect();
+    let tracked_names: std::collections::HashSet<String> =
+        tracked_resources.iter().map(|r| r.name.clone()).collect();
 
     loop {
         // Each reconnection gets a new stream_id
@@ -405,11 +406,7 @@ async fn run_watch_loop(
                         exists: true,
                         uid: obj.metadata.uid.clone(),
                         has_deletion_timestamp: obj.metadata.deletion_timestamp.is_some(),
-                        finalizer_count: obj
-                            .metadata
-                            .finalizers
-                            .as_ref()
-                            .map_or(0, |f| f.len()),
+                        finalizer_count: obj.metadata.finalizers.as_ref().map_or(0, |f| f.len()),
                         authoritative: true,
                     };
                     // Authoritative → stream_id=0 (always accepted)
@@ -455,11 +452,7 @@ async fn run_watch_loop(
                         exists: true,
                         uid: obj.metadata.uid.clone(),
                         has_deletion_timestamp: obj.metadata.deletion_timestamp.is_some(),
-                        finalizer_count: obj
-                            .metadata
-                            .finalizers
-                            .as_ref()
-                            .map_or(0, |f| f.len()),
+                        finalizer_count: obj.metadata.finalizers.as_ref().map_or(0, |f| f.len()),
                         authoritative: false, // WATCH is non-authoritative
                     };
                     store.update_from_observation(&resource, obs, stream_id);
@@ -558,11 +551,11 @@ async fn observe_resource(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use crate::teardown::events::EventNotifier;
-    use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
-    use crate::teardown::permit::MutationGate;
     use crate::kube::resource::ResourceId;
+    use crate::teardown::events::EventNotifier;
+    use crate::teardown::permit::MutationGate;
+    use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
+    use std::sync::Arc;
 
     fn make_resource(kind: &str, name: &str) -> ResourceId {
         ResourceId {
@@ -609,10 +602,8 @@ mod tests {
         use std::pin::pin;
 
         // Mock service that never responds to GET — simulates API timeout
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let spawned = tokio::spawn(async move {
             let mut handle = pin!(handle);
@@ -642,15 +633,17 @@ mod tests {
 
         let client = kube::Client::new(mock_service, "test-ns");
         let start = std::time::Instant::now();
-        let result = watch_mgr.wait_for_gone_cancellable(
-            &client,
-            &[res],
-            &km,
-            &gk,
-            Duration::from_secs(300),
-            Duration::from_secs(120),
-            Some(&cancel),
-        ).await;
+        let result = watch_mgr
+            .wait_for_gone_cancellable(
+                &client,
+                &[res],
+                &km,
+                &gk,
+                Duration::from_secs(300),
+                Duration::from_secs(120),
+                Some(&cancel),
+            )
+            .await;
 
         let elapsed = start.elapsed();
 
@@ -701,30 +694,44 @@ mod tests {
                 "kind": "Status", "apiVersion": "v1", "metadata": {},
                 "status": "Failure", "reason": "NotFound", "code": 404
             });
-            send.send_response(http::Response::builder().status(404)
-                .body(kube::client::Body::from(serde_json::to_vec(&not_found).unwrap())).unwrap());
+            send.send_response(
+                http::Response::builder()
+                    .status(404)
+                    .body(kube::client::Body::from(
+                        serde_json::to_vec(&not_found).unwrap(),
+                    ))
+                    .unwrap(),
+            );
             // LIST → 200 (endpoint verification)
             let (_req, send) = handle.next_request().await.expect("LIST");
             let empty_list = serde_json::json!({
                 "apiVersion": "v1", "kind": "ConfigMapList",
                 "metadata": {"resourceVersion": "1"}, "items": []
             });
-            send.send_response(http::Response::builder().status(200)
-                .body(kube::client::Body::from(serde_json::to_vec(&empty_list).unwrap())).unwrap());
+            send.send_response(
+                http::Response::builder()
+                    .status(200)
+                    .body(kube::client::Body::from(
+                        serde_json::to_vec(&empty_list).unwrap(),
+                    ))
+                    .unwrap(),
+            );
         });
 
         let km = test_kind_map();
         let gk = test_gk_map();
         let client = kube::Client::new(mock_service, "test-ns");
-        let result = watch_mgr.wait_for_gone_cancellable(
-            &client,
-            &[res],
-            &km,
-            &gk,
-            Duration::from_secs(10),
-            Duration::from_secs(10),
-            None,
-        ).await;
+        let result = watch_mgr
+            .wait_for_gone_cancellable(
+                &client,
+                &[res],
+                &km,
+                &gk,
+                Duration::from_secs(10),
+                Duration::from_secs(10),
+                None,
+            )
+            .await;
 
         assert!(
             matches!(result, WatchWaitResult::AllGone),

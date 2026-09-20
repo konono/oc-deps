@@ -6,26 +6,21 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::analyzers::olm::OperatorInstance;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
-use crate::teardown::app::{
-    AppCommand, AppScreen, AppState, DraftAction, apply_command,
-};
+use crate::teardown::app::{AppCommand, AppScreen, AppState, DraftAction, apply_command};
 use crate::teardown::audit::{self, OperatorGenerationState, ResidualAudit};
 use crate::teardown::executor::{self, ExecutionResult};
-use crate::teardown::journal::{self, JournalStore, RunState, ResidualStatus, CleanupDecision};
+use crate::teardown::journal::{self, CleanupDecision, JournalStore, ResidualStatus, RunState};
 use crate::teardown::permit::MutationGate;
-use crate::teardown::planner::{Action, TeardownPlan};
 use crate::teardown::plan::ReviewMetadata;
+use crate::teardown::planner::{Action, TeardownPlan};
 use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
 
 /// Run the interactive TUI workflow: Plan Review → Execution → Residual Cleanup.
@@ -51,10 +46,19 @@ pub async fn run_tui(
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
     let result = run_tui_inner(
-        &mut terminal, client, plan, target_operators,
-        kind_map, gk_map, gvk_map, gvr_map,
-        journal_store, gate, force,
-    ).await;
+        &mut terminal,
+        client,
+        plan,
+        target_operators,
+        kind_map,
+        gk_map,
+        gvk_map,
+        gvr_map,
+        journal_store,
+        gate,
+        force,
+    )
+    .await;
 
     // Always restore terminal
     disable_raw_mode().ok();
@@ -86,13 +90,20 @@ async fn run_tui_inner(
         .iter()
         .enumerate()
         .flat_map(|(pi, phase)| {
-            phase.actions.iter().enumerate().filter_map(move |(ai, action)| {
-                if let Action::Review { resource, metadata, .. } = action {
-                    Some((pi, ai, resource.clone(), metadata.clone()))
-                } else {
-                    None
-                }
-            })
+            phase
+                .actions
+                .iter()
+                .enumerate()
+                .filter_map(move |(ai, action)| {
+                    if let Action::Review {
+                        resource, metadata, ..
+                    } = action
+                    {
+                        Some((pi, ai, resource.clone(), metadata.clone()))
+                    } else {
+                        None
+                    }
+                })
         })
         .collect();
 
@@ -119,15 +130,21 @@ async fn run_tui_inner(
                     }
                     KeyCode::Char('a') if !review_items.is_empty() => {
                         let (_, _, ref res, _) = review_items[selected_index];
-                        let _ = apply_command(&mut app, &AppCommand::ApproveReview {
-                            resource: res.clone(),
-                        });
+                        let _ = apply_command(
+                            &mut app,
+                            &AppCommand::ApproveReview {
+                                resource: res.clone(),
+                            },
+                        );
                     }
                     KeyCode::Char('K') if !review_items.is_empty() => {
                         let (_, _, ref res, _) = review_items[selected_index];
-                        let _ = apply_command(&mut app, &AppCommand::KeepReview {
-                            resource: res.clone(),
-                        });
+                        let _ = apply_command(
+                            &mut app,
+                            &AppCommand::KeepReview {
+                                resource: res.clone(),
+                            },
+                        );
                     }
                     KeyCode::Char('s') | KeyCode::Enter => {
                         break; // Proceed to execution
@@ -144,7 +161,10 @@ async fn run_tui_inner(
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
 
     if !app.draft_overrides.is_empty() {
-        eprintln!("  Applying {} draft override(s) with fresh validation...", app.draft_overrides.len());
+        eprintln!(
+            "  Applying {} draft override(s) with fresh validation...",
+            app.draft_overrides.len()
+        );
         let audit_ctx = journal::build_audit_context(plan, target_operators, gk_map);
         let j = journal_store.read().await;
         let operator_snapshot = &j.operator;
@@ -165,13 +185,22 @@ async fn run_tui_inner(
                 })
             });
             if !found {
-                bail!("Override for {}/{} does not match any REVIEW action",
-                    ovr.resource.kind, ovr.resource.name);
+                bail!(
+                    "Override for {}/{} does not match any REVIEW action",
+                    ovr.resource.kind,
+                    ovr.resource.name
+                );
             }
 
             for phase in &mut mutated.phases {
                 for action in &mut phase.actions {
-                    if let Action::Review { resource, reason, metadata, .. } = action {
+                    if let Action::Review {
+                        resource,
+                        reason,
+                        metadata,
+                        ..
+                    } = action
+                    {
                         if resource.group == ovr.resource.group
                             && resource.version == ovr.resource.version
                             && resource.kind == ovr.resource.kind
@@ -183,14 +212,27 @@ async fn run_tui_inner(
                                     let ovr_uid = ovr.resource.uid.as_deref().unwrap_or("");
                                     let plan_uid = resource.uid.as_deref().unwrap_or("");
                                     if plan_uid.is_empty() {
-                                        bail!("Cannot approve DELETE for {}/{}: plan resource has no UID", resource.kind, resource.name);
+                                        bail!(
+                                            "Cannot approve DELETE for {}/{}: plan resource has no UID",
+                                            resource.kind,
+                                            resource.name
+                                        );
                                     }
                                     if ovr_uid.is_empty() {
-                                        bail!("Cannot approve DELETE for {}/{} without UID in approval",
-                                            resource.kind, resource.name);
+                                        bail!(
+                                            "Cannot approve DELETE for {}/{} without UID in approval",
+                                            resource.kind,
+                                            resource.name
+                                        );
                                     }
                                     if ovr_uid != plan_uid {
-                                        bail!("Override UID {} does not match plan UID {} for {}/{}", ovr_uid, plan_uid, resource.kind, resource.name);
+                                        bail!(
+                                            "Override UID {} does not match plan UID {} for {}/{}",
+                                            ovr_uid,
+                                            plan_uid,
+                                            resource.kind,
+                                            resource.name
+                                        );
                                     }
                                     let (api, _) = crate::kube::resource::resolve_api(
                                         client, resource, kind_map, gk_map,
@@ -200,21 +242,42 @@ async fn run_tui_inner(
                                     ))?;
                                     match api.get(&resource.name).await {
                                         Ok(obj) => {
-                                            let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                            let live_uid =
+                                                obj.metadata.uid.as_deref().unwrap_or("");
                                             if live_uid.is_empty() {
-                                                bail!("Cannot apply override for {}/{}: live resource has no UID",
-                                                    resource.kind, resource.name);
+                                                bail!(
+                                                    "Cannot apply override for {}/{}: live resource has no UID",
+                                                    resource.kind,
+                                                    resource.name
+                                                );
                                             }
                                             if live_uid != plan_uid {
-                                                bail!("UID changed for {}/{}: plan {} vs live {}",
-                                                    resource.kind, resource.name, plan_uid, live_uid);
+                                                bail!(
+                                                    "UID changed for {}/{}: plan {} vs live {}",
+                                                    resource.kind,
+                                                    resource.name,
+                                                    plan_uid,
+                                                    live_uid
+                                                );
                                             }
                                             let action_meta = metadata.clone();
-                                            if let Err(drift_reason) = crate::revalidate_review_basis(
-                                                client, &obj, resource, &action_meta, &audit_ctx, operator_snapshot,
-                                            ).await {
-                                                bail!("BLOCKED: {}/{} — basis drift: {}",
-                                                    resource.kind, resource.name, drift_reason);
+                                            if let Err(drift_reason) =
+                                                crate::revalidate_review_basis(
+                                                    client,
+                                                    &obj,
+                                                    resource,
+                                                    &action_meta,
+                                                    &audit_ctx,
+                                                    operator_snapshot,
+                                                )
+                                                .await
+                                            {
+                                                bail!(
+                                                    "BLOCKED: {}/{} — basis drift: {}",
+                                                    resource.kind,
+                                                    resource.name,
+                                                    drift_reason
+                                                );
                                             }
                                             let mut bound = resource.clone();
                                             bound.uid = Some(live_uid.to_string());
@@ -224,9 +287,17 @@ async fn run_tui_inner(
                                             };
                                         }
                                         Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                            eprintln!("  ⚠ {}/{} no longer present — skipped", resource.kind, resource.name);
+                                            eprintln!(
+                                                "  ⚠ {}/{} no longer present — skipped",
+                                                resource.kind, resource.name
+                                            );
                                         }
-                                        Err(e) => bail!("Cannot verify {}/{}: {}", resource.kind, resource.name, e),
+                                        Err(e) => bail!(
+                                            "Cannot verify {}/{}: {}",
+                                            resource.kind,
+                                            resource.name,
+                                            e
+                                        ),
                                     }
                                 }
                                 DraftAction::Keep => {
@@ -248,21 +319,31 @@ async fn run_tui_inner(
     {
         let j = journal_store.read().await;
         let gen_state = crate::teardown::audit::check_operator_generation(
-            client, &j.operator, &j.audit_context.csv_baseline,
-        ).await;
+            client,
+            &j.operator,
+            &j.audit_context.csv_baseline,
+        )
+        .await;
         match gen_state {
             OperatorGenerationState::SameGeneration => {}
             OperatorGenerationState::Absent => {
-                bail!("Operator was removed during Plan Review — cannot start execution. \
-                       Create a new teardown plan.");
+                bail!(
+                    "Operator was removed during Plan Review — cannot start execution. \
+                       Create a new teardown plan."
+                );
             }
             OperatorGenerationState::Reappeared => {
-                bail!("Operator was reinstalled during Plan Review — approvals are invalid. \
-                       Create a new teardown plan for the current generation.");
+                bail!(
+                    "Operator was reinstalled during Plan Review — approvals are invalid. \
+                       Create a new teardown plan for the current generation."
+                );
             }
             OperatorGenerationState::Unknown(reason) => {
-                bail!("Cannot verify operator generation before Start: {}. \
-                       Create a new teardown plan.", reason);
+                bail!(
+                    "Cannot verify operator generation before Start: {}. \
+                       Create a new teardown plan.",
+                    reason
+                );
             }
         }
     }
@@ -278,17 +359,29 @@ async fn run_tui_inner(
 
     // P0: Persist Bound Plan to journal BEFORE mutation.
     let bound_snapshot = plan.clone();
-    journal_store.update(|j| {
-        j.plan_snapshot = bound_snapshot;
-    }).await.context("Failed to persist Bound Plan to journal — aborting start")?;
+    journal_store
+        .update(|j| {
+            j.plan_snapshot = bound_snapshot;
+        })
+        .await
+        .context("Failed to persist Bound Plan to journal — aborting start")?;
 
     let _ = apply_command(&mut app, &AppCommand::StartExecution);
 
     // ── Screen 2: Execution (live ratatui rendering) ──
     run_execution_screen(
-        terminal, client, plan, kind_map, gk_map, gvk_map, gvr_map,
-        journal_store, gate, force,
-    ).await
+        terminal,
+        client,
+        plan,
+        kind_map,
+        gk_map,
+        gvk_map,
+        gvr_map,
+        journal_store,
+        gate,
+        force,
+    )
+    .await
 }
 
 /// Execution screen: runs executor with live ratatui rendering from shared RuntimeStateStore.
@@ -325,8 +418,14 @@ async fn run_execution_screen(
 
     // Pin the executor future so we can select! between it and UI ticks
     let mut executor_fut = Box::pin(executor::execute_plan_with_store(
-        client, plan, kind_map, gk_map, gvk_map, gvr_map,
-        false, force,
+        client,
+        plan,
+        kind_map,
+        gk_map,
+        gvk_map,
+        gvr_map,
+        false,
+        force,
         Some(journal_store.as_ref()),
         Some(gate.as_ref()),
         0,
@@ -345,20 +444,30 @@ async fn run_execution_screen(
         let summary = runtime_store.summary_for(&all_resources);
         let elapsed = exec_start.elapsed().as_secs();
 
-        let current_phase = entries.iter()
-            .filter(|e| !matches!(e.state,
-                ResourceRuntimeState::Gone
-                | ResourceRuntimeState::Keep
-                | ResourceRuntimeState::Review
-            ))
+        let current_phase = entries
+            .iter()
+            .filter(|e| {
+                !matches!(
+                    e.state,
+                    ResourceRuntimeState::Gone
+                        | ResourceRuntimeState::Keep
+                        | ResourceRuntimeState::Review
+                )
+            })
             .map(|e| e.phase_index)
             .min()
             .unwrap_or(total_phases);
 
         if let Err(e) = terminal.draw(|f| {
             renderer::draw_execution(
-                f, &entries, &summary, current_phase, total_phases,
-                elapsed, paused, None,
+                f,
+                &entries,
+                &summary,
+                current_phase,
+                total_phases,
+                elapsed,
+                paused,
+                None,
             );
         }) {
             // Draw error — close gate + drain concurrently with executor
@@ -368,10 +477,18 @@ async fn run_execution_screen(
             // If executor had a hard error (e.g. journal checkpoint failure after mutation),
             // persist Failed and propagate that error — don't mask it with draw error.
             if let Err(exec_err) = exec_r {
-                let _ = journal_store.update(|j| { j.state = RunState::Failed; }).await;
+                let _ = journal_store
+                    .update(|j| {
+                        j.state = RunState::Failed;
+                    })
+                    .await;
                 return Err(exec_err.context("Executor error during TUI draw failure"));
             }
-            let _ = journal_store.update(|j| { j.state = RunState::Paused; }).await;
+            let _ = journal_store
+                .update(|j| {
+                    j.state = RunState::Paused;
+                })
+                .await;
             return Err(anyhow::anyhow!("TUI draw error: {}", e));
         }
 
@@ -438,11 +555,23 @@ async fn run_execution_screen(
     match exec_result {
         Some(Ok(result)) => {
             handle_execution_completed(
-                terminal, client, result, plan, journal_store, gate, kind_map, gk_map,
-            ).await
+                terminal,
+                client,
+                result,
+                plan,
+                journal_store,
+                gate,
+                kind_map,
+                gk_map,
+            )
+            .await
         }
         Some(Err(e)) => {
-            let _ = journal_store.update(|j| { j.state = RunState::Failed; }).await;
+            let _ = journal_store
+                .update(|j| {
+                    j.state = RunState::Failed;
+                })
+                .await;
             Err(e)
         }
         None => {
@@ -464,10 +593,13 @@ async fn handle_execution_completed(
 ) -> Result<()> {
     // Check if gate was closed (signal-based pause, not key-based)
     if !gate.is_open() {
-        journal_store.update(|j| {
-            j.state = RunState::Paused;
-            j.execution.phases_total = result.phases_total;
-        }).await.context("Failed to persist Paused state after signal pause")?;
+        journal_store
+            .update(|j| {
+                j.state = RunState::Paused;
+                j.execution.phases_total = result.phases_total;
+            })
+            .await
+            .context("Failed to persist Paused state after signal pause")?;
         executor::print_execution_result(&result);
         eprintln!("⏸ Paused (signal). Use 'teardown resume' to continue.");
         return Ok(());
@@ -483,10 +615,13 @@ async fn handle_execution_completed(
     };
 
     // Persist final state durably BEFORE any screen transition
-    journal_store.update(|j| {
-        j.state = final_state.clone();
-        j.execution.phases_total = result.phases_total;
-    }).await.context("Failed to persist final state")?;
+    journal_store
+        .update(|j| {
+            j.state = final_state.clone();
+            j.execution.phases_total = result.phases_total;
+        })
+        .await
+        .context("Failed to persist final state")?;
 
     executor::print_execution_result(&result);
 
@@ -498,9 +633,7 @@ async fn handle_execution_completed(
     // ApplyCompleted is durably persisted. Verify generation Absent before Residual.
     let gen_state = {
         let j = journal_store.read().await;
-        audit::check_operator_generation(
-            client, &j.operator, &j.audit_context.csv_baseline,
-        ).await
+        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await
     };
     match gen_state {
         OperatorGenerationState::Absent => {}
@@ -513,7 +646,10 @@ async fn handle_execution_completed(
             return Ok(());
         }
         OperatorGenerationState::Unknown(reason) => {
-            eprintln!("⚠ Cannot verify operator generation: {} — residual cleanup blocked.", reason);
+            eprintln!(
+                "⚠ Cannot verify operator generation: {} — residual cleanup blocked.",
+                reason
+            );
             return Ok(());
         }
     }
@@ -521,16 +657,17 @@ async fn handle_execution_completed(
     // Run fresh complete audit and persist before entering residual screen
     let audit_result = {
         let j = journal_store.read().await;
-        audit::run_residual_audit(client, &j).await
+        audit::run_residual_audit(client, &j)
+            .await
             .context("Fresh residual audit failed")?
     };
 
     // Re-verify generation hasn't changed during audit
     {
         let j = journal_store.read().await;
-        let gen_recheck = audit::check_operator_generation(
-            client, &j.operator, &j.audit_context.csv_baseline,
-        ).await;
+        let gen_recheck =
+            audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline)
+                .await;
         if !matches!(gen_recheck, OperatorGenerationState::Absent) {
             eprintln!("⚠ Operator generation changed during audit — residual cleanup blocked.");
             return Ok(());
@@ -539,11 +676,14 @@ async fn handle_execution_completed(
 
     // Persist audit durably
     let status = audit::residual_status_from_audit(&audit_result);
-    journal_store.update(|j| {
-        j.residual_status = status.clone();
-        j.audit_revision += 1;
-        j.last_residual_audit = Some(audit_result.clone());
-    }).await.context("Failed to persist residual audit")?;
+    journal_store
+        .update(|j| {
+            j.residual_status = status.clone();
+            j.audit_revision += 1;
+            j.last_residual_audit = Some(audit_result.clone());
+        })
+        .await
+        .context("Failed to persist residual audit")?;
 
     // AuditIncomplete → cannot enter cleanup screen
     if matches!(status, journal::ResidualStatus::AuditIncomplete) {
@@ -552,10 +692,16 @@ async fn handle_execution_completed(
     }
 
     // Collect candidates: likely_operator_residual + unattributed only
-    let residuals: Vec<(ResourceId, String)> = audit_result.likely_operator_residual.iter()
+    let residuals: Vec<(ResourceId, String)> = audit_result
+        .likely_operator_residual
+        .iter()
         .map(|r| (r.resource.clone(), format!("{:?} confidence", r.confidence)))
-        .chain(audit_result.unattributed.iter()
-            .map(|r| (r.resource.clone(), "unattributed".to_string())))
+        .chain(
+            audit_result
+                .unattributed
+                .iter()
+                .map(|r| (r.resource.clone(), "unattributed".to_string())),
+        )
         .collect();
 
     // ── Screen 3: Residual Cleanup ──
@@ -565,8 +711,15 @@ async fn handle_execution_completed(
         .context("Failed to re-enter alternate screen for residual")?;
 
     let residual_result = run_residual_screen(
-        terminal, client, &residuals, journal_store, gate, kind_map, gk_map,
-    ).await;
+        terminal,
+        client,
+        &residuals,
+        journal_store,
+        gate,
+        kind_map,
+        gk_map,
+    )
+    .await;
 
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
@@ -599,15 +752,22 @@ async fn run_residual_screen(
                 &selected,
                 cursor,
                 status_msg.as_deref(),
-                if cleanup_states.is_empty() { None } else { Some(&cleanup_states) },
+                if cleanup_states.is_empty() {
+                    None
+                } else {
+                    Some(&cleanup_states)
+                },
             );
         })?;
 
         // Check gate closed (signal-based pause) during idle
         if !gate.is_open() {
-            journal_store.update(|j| {
-                j.state = RunState::Paused;
-            }).await.context("Failed to persist Paused on signal in Residual screen")?;
+            journal_store
+                .update(|j| {
+                    j.state = RunState::Paused;
+                })
+                .await
+                .context("Failed to persist Paused on signal in Residual screen")?;
             return Ok(());
         }
 
@@ -619,10 +779,12 @@ async fn run_residual_screen(
                     }
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                     KeyCode::Char('f') => {
-                        journal_store.update(|j| {
-                            j.state = RunState::Finished;
-                        }).await
-                        .context("Failed to persist Finished state")?;
+                        journal_store
+                            .update(|j| {
+                                j.state = RunState::Finished;
+                            })
+                            .await
+                            .context("Failed to persist Finished state")?;
                         return Ok(());
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -636,8 +798,10 @@ async fn run_residual_screen(
                     KeyCode::Char(' ') if !current_residuals.is_empty() => {
                         let res = &current_residuals[cursor].0;
                         let already = selected.iter().position(|s| {
-                            s.kind == res.kind && s.name == res.name
-                                && s.namespace == res.namespace && s.group == res.group
+                            s.kind == res.kind
+                                && s.name == res.name
+                                && s.namespace == res.namespace
+                                && s.group == res.group
                         });
                         if let Some(idx) = already {
                             selected.remove(idx);
@@ -654,8 +818,8 @@ async fn run_residual_screen(
                         let (progress_tx, mut progress_rx) =
                             tokio::sync::mpsc::unbounded_channel::<executor::CleanupProgress>();
 
-                        let mut cleanup_fut = Box::pin(
-                            executor::execute_residual_cleanup_with_progress(
+                        let mut cleanup_fut =
+                            Box::pin(executor::execute_residual_cleanup_with_progress(
                                 client,
                                 &selected_for_cleanup,
                                 journal_store.as_ref(),
@@ -663,8 +827,7 @@ async fn run_residual_screen(
                                 kind_map,
                                 gk_map,
                                 Some(&progress_tx),
-                            )
-                        );
+                            ));
 
                         // Render loop during cleanup — show per-resource progress.
                         // All exit paths (draw error, signal cancel, completion) must
@@ -678,15 +841,20 @@ async fn run_residual_screen(
                                     &selected_for_cleanup,
                                     cursor,
                                     status_msg.as_deref(),
-                                    if cleanup_states.is_empty() { None } else { Some(&cleanup_states) },
+                                    if cleanup_states.is_empty() {
+                                        None
+                                    } else {
+                                        Some(&cleanup_states)
+                                    },
                                 );
                             }) {
-                                let (_, cleanup_r) = tokio::join!(
-                                    gate.close_and_drain(),
-                                    &mut cleanup_fut
-                                );
+                                let (_, cleanup_r) =
+                                    tokio::join!(gate.close_and_drain(), &mut cleanup_fut);
                                 let _ = cleanup_r;
-                                return Err(anyhow::anyhow!("TUI draw error during cleanup: {}", draw_err));
+                                return Err(anyhow::anyhow!(
+                                    "TUI draw error during cleanup: {}",
+                                    draw_err
+                                ));
                             }
 
                             tokio::select! {
@@ -751,17 +919,27 @@ async fn run_residual_screen(
                             Ok(result) => {
                                 // If gate was closed during cleanup (signal pause after last resource)
                                 if !gate.is_open() {
-                                    journal_store.update(|j| {
-                                        j.state = RunState::Paused;
-                                    }).await
-                                    .context("Failed to persist Paused after cleanup signal")?;
+                                    journal_store
+                                        .update(|j| {
+                                            j.state = RunState::Paused;
+                                        })
+                                        .await
+                                        .context("Failed to persist Paused after cleanup signal")?;
                                     return Ok(());
                                 }
                                 if let Some(ref post_audit) = result.post_audit {
-                                    current_residuals = post_audit.likely_operator_residual.iter()
-                                        .map(|r| (r.resource.clone(), format!("{:?} confidence", r.confidence)))
-                                        .chain(post_audit.unattributed.iter()
-                                            .map(|r| (r.resource.clone(), "unattributed".to_string())))
+                                    current_residuals = post_audit
+                                        .likely_operator_residual
+                                        .iter()
+                                        .map(|r| {
+                                            (
+                                                r.resource.clone(),
+                                                format!("{:?} confidence", r.confidence),
+                                            )
+                                        })
+                                        .chain(post_audit.unattributed.iter().map(|r| {
+                                            (r.resource.clone(), "unattributed".to_string())
+                                        }))
                                         .collect();
                                     cursor = cursor.min(current_residuals.len().saturating_sub(1));
                                 }
@@ -776,10 +954,14 @@ async fn run_residual_screen(
                             }
                             Err(e) => {
                                 if executor::is_gate_closed_error(&e) {
-                                    journal_store.update(|j| {
-                                        j.state = RunState::Paused;
-                                    }).await
-                                    .context("Failed to persist Paused after gate-closed cleanup")?;
+                                    journal_store
+                                        .update(|j| {
+                                            j.state = RunState::Paused;
+                                        })
+                                        .await
+                                        .context(
+                                            "Failed to persist Paused after gate-closed cleanup",
+                                        )?;
                                     return Ok(());
                                 }
                                 gate.close_and_drain().await;
@@ -808,9 +990,8 @@ pub async fn run_residual_cleanup(
 ) -> Result<()> {
     let j = journal_store.read().await;
 
-    let gen_state = audit::check_operator_generation(
-        client, &j.operator, &j.audit_context.csv_baseline,
-    ).await;
+    let gen_state =
+        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
 
     match gen_state {
         OperatorGenerationState::Absent => {
@@ -821,15 +1002,20 @@ pub async fn run_residual_cleanup(
                     audit::print_residual_audit(&audit_result, &j);
 
                     let gen_recheck = audit::check_operator_generation(
-                        client, &j.operator, &j.audit_context.csv_baseline,
-                    ).await;
+                        client,
+                        &j.operator,
+                        &j.audit_context.csv_baseline,
+                    )
+                    .await;
                     if matches!(gen_recheck, OperatorGenerationState::Absent) {
-                        journal_store.update(|j| {
-                            j.residual_status = status;
-                            j.audit_revision += 1;
-                            j.last_residual_audit = Some(audit_result);
-                        }).await
-                        .context("Failed to persist audit results")?;
+                        journal_store
+                            .update(|j| {
+                                j.residual_status = status;
+                                j.audit_revision += 1;
+                                j.last_residual_audit = Some(audit_result);
+                            })
+                            .await
+                            .context("Failed to persist audit results")?;
                     } else {
                         eprintln!("⚠ Operator generation changed during audit; discarding results");
                     }
@@ -861,7 +1047,11 @@ pub async fn check_and_persist_paused(
     gate: &Arc<MutationGate>,
 ) -> Result<bool> {
     if !gate.is_open() {
-        journal_store.update(|j| { j.state = RunState::Paused; }).await
+        journal_store
+            .update(|j| {
+                j.state = RunState::Paused;
+            })
+            .await
             .context("Failed to persist Paused on signal")?;
         return Ok(true);
     }
@@ -878,14 +1068,17 @@ pub async fn run_residual_only(
     gk_map: &GroupKindMap,
 ) -> Result<()> {
     // Early gate check — if already closed, skip all API work
-    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+    if check_and_persist_paused(journal_store, gate).await? {
+        return Ok(());
+    }
 
     // Fresh generation Absent check
     let j = journal_store.read().await;
-    let gen_state = audit::check_operator_generation(
-        client, &j.operator, &j.audit_context.csv_baseline,
-    ).await;
-    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+    let gen_state =
+        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
+    if check_and_persist_paused(journal_store, gate).await? {
+        return Ok(());
+    }
     if !matches!(gen_state, OperatorGenerationState::Absent) {
         bail!("Operator generation not Absent — cannot enter Residual Cleanup");
     }
@@ -894,48 +1087,68 @@ pub async fn run_residual_only(
     let audit_result = match audit::run_residual_audit(client, &j).await {
         Ok(a) => a,
         Err(e) => {
-            if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+            if check_and_persist_paused(journal_store, gate).await? {
+                return Ok(());
+            }
             return Err(e.context("Fresh residual audit failed"));
         }
     };
-    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+    if check_and_persist_paused(journal_store, gate).await? {
+        return Ok(());
+    }
 
     // Post-audit generation recheck
-    let gen_recheck = audit::check_operator_generation(
-        client, &j.operator, &j.audit_context.csv_baseline,
-    ).await;
-    if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+    let gen_recheck =
+        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
+    if check_and_persist_paused(journal_store, gate).await? {
+        return Ok(());
+    }
     if !matches!(gen_recheck, OperatorGenerationState::Absent) {
         bail!("Operator generation changed during audit — cannot enter Residual Cleanup");
     }
 
     let status = audit::residual_status_from_audit(&audit_result);
     if matches!(status, journal::ResidualStatus::AuditIncomplete) {
-        if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+        if check_and_persist_paused(journal_store, gate).await? {
+            return Ok(());
+        }
         audit::print_residual_audit(&audit_result, &j);
         bail!("Residual audit incomplete — cannot enter cleanup screen");
     }
 
     // Persist audit
-    journal_store.update(|j| {
-        j.residual_status = status;
-        j.audit_revision += 1;
-        j.last_residual_audit = Some(audit_result.clone());
-    }).await.context("Failed to persist residual audit")?;
+    journal_store
+        .update(|j| {
+            j.residual_status = status;
+            j.audit_revision += 1;
+            j.last_residual_audit = Some(audit_result.clone());
+        })
+        .await
+        .context("Failed to persist residual audit")?;
 
     // Collect candidates
-    let residuals: Vec<(ResourceId, String)> = audit_result.likely_operator_residual.iter()
+    let residuals: Vec<(ResourceId, String)> = audit_result
+        .likely_operator_residual
+        .iter()
         .map(|r| (r.resource.clone(), format!("{:?} confidence", r.confidence)))
-        .chain(audit_result.unattributed.iter()
-            .map(|r| (r.resource.clone(), "unattributed".to_string())))
+        .chain(
+            audit_result
+                .unattributed
+                .iter()
+                .map(|r| (r.resource.clone(), "unattributed".to_string())),
+        )
         .collect();
 
     // Non-TTY: print audit and return (no TUI available for f/Finish)
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        if check_and_persist_paused(journal_store, gate).await? { return Ok(()); }
+        if check_and_persist_paused(journal_store, gate).await? {
+            return Ok(());
+        }
         audit::print_residual_audit(&audit_result, &j);
         if residuals.is_empty() {
-            eprintln!("✅ No residuals. Run 'teardown resume' in a TTY and press 'f' to mark as Finished.");
+            eprintln!(
+                "✅ No residuals. Run 'teardown resume' in a TTY and press 'f' to mark as Finished."
+            );
         }
         return Ok(());
     }
@@ -948,8 +1161,15 @@ pub async fn run_residual_only(
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
     let result = run_residual_screen(
-        &mut terminal, client, &residuals, journal_store, gate, kind_map, gk_map,
-    ).await;
+        &mut terminal,
+        client,
+        &residuals,
+        journal_store,
+        gate,
+        kind_map,
+        gk_map,
+    )
+    .await;
 
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();

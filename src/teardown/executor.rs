@@ -179,9 +179,21 @@ pub async fn execute_plan(
     skip_confirm: bool,
 ) -> Result<ExecutionResult> {
     execute_plan_with_store(
-        client, plan, kind_map, gk_map, gvk_map, gvr_map,
-        dry_run, force, journal, gate, start_phase, skip_confirm, None,
-    ).await
+        client,
+        plan,
+        kind_map,
+        gk_map,
+        gvk_map,
+        gvr_map,
+        dry_run,
+        force,
+        journal,
+        gate,
+        start_phase,
+        skip_confirm,
+        None,
+    )
+    .await
 }
 
 pub async fn execute_plan_with_store(
@@ -262,7 +274,10 @@ pub async fn execute_plan_with_store(
         );
         for phase in &plan.phases {
             for action in &phase.actions {
-                if let Action::Review { resource, reason, .. } = action {
+                if let Action::Review {
+                    resource, reason, ..
+                } = action
+                {
                     eprintln!("  {}/{}: {}", resource.kind, resource.name, reason);
                 }
             }
@@ -307,8 +322,7 @@ pub async fn execute_plan_with_store(
             .flat_map(|p| &p.actions)
             .filter_map(|a| match a {
                 Action::Delete { resource, .. } => {
-                    if resource.uid.is_none()
-                        || resource.uid.as_ref().is_some_and(|u| u.is_empty())
+                    if resource.uid.is_none() || resource.uid.as_ref().is_some_and(|u| u.is_empty())
                     {
                         Some(format!("{}/{}", resource.kind, resource.name))
                     } else {
@@ -374,7 +388,10 @@ pub async fn execute_plan_with_store(
     for (i, phase) in plan.phases.iter().enumerate() {
         // Skip already-completed phases (resume support)
         if i < start_phase {
-            eprintln!("\n\x1b[2mPhase {} {} (completed in prior run)\x1b[0m", i, phase.name);
+            eprintln!(
+                "\n\x1b[2mPhase {} {} (completed in prior run)\x1b[0m",
+                i, phase.name
+            );
             result.phases_completed += 1;
             continue;
         }
@@ -503,24 +520,30 @@ pub async fn execute_plan_with_store(
                 let pkg_name: Option<String> = if let Some(j_ref) = journal {
                     let j = j_ref.read().await;
                     match &j.operator.generation_identity {
-                        crate::teardown::plan::OperatorGenerationIdentity::OlmPackage { package_name, .. } => {
-                            Some(package_name.clone())
-                        }
+                        crate::teardown::plan::OperatorGenerationIdentity::OlmPackage {
+                            package_name,
+                            ..
+                        } => Some(package_name.clone()),
                         _ => None,
                     }
                 } else {
                     None
                 };
                 // Fail-closed: Subscription DELETE requires known package name
-                let has_sub_delete = eligible.iter().any(|(r, _)| {
-                    r.kind == "Subscription" && r.group == "operators.coreos.com"
-                });
+                let has_sub_delete = eligible
+                    .iter()
+                    .any(|(r, _)| r.kind == "Subscription" && r.group == "operators.coreos.com");
                 if has_sub_delete && pkg_name.is_none() {
                     for (resource, _) in &eligible {
-                        if resource.kind == "Subscription" && resource.group == "operators.coreos.com" {
-                            result.failed.push((resource.clone(),
+                        if resource.kind == "Subscription"
+                            && resource.group == "operators.coreos.com"
+                        {
+                            result.failed.push((
+                                resource.clone(),
                                 "cannot DELETE Subscription without verified package name \
-                                 (generation_identity is Unverifiable)".to_string()));
+                                 (generation_identity is Unverifiable)"
+                                    .to_string(),
+                            ));
                         }
                     }
                     // Skip all DELETEs in this phase — Subscription blocks phase
@@ -534,10 +557,9 @@ pub async fn execute_plan_with_store(
                     let gk = gk.clone();
                     let pkg = pkg_name.clone();
                     async move {
-                        let res = delete_resource_inner(
-                            &client, &resource, &km, &gk,
-                            pkg.as_deref(),
-                        ).await;
+                        let res =
+                            delete_resource_inner(&client, &resource, &km, &gk, pkg.as_deref())
+                                .await;
                         (resource, res)
                     }
                 });
@@ -570,10 +592,7 @@ pub async fn execute_plan_with_store(
                                 resource.name,
                                 scope_suffix(&resource)
                             );
-                            store.update_from_executor(
-                                &resource,
-                                ResourceRuntimeState::Gone,
-                            );
+                            store.update_from_executor(&resource, ResourceRuntimeState::Gone);
                             result.already_gone.push(resource);
                         }
                         DeleteResult::Failed(err) => {
@@ -636,7 +655,11 @@ pub async fn execute_plan_with_store(
                         metadata: None,
                     });
                 }
-                Action::Review { resource, reason, metadata } => {
+                Action::Review {
+                    resource,
+                    reason,
+                    metadata,
+                } => {
                     eprintln!(
                         "  \x1b[35mREVIEW\x1b[0m   {}/{}{}",
                         resource.kind,
@@ -672,8 +695,16 @@ pub async fn execute_plan_with_store(
                     let deleted_snap = result.deleted.clone();
                     let already_snap = result.already_gone.clone();
                     let failed_snap = result.failed.clone();
-                    let kept_snap: Vec<_> = result.kept.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
-                    let reviewed_snap: Vec<_> = result.reviewed.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
+                    let kept_snap: Vec<_> = result
+                        .kept
+                        .iter()
+                        .map(crate::teardown::journal::PreservedRecord::from)
+                        .collect();
+                    let reviewed_snap: Vec<_> = result
+                        .reviewed
+                        .iter()
+                        .map(crate::teardown::journal::PreservedRecord::from)
+                        .collect();
                     j.update(|journal| {
                         journal.execution.phases_completed = phase_count;
                         journal.execution.deleted = deleted_snap;
@@ -716,8 +747,16 @@ pub async fn execute_plan_with_store(
                                 summary.total,
                                 summary.deleting,
                                 summary.finalizer_blocked,
-                                if summary.stalled > 0 { format!(", {} Stalled", summary.stalled) } else { String::new() },
-                                if summary.unknown > 0 { format!(", {} Unknown", summary.unknown) } else { String::new() },
+                                if summary.stalled > 0 {
+                                    format!(", {} Stalled", summary.stalled)
+                                } else {
+                                    String::new()
+                                },
+                                if summary.unknown > 0 {
+                                    format!(", {} Unknown", summary.unknown)
+                                } else {
+                                    String::new()
+                                },
                                 elapsed
                             );
                             std::io::stderr().flush().ok();
@@ -746,8 +785,16 @@ pub async fn execute_plan_with_store(
                         summary.total,
                         summary.deleting,
                         summary.finalizer_blocked,
-                        if summary.stalled > 0 { format!(", {} Stalled", summary.stalled) } else { String::new() },
-                        if summary.unknown > 0 { format!(", {} Unknown", summary.unknown) } else { String::new() },
+                        if summary.stalled > 0 {
+                            format!(", {} Stalled", summary.stalled)
+                        } else {
+                            String::new()
+                        },
+                        if summary.unknown > 0 {
+                            format!(", {} Unknown", summary.unknown)
+                        } else {
+                            String::new()
+                        },
                         elapsed
                     );
                     eprintln!();
@@ -774,9 +821,7 @@ pub async fn execute_plan_with_store(
                         );
                         let finalizers: Vec<(ResourceId, Vec<String>)> = finalizer_details
                             .iter()
-                            .map(|(r, count)| {
-                                (r.clone(), vec![format!("{} finalizer(s)", count)])
-                            })
+                            .map(|(r, count)| (r.clone(), vec![format!("{} finalizer(s)", count)]))
                             .collect();
                         for res in &remaining {
                             let fins: Vec<&str> = finalizers
@@ -787,12 +832,7 @@ pub async fn execute_plan_with_store(
                             if fins.is_empty() {
                                 eprintln!("    {}/{}", res.kind, res.name);
                             } else {
-                                eprintln!(
-                                    "    {}/{} ({})",
-                                    res.kind,
-                                    res.name,
-                                    fins.join(", ")
-                                );
+                                eprintln!("    {}/{} ({})", res.kind, res.name, fins.join(", "));
                             }
                         }
                         result.barrier_timeout = Some(BarrierTimeout {
@@ -880,8 +920,16 @@ pub async fn execute_plan_with_store(
             let deleted_snapshot = result.deleted.clone();
             let already_gone_snapshot = result.already_gone.clone();
             let failed_snapshot = result.failed.clone();
-            let kept_snapshot: Vec<_> = result.kept.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
-            let reviewed_snapshot: Vec<_> = result.reviewed.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
+            let kept_snapshot: Vec<_> = result
+                .kept
+                .iter()
+                .map(crate::teardown::journal::PreservedRecord::from)
+                .collect();
+            let reviewed_snapshot: Vec<_> = result
+                .reviewed
+                .iter()
+                .map(crate::teardown::journal::PreservedRecord::from)
+                .collect();
             j.update(|journal| {
                 journal.execution.phases_completed = phase_count;
                 journal.execution.deleted = deleted_snapshot;
@@ -903,10 +951,7 @@ pub async fn execute_plan_with_store(
 /// Both plan UID and live UID must be present and match.
 /// Plan UID should have been bound in the pre-mutation UID binding step.
 /// If either is missing/empty, return Err (no mutation).
-pub fn verify_delete_identity(
-    plan_uid: &Option<String>,
-    current_uid: &str,
-) -> Result<(), String> {
+pub fn verify_delete_identity(plan_uid: &Option<String>, current_uid: &str) -> Result<(), String> {
     let plan_uid = match plan_uid {
         Some(uid) if !uid.is_empty() => uid.as_str(),
         _ => {
@@ -996,18 +1041,19 @@ async fn delete_resource_inner(
             Some(pkg) if !pkg.is_empty() => pkg,
             _ => {
                 return DeleteResult::Failed(
-                    "Subscription DELETE requires non-empty expected package name".to_string()
+                    "Subscription DELETE requires non-empty expected package name".to_string(),
                 );
             }
         };
-        let live_spec_name = current.data
+        let live_spec_name = current
+            .data
             .get("spec")
             .and_then(|s| s.get("name"))
             .and_then(|n| n.as_str())
             .unwrap_or("");
         if live_spec_name.is_empty() {
             return DeleteResult::Failed(
-                "Subscription has empty spec.name — cannot verify semantic identity".to_string()
+                "Subscription has empty spec.name — cannot verify semantic identity".to_string(),
             );
         }
         if live_spec_name != expected_pkg {
@@ -1099,7 +1145,8 @@ pub async fn delete_resource_pub(
             None | Some("") => {
                 bail!(
                     "Cannot DELETE Subscription {}/{} without verified package name",
-                    resource.kind, resource.name
+                    resource.kind,
+                    resource.name
                 );
             }
             _ => {}
@@ -1325,12 +1372,26 @@ pub struct ResidualCleanupResult {
 /// Progress update from residual cleanup — for TUI rendering.
 #[derive(Clone, Debug)]
 pub enum CleanupProgress {
-    Validating { resource: ResourceId },
-    DeleteRequested { resource: ResourceId },
-    WaitingGone { resource: ResourceId },
-    Gone { resource: ResourceId },
-    Skipped { resource: ResourceId, reason: String },
-    Failed { resource: ResourceId, reason: String },
+    Validating {
+        resource: ResourceId,
+    },
+    DeleteRequested {
+        resource: ResourceId,
+    },
+    WaitingGone {
+        resource: ResourceId,
+    },
+    Gone {
+        resource: ResourceId,
+    },
+    Skipped {
+        resource: ResourceId,
+        reason: String,
+    },
+    Failed {
+        resource: ResourceId,
+        reason: String,
+    },
 }
 
 pub type ProgressSender = tokio::sync::mpsc::UnboundedSender<CleanupProgress>;
@@ -1355,8 +1416,15 @@ pub async fn execute_residual_cleanup(
     gk_map: &GroupKindMap,
 ) -> Result<ResidualCleanupResult> {
     execute_residual_cleanup_with_progress(
-        client, selected, journal_store, gate, kind_map, gk_map, None,
-    ).await
+        client,
+        selected,
+        journal_store,
+        gate,
+        kind_map,
+        gk_map,
+        None,
+    )
+    .await
 }
 
 pub async fn execute_residual_cleanup_with_progress(
@@ -1369,7 +1437,7 @@ pub async fn execute_residual_cleanup_with_progress(
     progress_tx: Option<&ProgressSender>,
 ) -> Result<ResidualCleanupResult> {
     use crate::teardown::audit;
-    use crate::teardown::journal::{CleanupDecision, CleanupResult, RunState, ResidualStatus};
+    use crate::teardown::journal::{CleanupDecision, CleanupResult, ResidualStatus, RunState};
 
     let mut result = ResidualCleanupResult {
         deleted: Vec::new(),
@@ -1407,15 +1475,15 @@ pub async fn execute_residual_cleanup_with_progress(
 
     // Step 1: Verify generation Absent
     let j = journal_store.read().await;
-    let gen_state = audit::check_operator_generation(
-        client, &j.operator, &j.audit_context.csv_baseline,
-    ).await;
+    let gen_state =
+        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
     if !matches!(gen_state, audit::OperatorGenerationState::Absent) {
         bail!("Operator generation is not Absent — residual cleanup blocked");
     }
 
     // Step 2: Fresh complete audit
-    let fresh_audit = audit::run_residual_audit(client, &j).await
+    let fresh_audit = audit::run_residual_audit(client, &j)
+        .await
         .context("Fresh audit failed before cleanup")?;
     let fresh_status = audit::residual_status_from_audit(&fresh_audit);
     if matches!(fresh_status, ResidualStatus::AuditIncomplete) {
@@ -1423,23 +1491,42 @@ pub async fn execute_residual_cleanup_with_progress(
     }
 
     // Step 3: Build current residual set (likely_operator_residual + unattributed only)
-    let residual_keys: std::collections::HashSet<String> = fresh_audit.likely_operator_residual.iter()
+    let residual_keys: std::collections::HashSet<String> = fresh_audit
+        .likely_operator_residual
+        .iter()
         .chain(fresh_audit.unattributed.iter())
-        .map(|r| format!("{}/{}/{}/{}", r.resource.group, r.resource.kind,
-            r.resource.namespace.as_deref().unwrap_or("-"), r.resource.name))
+        .map(|r| {
+            format!(
+                "{}/{}/{}/{}",
+                r.resource.group,
+                r.resource.kind,
+                r.resource.namespace.as_deref().unwrap_or("-"),
+                r.resource.name
+            )
+        })
         .collect();
 
     // Validate all selections against current residual set
-    let valid_selected: Vec<&ResourceId> = selected.iter().filter(|res| {
-        let key = format!("{}/{}/{}/{}", res.group, res.kind,
-            res.namespace.as_deref().unwrap_or("-"), res.name);
-        if residual_keys.contains(&key) {
-            true
-        } else {
-            result.skipped.push(((*res).clone(), "not in current residual set".to_string()));
-            false
-        }
-    }).collect();
+    let valid_selected: Vec<&ResourceId> = selected
+        .iter()
+        .filter(|res| {
+            let key = format!(
+                "{}/{}/{}/{}",
+                res.group,
+                res.kind,
+                res.namespace.as_deref().unwrap_or("-"),
+                res.name
+            );
+            if residual_keys.contains(&key) {
+                true
+            } else {
+                result
+                    .skipped
+                    .push(((*res).clone(), "not in current residual set".to_string()));
+                false
+            }
+        })
+        .collect();
 
     if valid_selected.is_empty() {
         if !result.skipped.is_empty() {
@@ -1453,23 +1540,32 @@ pub async fn execute_residual_cleanup_with_progress(
     }
 
     // Set InteractiveCleanup state
-    journal_store.update(|j| {
-        j.state = RunState::InteractiveCleanup;
-    }).await
-    .context("Failed to persist InteractiveCleanup state")?;
+    journal_store
+        .update(|j| {
+            j.state = RunState::InteractiveCleanup;
+        })
+        .await
+        .context("Failed to persist InteractiveCleanup state")?;
 
     // Step 4: Per-resource DELETE with full safety checks
     for res in &valid_selected {
         if let Some(tx) = progress_tx {
-            let _ = tx.send(CleanupProgress::Validating { resource: (*res).clone() });
+            let _ = tx.send(CleanupProgress::Validating {
+                resource: (*res).clone(),
+            });
         }
         // Re-check generation per resource
         let cur_j = journal_store.read().await;
         let gen_per_res = audit::check_operator_generation(
-            client, &cur_j.operator, &cur_j.audit_context.csv_baseline,
-        ).await;
+            client,
+            &cur_j.operator,
+            &cur_j.audit_context.csv_baseline,
+        )
+        .await;
         if !matches!(gen_per_res, audit::OperatorGenerationState::Absent) {
-            result.skipped.push(((*res).clone(), "generation changed".to_string()));
+            result
+                .skipped
+                .push(((*res).clone(), "generation changed".to_string()));
             break;
         }
 
@@ -1477,24 +1573,34 @@ pub async fn execute_residual_cleanup_with_progress(
         let per_res_j = journal_store.read().await;
         match audit::run_residual_audit(client, &per_res_j).await {
             Ok(fresh_per_res) => {
-                let still_in_set = fresh_per_res.likely_operator_residual.iter()
+                let still_in_set = fresh_per_res
+                    .likely_operator_residual
+                    .iter()
                     .chain(fresh_per_res.unattributed.iter())
-                    .any(|r| r.resource.group == res.group
-                        && r.resource.kind == res.kind
-                        && r.resource.name == res.name
-                        && r.resource.namespace == res.namespace);
+                    .any(|r| {
+                        r.resource.group == res.group
+                            && r.resource.kind == res.kind
+                            && r.resource.name == res.name
+                            && r.resource.namespace == res.namespace
+                    });
                 if !still_in_set {
-                    result.skipped.push(((*res).clone(), "no longer in residual set".to_string()));
+                    result
+                        .skipped
+                        .push(((*res).clone(), "no longer in residual set".to_string()));
                     continue;
                 }
                 let per_status = audit::residual_status_from_audit(&fresh_per_res);
                 if matches!(per_status, ResidualStatus::AuditIncomplete) {
-                    result.skipped.push(((*res).clone(), "per-resource audit incomplete".to_string()));
+                    result
+                        .skipped
+                        .push(((*res).clone(), "per-resource audit incomplete".to_string()));
                     continue;
                 }
             }
             Err(e) => {
-                result.failed.push(((*res).clone(), format!("per-resource audit failed: {}", e)));
+                result
+                    .failed
+                    .push(((*res).clone(), format!("per-resource audit failed: {}", e)));
                 break;
             }
         }
@@ -1510,10 +1616,16 @@ pub async fn execute_residual_cleanup_with_progress(
         {
             let post_permit_j = journal_store.read().await;
             let post_permit_gen = audit::check_operator_generation(
-                client, &post_permit_j.operator, &post_permit_j.audit_context.csv_baseline,
-            ).await;
+                client,
+                &post_permit_j.operator,
+                &post_permit_j.audit_context.csv_baseline,
+            )
+            .await;
             if !matches!(post_permit_gen, audit::OperatorGenerationState::Absent) {
-                result.skipped.push(((*res).clone(), "generation changed after permit acquisition".to_string()));
+                result.skipped.push((
+                    (*res).clone(),
+                    "generation changed after permit acquisition".to_string(),
+                ));
                 drop(_permit);
                 break;
             }
@@ -1522,24 +1634,35 @@ pub async fn execute_residual_cleanup_with_progress(
                 Ok(post_permit_audit) => {
                     let post_permit_status = audit::residual_status_from_audit(&post_permit_audit);
                     if matches!(post_permit_status, ResidualStatus::AuditIncomplete) {
-                        result.skipped.push(((*res).clone(), "post-permit audit incomplete".to_string()));
+                        result
+                            .skipped
+                            .push(((*res).clone(), "post-permit audit incomplete".to_string()));
                         drop(_permit);
                         continue;
                     }
-                    let still_in_set = post_permit_audit.likely_operator_residual.iter()
+                    let still_in_set = post_permit_audit
+                        .likely_operator_residual
+                        .iter()
                         .chain(post_permit_audit.unattributed.iter())
-                        .any(|r| r.resource.group == res.group
-                            && r.resource.kind == res.kind
-                            && r.resource.name == res.name
-                            && r.resource.namespace == res.namespace);
+                        .any(|r| {
+                            r.resource.group == res.group
+                                && r.resource.kind == res.kind
+                                && r.resource.name == res.name
+                                && r.resource.namespace == res.namespace
+                        });
                     if !still_in_set {
-                        result.skipped.push(((*res).clone(), "no longer in residual set after permit acquisition".to_string()));
+                        result.skipped.push((
+                            (*res).clone(),
+                            "no longer in residual set after permit acquisition".to_string(),
+                        ));
                         drop(_permit);
                         continue;
                     }
                 }
                 Err(e) => {
-                    result.failed.push(((*res).clone(), format!("post-permit audit failed: {}", e)));
+                    result
+                        .failed
+                        .push(((*res).clone(), format!("post-permit audit failed: {}", e)));
                     drop(_permit);
                     break;
                 }
@@ -1550,10 +1673,16 @@ pub async fn execute_residual_cleanup_with_progress(
         {
             let pre_dec_j = journal_store.read().await;
             let pre_dec_gen = audit::check_operator_generation(
-                client, &pre_dec_j.operator, &pre_dec_j.audit_context.csv_baseline,
-            ).await;
+                client,
+                &pre_dec_j.operator,
+                &pre_dec_j.audit_context.csv_baseline,
+            )
+            .await;
             if !matches!(pre_dec_gen, audit::OperatorGenerationState::Absent) {
-                result.skipped.push(((*res).clone(), "generation changed during post-permit audit".to_string()));
+                result.skipped.push((
+                    (*res).clone(),
+                    "generation changed during post-permit audit".to_string(),
+                ));
                 drop(_permit);
                 break;
             }
@@ -1563,31 +1692,44 @@ pub async fn execute_residual_cleanup_with_progress(
         let approved_spec_name: Option<String> = if res.kind == "Subscription"
             && res.group == "operators.coreos.com"
         {
-            let (api, _) = resolve_api(client, res, kind_map, gk_map)
-                .ok_or_else(|| anyhow::anyhow!(
+            let (api, _) = resolve_api(client, res, kind_map, gk_map).ok_or_else(|| {
+                anyhow::anyhow!(
                     "Cannot resolve API for Subscription {} — fail-closed",
                     res.name
-                ))?;
+                )
+            })?;
             match api.get(&res.name).await {
                 Ok(obj) => {
                     // Verify GET UID matches resource UID
                     let get_uid = obj.metadata.uid.as_deref().unwrap_or("");
                     let expected_uid = res.uid.as_deref().unwrap_or("");
                     if get_uid.is_empty() || expected_uid.is_empty() {
-                        bail!("Subscription {} UID missing (get={:?}, expected={:?}) — fail-closed",
-                            res.name, get_uid, expected_uid);
+                        bail!(
+                            "Subscription {} UID missing (get={:?}, expected={:?}) — fail-closed",
+                            res.name,
+                            get_uid,
+                            expected_uid
+                        );
                     }
                     if get_uid != expected_uid {
-                        bail!("Subscription {} UID changed ({} → {}) — cannot capture semantic identity",
-                            res.name, expected_uid, get_uid);
+                        bail!(
+                            "Subscription {} UID changed ({} → {}) — cannot capture semantic identity",
+                            res.name,
+                            expected_uid,
+                            get_uid
+                        );
                     }
-                    let spec_name = obj.data
+                    let spec_name = obj
+                        .data
                         .get("spec")
                         .and_then(|s| s.get("name"))
                         .and_then(|n| n.as_str())
                         .unwrap_or("");
                     if spec_name.is_empty() {
-                        bail!("Subscription {} has no spec.name — cannot establish semantic identity", res.name);
+                        bail!(
+                            "Subscription {} has no spec.name — cannot establish semantic identity",
+                            res.name
+                        );
                     }
                     Some(spec_name.to_string())
                 }
@@ -1595,14 +1737,23 @@ pub async fn execute_residual_cleanup_with_progress(
                     // Verify endpoint exists before declaring gone
                     match api.list(&kube::api::ListParams::default().limit(1)).await {
                         Ok(_) => {
-                            result.skipped.push(((*res).clone(), "Subscription already gone".to_string()));
+                            result
+                                .skipped
+                                .push(((*res).clone(), "Subscription already gone".to_string()));
                             drop(_permit);
                             continue;
                         }
-                        Err(_) => bail!("Subscription {} GET 404 but endpoint verification failed", res.name),
+                        Err(_) => bail!(
+                            "Subscription {} GET 404 but endpoint verification failed",
+                            res.name
+                        ),
                     }
                 }
-                Err(e) => bail!("Cannot GET Subscription {} for semantic identity: {}", res.name, e),
+                Err(e) => bail!(
+                    "Cannot GET Subscription {} for semantic identity: {}",
+                    res.name,
+                    e
+                ),
             }
         } else {
             None
@@ -1612,34 +1763,45 @@ pub async fn execute_residual_cleanup_with_progress(
         let decision_uid = res.uid.clone();
         let res_clone = (*res).clone();
         let spec_name_clone = approved_spec_name.clone();
-        journal_store.update(|j| {
-            j.cleanup_decisions.push(CleanupDecision {
-                resource: res_clone.clone(),
-                bound_uid: decision_uid.clone(),
-                action: "delete".to_string(),
-                result: None,
-                approved_spec_name: spec_name_clone,
-            });
-            j.audit_revision += 1;
-        }).await
-        .context("Failed to persist cleanup decision — no mutation")?;
+        journal_store
+            .update(|j| {
+                j.cleanup_decisions.push(CleanupDecision {
+                    resource: res_clone.clone(),
+                    bound_uid: decision_uid.clone(),
+                    action: "delete".to_string(),
+                    result: None,
+                    approved_spec_name: spec_name_clone,
+                });
+                j.audit_revision += 1;
+            })
+            .await
+            .context("Failed to persist cleanup decision — no mutation")?;
 
         // Core executor DELETE (UID + semantic identity preconditioned)
         let del_result = delete_resource_pub(
-            client, res, kind_map, gk_map, None,
+            client,
+            res,
+            kind_map,
+            gk_map,
+            None,
             approved_spec_name.as_deref(),
-        ).await;
+        )
+        .await;
 
         let cleanup_result = match &del_result {
             Ok(msg) => {
                 if msg == "deleted" {
                     if let Some(tx) = progress_tx {
-                        let _ = tx.send(CleanupProgress::DeleteRequested { resource: (*res).clone() });
+                        let _ = tx.send(CleanupProgress::DeleteRequested {
+                            resource: (*res).clone(),
+                        });
                     }
                     let mut gone_confirmed = false;
                     if let Some((api, _)) = resolve_api(client, res, kind_map, gk_map) {
                         if let Some(tx) = progress_tx {
-                            let _ = tx.send(CleanupProgress::WaitingGone { resource: (*res).clone() });
+                            let _ = tx.send(CleanupProgress::WaitingGone {
+                                resource: (*res).clone(),
+                            });
                         }
                         for _ in 0..30 {
                             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1647,7 +1809,10 @@ pub async fn execute_residual_cleanup_with_progress(
                                 Err(kube::Error::Api(ref err)) if err.code == 404 => {
                                     // Verify endpoint exists before confirming Gone
                                     match api.list(&ListParams::default().limit(1)).await {
-                                        Ok(_) => { gone_confirmed = true; break; }
+                                        Ok(_) => {
+                                            gone_confirmed = true;
+                                            break;
+                                        }
                                         Err(_) => break, // endpoint gone — cannot confirm
                                     }
                                 }
@@ -1658,7 +1823,9 @@ pub async fn execute_residual_cleanup_with_progress(
                     }
                     if gone_confirmed {
                         if let Some(tx) = progress_tx {
-                            let _ = tx.send(CleanupProgress::Gone { resource: (*res).clone() });
+                            let _ = tx.send(CleanupProgress::Gone {
+                                resource: (*res).clone(),
+                            });
                         }
                         result.deleted.push((*res).clone());
                         CleanupResult::Gone
@@ -1685,14 +1852,19 @@ pub async fn execute_residual_cleanup_with_progress(
         };
 
         let res_clone2 = (*res).clone();
-        journal_store.update(|j| {
-            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                .find(|d| d.resource == res_clone2 && d.result.is_none())
-            {
-                d.result = Some(cleanup_result);
-            }
-        }).await
-        .context("Failed to checkpoint cleanup result")?;
+        journal_store
+            .update(|j| {
+                if let Some(d) = j
+                    .cleanup_decisions
+                    .iter_mut()
+                    .rev()
+                    .find(|d| d.resource == res_clone2 && d.result.is_none())
+                {
+                    d.result = Some(cleanup_result);
+                }
+            })
+            .await
+            .context("Failed to checkpoint cleanup result")?;
 
         drop(_permit);
     }
@@ -1700,41 +1872,63 @@ pub async fn execute_residual_cleanup_with_progress(
     // Step 5: Re-audit after all cleanups
     let post_j = journal_store.read().await;
     let post_gen = audit::check_operator_generation(
-        client, &post_j.operator, &post_j.audit_context.csv_baseline,
-    ).await;
+        client,
+        &post_j.operator,
+        &post_j.audit_context.csv_baseline,
+    )
+    .await;
     if !matches!(post_gen, audit::OperatorGenerationState::Absent) {
         // Generation change during post-cleanup audit is not a hard DELETE failure.
         // DELETEs already completed — keep retryable state for re-audit.
-        journal_store.update(|j| {
-            j.state = RunState::InteractiveCleanup;
-        }).await.context("Failed to persist state after generation change")?;
-        bail!("Operator generation changed after cleanup — re-audit needed. State: InteractiveCleanup.");
+        journal_store
+            .update(|j| {
+                j.state = RunState::InteractiveCleanup;
+            })
+            .await
+            .context("Failed to persist state after generation change")?;
+        bail!(
+            "Operator generation changed after cleanup — re-audit needed. State: InteractiveCleanup."
+        );
     }
 
     match audit::run_residual_audit(client, &post_j).await {
         Ok(new_audit) => {
             let new_status = audit::residual_status_from_audit(&new_audit);
-            journal_store.update(|j| {
-                j.residual_status = new_status;
-                j.audit_revision += 1;
-                j.last_residual_audit = Some(new_audit.clone());
-            }).await
-            .context("Failed to persist post-cleanup audit")?;
+            journal_store
+                .update(|j| {
+                    j.residual_status = new_status;
+                    j.audit_revision += 1;
+                    j.last_residual_audit = Some(new_audit.clone());
+                })
+                .await
+                .context("Failed to persist post-cleanup audit")?;
             result.post_audit = Some(new_audit);
         }
         Err(e) => {
             // Audit probe failure is retryable — DELETEs already completed
-            journal_store.update(|j| {
-                j.state = RunState::InteractiveCleanup;
-            }).await.context("Failed to persist state after audit failure")?;
-            bail!("Post-cleanup re-audit failed: {}. State: InteractiveCleanup (retryable).", e);
+            journal_store
+                .update(|j| {
+                    j.state = RunState::InteractiveCleanup;
+                })
+                .await
+                .context("Failed to persist state after audit failure")?;
+            bail!(
+                "Post-cleanup re-audit failed: {}. State: InteractiveCleanup (retryable).",
+                e
+            );
         }
     }
 
     // Determine final state — consider skipped/failed resources
     let post_j_final = journal_store.read().await;
-    let has_hard_failed = post_j_final.cleanup_decisions.iter().any(|d| d.is_hard_failed());
-    let has_unconfirmed = post_j_final.cleanup_decisions.iter().any(|d| d.is_pending());
+    let has_hard_failed = post_j_final
+        .cleanup_decisions
+        .iter()
+        .any(|d| d.is_hard_failed());
+    let has_unconfirmed = post_j_final
+        .cleanup_decisions
+        .iter()
+        .any(|d| d.is_pending());
     let has_incomplete = !result.skipped.is_empty() || !result.failed.is_empty();
 
     let final_cleanup_state = if has_hard_failed {
@@ -1756,10 +1950,12 @@ pub async fn execute_residual_cleanup_with_progress(
             }
         }
     };
-    journal_store.update(|j| {
-        j.state = final_cleanup_state.clone();
-    }).await
-    .context("Failed to persist final cleanup state")?;
+    journal_store
+        .update(|j| {
+            j.state = final_cleanup_state.clone();
+        })
+        .await
+        .context("Failed to persist final cleanup state")?;
 
     if final_cleanup_state == RunState::Failed {
         bail!("Cleanup completed with failed or unconfirmed decisions");
@@ -1768,7 +1964,9 @@ pub async fn execute_residual_cleanup_with_progress(
         bail!(
             "Cleanup incomplete: {} deleted, {} skipped, {} failed. \
              State persisted as InteractiveCleanup — retry is safe.",
-            result.deleted.len(), result.skipped.len(), result.failed.len()
+            result.deleted.len(),
+            result.skipped.len(),
+            result.failed.len()
         );
     }
 
@@ -1917,27 +2115,18 @@ mod tests {
 
     #[test]
     fn test_delete_identity_both_uids_match() {
-        assert!(verify_delete_identity(
-            &Some("uid-a".to_string()),
-            "uid-a"
-        ).is_ok());
+        assert!(verify_delete_identity(&Some("uid-a".to_string()), "uid-a").is_ok());
     }
 
     #[test]
     fn test_delete_identity_uid_mismatch() {
-        let err = verify_delete_identity(
-            &Some("uid-a".to_string()),
-            "uid-b"
-        ).unwrap_err();
+        let err = verify_delete_identity(&Some("uid-a".to_string()), "uid-b").unwrap_err();
         assert!(err.contains("UID mismatch"));
     }
 
     #[test]
     fn test_delete_identity_live_uid_empty() {
-        let err = verify_delete_identity(
-            &Some("uid-a".to_string()),
-            ""
-        ).unwrap_err();
+        let err = verify_delete_identity(&Some("uid-a".to_string()), "").unwrap_err();
         assert!(err.contains("no UID"));
     }
 
@@ -2000,8 +2189,8 @@ mod tests {
 
     // ── Mock API tests: real HTTP decision paths ──
 
-    use std::pin::pin;
     use kube::client::Body;
+    use std::pin::pin;
 
     fn test_kind_map() -> KindMap {
         let mut km = std::collections::HashMap::new();
@@ -2084,10 +2273,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_delete_uid_mismatch_zero_deletes() {
         // Plan says UID=A, live resource has UID=B → DELETE should NOT be called
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let resource = make_cm_resource("my-cm", Some("uid-A"));
         let km = test_kind_map();
@@ -2130,10 +2317,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_delete_get404_list_forbidden_not_already_gone() {
         // GET 404 + LIST 403 → cannot verify endpoint → Failed (not AlreadyGone)
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let resource = make_cm_resource("gone-cm", Some("uid-A"));
         let km = test_kind_map();
@@ -2195,12 +2380,18 @@ mod tests {
         ];
 
         for state in &allowed {
-            let ok = matches!(state, RunState::ApplyCompleted | RunState::InteractiveCleanup);
+            let ok = matches!(
+                state,
+                RunState::ApplyCompleted | RunState::InteractiveCleanup
+            );
             assert!(ok, "State {:?} should be allowed for cleanup", state);
         }
 
         for state in &rejected {
-            let ok = matches!(state, RunState::ApplyCompleted | RunState::InteractiveCleanup);
+            let ok = matches!(
+                state,
+                RunState::ApplyCompleted | RunState::InteractiveCleanup
+            );
             assert!(!ok, "State {:?} should be rejected for cleanup", state);
         }
     }
@@ -2208,7 +2399,10 @@ mod tests {
     #[test]
     fn residual_cleanup_schema_gate_rejects_old_schema() {
         let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
-        assert_eq!(current, 7, "Schema version must be 7 for cleanup gate to work correctly");
+        assert_eq!(
+            current, 7,
+            "Schema version must be 7 for cleanup gate to work correctly"
+        );
     }
 
     fn make_sub_resource(name: &str, uid: Option<&str>) -> ResourceId {
@@ -2239,7 +2433,10 @@ mod tests {
     fn test_sub_gk_map() -> GroupKindMap {
         let mut gk = test_gk_map();
         gk.insert(
-            ("operators.coreos.com".to_string(), "Subscription".to_string()),
+            (
+                "operators.coreos.com".to_string(),
+                "Subscription".to_string(),
+            ),
             crate::kube::discovery::KindInfo {
                 group: "operators.coreos.com".to_string(),
                 version: "v1alpha1".to_string(),
@@ -2253,10 +2450,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_subscription_spec_name_drift_zero_deletes() {
         // Subscription has spec.name=other (expected=target) → DELETE NOT called
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let resource = make_sub_resource("my-sub", Some("uid-A"));
         let km = test_sub_kind_map();
@@ -2281,9 +2476,8 @@ mod tests {
         });
 
         let client = Client::new(mock_service, "test-ns");
-        let result = delete_resource_inner(
-            &client, &resource, &km, &gk, Some("target-package"),
-        ).await;
+        let result =
+            delete_resource_inner(&client, &resource, &km, &gk, Some("target-package")).await;
 
         assert!(
             matches!(result, DeleteResult::Failed(ref msg) if msg.contains("semantic identity drift")),
@@ -2296,52 +2490,51 @@ mod tests {
     #[tokio::test]
     async fn test_mock_subscription_delete_pub_no_package_fails() {
         // delete_resource_pub with None package for Subscription → immediate Err
-        let (mock_service, _handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, _handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
         let resource = make_sub_resource("my-sub", Some("uid-A"));
         let km = test_sub_kind_map();
         let gk = test_sub_gk_map();
 
         let client = Client::new(mock_service, "test-ns");
-        let result = delete_resource_pub(
-            &client, &resource, &km, &gk, None, None,
-        ).await;
+        let result = delete_resource_pub(&client, &resource, &km, &gk, None, None).await;
 
-        assert!(result.is_err(), "Subscription DELETE with None package must fail");
         assert!(
-            result.unwrap_err().to_string().contains("without verified package name"),
+            result.is_err(),
+            "Subscription DELETE with None package must fail"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("without verified package name"),
             "Error must mention missing package name"
         );
     }
 
     #[tokio::test]
     async fn test_mock_subscription_delete_pub_empty_package_fails() {
-        let (mock_service, _handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, _handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
         let resource = make_sub_resource("my-sub", Some("uid-A"));
         let km = test_sub_kind_map();
         let gk = test_sub_gk_map();
 
         let client = Client::new(mock_service, "test-ns");
-        let result = delete_resource_pub(
-            &client, &resource, &km, &gk, None, Some(""),
-        ).await;
+        let result = delete_resource_pub(&client, &resource, &km, &gk, None, Some("")).await;
 
-        assert!(result.is_err(), "Subscription DELETE with empty package must fail");
+        assert!(
+            result.is_err(),
+            "Subscription DELETE with empty package must fail"
+        );
     }
 
     #[tokio::test]
     async fn test_mock_get404_list403_not_already_gone() {
         // GET 404 + LIST 403 → Failed (not AlreadyGone)
         // This tests the endpoint verification requirement
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let resource = make_cm_resource("gone-cm", Some("uid-A"));
         let km = test_kind_map();
@@ -2356,9 +2549,7 @@ mod tests {
         });
 
         let client = Client::new(mock_service, "test-ns");
-        let result = delete_resource_inner(
-            &client, &resource, &km, &gk, None,
-        ).await;
+        let result = delete_resource_inner(&client, &resource, &km, &gk, None).await;
 
         assert!(
             matches!(result, DeleteResult::Failed(ref msg) if msg.contains("endpoint")),
@@ -2387,8 +2578,14 @@ mod tests {
             result: Some(CleanupResult::DeleteRequested),
             approved_spec_name: None,
         };
-        assert!(!retryable.is_hard_failed(), "DeleteRequested is NOT hard failed");
-        assert!(retryable.is_pending(), "DeleteRequested IS pending (retryable)");
+        assert!(
+            !retryable.is_hard_failed(),
+            "DeleteRequested is NOT hard failed"
+        );
+        assert!(
+            retryable.is_pending(),
+            "DeleteRequested IS pending (retryable)"
+        );
     }
 
     #[test]
@@ -2410,17 +2607,17 @@ mod tests {
                 approved_spec_name: None,
             },
         ];
-        assert!(decisions.iter().any(|d| d.is_pending()),
-            "DeleteRequested must prevent ApplyCompleted");
+        assert!(
+            decisions.iter().any(|d| d.is_pending()),
+            "DeleteRequested must prevent ApplyCompleted"
+        );
     }
 
     #[tokio::test]
     async fn test_mock_subscription_empty_spec_name_zero_deletes() {
         // Subscription with empty spec.name → Failed (no DELETE sent)
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let resource = make_sub_resource("my-sub", Some("uid-A"));
         let km = test_sub_kind_map();
@@ -2444,9 +2641,7 @@ mod tests {
         });
 
         let client = Client::new(mock_service, "test-ns");
-        let result = delete_resource_inner(
-            &client, &resource, &km, &gk, Some("target-pkg"),
-        ).await;
+        let result = delete_resource_inner(&client, &resource, &km, &gk, Some("target-pkg")).await;
 
         assert!(
             matches!(result, DeleteResult::Failed(ref msg) if msg.contains("empty spec.name")),
@@ -2459,10 +2654,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_subscription_inner_no_package_fails() {
         // delete_resource_inner with None expected_package for Subscription → Failed
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let resource = make_sub_resource("my-sub", Some("uid-A"));
         let km = test_sub_kind_map();
@@ -2485,9 +2678,7 @@ mod tests {
         });
 
         let client = Client::new(mock_service, "test-ns");
-        let result = delete_resource_inner(
-            &client, &resource, &km, &gk, None,
-        ).await;
+        let result = delete_resource_inner(&client, &resource, &km, &gk, None).await;
 
         assert!(
             matches!(result, DeleteResult::Failed(ref msg) if msg.contains("non-empty expected package")),
@@ -2500,19 +2691,28 @@ mod tests {
     #[test]
     fn gate_closed_error_is_typed() {
         let err: anyhow::Error = GateClosedError.into();
-        assert!(is_gate_closed_error(&err), "GateClosedError must be detected by is_gate_closed_error");
+        assert!(
+            is_gate_closed_error(&err),
+            "GateClosedError must be detected by is_gate_closed_error"
+        );
     }
 
     #[test]
     fn non_gate_error_is_not_gate_closed() {
         let err = anyhow::anyhow!("some other error");
-        assert!(!is_gate_closed_error(&err), "generic error must not match gate-closed");
+        assert!(
+            !is_gate_closed_error(&err),
+            "generic error must not match gate-closed"
+        );
     }
 
     #[tokio::test]
     async fn gate_closed_acquire_fails() {
         let gate = crate::teardown::permit::MutationGate::new(4);
         gate.close_and_drain().await;
-        assert!(gate.acquire().await.is_err(), "acquire on closed gate must fail");
+        assert!(
+            gate.acquire().await.is_err(),
+            "acquire on closed gate must fail"
+        );
     }
 }

@@ -91,22 +91,38 @@ impl<'de> serde::Deserialize<'de> for CleanupResult {
                     "deleted" => Ok(CleanupResult::DeleteRequested),
                     "gone" => Ok(CleanupResult::Gone),
                     "already_gone" | "already gone" => Ok(CleanupResult::AlreadyGone),
-                    s if s.starts_with("failed:") => {
-                        Ok(CleanupResult::Failed(s.trim_start_matches("failed:").trim().to_string()))
-                    }
+                    s if s.starts_with("failed:") => Ok(CleanupResult::Failed(
+                        s.trim_start_matches("failed:").trim().to_string(),
+                    )),
                     other => Ok(CleanupResult::Failed(format!("unknown result: {}", other))),
                 }
             }
 
             // v6 format: tagged enum {"DeleteRequested": null} or {"Failed": "reason"}
-            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<Self::Value, A::Error> {
-                let key: String = map.next_key()?
+            fn visit_map<A: de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let key: String = map
+                    .next_key()?
                     .ok_or_else(|| de::Error::custom("expected enum variant key"))?;
                 match key.as_str() {
-                    "DeleteRequested" => { let _: Option<()> = map.next_value()?; Ok(CleanupResult::DeleteRequested) }
-                    "Gone" => { let _: Option<()> = map.next_value()?; Ok(CleanupResult::Gone) }
-                    "AlreadyGone" => { let _: Option<()> = map.next_value()?; Ok(CleanupResult::AlreadyGone) }
-                    "Failed" => { let reason: String = map.next_value()?; Ok(CleanupResult::Failed(reason)) }
+                    "DeleteRequested" => {
+                        let _: Option<()> = map.next_value()?;
+                        Ok(CleanupResult::DeleteRequested)
+                    }
+                    "Gone" => {
+                        let _: Option<()> = map.next_value()?;
+                        Ok(CleanupResult::Gone)
+                    }
+                    "AlreadyGone" => {
+                        let _: Option<()> = map.next_value()?;
+                        Ok(CleanupResult::AlreadyGone)
+                    }
+                    "Failed" => {
+                        let reason: String = map.next_value()?;
+                        Ok(CleanupResult::Failed(reason))
+                    }
                     other => Ok(CleanupResult::Failed(format!("unknown variant: {}", other))),
                 }
             }
@@ -387,8 +403,7 @@ impl JournalStore {
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
-            let ret =
-                unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
             if ret != 0 {
                 return true; // lock is held by another process
             }
@@ -437,7 +452,10 @@ fn state_dir() -> Result<PathBuf> {
 }
 
 pub fn runs_dir(cluster_id: &ClusterIdentity) -> Result<PathBuf> {
-    let dir = state_dir()?.join("clusters").join(&cluster_id.kube_system_uid).join("runs");
+    let dir = state_dir()?
+        .join("clusters")
+        .join(&cluster_id.kube_system_uid)
+        .join("runs");
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create runs directory: {}", dir.display()))?;
     set_dir_permissions(&dir);
@@ -568,8 +586,13 @@ fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
     }
 
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "Failed to rename {} -> {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
 
     // fsync parent directory for crash consistency
     if let Ok(dir) = fs::File::open(parent) {
@@ -620,11 +643,13 @@ pub fn generate_run_id() -> String {
 }
 
 pub async fn fetch_cluster_identity(client: &kube::Client) -> Result<ClusterIdentity> {
-    use kube::api::Api;
     use k8s_openapi::api::core::v1::Namespace;
+    use kube::api::Api;
 
     let ns_api: Api<Namespace> = Api::all(client.clone());
-    let kube_system = ns_api.get("kube-system").await
+    let kube_system = ns_api
+        .get("kube-system")
+        .await
         .context("Failed to get kube-system namespace for cluster identity")?;
 
     let uid = kube_system
@@ -652,7 +677,8 @@ pub fn build_audit_context(
 
     for op in operators {
         ctx.csv_names.insert(op.csv.name.clone());
-        ctx.footprint_namespaces.insert(op.install_namespace.clone());
+        ctx.footprint_namespaces
+            .insert(op.install_namespace.clone());
         for dep in &op.deployments {
             ctx.controller_deployment_names.insert(dep.clone());
         }
@@ -695,7 +721,11 @@ pub fn build_audit_context(
                         },
                     });
                 } else {
-                    unresolved_gvks.push((rid.group.clone(), rid.version.clone(), rid.kind.clone()));
+                    unresolved_gvks.push((
+                        rid.group.clone(),
+                        rid.version.clone(),
+                        rid.kind.clone(),
+                    ));
                 }
             }
         }
@@ -870,7 +900,10 @@ mod tests {
 
         // Old audit discarded (operator has owned CRDs but no unresolved_crds metadata)
         assert!(journal.last_residual_audit.is_none());
-        assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
+        assert!(matches!(
+            journal.residual_status,
+            ResidualStatus::NotAudited
+        ));
 
         // Other fields preserved
         assert_eq!(journal.run_id, "run-test-v2");
@@ -954,7 +987,10 @@ mod tests {
         assert_eq!(journal.schema_version, 4);
         // v4 migration discards audit — unresolved_gvks and csv_baseline are None
         assert!(journal.last_residual_audit.is_none());
-        assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
+        assert!(matches!(
+            journal.residual_status,
+            ResidualStatus::NotAudited
+        ));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -974,7 +1010,8 @@ mod tests {
         let v5_already_space: CleanupResult = serde_json::from_str(r#""already gone""#).unwrap();
         assert_eq!(v5_already_space, CleanupResult::AlreadyGone);
 
-        let v5_failed: CleanupResult = serde_json::from_str(r#""failed: connection refused""#).unwrap();
+        let v5_failed: CleanupResult =
+            serde_json::from_str(r#""failed: connection refused""#).unwrap();
         assert!(matches!(v5_failed, CleanupResult::Failed(r) if r == "connection refused"));
 
         let v5_unknown: CleanupResult = serde_json::from_str(r#""something_else""#).unwrap();
@@ -1059,8 +1096,15 @@ mod tests {
 
         let journal = load_journal(&path).unwrap();
 
-        assert_eq!(journal.schema_version, 5, "v5 stays at 5 — read-only, no mutation authority");
-        assert_eq!(journal.cleanup_decisions.len(), 2, "decisions must be preserved");
+        assert_eq!(
+            journal.schema_version, 5,
+            "v5 stays at 5 — read-only, no mutation authority"
+        );
+        assert_eq!(
+            journal.cleanup_decisions.len(),
+            2,
+            "decisions must be preserved"
+        );
         assert_eq!(
             journal.cleanup_decisions[0].result,
             Some(CleanupResult::DeleteRequested),
@@ -1081,21 +1125,34 @@ mod tests {
         // execute_residual_cleanup requires schema_version == RUN_JOURNAL_SCHEMA_VERSION (6),
         // so v5 journals cannot gain new cleanup mutation authority.
         // The schema gate (not is_failed) is the actual mutation barrier.
-        assert_ne!(5u32, RUN_JOURNAL_SCHEMA_VERSION,
-            "v5 != current schema — core cleanup gate blocks mutations on v5 journals");
-        assert_ne!(6u32, RUN_JOURNAL_SCHEMA_VERSION,
-            "v6 != current schema — core cleanup gate blocks mutations on v6 journals");
-        assert_eq!(7u32, RUN_JOURNAL_SCHEMA_VERSION,
-            "current schema must be v7 for approved_spec_name support");
+        assert_ne!(
+            5u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "v5 != current schema — core cleanup gate blocks mutations on v5 journals"
+        );
+        assert_ne!(
+            6u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "v6 != current schema — core cleanup gate blocks mutations on v6 journals"
+        );
+        assert_eq!(
+            7u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "current schema must be v7 for approved_spec_name support"
+        );
 
         // v5 cleanup_decisions are still readable for inspection
         let result: CleanupResult = serde_json::from_str(r#""deleted""#).unwrap();
-        assert_eq!(result, CleanupResult::DeleteRequested,
-            "v5 string 'deleted' deserializes to DeleteRequested for read-only inspection");
+        assert_eq!(
+            result,
+            CleanupResult::DeleteRequested,
+            "v5 string 'deleted' deserializes to DeleteRequested for read-only inspection"
+        );
 
         // Roundtrip: v6 enum format also works
         let v6_serialized = serde_json::to_string(&CleanupResult::Gone).unwrap();
         let v6_roundtrip: CleanupResult = serde_json::from_str(&v6_serialized).unwrap();
-        assert_eq!(v6_roundtrip, CleanupResult::Gone, "v6 enum roundtrips correctly");
+        assert_eq!(
+            v6_roundtrip,
+            CleanupResult::Gone,
+            "v6 enum roundtrips correctly"
+        );
     }
 }

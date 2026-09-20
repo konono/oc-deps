@@ -514,12 +514,18 @@ pub async fn discover_operators(
 
         let same_pkg_unaccounted_subs = if let Some(pkg) = pkg_name {
             // Count Subs in this namespace with same spec.name
-            let same_pkg_count = sub_items.iter().filter(|sub| {
-                sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
-                    && sub.data.get("spec")
-                        .and_then(|s| s.get("name"))
-                        .and_then(|n| n.as_str()) == Some(pkg.as_str())
-            }).count();
+            let same_pkg_count = sub_items
+                .iter()
+                .filter(|sub| {
+                    sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
+                        && sub
+                            .data
+                            .get("spec")
+                            .and_then(|s| s.get("name"))
+                            .and_then(|n| n.as_str())
+                            == Some(pkg.as_str())
+                })
+                .count();
             // If more than 1 Sub has the same package name, we can't prove all are in Phase 0
             same_pkg_count > 1
         } else {
@@ -529,9 +535,9 @@ pub async fn discover_operators(
         let has_unlinked = multiple_subs_for_csv
             || same_pkg_unaccounted_subs
             || (subscription.is_none()
-                && sub_items.iter().any(|sub| {
-                    sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
-                }));
+                && sub_items
+                    .iter()
+                    .any(|sub| sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())));
 
         operators.push(OperatorInstance {
             subscription: subscription.clone(),

@@ -41,10 +41,9 @@ pub(crate) async fn probe_uid(
         Err(kube::Error::Api(ref err)) if err.code == 404 => {
             match api.list(&kube::api::ListParams::default().limit(1)).await {
                 Ok(_) => BindResult::Absent,
-                Err(e) => BindResult::Failed(format!(
-                    "GET 404 but endpoint verification failed: {}",
-                    e
-                )),
+                Err(e) => {
+                    BindResult::Failed(format!("GET 404 but endpoint verification failed: {}", e))
+                }
             }
         }
         Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
@@ -971,9 +970,7 @@ async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> 
 
 /// Check Subscription linkage safety for a single operator.
 /// has_unlinked_subscriptions is evaluated FIRST regardless of subscription Some/None.
-pub fn check_subscription_safety(
-    op: &OperatorInstance,
-) -> (bool, PreflightSeverity, String) {
+pub fn check_subscription_safety(op: &OperatorInstance) -> (bool, PreflightSeverity, String) {
     if op.has_unlinked_subscriptions {
         (
             false,
@@ -1370,7 +1367,9 @@ pub async fn discover_related_crd_instances(
                 approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
                 provenance: match &cr.provenance {
                     Provenance::Managed => Some(crate::teardown::plan::ProvenanceSer::Managed),
-                    Provenance::LikelyManaged => Some(crate::teardown::plan::ProvenanceSer::LikelyManaged),
+                    Provenance::LikelyManaged => {
+                        Some(crate::teardown::plan::ProvenanceSer::LikelyManaged)
+                    }
                     Provenance::Unknown => Some(crate::teardown::plan::ProvenanceSer::Unknown),
                 },
                 discovery_source: Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly),
@@ -1531,7 +1530,9 @@ async fn discover_namespace_resources(
                                 .to_string(),
                             metadata: Some(crate::teardown::plan::ReviewMetadata {
                                 category: Some(crate::teardown::plan::ReviewCategorySer::Ancillary),
-                                approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
+                                approval_class: Some(
+                                    crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly,
+                                ),
                                 provenance: None,
                                 discovery_source: None,
                                 decisive_part_of_seeds: vec![],
@@ -2597,7 +2598,10 @@ pub async fn generate_teardown_plan(
     // Root REVIEWs that are not approved become hard blockers
     for phase in &operand_phases {
         for action in &phase.actions {
-            if let Action::Review { resource, reason, .. } = action {
+            if let Action::Review {
+                resource, reason, ..
+            } = action
+            {
                 let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
                 let is_root = root_cr.is_some();
                 if !is_root {
@@ -2712,7 +2716,11 @@ pub async fn generate_teardown_plan(
     let ns_cleanup_actions: Vec<Action> = ns_cleanup_actions
         .into_iter()
         .map(|action| {
-            if let Action::Review { resource, reason, metadata } = &action
+            if let Action::Review {
+                resource,
+                reason,
+                metadata,
+            } = &action
                 && let Some(decision) = resolved_decisions.get(resource)
             {
                 return match decision {
@@ -2772,10 +2780,8 @@ pub async fn generate_teardown_plan(
         if !prune_candidates.is_empty() {
             let crd_gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
                 .with_kind("CustomResourceDefinition");
-            let crd_ar = kube::api::ApiResource::from_gvk_with_plural(
-                &crd_gvk,
-                "customresourcedefinitions",
-            );
+            let crd_ar =
+                kube::api::ApiResource::from_gvk_with_plural(&crd_gvk, "customresourcedefinitions");
             let crd_api: kube::api::Api<kube::api::DynamicObject> =
                 kube::api::Api::all_with(client.clone(), &crd_ar);
 
@@ -2843,8 +2849,7 @@ pub async fn generate_teardown_plan(
                     // CRD already gone (GET 404 + endpoint verified) — skip DELETE
                     phase4_actions.push(Action::Keep {
                         resource: crd_id,
-                        reason: "already absent (confirmed via endpoint verification)"
-                            .to_string(),
+                        reason: "already absent (confirmed via endpoint verification)".to_string(),
                     });
                 }
                 Some(BindResult::Failed(reason)) => {
@@ -2895,12 +2900,10 @@ pub async fn generate_teardown_plan(
         Vec::new()
     };
 
-    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty()
-    {
-        let apisvc_gvk = kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1")
-            .with_kind("APIService");
-        let apisvc_ar =
-            kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
+    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty() {
+        let apisvc_gvk =
+            kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1").with_kind("APIService");
+        let apisvc_ar = kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
         let apisvc_api: kube::api::Api<kube::api::DynamicObject> =
             kube::api::Api::all_with(client.clone(), &apisvc_ar);
 
@@ -2962,8 +2965,7 @@ pub async fn generate_teardown_plan(
                 Some(BindResult::Absent) => {
                     phase4_actions.push(Action::Keep {
                         resource: api_svc_id,
-                        reason: "already absent (confirmed via endpoint verification)"
-                            .to_string(),
+                        reason: "already absent (confirmed via endpoint verification)".to_string(),
                     });
                 }
                 Some(BindResult::Failed(reason)) => {
@@ -3110,24 +3112,19 @@ pub async fn generate_teardown_plan(
                         Some((api, _)) => match api.get(&res.name).await {
                             Ok(obj) => match obj.metadata.uid {
                                 Some(uid) => BindResult::Bound(uid),
-                                None => BindResult::Failed(
-                                    "live resource has no UID".to_string(),
-                                ),
+                                None => BindResult::Failed("live resource has no UID".to_string()),
                             },
                             Err(kube::Error::Api(err)) if err.code == 404 => {
                                 match api.list(&ListParams::default().limit(1)).await {
                                     Ok(_) => BindResult::Absent,
                                     Err(_) => BindResult::Failed(
-                                        "GET 404 but endpoint verification failed"
-                                            .to_string(),
+                                        "GET 404 but endpoint verification failed".to_string(),
                                     ),
                                 }
                             }
                             Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
                         },
-                        None => BindResult::Failed(
-                            "cannot resolve API for resource".to_string(),
-                        ),
+                        None => BindResult::Failed("cannot resolve API for resource".to_string()),
                     };
                     (pi, ai, res, result)
                 }
@@ -3307,7 +3304,9 @@ fn print_plan_tree(plan: &TeardownPlan) {
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
                 }
-                Action::Review { resource, reason, .. } => {
+                Action::Review {
+                    resource, reason, ..
+                } => {
                     println!(
                         "  \x1b[35mREVIEW\x1b[0m {}/{}{}",
                         resource.kind,
@@ -4032,8 +4031,8 @@ mod tests {
 
     // ── probe_uid mock API tests ──
 
-    use std::pin::pin;
     use kube::client::Body;
+    use std::pin::pin;
 
     fn json_response(json: serde_json::Value) -> http::Response<Body> {
         http::Response::builder()
@@ -4064,19 +4063,14 @@ mod tests {
         let client = Client::new(mock_service, "default");
         let gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
             .with_kind("CustomResourceDefinition");
-        let ar = kube::api::ApiResource::from_gvk_with_plural(
-            &gvk,
-            "customresourcedefinitions",
-        );
+        let ar = kube::api::ApiResource::from_gvk_with_plural(&gvk, "customresourcedefinitions");
         kube::api::Api::all_with(client, &ar)
     }
 
     #[tokio::test]
     async fn test_probe_uid_get404_list200_is_absent() {
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let api = make_mock_api(mock_service);
 
@@ -4109,10 +4103,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_uid_get404_list403_is_failed() {
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let api = make_mock_api(mock_service);
 
@@ -4140,10 +4132,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_uid_get200_returns_bound_uid() {
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let api = make_mock_api(mock_service);
 

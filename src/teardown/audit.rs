@@ -7,10 +7,8 @@ use kube::core::GroupVersion;
 use serde::{Deserialize, Serialize};
 
 use crate::kube::resource::ResourceId;
-use crate::teardown::journal::{AuditContext, RunJournal, ResidualStatus};
-use crate::teardown::plan::{
-    OperatorGenerationIdentity, OperatorIdentitySnapshot,
-};
+use crate::teardown::journal::{AuditContext, ResidualStatus, RunJournal};
+use crate::teardown::plan::{OperatorGenerationIdentity, OperatorIdentitySnapshot};
 use crate::teardown::planner::Action;
 
 // ──────────────────────────────────────────────────────────────
@@ -44,8 +42,7 @@ pub async fn check_operator_generation(
     };
 
     // Step 1: LIST Subscriptions in install namespace, find spec.name == package_name
-    let sub_gvk =
-        GroupVersion::gv("operators.coreos.com", "v1alpha1").with_kind("Subscription");
+    let sub_gvk = GroupVersion::gv("operators.coreos.com", "v1alpha1").with_kind("Subscription");
     let sub_ar = ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
     let sub_api: Api<DynamicObject> =
         Api::namespaced_with(client.clone(), &install_namespace, &sub_ar);
@@ -62,10 +59,12 @@ pub async fn check_operator_generation(
 
     // Check for semantic drift: saved-UID subscription with changed spec.name
     for saved_sub in &snapshot.subscriptions {
-        if let Some(live_sub) = sub_list.iter().find(|s| {
-            s.metadata.uid.as_deref().unwrap_or("") == saved_sub.uid
-        }) {
-            let live_spec_name = live_sub.data
+        if let Some(live_sub) = sub_list
+            .iter()
+            .find(|s| s.metadata.uid.as_deref().unwrap_or("") == saved_sub.uid)
+        {
+            let live_spec_name = live_sub
+                .data
                 .get("spec")
                 .and_then(|s| s.get("name"))
                 .and_then(|n| n.as_str())
@@ -89,10 +88,7 @@ pub async fn check_operator_generation(
 
         if spec_name == Some(package_name.as_str()) {
             let live_uid = sub.metadata.uid.as_deref().unwrap_or("");
-            let saved_matches = snapshot
-                .subscriptions
-                .iter()
-                .any(|s| s.uid == live_uid);
+            let saved_matches = snapshot.subscriptions.iter().any(|s| s.uid == live_uid);
 
             return if saved_matches {
                 OperatorGenerationState::SameGeneration
@@ -103,10 +99,9 @@ pub async fn check_operator_generation(
     }
 
     // Step 2: No matching subscription — check CSV
-    let csv_gvk = GroupVersion::gv("operators.coreos.com", "v1alpha1")
-        .with_kind("ClusterServiceVersion");
-    let csv_ar =
-        ApiResource::from_gvk_with_plural(&csv_gvk, "clusterserviceversions");
+    let csv_gvk =
+        GroupVersion::gv("operators.coreos.com", "v1alpha1").with_kind("ClusterServiceVersion");
+    let csv_ar = ApiResource::from_gvk_with_plural(&csv_gvk, "clusterserviceversions");
     let csv_api: Api<DynamicObject> =
         Api::namespaced_with(client.clone(), &install_namespace, &csv_ar);
 
@@ -201,19 +196,16 @@ pub async fn check_operator_generation(
             // Multiple Subs can point to the same CSV with different packages.
             let mut sub_csv_to_pkgs: HashMap<String, HashSet<String>> = HashMap::new();
             for sub in &sub_list {
-                let csv = sub
-                    .data
-                    .get("status")
-                    .and_then(|s| {
-                        s.get("installedCSV")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty())
-                            .or_else(|| {
-                                s.get("currentCSV")
-                                    .and_then(|v| v.as_str())
-                                    .filter(|s| !s.is_empty())
-                            })
-                    });
+                let csv = sub.data.get("status").and_then(|s| {
+                    s.get("installedCSV")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            s.get("currentCSV")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                        })
+                });
                 let pkg = sub
                     .data
                     .get("spec")
@@ -243,8 +235,7 @@ pub async fn check_operator_generation(
                         }
 
                         // Check if this CSV was in baseline (same name AND same UID)
-                        let in_baseline =
-                            baseline.iter().any(|b| b.name == name && b.uid == uid);
+                        let in_baseline = baseline.iter().any(|b| b.name == name && b.uid == uid);
 
                         if !in_baseline {
                             // New CSV or recreated CSV not in baseline
@@ -343,7 +334,10 @@ pub fn is_exclusively_other_package(
         return false;
     }
     let has_target = evidence_packages.contains(target_package);
-    let other_count = evidence_packages.iter().filter(|p| p.as_str() != target_package).count();
+    let other_count = evidence_packages
+        .iter()
+        .filter(|p| p.as_str() != target_package)
+        .count();
     !has_target && other_count == 1
 }
 
@@ -411,9 +405,7 @@ fn csv_packages_from_annotations(csv: &DynamicObject) -> Vec<String> {
                         Some(value.clone())
                     };
                     if let Some(pkg_info) = pkg_value {
-                        if let Some(name) =
-                            pkg_info.get("packageName").and_then(|n| n.as_str())
-                        {
+                        if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str()) {
                             if !packages.contains(&name.to_string()) {
                                 packages.push(name.to_string());
                             }
@@ -527,30 +519,67 @@ struct ScanTarget {
 }
 
 const NATIVE_WORKLOAD_TARGETS: &[ScanTarget] = &[
-    ScanTarget { group: "apps", version: "v1", kind: "Deployment", plural: "deployments" },
-    ScanTarget { group: "apps", version: "v1", kind: "StatefulSet", plural: "statefulsets" },
-    ScanTarget { group: "apps", version: "v1", kind: "DaemonSet", plural: "daemonsets" },
-    ScanTarget { group: "", version: "v1", kind: "Service", plural: "services" },
+    ScanTarget {
+        group: "apps",
+        version: "v1",
+        kind: "Deployment",
+        plural: "deployments",
+    },
+    ScanTarget {
+        group: "apps",
+        version: "v1",
+        kind: "StatefulSet",
+        plural: "statefulsets",
+    },
+    ScanTarget {
+        group: "apps",
+        version: "v1",
+        kind: "DaemonSet",
+        plural: "daemonsets",
+    },
+    ScanTarget {
+        group: "",
+        version: "v1",
+        kind: "Service",
+        plural: "services",
+    },
 ];
 
 const OPENSHIFT_TARGETS: &[ScanTarget] = &[
-    ScanTarget { group: "route.openshift.io", version: "v1", kind: "Route", plural: "routes" },
-    ScanTarget { group: "image.openshift.io", version: "v1", kind: "ImageStream", plural: "imagestreams" },
+    ScanTarget {
+        group: "route.openshift.io",
+        version: "v1",
+        kind: "Route",
+        plural: "routes",
+    },
+    ScanTarget {
+        group: "image.openshift.io",
+        version: "v1",
+        kind: "ImageStream",
+        plural: "imagestreams",
+    },
 ];
 
 const OLM_TARGETS: &[ScanTarget] = &[
-    ScanTarget { group: "operators.coreos.com", version: "v1alpha1", kind: "Subscription", plural: "subscriptions" },
-    ScanTarget { group: "operators.coreos.com", version: "v1alpha1", kind: "ClusterServiceVersion", plural: "clusterserviceversions" },
+    ScanTarget {
+        group: "operators.coreos.com",
+        version: "v1alpha1",
+        kind: "Subscription",
+        plural: "subscriptions",
+    },
+    ScanTarget {
+        group: "operators.coreos.com",
+        version: "v1alpha1",
+        kind: "ClusterServiceVersion",
+        plural: "clusterserviceversions",
+    },
 ];
 
 // ──────────────────────────────────────────────────────────────
 //  Live residual audit
 // ──────────────────────────────────────────────────────────────
 
-pub async fn run_residual_audit(
-    client: &Client,
-    journal: &RunJournal,
-) -> Result<ResidualAudit> {
+pub async fn run_residual_audit(client: &Client, journal: &RunJournal) -> Result<ResidualAudit> {
     let ctx = &journal.audit_context;
     let plan = &journal.plan_snapshot;
 
@@ -670,7 +699,9 @@ pub async fn run_residual_audit(
                         }
                     }
                 }
-                Action::Keep { resource, reason, .. } => {
+                Action::Keep {
+                    resource, reason, ..
+                } => {
                     audit.expected_preserved.push(PreservedItem {
                         resource: resource.clone(),
                         reason: reason.clone(),
@@ -678,7 +709,9 @@ pub async fn run_residual_audit(
                         associated_active_workloads: 0,
                     });
                 }
-                Action::Review { resource, reason, .. } => {
+                Action::Review {
+                    resource, reason, ..
+                } => {
                     audit.expected_preserved.push(PreservedItem {
                         resource: resource.clone(),
                         reason: reason.clone(),
@@ -709,9 +742,18 @@ pub async fn run_residual_audit(
     for ns in &ctx.footprint_namespaces {
         for target in &all_targets {
             scan_namespace_for_target(
-                client, target.group, target.version, target.kind, target.plural,
-                ns, ctx, &target_uids, &plan_resources, &mut audit,
-            ).await;
+                client,
+                target.group,
+                target.version,
+                target.kind,
+                target.plural,
+                ns,
+                ctx,
+                &target_uids,
+                &plan_resources,
+                &mut audit,
+            )
+            .await;
         }
     }
 
@@ -735,24 +777,17 @@ pub async fn run_residual_audit(
                 // Check if this GVR's governing CRD was approved for deletion
                 // and confirmed Gone (GoneByCrdRemoval exception for --prune-apis)
                 let crd_name = format!("{}.{}", gvr.plural, gvr.group);
-                let crd_approved_delete = plan
-                    .phases
-                    .iter()
-                    .flat_map(|p| &p.actions)
-                    .any(|a| {
-                        matches!(a, Action::Delete { resource, .. }
+                let crd_approved_delete = plan.phases.iter().flat_map(|p| &p.actions).any(|a| {
+                    matches!(a, Action::Delete { resource, .. }
                             if resource.kind == "CustomResourceDefinition"
                                 && resource.name == crd_name)
-                    });
+                });
 
                 if crd_approved_delete {
-                    let crd_still_present = audit
-                        .planned_delete_still_present
-                        .iter()
-                        .any(|item| {
-                            item.resource.kind == "CustomResourceDefinition"
-                                && item.resource.name == crd_name
-                        });
+                    let crd_still_present = audit.planned_delete_still_present.iter().any(|item| {
+                        item.resource.kind == "CustomResourceDefinition"
+                            && item.resource.name == crd_name
+                    });
 
                     if !crd_still_present {
                         // CRD was approved for delete and appears gone in Phase A.
@@ -794,8 +829,7 @@ pub async fn run_residual_audit(
                     }
                     crate::teardown::journal::GvrScope::Cluster => {
                         audit.coverage.requested_probes += 1;
-                        let gvk =
-                            GroupVersion::gv(&gvr.group, &gvr.version).with_kind(&gvr.kind);
+                        let gvk = GroupVersion::gv(&gvr.group, &gvr.version).with_kind(&gvr.kind);
                         let ar = ApiResource::from_gvk_with_plural(&gvk, &gvr.plural);
                         let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
                         match api.list(&ListParams::default()).await {
@@ -910,7 +944,15 @@ async fn scan_namespace_for_target(
         Ok(list) => {
             audit.coverage.succeeded_probes += 1;
             classify_list_results(
-                list.items, kind, group, version, namespace, ctx, target_uids, plan_resources, audit,
+                list.items,
+                kind,
+                group,
+                version,
+                namespace,
+                ctx,
+                target_uids,
+                plan_resources,
+                audit,
             );
         }
         Err(e) => {
@@ -957,7 +999,12 @@ fn classify_list_results(
         }
 
         let obj_ns = obj.metadata.namespace.clone();
-        let key = (group.to_string(), kind.to_string(), obj_ns.clone(), name.clone());
+        let key = (
+            group.to_string(),
+            kind.to_string(),
+            obj_ns.clone(),
+            name.clone(),
+        );
         if plan_resources.contains(&key) {
             continue;
         }
@@ -987,7 +1034,6 @@ fn classify_list_results(
         }
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────
 //  Attribution classification
@@ -1156,8 +1202,8 @@ async fn probe_resource(
     };
 
     // Fall back to static allowlist for well-known types
-    let plural = plural
-        .or_else(|| known_plural_for_gvk(&resource.group, &resource.kind).map(String::from));
+    let plural =
+        plural.or_else(|| known_plural_for_gvk(&resource.group, &resource.kind).map(String::from));
 
     let plural = match plural {
         Some(p) => p,
@@ -1169,8 +1215,7 @@ async fn probe_resource(
         }
     };
 
-    let gvk = GroupVersion::gv(&resource.group, &resource.version)
-        .with_kind(&resource.kind);
+    let gvk = GroupVersion::gv(&resource.group, &resource.version).with_kind(&resource.kind);
     let ar = ApiResource::from_gvk_with_plural(&gvk, &plural);
 
     let api: Api<DynamicObject> = if let Some(ns) = &resource.namespace {
@@ -1260,9 +1305,7 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
     eprintln!();
     eprintln!(
         "Execution: {:?} ({}/{} phases)",
-        journal.state,
-        journal.execution.phases_completed,
-        journal.execution.phases_total,
+        journal.state, journal.execution.phases_completed, journal.execution.phases_total,
     );
 
     let total_residuals = audit.planned_delete_still_present.len()
@@ -1312,7 +1355,9 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
         for item in &audit.expected_preserved {
             eprintln!(
                 "  {}/{}{}",
-                item.resource.kind, item.resource.name, ns_suffix(&item.resource)
+                item.resource.kind,
+                item.resource.name,
+                ns_suffix(&item.resource)
             );
             eprintln!("    \x1b[2m{}\x1b[0m", item.reason);
         }
@@ -1328,7 +1373,9 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
         for item in &audit.likely_operator_residual {
             eprintln!(
                 "  {}/{}{}",
-                item.resource.kind, item.resource.name, ns_suffix(&item.resource)
+                item.resource.kind,
+                item.resource.name,
+                ns_suffix(&item.resource)
             );
             let evidence_parts = format_evidence(&item.evidence);
             if !evidence_parts.is_empty() {
@@ -1341,14 +1388,13 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
 
     // Unattributed
     if !audit.unattributed.is_empty() {
-        eprintln!(
-            "\x1b[1mUNATTRIBUTED\x1b[0m ({})",
-            audit.unattributed.len()
-        );
+        eprintln!("\x1b[1mUNATTRIBUTED\x1b[0m ({})", audit.unattributed.len());
         for item in &audit.unattributed {
             eprintln!(
                 "  {}/{}{}",
-                item.resource.kind, item.resource.name, ns_suffix(&item.resource)
+                item.resource.kind,
+                item.resource.name,
+                ns_suffix(&item.resource)
             );
             eprintln!("    no sufficient operator attribution evidence");
         }
@@ -1440,7 +1486,13 @@ pub fn residual_status_from_audit(audit: &ResidualAudit) -> ResidualStatus {
 mod tests {
     use super::*;
 
-    fn make_rid(group: &str, kind: &str, ns: Option<&str>, name: &str, uid: Option<&str>) -> ResourceId {
+    fn make_rid(
+        group: &str,
+        kind: &str,
+        ns: Option<&str>,
+        name: &str,
+        uid: Option<&str>,
+    ) -> ResourceId {
         ResourceId {
             group: group.to_string(),
             version: "v1".to_string(),
@@ -1498,7 +1550,10 @@ mod tests {
             namespace: "ns".to_string(),
             error: "403 Forbidden".to_string(),
         });
-        assert!(matches!(residual_status_from_audit(&audit), ResidualStatus::AuditIncomplete));
+        assert!(matches!(
+            residual_status_from_audit(&audit),
+            ResidualStatus::AuditIncomplete
+        ));
     }
 
     #[test]
@@ -1510,13 +1565,19 @@ mod tests {
             live_uid: None,
             recreation: RecreationState::Unknown,
         });
-        assert!(matches!(residual_status_from_audit(&audit), ResidualStatus::AuditIncomplete));
+        assert!(matches!(
+            residual_status_from_audit(&audit),
+            ResidualStatus::AuditIncomplete
+        ));
     }
 
     #[test]
     fn test_residual_status_no_residuals_is_none_observed() {
         let audit = empty_audit();
-        assert!(matches!(residual_status_from_audit(&audit), ResidualStatus::NoneObservedInScope));
+        assert!(matches!(
+            residual_status_from_audit(&audit),
+            ResidualStatus::NoneObservedInScope
+        ));
     }
 
     #[test]
@@ -1617,7 +1678,10 @@ mod tests {
 
     #[test]
     fn test_known_plural_apps_deployment() {
-        assert_eq!(known_plural_for_gvk("apps", "Deployment"), Some("deployments"));
+        assert_eq!(
+            known_plural_for_gvk("apps", "Deployment"),
+            Some("deployments")
+        );
     }
 
     #[test]
@@ -1644,20 +1708,40 @@ mod tests {
     #[test]
     fn test_plan_resources_excludes_same_group() {
         let mut plan_resources: HashSet<(String, String, Option<String>, String)> = HashSet::new();
-        plan_resources.insert(("apps".into(), "Deployment".into(), Some("ns".into()), "foo".into()));
+        plan_resources.insert((
+            "apps".into(),
+            "Deployment".into(),
+            Some("ns".into()),
+            "foo".into(),
+        ));
 
         // Same group+kind+ns+name → excluded
-        let key = ("apps".to_string(), "Deployment".to_string(), Some("ns".to_string()), "foo".to_string());
+        let key = (
+            "apps".to_string(),
+            "Deployment".to_string(),
+            Some("ns".to_string()),
+            "foo".to_string(),
+        );
         assert!(plan_resources.contains(&key));
     }
 
     #[test]
     fn test_plan_resources_does_not_exclude_different_group() {
         let mut plan_resources: HashSet<(String, String, Option<String>, String)> = HashSet::new();
-        plan_resources.insert(("apps".into(), "Deployment".into(), Some("ns".into()), "foo".into()));
+        plan_resources.insert((
+            "apps".into(),
+            "Deployment".into(),
+            Some("ns".into()),
+            "foo".into(),
+        ));
 
         // Different group with same Kind/name → NOT excluded
-        let key = ("custom.io".to_string(), "Deployment".to_string(), Some("ns".to_string()), "foo".to_string());
+        let key = (
+            "custom.io".to_string(),
+            "Deployment".to_string(),
+            Some("ns".to_string()),
+            "foo".to_string(),
+        );
         assert!(!plan_resources.contains(&key));
     }
 
@@ -1785,7 +1869,10 @@ mod tests {
         }"#;
         let audit: ResidualAudit = serde_json::from_str(json).unwrap();
         // ResidualItem defaults: recreation=Unknown, live_uid=None
-        assert_eq!(audit.planned_delete_still_present[0].recreation, RecreationState::Unknown);
+        assert_eq!(
+            audit.planned_delete_still_present[0].recreation,
+            RecreationState::Unknown
+        );
         assert!(audit.planned_delete_still_present[0].live_uid.is_none());
         // ResidualEvidence defaults: owner_ref_match=false
         assert!(!audit.likely_operator_residual[0].evidence.owner_ref_match);
@@ -1819,11 +1906,14 @@ mod tests {
     fn test_plan_resources_different_group_not_excluded() {
         // Verify that resources from different API groups with same Kind/name
         // are NOT excluded from scan results
-        let plan_resources: HashSet<(String, String, Option<String>, String)> =
-            [("apps".to_string(), "Deployment".to_string(),
-              Some("ns".to_string()), "my-dep".to_string())]
-            .into_iter()
-            .collect();
+        let plan_resources: HashSet<(String, String, Option<String>, String)> = [(
+            "apps".to_string(),
+            "Deployment".to_string(),
+            Some("ns".to_string()),
+            "my-dep".to_string(),
+        )]
+        .into_iter()
+        .collect();
 
         // Same kind/name but different group should NOT be excluded
         let key = (
@@ -1854,7 +1944,10 @@ mod tests {
             expected_preserved: vec![],
             likely_operator_residual: vec![],
             unattributed: vec![],
-            coverage: AuditCoverage { requested_probes: 0, succeeded_probes: 0 },
+            coverage: AuditCoverage {
+                requested_probes: 0,
+                succeeded_probes: 0,
+            },
             scan_errors: vec![],
         };
         let ctx = AuditContext::default();
@@ -1862,14 +1955,23 @@ mod tests {
         let plan_resources = HashSet::new();
 
         // Create a DynamicObject with name but no UID
-        let mut obj = DynamicObject::new("test-obj", &ApiResource::erase::<k8s_openapi::api::core::v1::Service>(&()));
+        let mut obj = DynamicObject::new(
+            "test-obj",
+            &ApiResource::erase::<k8s_openapi::api::core::v1::Service>(&()),
+        );
         obj.metadata.namespace = Some("ns".to_string());
         obj.metadata.uid = None;
 
         classify_list_results(
             vec![obj],
-            "Service", "", "v1", "ns",
-            &ctx, &target_uids, &plan_resources, &mut audit,
+            "Service",
+            "",
+            "v1",
+            "ns",
+            &ctx,
+            &target_uids,
+            &plan_resources,
+            &mut audit,
         );
 
         // Should have a scan error about missing UID
@@ -1910,8 +2012,8 @@ mod tests {
     fn test_target_uids_includes_plan_delete_resources() {
         // target_uids should include UIDs from plan DELETE/EXPECT actions
         // so ownerRef descendants of approved root CRs are classified HIGH
-        use crate::teardown::planner::{Action, PlanPhase, TeardownPlan, Preflight};
         use crate::kube::resource::ResourceId;
+        use crate::teardown::planner::{Action, PlanPhase, Preflight, TeardownPlan};
 
         let plan = TeardownPlan {
             targets: vec![],
@@ -1966,8 +2068,7 @@ mod tests {
         for phase in &plan.phases {
             for action in &phase.actions {
                 match action {
-                    Action::Delete { resource, .. }
-                    | Action::ExpectGone { resource, .. } => {
+                    Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
                         if let Some(uid) = &resource.uid {
                             target_uids.insert(uid.clone());
                         }
@@ -2064,10 +2165,7 @@ mod tests {
     fn test_csv_label_empty_package() {
         let mut labels = std::collections::BTreeMap::new();
         // Edge case: label key = "operators.coreos.com/.my-ns" → empty package
-        labels.insert(
-            "operators.coreos.com/.my-ns".to_string(),
-            String::new(),
-        );
+        labels.insert("operators.coreos.com/.my-ns".to_string(), String::new());
         assert!(!csv_label_attributes_to_other_package(
             &labels,
             "my-ns",
@@ -2141,7 +2239,8 @@ mod tests {
             r#"[
                 {"type":"olm.package","value":"{\"packageName\":\"pkg-a\",\"version\":\"1.0\"}"},
                 {"type":"olm.package","value":"{\"packageName\":\"pkg-b\",\"version\":\"2.0\"}"}
-            ]"#.to_string(),
+            ]"#
+            .to_string(),
         )]));
 
         let pkgs = csv_packages_from_annotations(&csv);
@@ -2201,7 +2300,9 @@ mod tests {
         labels.insert("operators.coreos.com/pkg-a.ns".to_string(), String::new());
         csv.metadata.labels = Some(labels);
         csv.metadata.namespace = Some("ns".to_string());
-        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "pkg-a", "ns"
+        ));
     }
 
     #[test]
@@ -2211,7 +2312,9 @@ mod tests {
         labels.insert("operators.coreos.com/pkg-b.ns".to_string(), String::new());
         csv.metadata.labels = Some(labels);
         csv.metadata.namespace = Some("ns".to_string());
-        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "pkg-a", "ns"
+        ));
     }
 
     #[test]
@@ -2223,7 +2326,9 @@ mod tests {
         csv.metadata.labels = Some(labels);
         csv.metadata.namespace = Some("ns".to_string());
         // Two packages → not exclusive for either
-        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "pkg-a", "ns"
+        ));
     }
 
     #[test]
@@ -2239,7 +2344,9 @@ mod tests {
         )]));
         csv.metadata.namespace = Some("ns".to_string());
         // label=pkg-a, annotation=pkg-b → conflicting → not exclusive
-        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "pkg-a", "ns"
+        ));
     }
 
     #[test]
@@ -2252,13 +2359,17 @@ mod tests {
                 .to_string(),
         )]));
         csv.metadata.namespace = Some("ns".to_string());
-        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "my-pkg", "ns"));
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "my-pkg", "ns"
+        ));
     }
 
     #[test]
     fn test_evidence_exclusive_no_evidence_trusts_status() {
         let csv = make_dynamic_object("csv.v1");
-        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "any", "ns"));
+        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "any", "ns"
+        ));
     }
 
     #[test]
@@ -2271,7 +2382,9 @@ mod tests {
                 .to_string(),
         )]));
         csv.metadata.namespace = Some("ns".to_string());
-        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "my-pkg", "ns"));
+        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(
+            &csv, "my-pkg", "ns"
+        ));
     }
 
     // ── olm.rs linkage edge cases ──
@@ -2369,40 +2482,51 @@ mod tests {
     #[test]
     fn test_preflight_linked_sub_no_unlinked_passes() {
         let op = make_test_operator(Some("sub-a"), false);
-        let (passed, severity, _) =
-            crate::teardown::planner::check_subscription_safety(&op);
+        let (passed, severity, _) = crate::teardown::planner::check_subscription_safety(&op);
         assert!(passed);
-        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Warning);
+        assert_eq!(
+            severity,
+            crate::teardown::planner::PreflightSeverity::Warning
+        );
     }
 
     #[test]
     fn test_preflight_has_unlinked_with_linked_sub_is_critical() {
         // subscription=Some + has_unlinked=true → Critical (not passed)
         let op = make_test_operator(Some("sub-a"), true);
-        let (passed, severity, _) =
-            crate::teardown::planner::check_subscription_safety(&op);
-        assert!(!passed, "has_unlinked_subscriptions should block even with linked Sub");
-        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Critical);
+        let (passed, severity, _) = crate::teardown::planner::check_subscription_safety(&op);
+        assert!(
+            !passed,
+            "has_unlinked_subscriptions should block even with linked Sub"
+        );
+        assert_eq!(
+            severity,
+            crate::teardown::planner::PreflightSeverity::Critical
+        );
     }
 
     #[test]
     fn test_preflight_no_sub_no_unlinked_passes() {
         // No subscription, no unlinked → frozen/manual → OK
         let op = make_test_operator(None, false);
-        let (passed, severity, _) =
-            crate::teardown::planner::check_subscription_safety(&op);
+        let (passed, severity, _) = crate::teardown::planner::check_subscription_safety(&op);
         assert!(passed);
-        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Warning);
+        assert_eq!(
+            severity,
+            crate::teardown::planner::PreflightSeverity::Warning
+        );
     }
 
     #[test]
     fn test_preflight_no_sub_has_unlinked_is_critical() {
         // No linked subscription but unlinked exist → Critical
         let op = make_test_operator(None, true);
-        let (passed, severity, _) =
-            crate::teardown::planner::check_subscription_safety(&op);
+        let (passed, severity, _) = crate::teardown::planner::check_subscription_safety(&op);
         assert!(!passed);
-        assert_eq!(severity, crate::teardown::planner::PreflightSeverity::Critical);
+        assert_eq!(
+            severity,
+            crate::teardown::planner::PreflightSeverity::Critical
+        );
     }
 
     // ── Generation Step 4 evidence conflict tests ──
@@ -2468,8 +2592,11 @@ mod tests {
                     .filter(|s| !s.is_empty())
             });
 
-        assert_eq!(csv_name, Some("csv-x"),
-            "empty installedCSV must fall through to currentCSV");
+        assert_eq!(
+            csv_name,
+            Some("csv-x"),
+            "empty installedCSV must fall through to currentCSV"
+        );
     }
 
     #[test]

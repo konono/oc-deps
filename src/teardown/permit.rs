@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
 use tokio::sync::Semaphore;
@@ -109,10 +109,7 @@ impl MutationGate {
 
         // 2. Wait until every outstanding permit is returned.
         //    Acquiring all `max_permits` slots means nothing else holds one.
-        let drain = self
-            .semaphore
-            .acquire_many(self.max_permits)
-            .await;
+        let drain = self.semaphore.acquire_many(self.max_permits).await;
         // Drop immediately — we only needed to block until drained.
         drop(drain);
     }
@@ -254,7 +251,10 @@ mod tests {
         let gate = MutationGate::new(4);
         gate.close_and_drain().await;
         let signal = gate.cancel_signal();
-        assert!(signal.is_cancelled(), "signal created after close must be cancelled");
+        assert!(
+            signal.is_cancelled(),
+            "signal created after close must be cancelled"
+        );
     }
 
     #[tokio::test]
@@ -285,6 +285,9 @@ mod tests {
 
         gate.reopen();
         let signal2 = gate.cancel_signal();
-        assert!(!signal2.is_cancelled(), "signal after reopen must not be cancelled");
+        assert!(
+            !signal2.is_cancelled(),
+            "signal after reopen must not be cancelled"
+        );
     }
 }

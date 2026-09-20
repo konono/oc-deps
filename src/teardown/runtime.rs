@@ -136,12 +136,7 @@ impl RuntimeStateStore {
         )
     }
 
-    pub fn register(
-        &self,
-        resource: &ResourceId,
-        state: ResourceRuntimeState,
-        phase_index: usize,
-    ) {
+    pub fn register(&self, resource: &ResourceId, state: ResourceRuntimeState, phase_index: usize) {
         let key = Self::resource_key(resource);
         let entry = RuntimeEntry {
             resource: resource.clone(),
@@ -156,11 +151,7 @@ impl RuntimeStateStore {
         self.entries.write().unwrap().insert(key, entry);
     }
 
-    pub fn update_from_executor(
-        &self,
-        resource: &ResourceId,
-        state: ResourceRuntimeState,
-    ) {
+    pub fn update_from_executor(&self, resource: &ResourceId, state: ResourceRuntimeState) {
         let key = Self::resource_key(resource);
         let mut entries = self.entries.write().unwrap();
         if let Some(entry) = entries.get_mut(&key) {
@@ -379,11 +370,7 @@ impl RuntimeStateStore {
         self.entries.read().unwrap().get(&key).cloned()
     }
 
-    pub fn any_meaningful_progress_since(
-        &self,
-        since: Instant,
-        resources: &[ResourceId],
-    ) -> bool {
+    pub fn any_meaningful_progress_since(&self, since: Instant, resources: &[ResourceId]) -> bool {
         let entries = self.entries.read().unwrap();
         resources.iter().any(|res| {
             let key = Self::resource_key(res);
@@ -399,9 +386,9 @@ impl RuntimeStateStore {
         let entries = self.entries.read().unwrap();
         resources.iter().all(|res| {
             let key = Self::resource_key(res);
-            entries.get(&key).is_some_and(|e| {
-                e.state == ResourceRuntimeState::Gone && !e.needs_verification
-            })
+            entries
+                .get(&key)
+                .is_some_and(|e| e.state == ResourceRuntimeState::Gone && !e.needs_verification)
         })
     }
 
@@ -480,8 +467,7 @@ fn is_meaningful_transition(
         (s, ResourceRuntimeState::FinalizerBlocked { .. })
             if !matches!(
                 s,
-                ResourceRuntimeState::FinalizerBlocked { .. }
-                    | ResourceRuntimeState::Deleting
+                ResourceRuntimeState::FinalizerBlocked { .. } | ResourceRuntimeState::Deleting
             ) =>
         {
             true
@@ -748,7 +734,10 @@ mod tests {
 
         store.update_from_observation(&res_a, obs_gone(true), 0);
         assert_eq!(store.get(&res_a).unwrap().state, ResourceRuntimeState::Gone);
-        assert_eq!(store.get(&res_b).unwrap().state, ResourceRuntimeState::Planned);
+        assert_eq!(
+            store.get(&res_b).unwrap().state,
+            ResourceRuntimeState::Planned
+        );
     }
 
     // ── API failure ──
@@ -1043,8 +1032,7 @@ mod tests {
     fn test_barrier_requires_authoritative_gone() {
         // WATCH hint (non-authoritative) should NOT pass barrier
         let (store, _) = make_store();
-        let res =
-            make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+        let res = make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
 
         store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
 
@@ -1091,8 +1079,7 @@ mod tests {
         // Resource A is deleted, B (new UID) is observed. Late WATCH Deleted
         // for A should not affect B's state.
         let (store, _) = make_store();
-        let res =
-            make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+        let res = make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
 
         store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
 
@@ -1110,7 +1097,10 @@ mod tests {
         );
 
         let entry = store.get(&res).unwrap();
-        assert!(matches!(entry.state, ResourceRuntimeState::Recreated { .. }));
+        assert!(matches!(
+            entry.state,
+            ResourceRuntimeState::Recreated { .. }
+        ));
 
         // Old WATCH Deleted arrives (non-authoritative, uid-a era)
         store.update_from_observation(
@@ -1238,9 +1228,23 @@ mod tests {
 
         // Verify: action 0 gets uid-A, action 1 gets uid-B
         // (not reversed by completion order)
-        let a_uid = uids.iter().find(|(_, ai, _)| *ai == 0).map(|(_, _, u)| u.as_str());
-        let b_uid = uids.iter().find(|(_, ai, _)| *ai == 1).map(|(_, _, u)| u.as_str());
-        assert_eq!(a_uid, Some("uid-A"), "action 0 should get uid-A regardless of completion order");
-        assert_eq!(b_uid, Some("uid-B"), "action 1 should get uid-B regardless of completion order");
+        let a_uid = uids
+            .iter()
+            .find(|(_, ai, _)| *ai == 0)
+            .map(|(_, _, u)| u.as_str());
+        let b_uid = uids
+            .iter()
+            .find(|(_, ai, _)| *ai == 1)
+            .map(|(_, _, u)| u.as_str());
+        assert_eq!(
+            a_uid,
+            Some("uid-A"),
+            "action 0 should get uid-A regardless of completion order"
+        );
+        assert_eq!(
+            b_uid,
+            Some("uid-B"),
+            "action 1 should get uid-B regardless of completion order"
+        );
     }
 }
