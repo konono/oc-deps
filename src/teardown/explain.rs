@@ -102,9 +102,23 @@ pub fn explain_resource(
     }
 
     if !child_edges.is_empty() {
+        // Determine the actual action for this resource to avoid saying "deleted"
+        // for REVIEW/KEEP resources
+        let this_action = plan.phases.iter().flat_map(|p| &p.actions).find(|a| {
+            let r = action_resource(a);
+            r.kind.eq_ignore_ascii_case(query_kind) && r.name == query_name
+        });
+        let action_desc = match this_action {
+            Some(Action::Delete { .. }) => "must be deleted AFTER its children",
+            Some(Action::Review { .. }) => "is marked for REVIEW (has children via ownerReference)",
+            Some(Action::Keep { .. }) => "is kept (has children via ownerReference)",
+            Some(Action::ExpectGone { .. }) => "is expected to be removed after its children",
+            _ => "has children via ownerReference",
+        };
+
         output.push_str(&format!("\n  {}/{}\n", query_kind, query_name));
         output.push_str("    └─ is a parent of other resources (ownerReference)   \x1b[36m[HARD: OwnerReference]\x1b[0m\n");
-        output.push_str("       └─ must be deleted AFTER its children (Phase 1)\n");
+        output.push_str(&format!("       └─ {}\n", action_desc));
     }
 
     // 3. Spec references

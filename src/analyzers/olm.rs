@@ -261,15 +261,35 @@ pub async fn discover_operators(
         });
         if let Some(csv_name) = csv_name_from_status {
             let sub_ns = sub.metadata.namespace.as_deref().unwrap_or("unknown");
+            let sub_pkg = sub
+                .data
+                .get("spec")
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str());
 
-            // Verify the referenced CSV actually exists in the same namespace.
-            // Stale status (CSV renamed/removed) must not suppress label fallback.
-            let csv_exists_in_ns = csv_items.iter().any(|csv| {
-                csv.metadata.name.as_deref() == Some(csv_name)
-                    && csv.metadata.namespace.as_deref() == Some(sub_ns)
+            // Verify: CSV exists in same namespace AND package label is consistent.
+            // Stale/corrupt status pointing to another package's CSV must not link.
+            let csv_exists_and_consistent = csv_items.iter().any(|csv| {
+                let name_match = csv.metadata.name.as_deref() == Some(csv_name)
+                    && csv.metadata.namespace.as_deref() == Some(sub_ns);
+                if !name_match {
+                    return false;
+                }
+                // If we have a package name from the Sub, verify the CSV has a
+                // matching label. If no label info, accept the status link.
+                if let Some(pkg) = sub_pkg {
+                    let label_key = format!("operators.coreos.com/{}.{}", pkg, sub_ns);
+                    csv.metadata
+                        .labels
+                        .as_ref()
+                        .map(|l| l.contains_key(&label_key))
+                        .unwrap_or(true) // no labels → trust status
+                } else {
+                    true
+                }
             });
 
-            if csv_exists_in_ns {
+            if csv_exists_and_consistent {
                 if let Some(uid) = &sub.metadata.uid {
                     matched_sub_uids.insert(uid.clone());
                 }
@@ -413,11 +433,17 @@ pub async fn discover_operators(
         let deployments = extract_deployment_names(&csv.data);
         let service_accounts = extract_service_account_names(&csv.data);
 
-        // Check if there are unlinked Subscriptions in this namespace
-        let has_unlinked = subscription.is_none()
-            && sub_items.iter().any(|sub| {
-                sub.metadata.namespace.as_deref() == Some(&csv_ns)
-            });
+        // Check if there are unlinked Subscriptions in this namespace,
+        // or if multiple Subscriptions point to the same CSV (ambiguous linkage)
+        let multiple_subs_for_csv = sub_by_csv
+            .get(csv_name.as_str())
+            .is_some_and(|subs| subs.len() > 1);
+
+        let has_unlinked = multiple_subs_for_csv
+            || (subscription.is_none()
+                && sub_items.iter().any(|sub| {
+                    sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
+                }));
 
         operators.push(OperatorInstance {
             subscription: subscription.clone(),

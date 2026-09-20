@@ -276,7 +276,7 @@ pub async fn check_operator_generation(
                         }
 
                         // From annotations (olm.package in operatorframework.io/properties)
-                        if let Some(pkg) = csv_package_from_annotations(csv_obj) {
+                        for pkg in csv_packages_from_annotations(csv_obj) {
                             evidence_packages.insert(pkg);
                         }
 
@@ -348,8 +348,14 @@ fn csv_label_attributes_to_other_package(
 
 /// Extract package name from CSV annotations (olm.package in operatorframework.io/properties).
 /// Used for CSV copies that may lack operators.coreos.com/* labels but have annotation evidence.
-fn csv_package_from_annotations(csv: &DynamicObject) -> Option<String> {
-    let annotations = csv.metadata.annotations.as_ref()?;
+/// Extract ALL package names from olm.package annotations.
+/// Returns all unique package names found (not just the first).
+fn csv_packages_from_annotations(csv: &DynamicObject) -> Vec<String> {
+    let mut packages = Vec::new();
+    let annotations = match csv.metadata.annotations.as_ref() {
+        Some(a) => a,
+        None => return packages,
+    };
 
     if let Some(props_str) = annotations.get("operatorframework.io/properties") {
         // Real OLM format can be either:
@@ -370,7 +376,6 @@ fn csv_package_from_annotations(csv: &DynamicObject) -> Option<String> {
         for prop in &props {
             if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
                 if let Some(value) = prop.get("value") {
-                    // value may be a JSON string or an object with packageName
                     let pkg_value = if let Some(s) = value.as_str() {
                         serde_json::from_str::<serde_json::Value>(s).ok()
                     } else {
@@ -380,7 +385,9 @@ fn csv_package_from_annotations(csv: &DynamicObject) -> Option<String> {
                         if let Some(name) =
                             pkg_info.get("packageName").and_then(|n| n.as_str())
                         {
-                            return Some(name.to_string());
+                            if !packages.contains(&name.to_string()) {
+                                packages.push(name.to_string());
+                            }
                         }
                     }
                 }
@@ -388,7 +395,7 @@ fn csv_package_from_annotations(csv: &DynamicObject) -> Option<String> {
         }
     }
 
-    None
+    packages
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2067,8 +2074,8 @@ mod tests {
             r#"[{"type":"olm.package","value":"{\"packageName\":\"authorino-operator\",\"version\":\"1.0.2\"}"}]"#.to_string(),
         )]));
 
-        let pkg = csv_package_from_annotations(&csv);
-        assert_eq!(pkg.as_deref(), Some("authorino-operator"));
+        let pkgs = csv_packages_from_annotations(&csv);
+        assert_eq!(pkgs, vec!["authorino-operator"]);
     }
 
     #[test]
@@ -2079,11 +2086,8 @@ mod tests {
             r#"[{"type":"olm.package","value":"{\"packageName\":\"rhods-operator\",\"version\":\"3.5.0\"}"}]"#.to_string(),
         )]));
 
-        let pkg = csv_package_from_annotations(&csv);
-        assert_eq!(pkg.as_deref(), Some("rhods-operator"));
-        // Same package → csv_package_from_annotations returns our name
-        // Caller should NOT treat this as "attributed to other"
-        assert!(!pkg.unwrap().ne("rhods-operator")); // is_some_and(|p| p != our_pkg) → false
+        let pkgs = csv_packages_from_annotations(&csv);
+        assert_eq!(pkgs, vec!["rhods-operator"]);
     }
 
     #[test]
@@ -2095,16 +2099,34 @@ mod tests {
             r#"{"properties":[{"type":"olm.package","value":"{\"packageName\":\"authorino-operator\",\"version\":\"1.0.2\"}"}]}"#.to_string(),
         )]));
 
-        let pkg = csv_package_from_annotations(&csv);
-        assert_eq!(pkg.as_deref(), Some("authorino-operator"));
+        let pkgs = csv_packages_from_annotations(&csv);
+        assert_eq!(pkgs, vec!["authorino-operator"]);
+    }
+
+    #[test]
+    fn test_csv_copy_olm_package_annotation_multiple_packages() {
+        // CSV with two different olm.package entries → evidence_packages gets both
+        let mut csv = make_dynamic_object("conflict-csv.v1.0");
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[
+                {"type":"olm.package","value":"{\"packageName\":\"pkg-a\",\"version\":\"1.0\"}"},
+                {"type":"olm.package","value":"{\"packageName\":\"pkg-b\",\"version\":\"2.0\"}"}
+            ]"#.to_string(),
+        )]));
+
+        let pkgs = csv_packages_from_annotations(&csv);
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains(&"pkg-a".to_string()));
+        assert!(pkgs.contains(&"pkg-b".to_string()));
     }
 
     #[test]
     fn test_csv_copy_no_labels_or_annotations() {
         let csv = make_dynamic_object("mystery-csv.v1.0");
         // No labels, no annotations
-        let pkg = csv_package_from_annotations(&csv);
-        assert!(pkg.is_none());
+        let pkgs = csv_packages_from_annotations(&csv);
+        assert!(pkgs.is_empty());
         // No labels → csv_label_attributes_to_other_package returns false
         assert!(!csv_label_attributes_to_other_package(
             &std::collections::BTreeMap::new(),
