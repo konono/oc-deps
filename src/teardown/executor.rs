@@ -666,10 +666,35 @@ pub async fn execute_plan_with_store(
             if dry_run {
                 eprintln!("\n  \x1b[1;33mBARRIER\x1b[0m (skipped in dry-run)");
             } else {
+                // Checkpoint DELETE results before releasing permit for barrier wait
+                if let Some(j) = journal {
+                    let phase_count = result.phases_completed;
+                    let deleted_snap = result.deleted.clone();
+                    let already_snap = result.already_gone.clone();
+                    let failed_snap = result.failed.clone();
+                    let kept_snap: Vec<_> = result.kept.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
+                    let reviewed_snap: Vec<_> = result.reviewed.iter().map(crate::teardown::journal::PreservedRecord::from).collect();
+                    j.update(|journal| {
+                        journal.execution.phases_completed = phase_count;
+                        journal.execution.deleted = deleted_snap;
+                        journal.execution.already_gone = already_snap;
+                        journal.execution.failed = failed_snap;
+                        journal.execution.kept = kept_snap;
+                        journal.execution.reviewed = reviewed_snap;
+                    })
+                    .await
+                    .context("Failed to checkpoint DELETE results before barrier")?;
+                }
+
+                // Release phase permit before barrier wait — mutations are checkpointed,
+                // pause/drain can complete without waiting for watch timeout.
+                drop(_phase_permit);
+
                 eprintln!();
-                // Use WatchManager for barrier wait — state is tracked in
-                // RuntimeStateStore, CLI renders from the store's summary.
                 let barrier_start = Instant::now();
+
+                // Create cancel signal from gate for fast pause during watch
+                let cancel = gate.map(|g| g.cancel_signal());
 
                 let wait_result = {
                     // Spawn a background task to render progress from the store.
@@ -700,13 +725,14 @@ pub async fn execute_plan_with_store(
                     });
 
                     let r = watch_mgr
-                        .wait_for_gone(
+                        .wait_for_gone_cancellable(
                             client,
                             &phase_wait_targets,
                             kind_map,
                             gk_map,
                             Duration::from_secs(300),
                             Duration::from_secs(120),
+                            cancel.as_ref(),
                         )
                         .await;
 
@@ -731,6 +757,10 @@ pub async fn execute_plan_with_store(
                 match wait_result {
                     WatchWaitResult::AllGone => {
                         eprintln!("  \x1b[32m✅ Barrier passed\x1b[0m");
+                    }
+                    WatchWaitResult::Cancelled => {
+                        eprintln!("  \x1b[1;33m⏸ Barrier cancelled (pausing)\x1b[0m");
+                        break;
                     }
                     WatchWaitResult::Stalled {
                         remaining,
@@ -1276,6 +1306,19 @@ pub struct ResidualCleanupResult {
     pub post_audit: Option<crate::teardown::audit::ResidualAudit>,
 }
 
+/// Progress update from residual cleanup — for TUI rendering.
+#[derive(Clone, Debug)]
+pub enum CleanupProgress {
+    Validating { resource: ResourceId },
+    DeleteRequested { resource: ResourceId },
+    WaitingGone { resource: ResourceId },
+    Gone { resource: ResourceId },
+    Skipped { resource: ResourceId, reason: String },
+    Failed { resource: ResourceId, reason: String },
+}
+
+pub type ProgressSender = tokio::sync::mpsc::UnboundedSender<CleanupProgress>;
+
 /// Core residual cleanup — shared by TUI, --script, and interactive CLI.
 ///
 /// Safety contract enforced by this function:
@@ -1294,6 +1337,20 @@ pub async fn execute_residual_cleanup(
     gate: &MutationGate,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
+) -> Result<ResidualCleanupResult> {
+    execute_residual_cleanup_with_progress(
+        client, selected, journal_store, gate, kind_map, gk_map, None,
+    ).await
+}
+
+pub async fn execute_residual_cleanup_with_progress(
+    client: &Client,
+    selected: &[ResourceId],
+    journal_store: &JournalStore,
+    gate: &MutationGate,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    progress_tx: Option<&ProgressSender>,
 ) -> Result<ResidualCleanupResult> {
     use crate::teardown::audit;
     use crate::teardown::journal::{CleanupDecision, CleanupResult, RunState, ResidualStatus};
@@ -1387,6 +1444,9 @@ pub async fn execute_residual_cleanup(
 
     // Step 4: Per-resource DELETE with full safety checks
     for res in &valid_selected {
+        if let Some(tx) = progress_tx {
+            let _ = tx.send(CleanupProgress::Validating { resource: (*res).clone() });
+        }
         // Re-check generation per resource
         let cur_j = journal_store.read().await;
         let gen_per_res = audit::check_operator_generation(
@@ -1555,8 +1615,14 @@ pub async fn execute_residual_cleanup(
         let cleanup_result = match &del_result {
             Ok(msg) => {
                 if msg == "deleted" {
+                    if let Some(tx) = progress_tx {
+                        let _ = tx.send(CleanupProgress::DeleteRequested { resource: (*res).clone() });
+                    }
                     let mut gone_confirmed = false;
                     if let Some((api, _)) = resolve_api(client, res, kind_map, gk_map) {
+                        if let Some(tx) = progress_tx {
+                            let _ = tx.send(CleanupProgress::WaitingGone { resource: (*res).clone() });
+                        }
                         for _ in 0..30 {
                             tokio::time::sleep(Duration::from_secs(2)).await;
                             match api.get(&res.name).await {
@@ -1573,6 +1639,9 @@ pub async fn execute_residual_cleanup(
                         }
                     }
                     if gone_confirmed {
+                        if let Some(tx) = progress_tx {
+                            let _ = tx.send(CleanupProgress::Gone { resource: (*res).clone() });
+                        }
                         result.deleted.push((*res).clone());
                         CleanupResult::Gone
                     } else {
@@ -1586,6 +1655,12 @@ pub async fn execute_residual_cleanup(
                 }
             }
             Err(e) => {
+                if let Some(tx) = progress_tx {
+                    let _ = tx.send(CleanupProgress::Failed {
+                        resource: (*res).clone(),
+                        reason: e.to_string(),
+                    });
+                }
                 result.failed.push(((*res).clone(), e.to_string()));
                 CleanupResult::Failed(e.to_string())
             }

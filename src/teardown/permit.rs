@@ -19,6 +19,30 @@ pub struct MutationGate {
     open: AtomicBool,
     semaphore: Arc<Semaphore>,
     max_permits: u32,
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+}
+
+/// Cancel signal for non-mutation work (watch barriers) to stop quickly on pause.
+/// Uses tokio::sync::watch — stateful, no race between check and subscribe.
+#[derive(Clone)]
+pub struct CancelSignal {
+    rx: tokio::sync::watch::Receiver<bool>,
+}
+
+impl CancelSignal {
+    pub fn is_cancelled(&self) -> bool {
+        *self.rx.borrow()
+    }
+
+    pub async fn cancelled(&self) {
+        let mut rx = self.rx.clone();
+        // If already cancelled, return immediately
+        if *rx.borrow() {
+            return;
+        }
+        // Wait for state change — no race because watch is stateful
+        let _ = rx.changed().await;
+    }
 }
 
 /// RAII guard held through mutation + durable checkpoint.
@@ -28,10 +52,18 @@ pub struct MutationPermit {
 
 impl MutationGate {
     pub fn new(max_concurrent: u32) -> Self {
+        let (cancel_tx, _) = tokio::sync::watch::channel(false);
         Self {
             open: AtomicBool::new(true),
             semaphore: Arc::new(Semaphore::new(max_concurrent as usize)),
             max_permits: max_concurrent,
+            cancel_tx,
+        }
+    }
+
+    pub fn cancel_signal(&self) -> CancelSignal {
+        CancelSignal {
+            rx: self.cancel_tx.subscribe(),
         }
     }
 
@@ -71,8 +103,9 @@ impl MutationGate {
     /// - Every previously-admitted mutation has dropped its permit
     ///   (meaning its durable checkpoint completed or failed).
     pub async fn close_and_drain(&self) {
-        // 1. Reject new acquires
+        // 1. Reject new acquires + signal cancel to non-mutation work (watch barriers)
         self.open.store(false, Ordering::SeqCst);
+        self.cancel_tx.send_replace(true);
 
         // 2. Wait until every outstanding permit is returned.
         //    Acquiring all `max_permits` slots means nothing else holds one.
@@ -87,6 +120,7 @@ impl MutationGate {
     /// Re-open the gate (used on resume after Paused).
     pub fn reopen(&self) {
         self.open.store(true, Ordering::SeqCst);
+        self.cancel_tx.send_replace(false);
     }
 
     pub fn is_open(&self) -> bool {
@@ -212,5 +246,45 @@ mod tests {
             result.is_err(),
             "double-check should reject permit acquired after gate close"
         );
+    }
+
+    #[tokio::test]
+    async fn test_cancel_signal_close_before_subscribe() {
+        // Close gate BEFORE creating cancel signal — signal must see cancelled
+        let gate = MutationGate::new(4);
+        gate.close_and_drain().await;
+        let signal = gate.cancel_signal();
+        assert!(signal.is_cancelled(), "signal created after close must be cancelled");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_signal_subscribe_then_close() {
+        let gate = Arc::new(MutationGate::new(4));
+        let signal = gate.cancel_signal();
+        assert!(!signal.is_cancelled());
+
+        let gate2 = gate.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            gate2.close_and_drain().await;
+        });
+
+        // cancelled() should resolve quickly after close
+        tokio::time::timeout(Duration::from_millis(200), signal.cancelled())
+            .await
+            .expect("cancelled() must resolve within 200ms after close");
+        assert!(signal.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_signal_reopen_resets() {
+        let gate = MutationGate::new(4);
+        gate.close_and_drain().await;
+        let signal = gate.cancel_signal();
+        assert!(signal.is_cancelled());
+
+        gate.reopen();
+        let signal2 = gate.cancel_signal();
+        assert!(!signal2.is_cancelled(), "signal after reopen must not be cancelled");
     }
 }

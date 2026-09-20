@@ -30,6 +30,7 @@ pub struct WatchManager {
 
 pub enum WatchWaitResult {
     AllGone,
+    Cancelled,
     Stalled {
         remaining: Vec<ResourceId>,
         finalizer_details: Vec<(ResourceId, usize)>,
@@ -112,6 +113,21 @@ impl WatchManager {
         timeout: Duration,
         stall_timeout: Duration,
     ) -> WatchWaitResult {
+        self.wait_for_gone_cancellable(
+            client, resources, kind_map, gk_map, timeout, stall_timeout, None,
+        ).await
+    }
+
+    pub async fn wait_for_gone_cancellable(
+        &self,
+        client: &Client,
+        resources: &[ResourceId],
+        kind_map: &KindMap,
+        gk_map: &GroupKindMap,
+        timeout: Duration,
+        stall_timeout: Duration,
+        cancel: Option<&crate::teardown::permit::CancelSignal>,
+    ) -> WatchWaitResult {
         // Initial authoritative reconcile
         self.reconcile(client, resources, kind_map, gk_map).await;
 
@@ -128,6 +144,11 @@ impl WatchManager {
         const MAX_UNKNOWN_RETRIES: u32 = 3;
 
         let result = loop {
+            // Cancel check — stop watch promptly on pause
+            if cancel.is_some_and(|c| c.is_cancelled()) {
+                break WatchWaitResult::Cancelled;
+            }
+
             // Authoritative reconcile for resources needing verification
             let needs_verify = self.store.resources_needing_verification(resources);
             if !needs_verify.is_empty() {
@@ -190,7 +211,7 @@ impl WatchManager {
                 }
             }
 
-            // Wait for WATCH hint or polling interval
+            // Wait for WATCH hint, polling interval, or cancel
             let mut rx = self.store.subscribe();
             tokio::select! {
                 _ = rx.changed() => {
@@ -198,6 +219,15 @@ impl WatchManager {
                 }
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {
                     // Periodic safety reconcile
+                }
+                _ = async {
+                    if let Some(c) = cancel {
+                        c.cancelled().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    break WatchWaitResult::Cancelled;
                 }
             }
         };

@@ -255,6 +255,19 @@ pub fn draw_execution(
     f.render_widget(help, chunks[4]);
 }
 
+/// Per-resource cleanup state for rendering.
+#[derive(Clone, Debug, Default)]
+pub enum ResidualResourceState {
+    #[default]
+    Pending,
+    Validating,
+    DeleteRequested,
+    WaitingGone,
+    Gone,
+    Skipped(String),
+    Failed(String),
+}
+
 /// Draw the Residual Cleanup screen.
 pub fn draw_residual(
     f: &mut Frame,
@@ -262,6 +275,7 @@ pub fn draw_residual(
     selected: &[ResourceId],
     cursor: usize,
     status_msg: Option<&str>,
+    cleanup_states: Option<&std::collections::HashMap<ResourceId, ResidualResourceState>>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -284,7 +298,7 @@ pub fn draw_residual(
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
-    // Residual items
+    // Residual items — show cleanup state per resource when available
     let items: Vec<ListItem> = residuals
         .iter()
         .enumerate()
@@ -294,18 +308,57 @@ pub fn draw_residual(
                     && s.namespace == res.namespace && s.group == res.group
             });
             let prefix = if i == cursor { "▶ " } else { "  " };
-            let check = if is_selected { "[x]" } else { "[ ]" };
-            let style = if i == cursor {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(Color::Red)
-            } else {
-                Style::default()
+
+            let cleanup_state = cleanup_states
+                .and_then(|states| states.get(res));
+
+            let (state_marker, style) = match cleanup_state {
+                Some(ResidualResourceState::Validating) => (
+                    "⏳ VALIDATING",
+                    Style::default().fg(Color::Yellow),
+                ),
+                Some(ResidualResourceState::DeleteRequested) => (
+                    "◐ DELETE SENT",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
+                Some(ResidualResourceState::WaitingGone) => (
+                    "◑ WAITING GONE",
+                    Style::default().fg(Color::Yellow),
+                ),
+                Some(ResidualResourceState::Gone) => (
+                    "✓ GONE",
+                    Style::default().fg(Color::Green),
+                ),
+                Some(ResidualResourceState::Skipped(_)) => (
+                    "⚠ SKIPPED",
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Some(ResidualResourceState::Failed(_)) => (
+                    "✗ FAILED",
+                    Style::default().fg(Color::Red),
+                ),
+                _ => {
+                    let check = if is_selected { "[x]" } else { "[ ]" };
+                    let s = if i == cursor {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else if is_selected {
+                        Style::default().fg(Color::Red)
+                    } else {
+                        Style::default()
+                    };
+                    let ns = res.namespace.as_deref().unwrap_or("cluster");
+                    let line = format!(
+                        "{}{} {}/{} ({}) — {}",
+                        prefix, check, res.kind, res.name, ns, reason
+                    );
+                    return ListItem::new(Line::from(line)).style(s);
+                }
             };
+
             let ns = res.namespace.as_deref().unwrap_or("cluster");
             let line = format!(
-                "{}{} {}/{} ({}) — {}",
-                prefix, check, res.kind, res.name, ns, reason
+                "{}{} {}/{} ({})",
+                prefix, state_marker, res.kind, res.name, ns
             );
             ListItem::new(Line::from(line)).style(style)
         })

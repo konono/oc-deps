@@ -581,6 +581,8 @@ async fn run_residual_screen(
     let mut selected: Vec<ResourceId> = Vec::new();
     let mut status_msg: Option<String> = None;
     let mut current_residuals = residuals.to_vec();
+    let mut cleanup_states: std::collections::HashMap<ResourceId, renderer::ResidualResourceState> =
+        std::collections::HashMap::new();
 
     loop {
         terminal.draw(|f| {
@@ -590,6 +592,7 @@ async fn run_residual_screen(
                 &selected,
                 cursor,
                 status_msg.as_deref(),
+                if cleanup_states.is_empty() { None } else { Some(&cleanup_states) },
             );
         })?;
 
@@ -621,31 +624,79 @@ async fn run_residual_screen(
                         }
                     }
                     KeyCode::Char('d') if !selected.is_empty() => {
-                        // Leave TUI for delete operation
-                        disable_raw_mode().ok();
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+                        // Run cleanup in TUI with live rendering via progress channel
+                        let selected_for_cleanup = selected.clone();
+                        selected.clear();
+                        status_msg = Some("Deleting...".to_string());
 
-                        // Delegate to core cleanup function — enforces all safety invariants
-                        match executor::execute_residual_cleanup(
-                            client,
-                            &selected,
-                            journal_store.as_ref(),
-                            gate.as_ref(),
-                            kind_map,
-                            gk_map,
-                        ).await {
-                            Ok(cleanup_result) => {
-                                for res in &cleanup_result.deleted {
-                                    eprintln!("  ✓ {}/{}: Gone", res.kind, res.name);
+                        let (progress_tx, mut progress_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<executor::CleanupProgress>();
+
+                        let mut cleanup_fut = Box::pin(
+                            executor::execute_residual_cleanup_with_progress(
+                                client,
+                                &selected_for_cleanup,
+                                journal_store.as_ref(),
+                                gate.as_ref(),
+                                kind_map,
+                                gk_map,
+                                Some(&progress_tx),
+                            )
+                        );
+
+                        // Render loop during cleanup — show per-resource progress.
+                        // Draw errors must not drop cleanup_fut — use join! to drain.
+                        let cleanup_result = loop {
+                            if let Err(draw_err) = terminal.draw(|f| {
+                                renderer::draw_residual(
+                                    f,
+                                    &current_residuals,
+                                    &selected_for_cleanup,
+                                    cursor,
+                                    status_msg.as_deref(),
+                                    if cleanup_states.is_empty() { None } else { Some(&cleanup_states) },
+                                );
+                            }) {
+                                let (_, cleanup_r) = tokio::join!(
+                                    gate.close_and_drain(),
+                                    &mut cleanup_fut
+                                );
+                                let _ = cleanup_r;
+                                return Err(anyhow::anyhow!("TUI draw error during cleanup: {}", draw_err));
+                            }
+
+                            tokio::select! {
+                                result = &mut cleanup_fut => {
+                                    break result;
                                 }
-                                for (res, reason) in &cleanup_result.skipped {
-                                    eprintln!("  ⚠ {}/{}: skipped — {}", res.kind, res.name, reason);
+                                progress = progress_rx.recv() => {
+                                    if let Some(p) = progress {
+                                        let (key, state) = match p {
+                                            executor::CleanupProgress::Validating { resource } =>
+                                                (resource, renderer::ResidualResourceState::Validating),
+                                            executor::CleanupProgress::DeleteRequested { resource } =>
+                                                (resource, renderer::ResidualResourceState::DeleteRequested),
+                                            executor::CleanupProgress::WaitingGone { resource } =>
+                                                (resource, renderer::ResidualResourceState::WaitingGone),
+                                            executor::CleanupProgress::Gone { resource } =>
+                                                (resource, renderer::ResidualResourceState::Gone),
+                                            executor::CleanupProgress::Skipped { resource, reason } =>
+                                                (resource, renderer::ResidualResourceState::Skipped(reason)),
+                                            executor::CleanupProgress::Failed { resource, reason } =>
+                                                (resource, renderer::ResidualResourceState::Failed(reason)),
+                                        };
+                                        cleanup_states.insert(key, state);
+                                    }
                                 }
-                                for (res, reason) in &cleanup_result.failed {
-                                    eprintln!("  ✗ {}/{}: {}", res.kind, res.name, reason);
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                                    // Tick — redraw
                                 }
-                                if let Some(ref post_audit) = cleanup_result.post_audit {
-                                    // Refresh residual list from post-cleanup audit
+                            }
+                        };
+
+                        match cleanup_result {
+                            Ok(result) => {
+                                if let Some(ref post_audit) = result.post_audit {
                                     current_residuals = post_audit.likely_operator_residual.iter()
                                         .map(|r| (r.resource.clone(), format!("{:?} confidence", r.confidence)))
                                         .chain(post_audit.unattributed.iter()
@@ -653,30 +704,23 @@ async fn run_residual_screen(
                                         .collect();
                                     cursor = cursor.min(current_residuals.len().saturating_sub(1));
                                 }
+                                // Clear stale cleanup states — post-audit may have new UIDs
+                                cleanup_states.clear();
                                 status_msg = Some(format!(
                                     "{} deleted, {} skipped, {} failed",
-                                    cleanup_result.deleted.len(),
-                                    cleanup_result.skipped.len(),
-                                    cleanup_result.failed.len(),
+                                    result.deleted.len(),
+                                    result.skipped.len(),
+                                    result.failed.len(),
                                 ));
                             }
                             Err(e) => {
-                                // Core cleanup error may include post-mutation journal failure.
-                                // Close gate to prevent further mutations, exit TUI.
                                 gate.close_and_drain().await;
-                                enable_raw_mode().ok();
-                                execute!(terminal.backend_mut(), EnterAlternateScreen).ok();
                                 return Err(e.context(
                                     "Residual cleanup failed — gate closed, no further mutations allowed. \
                                      Use 'teardown journal' to inspect state before retry."
                                 ));
                             }
                         }
-                        selected.clear();
-
-                        // Re-enter TUI
-                        enable_raw_mode().ok();
-                        execute!(terminal.backend_mut(), EnterAlternateScreen).ok();
                     }
                     _ => {}
                 }
