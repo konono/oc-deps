@@ -24,8 +24,8 @@ pub fn draw_plan_review(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // title
-            Constraint::Min(10),   // plan actions
-            Constraint::Length(5), // review items
+            Constraint::Length(9), // plan actions (phases summary)
+            Constraint::Min(10),   // review items (scrollable, takes remaining space)
             Constraint::Length(3), // help
         ])
         .split(f.area());
@@ -102,12 +102,16 @@ pub fn draw_plan_review(
         );
         review_list_items.push(ListItem::new(Line::from(line)).style(style));
     }
-    let review_list = List::new(review_list_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" REVIEW Items "),
-    );
-    f.render_widget(review_list, chunks[2]);
+    let review_list = List::new(review_list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" REVIEW Items ({}) ", review_items.len())),
+        )
+        .highlight_style(Style::default());
+    let mut list_state = ratatui::widgets::ListState::default();
+    list_state.select(Some(selected_index));
+    f.render_stateful_widget(review_list, chunks[2], &mut list_state);
 
     // Help
     let help = Paragraph::new(Line::from(vec![
