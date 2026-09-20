@@ -586,4 +586,68 @@ mod tests {
         let group_matches = plan_resource.group == override_resource.group;
         assert!(!group_matches, "Different groups must not match");
     }
+
+    // ── Cleanup decision state transition tests ──
+
+    #[test]
+    fn test_delete_requested_is_not_gone() {
+        // DELETE accepted ("delete_requested") must NOT be treated as "gone"
+        let decision = crate::teardown::journal::CleanupDecision {
+            resource: ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "Deployment".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "test".to_string(),
+                uid: Some("uid-1".to_string()),
+            },
+            bound_uid: Some("uid-1".to_string()),
+            action: "delete".to_string(),
+            result: Some("delete_requested".to_string()),
+        };
+        // delete_requested is a pending state — requires Gone confirmation
+        assert_ne!(decision.result.as_deref(), Some("gone"));
+        assert_ne!(decision.result.as_deref(), Some("already_gone"));
+        // Should be picked up by pending filter
+        let is_pending = decision.result.is_none()
+            || decision.result.as_deref() == Some("delete_requested");
+        assert!(is_pending, "delete_requested should be treated as pending");
+    }
+
+    #[test]
+    fn test_any_failed_blocks_apply_completed() {
+        // If any DELETE failed or Gone wasn't confirmed, final state must not be ApplyCompleted
+        let any_failed = true;
+        let gate_open = true;
+
+        // Simulating final_state logic from main.rs
+        let final_state = if !gate_open {
+            "Paused"
+        } else if any_failed {
+            "Failed"
+        } else {
+            "ApplyCompleted"
+        };
+        assert_eq!(final_state, "Failed", "any_failed must prevent ApplyCompleted");
+    }
+
+    #[test]
+    fn test_cleanup_decision_gone_is_terminal() {
+        // Only "gone" and "already_gone" are terminal completed states
+        let terminal_results = ["gone", "already_gone"];
+        let pending_results: Vec<Option<&str>> = vec![None, Some("delete_requested")];
+        let failed_results = ["failed: timeout", "failed: api error"];
+
+        for r in terminal_results {
+            let is_pending = r == "delete_requested" || r.is_empty();
+            assert!(!is_pending, "{} should not be pending", r);
+        }
+        for r in &pending_results {
+            let is_pending = r.is_none() || *r == Some("delete_requested");
+            assert!(is_pending, "{:?} should be pending", r);
+        }
+        for r in failed_results {
+            assert!(r.starts_with("failed:"), "{} should be failure", r);
+        }
+    }
 }

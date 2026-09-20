@@ -1470,7 +1470,10 @@ async fn main() -> Result<()> {
                                 // Branch based on state: InteractiveCleanup vs main execution
                                 // Do NOT write Applying before the branch — each path manages its own state.
                                 let has_pending_cleanup = !j.cleanup_decisions.is_empty()
-                                    && j.cleanup_decisions.iter().any(|d| d.result.is_none());
+                                    && j.cleanup_decisions.iter().any(|d| {
+                                        d.result.is_none()
+                                            || d.result.as_deref() == Some("delete_requested")
+                                    });
 
                                 let should_resume_cleanup = j.state == RunState::InteractiveCleanup
                                     || ((j.state == RunState::Applying || j.state == RunState::Paused) && has_pending_cleanup);
@@ -1482,16 +1485,83 @@ async fn main() -> Result<()> {
                                     }
                                     let pending: Vec<crate::teardown::journal::CleanupDecision> =
                                         j.cleanup_decisions.iter()
-                                            .filter(|d| d.result.is_none())
+                                            .filter(|d| {
+                                                d.result.is_none()
+                                                    || d.result.as_deref() == Some("delete_requested")
+                                            })
                                             .cloned()
                                             .collect();
 
+                                    let mut any_failed = false;
                                     if pending.is_empty() {
                                         eprintln!("No pending cleanup decisions to resume.");
                                     } else {
                                         eprintln!("Resuming {} pending cleanup decision(s)...", pending.len());
-                                        let mut any_failed = false;
                                         for decision in &pending {
+                                            if !gate.is_open() {
+                                                eprintln!("⏸ Gate closed — stopping cleanup resume");
+                                                break;
+                                            }
+
+                                            // Handle delete_requested: DELETE was sent but Gone
+                                            // was not confirmed. Reconcile via live GET — do NOT
+                                            // re-send DELETE (authority already used).
+                                            if decision.result.as_deref() == Some("delete_requested") {
+                                                let (api, _) = crate::kube::resource::resolve_api(
+                                                    &client, &decision.resource, &kind_map, &gk_map,
+                                                ).ok_or_else(|| anyhow::anyhow!(
+                                                    "Cannot resolve API for {}/{}", decision.resource.kind, decision.resource.name
+                                                ))?;
+                                                match api.get(&decision.resource.name).await {
+                                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                        let res_up = decision.resource.clone();
+                                                        store.update(|j| {
+                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                .find(|d| d.resource == res_up && d.result.as_deref() == Some("delete_requested"))
+                                                            { d.result = Some("gone".to_string()); }
+                                                        }).await?;
+                                                        eprintln!("  {}/{}: gone (confirmed on resume)", decision.resource.kind, decision.resource.name);
+                                                    }
+                                                    Ok(obj) => {
+                                                        // Still exists — check if deleting
+                                                        if obj.metadata.deletion_timestamp.is_some() {
+                                                            // Wait for Gone
+                                                            let mut gone = false;
+                                                            for _ in 0..30 {
+                                                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                                match api.get(&decision.resource.name).await {
+                                                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => { gone = true; break; }
+                                                                    Ok(_) => continue,
+                                                                    Err(_) => break,
+                                                                }
+                                                            }
+                                                            if gone {
+                                                                let res_up = decision.resource.clone();
+                                                                store.update(|j| {
+                                                                    if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                        .find(|d| d.resource == res_up && d.result.as_deref() == Some("delete_requested"))
+                                                                    { d.result = Some("gone".to_string()); }
+                                                                }).await?;
+                                                                eprintln!("  {}/{}: gone (waited on resume)", decision.resource.kind, decision.resource.name);
+                                                            } else {
+                                                                eprintln!("  ⚠ {}/{}: still not Gone after wait", decision.resource.kind, decision.resource.name);
+                                                                any_failed = true;
+                                                            }
+                                                        } else {
+                                                            // No deletionTimestamp — DELETE may not have reached API
+                                                            eprintln!("  ⚠ {}/{}: exists without deletionTimestamp — DELETE may have failed", decision.resource.kind, decision.resource.name);
+                                                            any_failed = true;
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("  ⚠ {}/{}: cannot verify: {}", decision.resource.kind, decision.resource.name, e);
+                                                        any_failed = true;
+                                                    }
+                                                }
+                                                continue;
+                                            }
+
+                                            // Below: result.is_none() — fresh DELETE needed
                                             if !gate.is_open() {
                                                 eprintln!("⏸ Gate closed — stopping cleanup resume");
                                                 break;
@@ -1584,21 +1654,25 @@ async fn main() -> Result<()> {
                                             let del = crate::teardown::executor::delete_resource_pub(
                                                 &client, &decision.resource, &kind_map, &gk_map, None,
                                             ).await;
-                                            let del_ok = del.as_ref().is_ok_and(|m| m == "deleted" || m == "already_gone");
-                                            let result_str = match &del {
-                                                Ok(msg) => msg.clone(),
+
+                                            // Record initial result: "delete_requested" (NOT "deleted")
+                                            // DELETE accepted != Gone. Gone is confirmed separately.
+                                            let initial_result = match &del {
+                                                Ok(msg) if msg == "deleted" => "delete_requested".to_string(),
+                                                Ok(msg) => msg.clone(), // "already_gone"
                                                 Err(e) => { any_failed = true; format!("failed: {}", e) },
                                             };
                                             let res_up = decision.resource.clone();
+                                            let initial_clone = initial_result.clone();
                                             store.update(|j| {
                                                 if let Some(d) = j.cleanup_decisions.iter_mut().rev()
                                                     .find(|d| d.resource == res_up && d.result.is_none())
-                                                { d.result = Some(result_str.clone()); }
+                                                { d.result = Some(initial_clone); }
                                             }).await.context("Failed to checkpoint cleanup result")?;
                                             drop(_permit);
 
-                                            // 5. Wait for Gone
-                                            if del_ok && result_str == "deleted" {
+                                            // 5. Wait for Gone (only if DELETE was accepted)
+                                            if initial_result == "delete_requested" {
                                                 let mut gone = false;
                                                 for _ in 0..30 {
                                                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1608,12 +1682,22 @@ async fn main() -> Result<()> {
                                                         Err(_) => { any_failed = true; break; }
                                                     }
                                                 }
-                                                if !gone {
-                                                    eprintln!("  ⚠ {}/{}: Gone not confirmed within timeout", decision.resource.kind, decision.resource.name);
+                                                if gone {
+                                                    // Update result to "gone" (confirmed)
+                                                    let res_up2 = decision.resource.clone();
+                                                    store.update(|j| {
+                                                        if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                            .find(|d| d.resource == res_up2 && d.result.as_deref() == Some("delete_requested"))
+                                                        { d.result = Some("gone".to_string()); }
+                                                    }).await?;
+                                                    eprintln!("  {}/{}: gone (confirmed)", decision.resource.kind, decision.resource.name);
+                                                } else {
+                                                    eprintln!("  ⚠ {}/{}: DELETE accepted but Gone not confirmed", decision.resource.kind, decision.resource.name);
                                                     any_failed = true;
                                                 }
+                                            } else {
+                                                eprintln!("  {}/{}: {}", decision.resource.kind, decision.resource.name, initial_result);
                                             }
-                                            eprintln!("  {}/{}: {}", decision.resource.kind, decision.resource.name, result_str);
                                         }
                                     }
 
@@ -1624,6 +1708,8 @@ async fn main() -> Result<()> {
                                     ).await;
                                     let final_state = if !gate.is_open() {
                                         RunState::Paused
+                                    } else if any_failed {
+                                        RunState::Failed
                                     } else if matches!(gen_state, OperatorGenerationState::Absent) {
                                         match audit::run_residual_audit(&client, &j_cur).await {
                                             Ok(re_audit) => {
