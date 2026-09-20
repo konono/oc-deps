@@ -2163,7 +2163,89 @@ mod tests {
         assert_eq!(label, "marked for review");
     }
 
-    // ── olm.rs linkage edge cases (tested via annotation/label helpers) ──
+    // ── csv_package_evidence_is_exclusive tests (olm.rs safety predicate) ──
+
+    #[test]
+    fn test_evidence_exclusive_label_only_target() {
+        let mut csv = make_dynamic_object("csv.v1");
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("operators.coreos.com/pkg-a.ns".to_string(), String::new());
+        csv.metadata.labels = Some(labels);
+        csv.metadata.namespace = Some("ns".to_string());
+        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+    }
+
+    #[test]
+    fn test_evidence_exclusive_label_other_rejects() {
+        let mut csv = make_dynamic_object("csv.v1");
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("operators.coreos.com/pkg-b.ns".to_string(), String::new());
+        csv.metadata.labels = Some(labels);
+        csv.metadata.namespace = Some("ns".to_string());
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+    }
+
+    #[test]
+    fn test_evidence_exclusive_conflicting_labels_rejects() {
+        let mut csv = make_dynamic_object("csv.v1");
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("operators.coreos.com/pkg-a.ns".to_string(), String::new());
+        labels.insert("operators.coreos.com/pkg-b.ns".to_string(), String::new());
+        csv.metadata.labels = Some(labels);
+        csv.metadata.namespace = Some("ns".to_string());
+        // Two packages → not exclusive for either
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+    }
+
+    #[test]
+    fn test_evidence_exclusive_annotation_contradicts_label() {
+        let mut csv = make_dynamic_object("csv.v1");
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("operators.coreos.com/pkg-a.ns".to_string(), String::new());
+        csv.metadata.labels = Some(labels);
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"pkg-b\",\"version\":\"1.0\"}"}]"#
+                .to_string(),
+        )]));
+        csv.metadata.namespace = Some("ns".to_string());
+        // label=pkg-a, annotation=pkg-b → conflicting → not exclusive
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "pkg-a", "ns"));
+    }
+
+    #[test]
+    fn test_evidence_exclusive_no_labels_annotation_other_rejects() {
+        let mut csv = make_dynamic_object("csv.v1");
+        csv.metadata.labels = None;
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"other-pkg\",\"version\":\"1.0\"}"}]"#
+                .to_string(),
+        )]));
+        csv.metadata.namespace = Some("ns".to_string());
+        assert!(!crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "my-pkg", "ns"));
+    }
+
+    #[test]
+    fn test_evidence_exclusive_no_evidence_trusts_status() {
+        let csv = make_dynamic_object("csv.v1");
+        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "any", "ns"));
+    }
+
+    #[test]
+    fn test_evidence_exclusive_annotation_confirms_target() {
+        let mut csv = make_dynamic_object("csv.v1");
+        csv.metadata.labels = None;
+        csv.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"my-pkg\",\"version\":\"1.0\"}"}]"#
+                .to_string(),
+        )]));
+        csv.metadata.namespace = Some("ns".to_string());
+        assert!(crate::analyzers::olm::csv_package_evidence_is_exclusive(&csv, "my-pkg", "ns"));
+    }
+
+    // ── olm.rs linkage edge cases ──
 
     #[test]
     fn test_annotation_contradicts_label_different_package() {

@@ -197,6 +197,44 @@ fn extract_service_account_names(csv_data: &serde_json::Value) -> Vec<String> {
     sa_names
 }
 
+/// Check if ALL package evidence on a CSV exclusively confirms a single package.
+/// Returns true only when evidence is absent (trust status) OR unanimously
+/// points to the expected package. Any contradictory evidence → false.
+pub fn csv_package_evidence_is_exclusive(
+    csv: &DynamicObject,
+    expected_pkg: &str,
+    csv_ns: &str,
+) -> bool {
+    let mut evidence_packages: HashSet<String> = HashSet::new();
+
+    // Collect from labels: operators.coreos.com/<pkg>.<ns>
+    if let Some(labels) = &csv.metadata.labels {
+        let suffix = format!(".{}", csv_ns);
+        for key in labels.keys() {
+            if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
+                if let Some(pkg) = rest.strip_suffix(&suffix) {
+                    if !pkg.is_empty() {
+                        evidence_packages.insert(pkg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect from annotations
+    for pkg in extract_annotation_packages(csv) {
+        evidence_packages.insert(pkg);
+    }
+
+    if evidence_packages.is_empty() {
+        // No evidence at all → trust status link
+        return true;
+    }
+
+    // Evidence must exclusively point to the expected package
+    evidence_packages.len() == 1 && evidence_packages.contains(expected_pkg)
+}
+
 fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
     let mut packages = Vec::new();
     let annotations = match csv.metadata.annotations.as_ref() {
@@ -307,8 +345,8 @@ pub async fn discover_operators(
                 .and_then(|s| s.get("name"))
                 .and_then(|n| n.as_str());
 
-            // Verify: CSV exists in same namespace AND package evidence is consistent.
-            // Check labels AND annotations for contradictory package attribution.
+            // Verify: CSV exists in same namespace AND package evidence is
+            // exclusively consistent with the Subscription's package.
             let csv_exists_and_consistent = csv_items.iter().any(|csv| {
                 let name_match = csv.metadata.name.as_deref() == Some(csv_name)
                     && csv.metadata.namespace.as_deref() == Some(sub_ns);
@@ -316,31 +354,7 @@ pub async fn discover_operators(
                     return false;
                 }
                 if let Some(pkg) = sub_pkg {
-                    let label_key = format!("operators.coreos.com/{}.{}", pkg, sub_ns);
-
-                    // Check label evidence
-                    let label_match = csv.metadata.labels.as_ref()
-                        .map(|l| l.contains_key(&label_key));
-
-                    // Check annotation evidence (olm.package)
-                    let annotation_pkgs = extract_annotation_packages(csv);
-                    let annotation_contradicts = !annotation_pkgs.is_empty()
-                        && !annotation_pkgs.iter().any(|p| p == pkg);
-
-                    if annotation_contradicts {
-                        // Annotation says different package → reject status link
-                        return false;
-                    }
-
-                    match label_match {
-                        Some(true) => true,   // label confirms
-                        Some(false) => false,  // label contradicts
-                        None => {
-                            // No labels. If annotations confirm, accept.
-                            // If no evidence at all, accept status link.
-                            true
-                        }
-                    }
+                    csv_package_evidence_is_exclusive(csv, pkg, sub_ns)
                 } else {
                     true
                 }
@@ -490,13 +504,30 @@ pub async fn discover_operators(
         let deployments = extract_deployment_names(&csv.data);
         let service_accounts = extract_service_account_names(&csv.data);
 
-        // Check if there are unlinked Subscriptions in this namespace,
-        // or if multiple Subscriptions point to the same CSV (ambiguous linkage)
+        // Check for ambiguous Subscription linkage:
+        // 1. Multiple Subs linked to this CSV via sub_by_csv
+        // 2. No Sub linked but Subs exist in namespace
+        // 3. Sub linked but same-package Subs exist that aren't accounted for
         let multiple_subs_for_csv = sub_by_csv
             .get(csv_name.as_str())
             .is_some_and(|subs| subs.len() > 1);
 
+        let same_pkg_unaccounted_subs = if let Some(pkg) = pkg_name {
+            // Count Subs in this namespace with same spec.name
+            let same_pkg_count = sub_items.iter().filter(|sub| {
+                sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
+                    && sub.data.get("spec")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str()) == Some(pkg.as_str())
+            }).count();
+            // If more than 1 Sub has the same package name, we can't prove all are in Phase 0
+            same_pkg_count > 1
+        } else {
+            false
+        };
+
         let has_unlinked = multiple_subs_for_csv
+            || same_pkg_unaccounted_subs
             || (subscription.is_none()
                 && sub_items.iter().any(|sub| {
                     sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
