@@ -257,23 +257,45 @@ async fn main() -> Result<()> {
                                 }
                                 print_execution_result(&result);
 
-                                // Run post-apply residual audit
+                                // Run post-apply residual audit (only if apply succeeded and operator is Absent)
                                 if let Some(store) = &journal_store {
                                     if result.failed.is_empty() && result.barrier_timeout.is_none() {
-                                        eprintln!("\n🔍 Running post-apply residual audit...");
+                                        use crate::teardown::audit::{self, OperatorGenerationState};
                                         let j = store.read().await;
-                                        match crate::teardown::audit::run_residual_audit(&client, &j).await {
-                                            Ok(audit_result) => {
-                                                let status = crate::teardown::audit::residual_status_from_audit(&audit_result);
-                                                crate::teardown::audit::print_residual_audit(&audit_result, &j);
-                                                let _ = store.update(|j| {
-                                                    j.residual_status = status;
-                                                    j.audit_revision += 1;
-                                                    j.last_residual_audit = Some(audit_result);
-                                                }).await;
+                                        let gen_state = audit::check_operator_generation(&client, &j.operator).await;
+                                        match gen_state {
+                                            OperatorGenerationState::Absent => {
+                                                eprintln!("\n🔍 Running post-apply residual audit...");
+                                                match audit::run_residual_audit(&client, &j).await {
+                                                    Ok(audit_result) => {
+                                                        let status = audit::residual_status_from_audit(&audit_result);
+                                                        audit::print_residual_audit(&audit_result, &j);
+                                                        // Re-verify generation before saving
+                                                        let gen_recheck = audit::check_operator_generation(&client, &j.operator).await;
+                                                        if matches!(gen_recheck, OperatorGenerationState::Absent) {
+                                                            match store.update(|j| {
+                                                                j.residual_status = status;
+                                                                j.audit_revision += 1;
+                                                                j.last_residual_audit = Some(audit_result);
+                                                            }).await {
+                                                                Ok(()) => {}
+                                                                Err(e) => {
+                                                                    eprintln!("⚠ Failed to persist audit results: {}", e);
+                                                                    eprintln!("  Audit results were displayed but are NOT durable.");
+                                                                    eprintln!("  Do not use this audit for cleanup authority.");
+                                                                }
+                                                            }
+                                                        } else {
+                                                            eprintln!("⚠ Operator generation changed during audit; discarding results");
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("⚠ Post-apply residual audit failed: {}", e);
+                                                    }
+                                                }
                                             }
-                                            Err(e) => {
-                                                eprintln!("⚠ Post-apply residual audit failed: {}", e);
+                                            _ => {
+                                                eprintln!("\nSkipping post-apply residual audit: operator generation not absent");
                                             }
                                         }
                                     }
@@ -290,9 +312,11 @@ async fn main() -> Result<()> {
                             Err(e) => {
                                 // Best-effort: record Failed state in journal, then propagate error
                                 if let Some(store) = &journal_store {
-                                    let _ = store.update(|j| {
+                                    if let Err(je) = store.update(|j| {
                                         j.state = RunState::Failed;
-                                    }).await;
+                                    }).await {
+                                        eprintln!("⚠ Additionally, failed to persist Failed state to journal: {}", je);
+                                    }
                                 }
                                 return Err(e);
                             }
@@ -448,7 +472,7 @@ async fn main() -> Result<()> {
                             Some(j) => {
                                 use crate::teardown::audit::{
                                     self, OperatorGenerationState,
-                                    print_residual_audit, residual_status_from_audit,
+                                    print_residual_audit,
                                 };
 
                                 print_run_journal(&j);
@@ -465,17 +489,11 @@ async fn main() -> Result<()> {
                                             eprintln!("\n🔍 Running live residual audit...");
                                             match audit::run_residual_audit(&client, &j).await {
                                                 Ok(result) => {
-                                                    let status = residual_status_from_audit(&result);
                                                     print_residual_audit(&result, &j);
-
-                                                    // Best-effort: update journal with audit results
-                                                    let path = journal::run_path(&cluster_id, &j.run_id)?;
-                                                    if let Ok(mut updated) = journal::load_journal(&path) {
-                                                        updated.residual_status = status;
-                                                        updated.audit_revision += 1;
-                                                        updated.last_residual_audit = Some(result);
-                                                        let _ = journal::atomic_write_json_pub(&path, &updated);
-                                                    }
+                                                    // teardown journal is read-only — audit results are
+                                                    // displayed but NOT persisted to the journal file.
+                                                    // Cross-process journal writes require PR3's full
+                                                    // exclusive lock design.
                                                 }
                                                 Err(e) => {
                                                     eprintln!("\n⚠ Residual audit failed: {}", e);

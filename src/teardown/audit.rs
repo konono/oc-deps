@@ -160,6 +160,15 @@ pub struct ResidualAudit {
 pub struct ResidualItem {
     pub resource: ResourceId,
     pub planned_action: String,
+    pub live_uid: Option<String>,
+    pub recreation: RecreationState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum RecreationState {
+    SameResource,
+    Recreated,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -278,11 +287,14 @@ pub async fn run_residual_audit(
                 Action::Delete { resource, .. } => {
                     audit.coverage.requested_probes += 1;
                     match probe_resource(client, resource).await {
-                        ProbeResult::Present => {
+                        ProbeResult::Present { uid } => {
                             audit.coverage.succeeded_probes += 1;
+                            let recreation = check_recreation(resource, &uid);
                             audit.planned_delete_still_present.push(ResidualItem {
                                 resource: resource.clone(),
                                 planned_action: "DELETE".to_string(),
+                                live_uid: uid,
+                                recreation,
                             });
                         }
                         ProbeResult::Gone => {
@@ -303,11 +315,14 @@ pub async fn run_residual_audit(
                 Action::ExpectGone { resource, .. } => {
                     audit.coverage.requested_probes += 1;
                     match probe_resource(client, resource).await {
-                        ProbeResult::Present => {
+                        ProbeResult::Present { uid } => {
                             audit.coverage.succeeded_probes += 1;
+                            let recreation = check_recreation(resource, &uid);
                             audit.planned_expect_still_present.push(ResidualItem {
                                 resource: resource.clone(),
                                 planned_action: "EXPECT-GONE".to_string(),
+                                live_uid: uid,
+                                recreation,
                             });
                         }
                         ProbeResult::Gone => {
@@ -347,84 +362,128 @@ pub async fn run_residual_audit(
     }
 
     // Phase B+C: Scan footprint namespaces for native workloads + OLM resources
-    let all_targets: Vec<&ScanTarget> = NATIVE_WORKLOAD_TARGETS
+    // Required APIs: failure = AuditIncomplete
+    let required_targets: Vec<&ScanTarget> = NATIVE_WORKLOAD_TARGETS
         .iter()
         .chain(OLM_TARGETS.iter())
+        .collect();
+    // All targets (including OpenShift Route/ImageStream) are treated as required.
+    // LIST 404/403/timeout → AuditIncomplete. Non-OpenShift clusters will show
+    // incomplete for Route/ImageStream; accurate API availability detection is
+    // deferred to a future PR with proper discovery integration.
+    let all_targets: Vec<&ScanTarget> = required_targets
+        .into_iter()
         .chain(OPENSHIFT_TARGETS.iter())
         .collect();
 
     for ns in &ctx.footprint_namespaces {
         for target in &all_targets {
-            audit.coverage.requested_probes += 1;
-
-            let gvk = GroupVersion::gv(target.group, target.version)
-                .with_kind(target.kind);
-            let ar = ApiResource::from_gvk_with_plural(&gvk, target.plural);
-            let api: Api<DynamicObject> =
-                Api::namespaced_with(client.clone(), ns, &ar);
-
-            match api.list(&ListParams::default()).await {
-                Ok(list) => {
-                    audit.coverage.succeeded_probes += 1;
-
-                    for obj in list.items {
-                        let name = match &obj.metadata.name {
-                            Some(n) => n.clone(),
-                            None => continue,
-                        };
-
-                        // Skip resources already in the plan
-                        let key = (
-                            target.kind.to_string(),
-                            Some(ns.clone()),
-                            name.clone(),
-                        );
-                        if plan_resources.contains(&key) {
-                            continue;
-                        }
-
-                        let rid = ResourceId {
-                            group: target.group.to_string(),
-                            version: target.version.to_string(),
-                            kind: target.kind.to_string(),
-                            namespace: Some(ns.clone()),
-                            name,
-                            uid: obj.metadata.uid.clone(),
-                        };
-
-                        let evidence = classify_evidence(&obj, ctx, ns);
-                        let confidence = compute_confidence(&evidence);
-
-                        let residual = AttributedResidual {
-                            resource: rid,
-                            evidence,
-                            confidence: confidence.clone(),
-                        };
-
-                        if confidence == ResidualConfidence::None {
-                            audit.unattributed.push(residual);
-                        } else {
-                            audit.likely_operator_residual.push(residual);
-                        }
-                    }
-                }
-                Err(kube::Error::Api(ref resp)) if resp.code == 404 => {
-                    // API not available on this cluster (e.g. Route on non-OpenShift)
-                    audit.coverage.succeeded_probes += 1;
-                }
-                Err(e) => {
-                    audit.scan_errors.push(AuditScanError {
-                        resource_type: target.kind.to_string(),
-                        namespace: ns.clone(),
-                        error: e.to_string(),
-                    });
-                }
-            }
+            scan_namespace_for_target(
+                client, target.group, target.version, target.kind, target.plural,
+                ns, ctx, &plan_resources, &mut audit,
+            ).await;
         }
+    }
+
+    // Known CR API scan requires pre-execution GVR/scope metadata not yet captured at plan time.
+    // Only mark incomplete if the operator actually owns CRDs that we can't scan.
+    if !journal.operator.owned_crds.is_empty() {
+        audit.scan_errors.push(AuditScanError {
+            resource_type: "(known CR APIs)".to_string(),
+            namespace: "(all)".to_string(),
+            error: format!(
+                "Operator owns {} CRD(s) but GVR/scope metadata is not yet captured at plan time. \
+                 Residual CRs beyond plan resources are not covered.",
+                journal.operator.owned_crds.len()
+            ),
+        });
     }
 
     Ok(audit)
 }
+
+/// Scan a single GVR in a namespace for residual resources.
+/// All LIST failures (404/403/timeout) are scan errors → AuditIncomplete.
+async fn scan_namespace_for_target(
+    client: &Client,
+    group: &str,
+    version: &str,
+    kind: &str,
+    plural: &str,
+    namespace: &str,
+    ctx: &AuditContext,
+    plan_resources: &HashSet<(String, Option<String>, String)>,
+    audit: &mut ResidualAudit,
+) {
+    audit.coverage.requested_probes += 1;
+
+    let gvk = GroupVersion::gv(group, version).with_kind(kind);
+    let ar = ApiResource::from_gvk_with_plural(&gvk, plural);
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+
+    match api.list(&ListParams::default()).await {
+        Ok(list) => {
+            audit.coverage.succeeded_probes += 1;
+            classify_list_results(list.items, kind, group, version, namespace, ctx, plan_resources, audit);
+        }
+        Err(e) => {
+            audit.scan_errors.push(AuditScanError {
+                resource_type: kind.to_string(),
+                namespace: namespace.to_string(),
+                error: e.to_string(),
+            });
+        }
+    }
+}
+
+fn classify_list_results(
+    items: Vec<DynamicObject>,
+    kind: &str,
+    group: &str,
+    version: &str,
+    namespace: &str,
+    ctx: &AuditContext,
+    plan_resources: &HashSet<(String, Option<String>, String)>,
+    audit: &mut ResidualAudit,
+) {
+    for obj in items {
+        let name = match &obj.metadata.name {
+            Some(n) => n.clone(),
+            None => continue,
+        };
+
+        let obj_ns = obj.metadata.namespace.clone();
+        let key = (kind.to_string(), obj_ns.clone(), name.clone());
+        if plan_resources.contains(&key) {
+            continue;
+        }
+
+        let rid = ResourceId {
+            group: group.to_string(),
+            version: version.to_string(),
+            kind: kind.to_string(),
+            namespace: obj_ns,
+            name,
+            uid: obj.metadata.uid.clone(),
+        };
+
+        let evidence = classify_evidence(&obj, ctx, namespace);
+        let confidence = compute_confidence(&evidence);
+
+        let residual = AttributedResidual {
+            resource: rid,
+            evidence,
+            confidence: confidence.clone(),
+        };
+
+        if confidence == ResidualConfidence::None {
+            audit.unattributed.push(residual);
+        } else {
+            audit.likely_operator_residual.push(residual);
+        }
+    }
+}
+
 
 // ──────────────────────────────────────────────────────────────
 //  Attribution classification
@@ -525,17 +584,53 @@ fn compute_confidence(evidence: &ResidualEvidence) -> ResidualConfidence {
 // ──────────────────────────────────────────────────────────────
 
 enum ProbeResult {
-    Present,
+    Present { uid: Option<String> },
     Gone,
     Error(String),
 }
 
+/// Map well-known Kinds to their API plural. Returns None for unknown types
+/// where guessing would produce false Gone results.
+fn known_plural(kind: &str) -> Option<&'static str> {
+    match kind {
+        // Native workloads
+        "Deployment" => Some("deployments"),
+        "StatefulSet" => Some("statefulsets"),
+        "DaemonSet" => Some("daemonsets"),
+        "Service" => Some("services"),
+        "Pod" => Some("pods"),
+        "ReplicaSet" => Some("replicasets"),
+        "ConfigMap" => Some("configmaps"),
+        "Secret" => Some("secrets"),
+        "ServiceAccount" => Some("serviceaccounts"),
+        "Namespace" => Some("namespaces"),
+        // OpenShift
+        "Route" => Some("routes"),
+        "ImageStream" => Some("imagestreams"),
+        // OLM
+        "Subscription" => Some("subscriptions"),
+        "ClusterServiceVersion" => Some("clusterserviceversions"),
+        "InstallPlan" => Some("installplans"),
+        "OperatorGroup" => Some("operatorgroups"),
+        // CRDs
+        "CustomResourceDefinition" => Some("customresourcedefinitions"),
+        _ => None,
+    }
+}
+
 async fn probe_resource(client: &Client, resource: &ResourceId) -> ProbeResult {
+    let plural = match known_plural(&resource.kind) {
+        Some(p) => p.to_string(),
+        None => {
+            return ProbeResult::Error(format!(
+                "Unknown plural for Kind '{}' — cannot safely probe without GVR metadata",
+                resource.kind
+            ));
+        }
+    };
+
     let gvk = GroupVersion::gv(&resource.group, &resource.version)
         .with_kind(&resource.kind);
-
-    // Guess plural (simple heuristic)
-    let plural = guess_plural(&resource.kind);
     let ar = ApiResource::from_gvk_with_plural(&gvk, &plural);
 
     let api: Api<DynamicObject> = if let Some(ns) = &resource.namespace {
@@ -545,22 +640,26 @@ async fn probe_resource(client: &Client, resource: &ResourceId) -> ProbeResult {
     };
 
     match api.get(&resource.name).await {
-        Ok(_) => ProbeResult::Present,
+        Ok(obj) => ProbeResult::Present {
+            uid: obj.metadata.uid,
+        },
         Err(kube::Error::Api(ref resp)) if resp.code == 404 => ProbeResult::Gone,
         Err(e) => ProbeResult::Error(e.to_string()),
     }
 }
 
-fn guess_plural(kind: &str) -> String {
-    let lower = kind.to_lowercase();
-    if lower.ends_with("ss") || lower.ends_with("sh") || lower.ends_with("ch") || lower.ends_with("x") {
-        format!("{}es", lower)
-    } else if lower.ends_with('s') {
-        lower
-    } else if lower.ends_with('y') && !lower.ends_with("ey") && !lower.ends_with("ay") {
-        format!("{}ies", &lower[..lower.len() - 1])
-    } else {
-        format!("{}s", lower)
+/// Compare plan UID with live UID to detect recreation.
+/// Returns Unknown when either UID is missing — never assumes same resource.
+fn check_recreation(plan_resource: &ResourceId, live_uid: &Option<String>) -> RecreationState {
+    match (&plan_resource.uid, live_uid) {
+        (Some(plan_uid), Some(live)) => {
+            if plan_uid == live {
+                RecreationState::SameResource
+            } else {
+                RecreationState::Recreated
+            }
+        }
+        _ => RecreationState::Unknown,
     }
 }
 
@@ -577,6 +676,27 @@ fn action_resource(action: &Action) -> &ResourceId {
 // ──────────────────────────────────────────────────────────────
 //  Display
 // ──────────────────────────────────────────────────────────────
+
+fn print_residual_item(item: &ResidualItem) {
+    let suffix = ns_suffix(&item.resource);
+    match item.recreation {
+        RecreationState::Recreated => {
+            eprintln!(
+                "  {}/{}{} \x1b[33m(RECREATED — different UID)\x1b[0m",
+                item.resource.kind, item.resource.name, suffix
+            );
+        }
+        RecreationState::Unknown => {
+            eprintln!(
+                "  {}/{}{} \x1b[33m(UID unknown — cannot verify identity)\x1b[0m",
+                item.resource.kind, item.resource.name, suffix
+            );
+        }
+        RecreationState::SameResource => {
+            eprintln!("  {}/{}{}", item.resource.kind, item.resource.name, suffix);
+        }
+    }
+}
 
 pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
     eprintln!(
@@ -611,7 +731,7 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
             audit.planned_delete_still_present.len()
         );
         for item in &audit.planned_delete_still_present {
-            eprintln!("  {}/{}{}", item.resource.kind, item.resource.name, ns_suffix(&item.resource));
+            print_residual_item(item);
         }
     }
     eprintln!();
@@ -626,7 +746,7 @@ pub fn print_residual_audit(audit: &ResidualAudit, journal: &RunJournal) {
             audit.planned_expect_still_present.len()
         );
         for item in &audit.planned_expect_still_present {
-            eprintln!("  {}/{}{}", item.resource.kind, item.resource.name, ns_suffix(&item.resource));
+            print_residual_item(item);
         }
     }
     eprintln!();
@@ -730,6 +850,16 @@ fn format_evidence(evidence: &ResidualEvidence) -> String {
 
 pub fn residual_status_from_audit(audit: &ResidualAudit) -> ResidualStatus {
     if !audit.scan_errors.is_empty() {
+        return ResidualStatus::AuditIncomplete;
+    }
+
+    // UID-unknown probes are coverage failures — cannot verify identity
+    let has_uid_unknown = audit
+        .planned_delete_still_present
+        .iter()
+        .chain(audit.planned_expect_still_present.iter())
+        .any(|item| item.recreation == RecreationState::Unknown);
+    if has_uid_unknown {
         return ResidualStatus::AuditIncomplete;
     }
 

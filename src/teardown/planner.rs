@@ -3087,6 +3087,7 @@ mod tests {
             deployments: vec!["test-controller".to_string()],
             service_accounts: vec![],
             install_namespace: "test-ns".to_string(),
+            package_name: None,
         }
     }
 

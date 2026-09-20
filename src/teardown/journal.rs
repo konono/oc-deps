@@ -151,6 +151,11 @@ impl JournalStore {
         }
     }
 
+    /// Update the journal via single-writer CAS.
+    ///
+    /// SAFETY: This uses in-process Mutex only. Only one JournalStore instance
+    /// per journal file should exist in a process. Cross-process writes are NOT
+    /// safe with this design — defer to PR3's full exclusive lock.
     pub async fn update<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(&mut RunJournal),
@@ -252,6 +257,12 @@ pub fn atomic_write_json_pub<T: Serialize>(path: &Path, value: &T) -> Result<()>
     atomic_write_json(path, value)
 }
 
+/// Atomic write: temp file → fsync → rename → fsync parent dir.
+///
+/// SAFETY: This function does NOT provide cross-process locking.
+/// Callers must ensure single-writer semantics externally (e.g., via
+/// JournalStore's in-process Mutex for the executor process).
+/// Cross-process exclusive writes will be added in PR3.
 fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let parent = path
         .parent()
