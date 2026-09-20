@@ -550,26 +550,29 @@ pub async fn execute_plan(
                 // Use WatchManager for barrier wait — state is tracked in
                 // RuntimeStateStore, CLI renders from the store's summary.
                 let barrier_start = Instant::now();
-                let mut rx = notifier.subscribe();
 
                 let wait_result = {
-                    // Spawn a background task to render progress from the store
+                    // Spawn a background task to render progress from the store.
+                    // Uses summary_for to show only current barrier targets.
                     let store_ref = store.clone();
-                    let targets_len = phase_wait_targets.len();
+                    let barrier_targets = phase_wait_targets.clone();
                     let render_handle = tokio::spawn(async move {
+                        let mut rx = store_ref.subscribe();
                         loop {
                             // Wait for state change notification
                             if rx.changed().await.is_err() {
                                 break;
                             }
-                            let summary = store_ref.summary();
+                            let summary = store_ref.summary_for(&barrier_targets);
                             let elapsed = barrier_start.elapsed().as_secs();
                             eprint!(
-                                "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked ({}s)",
+                                "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked{}{}({}s)",
                                 summary.gone,
-                                targets_len,
+                                summary.total,
                                 summary.deleting,
                                 summary.finalizer_blocked,
+                                if summary.stalled > 0 { format!(", {} Stalled", summary.stalled) } else { String::new() },
+                                if summary.unknown > 0 { format!(", {} Unknown", summary.unknown) } else { String::new() },
                                 elapsed
                             );
                             std::io::stderr().flush().ok();
@@ -588,15 +591,17 @@ pub async fn execute_plan(
                         .await;
 
                     render_handle.abort();
-                    // Final status line
-                    let summary = store.summary();
+                    // Final status line — barrier targets only
+                    let summary = store.summary_for(&phase_wait_targets);
                     let elapsed = barrier_start.elapsed().as_secs();
                     eprint!(
-                        "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked ({}s)",
+                        "\r\x1b[2K  ⏳ {}/{} Gone, {} Deleting, {} FinalizerBlocked{}{}({}s)",
                         summary.gone,
-                        phase_wait_targets.len(),
+                        summary.total,
                         summary.deleting,
                         summary.finalizer_blocked,
+                        if summary.stalled > 0 { format!(", {} Stalled", summary.stalled) } else { String::new() },
+                        if summary.unknown > 0 { format!(", {} Unknown", summary.unknown) } else { String::new() },
                         elapsed
                     );
                     eprintln!();
@@ -743,6 +748,13 @@ pub async fn execute_plan(
     Ok(result)
 }
 
+/// Delete a resource with UID-preconditioned safety.
+///
+/// 1. GET current UID to verify we're deleting the right resource
+/// 2. Compare with plan UID (if available) — mismatch → Failed
+/// 3. DELETE with UID precondition to prevent TOCTOU race
+///
+/// Failure/AlreadyGone does NOT grant re-delete authority.
 async fn delete_resource(
     client: &Client,
     resource: &ResourceId,
@@ -759,9 +771,51 @@ async fn delete_resource(
         }
     };
 
-    match api.delete(&resource.name, &DeleteParams::default()).await {
+    // Step 1: GET current resource to verify identity
+    let current = match api.get(&resource.name).await {
+        Ok(obj) => obj,
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            return DeleteResult::AlreadyGone;
+        }
+        Err(e) => {
+            return DeleteResult::Failed(format!("pre-delete GET failed: {}", e));
+        }
+    };
+
+    let current_uid = current.metadata.uid.as_deref().unwrap_or("");
+
+    // Step 2: Verify UID matches plan (if plan has UID)
+    if let Some(plan_uid) = &resource.uid {
+        if !plan_uid.is_empty() && current_uid != plan_uid.as_str() {
+            return DeleteResult::Failed(format!(
+                "UID mismatch: plan expected {} but found {} — resource may have been recreated",
+                plan_uid, current_uid
+            ));
+        }
+    }
+
+    // Step 3: Delete with UID precondition
+    let dp = if !current_uid.is_empty() {
+        DeleteParams {
+            preconditions: Some(kube::api::Preconditions {
+                uid: Some(current_uid.to_string()),
+                resource_version: None,
+            }),
+            ..Default::default()
+        }
+    } else {
+        DeleteParams::default()
+    };
+
+    match api.delete(&resource.name, &dp).await {
         Ok(_) => DeleteResult::Deleted,
         Err(kube::Error::Api(err)) if err.code == 404 => DeleteResult::AlreadyGone,
+        Err(kube::Error::Api(err)) if err.code == 409 => {
+            DeleteResult::Failed(
+                "UID conflict during delete — resource was recreated between GET and DELETE"
+                    .to_string(),
+            )
+        }
         Err(e) => DeleteResult::Failed(e.to_string()),
     }
 }

@@ -69,6 +69,10 @@ pub struct RuntimeObservation {
     pub uid: Option<String>,
     pub has_deletion_timestamp: bool,
     pub finalizer_count: usize,
+    /// true for authoritative GET/LIST results, false for WATCH events.
+    /// Authoritative observations can revive a Gone resource (transient 404).
+    /// Non-authoritative (WATCH) events after Gone with same UID are ignored.
+    pub authoritative: bool,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -112,7 +116,8 @@ impl RuntimeStateStore {
 
     fn resource_key(resource: &ResourceId) -> String {
         format!(
-            "{}/{}/{}",
+            "{}/{}/{}/{}",
+            resource.group,
             resource.kind,
             resource.namespace.as_deref().unwrap_or("-"),
             resource.name
@@ -211,11 +216,12 @@ impl RuntimeStateStore {
         // Resource exists
         let live_uid = &obs.uid;
 
-        // Rule 3: If we were Gone but resource now exists with different UID → Recreated
+        // Rule 3: If we were Gone but resource now exists
         if entry.state == ResourceRuntimeState::Gone {
             if let Some(new_uid) = live_uid {
                 let old_uid = entry.uid.clone().unwrap_or_default();
                 if old_uid.is_empty() || *new_uid != old_uid {
+                    // Different UID → Recreated
                     entry.state = ResourceRuntimeState::Recreated {
                         old_uid: old_uid.clone(),
                         new_uid: new_uid.clone(),
@@ -226,8 +232,31 @@ impl RuntimeStateStore {
                     self.notifier.notify();
                     return;
                 }
+                // Same UID after Gone:
+                if obs.authoritative {
+                    // Authoritative GET says resource exists with same UID.
+                    // The prior 404 was transient. Revive to Unknown.
+                    entry.state = ResourceRuntimeState::Unknown {
+                        reason: "resource reappeared after transient 404 (same UID)".to_string(),
+                    };
+                    entry.last_meaningful_progress = Instant::now();
+                    drop(entries);
+                    self.notifier.notify();
+                    return;
+                }
+                // Non-authoritative (WATCH) event with same UID after Gone → stale, ignore
+                return;
             }
-            // Same UID appearing after Gone — late stale event, ignore
+            // No UID info:
+            if obs.authoritative {
+                // Authoritative says exists but no UID — Unknown
+                entry.state = ResourceRuntimeState::Unknown {
+                    reason: "resource reappeared after 404 but UID unavailable".to_string(),
+                };
+                drop(entries);
+                self.notifier.notify();
+                return;
+            }
             return;
         }
 
@@ -290,6 +319,7 @@ impl RuntimeStateStore {
         // NOT reset the stall timer.
         let meaningful = state_changed || finalizer_decreased;
 
+        let mut became_stalled = false;
         if meaningful {
             entry.last_meaningful_progress = Instant::now();
         } else {
@@ -304,14 +334,20 @@ impl RuntimeStateStore {
                         | ResourceRuntimeState::ExpectingGone
                 ) {
                     entry.state = ResourceRuntimeState::Stalled;
+                    became_stalled = true;
                 }
             }
         }
 
         drop(entries);
-        if state_changed || finalizer_decreased {
+        if state_changed || finalizer_decreased || became_stalled {
             self.notifier.notify();
         }
+    }
+
+    /// Subscribe to state change notifications.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.notifier.subscribe()
     }
 
     /// Get a snapshot of all entries.
@@ -325,7 +361,54 @@ impl RuntimeStateStore {
         self.entries.read().unwrap().get(&key).cloned()
     }
 
-    /// Compute state summary for CLI rendering.
+    /// Check if any tracked resource in the given set has had meaningful
+    /// progress since the given instant.
+    pub fn any_meaningful_progress_since(
+        &self,
+        since: Instant,
+        resources: &[ResourceId],
+    ) -> bool {
+        let entries = self.entries.read().unwrap();
+        resources.iter().any(|res| {
+            let key = Self::resource_key(res);
+            entries
+                .get(&key)
+                .is_some_and(|e| e.last_meaningful_progress > since)
+        })
+    }
+
+    /// Compute state summary for a specific set of resources (barrier targets).
+    pub fn summary_for(&self, resources: &[ResourceId]) -> StateSummary {
+        let entries = self.entries.read().unwrap();
+        let mut s = StateSummary::default();
+        for res in resources {
+            let key = Self::resource_key(res);
+            if let Some(entry) = entries.get(&key) {
+                s.total += 1;
+                Self::count_state(&entry.state, &mut s);
+            }
+        }
+        s
+    }
+
+    fn count_state(state: &ResourceRuntimeState, s: &mut StateSummary) {
+        match state {
+            ResourceRuntimeState::Gone => s.gone += 1,
+            ResourceRuntimeState::Deleting => s.deleting += 1,
+            ResourceRuntimeState::ExpectingGone => s.expecting_gone += 1,
+            ResourceRuntimeState::DeleteRequested => s.delete_requested += 1,
+            ResourceRuntimeState::Review => s.review += 1,
+            ResourceRuntimeState::Keep => s.keep += 1,
+            ResourceRuntimeState::FinalizerBlocked { .. } => s.finalizer_blocked += 1,
+            ResourceRuntimeState::Stalled => s.stalled += 1,
+            ResourceRuntimeState::Failed { .. } => s.failed += 1,
+            ResourceRuntimeState::Unknown { .. } => s.unknown += 1,
+            ResourceRuntimeState::Recreated { .. } => s.recreated += 1,
+            ResourceRuntimeState::Planned => {}
+        }
+    }
+
+    /// Compute state summary for CLI rendering (all resources).
     pub fn summary(&self) -> StateSummary {
         let entries = self.entries.read().unwrap();
         let mut s = StateSummary {
@@ -333,20 +416,7 @@ impl RuntimeStateStore {
             ..Default::default()
         };
         for entry in entries.values() {
-            match &entry.state {
-                ResourceRuntimeState::Gone => s.gone += 1,
-                ResourceRuntimeState::Deleting => s.deleting += 1,
-                ResourceRuntimeState::ExpectingGone => s.expecting_gone += 1,
-                ResourceRuntimeState::DeleteRequested => s.delete_requested += 1,
-                ResourceRuntimeState::Review => s.review += 1,
-                ResourceRuntimeState::Keep => s.keep += 1,
-                ResourceRuntimeState::FinalizerBlocked { .. } => s.finalizer_blocked += 1,
-                ResourceRuntimeState::Stalled => s.stalled += 1,
-                ResourceRuntimeState::Failed { .. } => s.failed += 1,
-                ResourceRuntimeState::Unknown { .. } => s.unknown += 1,
-                ResourceRuntimeState::Recreated { .. } => s.recreated += 1,
-                ResourceRuntimeState::Planned => {}
-            }
+            Self::count_state(&entry.state, &mut s);
         }
         s
     }
@@ -396,6 +466,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: true,
                 finalizer_count: 0,
+                authoritative: true,
             },
             5,
         );
@@ -409,6 +480,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             3,
         );
@@ -432,12 +504,13 @@ mod tests {
                 uid: None,
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             5,
         );
         assert_eq!(store.get(&res).unwrap().state, ResourceRuntimeState::Gone);
 
-        // Late Modified with same UID at epoch 6 — should be ignored
+        // Late non-authoritative (WATCH) Modified with same UID at epoch 6 — should be ignored
         store.update_from_observation(
             &res,
             RuntimeObservation {
@@ -445,10 +518,11 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: false,
             },
             6,
         );
-        // Must remain Gone — late stale event for same UID
+        // Must remain Gone — non-authoritative late stale event for same UID
         assert_eq!(store.get(&res).unwrap().state, ResourceRuntimeState::Gone);
     }
 
@@ -468,6 +542,7 @@ mod tests {
                 uid: None,
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -481,6 +556,7 @@ mod tests {
                 uid: Some("uid-b".to_string()),
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             2,
         );
@@ -534,6 +610,7 @@ mod tests {
                 uid: None,
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -559,6 +636,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: true,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -592,6 +670,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: true,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -615,6 +694,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: true,
                 finalizer_count: 3,
+                authoritative: true,
             },
             1,
         );
@@ -634,6 +714,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: true,
                 finalizer_count: 2,
+                authoritative: true,
             },
             2,
         );
@@ -660,6 +741,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -677,6 +759,7 @@ mod tests {
                 uid: None,
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             2,
         );
@@ -711,6 +794,7 @@ mod tests {
                 uid: Some("uid-a".to_string()),
                 has_deletion_timestamp: true,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -730,6 +814,7 @@ mod tests {
                 uid: None,
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -783,6 +868,7 @@ mod tests {
                 uid: Some("uid-b".to_string()),
                 has_deletion_timestamp: false,
                 finalizer_count: 0,
+                authoritative: true,
             },
             1,
         );
@@ -791,5 +877,187 @@ mod tests {
             ResourceRuntimeState::Recreated { old_uid, new_uid }
             if old_uid == "uid-a" && new_uid == "uid-b"
         ));
+    }
+
+    // ── P0-1: Different groups with same Kind/name/ns ──
+
+    #[test]
+    fn test_different_group_same_kind_name_separate_entries() {
+        let (_, store) = make_store();
+        let res_a = ResourceId {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: "test".to_string(),
+            uid: Some("uid-a".to_string()),
+        };
+        let res_b = ResourceId {
+            group: "custom.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: "test".to_string(),
+            uid: Some("uid-b".to_string()),
+        };
+
+        store.register(&res_a, ResourceRuntimeState::DeleteRequested, 0);
+        store.register(&res_b, ResourceRuntimeState::DeleteRequested, 0);
+
+        // Mark A as Gone
+        store.update_from_observation(
+            &res_a,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            1,
+        );
+
+        // A is Gone, B is still DeleteRequested
+        assert_eq!(store.get(&res_a).unwrap().state, ResourceRuntimeState::Gone);
+        assert_eq!(
+            store.get(&res_b).unwrap().state,
+            ResourceRuntimeState::DeleteRequested
+        );
+    }
+
+    // ── P0-2: Authoritative GET 200 after Gone revives ──
+
+    #[test]
+    fn test_authoritative_get_200_after_gone_revives_to_unknown() {
+        let (_, store) = make_store();
+        let res = make_resource("Pod", "test");
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        // Mark Gone
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            1,
+        );
+        assert_eq!(store.get(&res).unwrap().state, ResourceRuntimeState::Gone);
+
+        // Authoritative GET says resource exists with SAME UID
+        // → transient 404, revive to Unknown
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: true,
+                uid: Some("uid-a".to_string()),
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            2,
+        );
+        assert!(
+            matches!(
+                store.get(&res).unwrap().state,
+                ResourceRuntimeState::Unknown { .. }
+            ),
+            "authoritative GET 200 same UID after Gone must revive to Unknown"
+        );
+    }
+
+    #[test]
+    fn test_non_authoritative_get_200_after_gone_ignored() {
+        let (_, store) = make_store();
+        let res = make_resource("Pod", "test");
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        // Mark Gone
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            1,
+        );
+        assert_eq!(store.get(&res).unwrap().state, ResourceRuntimeState::Gone);
+
+        // Non-authoritative (WATCH) event with same UID after Gone → ignored
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: true,
+                uid: Some("uid-a".to_string()),
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: false,
+            },
+            2,
+        );
+        assert_eq!(
+            store.get(&res).unwrap().state,
+            ResourceRuntimeState::Gone,
+            "non-authoritative event after Gone with same UID must be ignored"
+        );
+    }
+
+    // ── P1-3: Stalled notifies ──
+
+    #[test]
+    fn test_stalled_transition_notifies() {
+        let notifier = Arc::new(EventNotifier::new());
+        let mut rx = notifier.subscribe();
+        let store = RuntimeStateStore::new(notifier, Duration::from_millis(10));
+        let res = make_resource("Pod", "test");
+        store.register(&res, ResourceRuntimeState::Deleting, 0);
+
+        // Consume initial notification
+        let _ = rx.has_changed();
+
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Trigger stall check via observation
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: true,
+                uid: Some("uid-a".to_string()),
+                has_deletion_timestamp: true,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            1,
+        );
+        assert_eq!(store.get(&res).unwrap().state, ResourceRuntimeState::Stalled);
+        // Notification should have been sent
+        assert!(rx.has_changed().is_ok());
+    }
+
+    // ── summary_for test ──
+
+    #[test]
+    fn test_summary_for_filters_resources() {
+        let (_, store) = make_store();
+        let res_a = make_resource("Deployment", "a");
+        let res_b = make_resource("Deployment", "b");
+        let res_c = make_resource("Deployment", "c");
+
+        store.register(&res_a, ResourceRuntimeState::Gone, 0);
+        store.register(&res_b, ResourceRuntimeState::Deleting, 0);
+        store.register(&res_c, ResourceRuntimeState::Keep, 0);
+
+        // summary_for only the barrier targets (a and b)
+        let s = store.summary_for(&[res_a.clone(), res_b.clone()]);
+        assert_eq!(s.total, 2);
+        assert_eq!(s.gone, 1);
+        assert_eq!(s.deleting, 1);
+        assert_eq!(s.keep, 0); // c is not in the filter
     }
 }
