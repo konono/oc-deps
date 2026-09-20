@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 1;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -228,7 +228,7 @@ pub fn list_runs(cluster_id: &ClusterIdentity) -> Result<Vec<RunJournal>> {
 pub fn load_journal(path: &Path) -> Result<RunJournal> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read journal: {}", path.display()))?;
-    let journal: RunJournal = serde_json::from_str(&data)
+    let mut journal: RunJournal = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse journal: {}", path.display()))?;
 
     if journal.schema_version > RUN_JOURNAL_SCHEMA_VERSION {
@@ -238,6 +238,21 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
             journal.schema_version,
             RUN_JOURNAL_SCHEMA_VERSION
         );
+    }
+
+    // v1 → v2 migration: discard old audit data (lacks UID tracking / recreation state).
+    // The audit is non-authoritative and must be re-run with current code.
+    if journal.schema_version < 2 {
+        if journal.last_residual_audit.is_some() {
+            eprintln!(
+                "  ℹ Migrating journal {} from schema v{} → v{}: \
+                 discarding old residual audit (lacks UID/recreation tracking)",
+                journal.run_id, journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION
+            );
+            journal.last_residual_audit = None;
+            journal.residual_status = ResidualStatus::NotAudited;
+        }
+        journal.schema_version = RUN_JOURNAL_SCHEMA_VERSION;
     }
 
     Ok(journal)
