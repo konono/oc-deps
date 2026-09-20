@@ -510,29 +510,53 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // After execution completes, transition to ResidualCleanup
-                                // so subsequent SelectResidual/DeleteSelected commands work
+                                // Transition to ResidualCleanup ONLY if execution succeeded
+                                // and journal state is ApplyCompleted
                                 if app.screen == AppScreen::Executing {
-                                    app.screen = AppScreen::ResidualCleanup;
-                                    events.push(serde_json::json!({
-                                        "screen_transition": "ResidualCleanup",
-                                    }));
+                                    if let (Some(store), true) = (&script_journal, result.is_ok()) {
+                                        let j = store.read().await;
+                                        if j.state == RunState::ApplyCompleted {
+                                            app.screen = AppScreen::ResidualCleanup;
+                                            events.push(serde_json::json!({
+                                                "screen_transition": "ResidualCleanup",
+                                            }));
+                                        } else {
+                                            events.push(serde_json::json!({
+                                                "screen_transition_blocked": format!("state is {:?}, not ApplyCompleted", j.state),
+                                            }));
+                                        }
+                                    }
                                 }
 
-                                // Handle DeleteSelected: execute residual cleanup
+                                // Handle DeleteSelected: execute residual cleanup via core function
                                 if matches!(cmd, AppCommand::DeleteSelected)
                                     && result.is_ok()
                                     && app.screen == AppScreen::ResidualCleanup
                                     && !app.selected_residuals.is_empty()
                                 {
                                     if let (Some(store), Some(g)) = (&script_journal, &script_gate) {
-                                        // Run cleanup via shared function
-                                        match crate::tui::run_residual_cleanup(
-                                            &client, &plan, store, g, &kind_map, &gk_map,
+                                        match crate::teardown::executor::execute_residual_cleanup(
+                                            &client,
+                                            &app.selected_residuals,
+                                            store.as_ref(),
+                                            g.as_ref(),
+                                            &kind_map,
+                                            &gk_map,
                                         ).await {
-                                            Ok(()) => {
+                                            Ok(cleanup_result) => {
                                                 events.push(serde_json::json!({
-                                                    "residual_cleanup": "completed"
+                                                    "residual_cleanup": {
+                                                        "status": "completed",
+                                                        "deleted": cleanup_result.deleted.len(),
+                                                        "skipped": cleanup_result.skipped.len(),
+                                                        "failed": cleanup_result.failed.len(),
+                                                        "skipped_details": cleanup_result.skipped.iter()
+                                                            .map(|(r, reason)| format!("{}/{}: {}", r.kind, r.name, reason))
+                                                            .collect::<Vec<_>>(),
+                                                        "failed_details": cleanup_result.failed.iter()
+                                                            .map(|(r, reason)| format!("{}/{}: {}", r.kind, r.name, reason))
+                                                            .collect::<Vec<_>>(),
+                                                    }
                                                 }));
                                             }
                                             Err(e) => {
@@ -541,6 +565,7 @@ async fn main() -> Result<()> {
                                                 }));
                                             }
                                         }
+                                        app.selected_residuals.clear();
                                     }
                                 }
                             }
@@ -942,202 +967,34 @@ async fn main() -> Result<()> {
 
                                                                     if !selected.is_empty() {
                                                                         eprintln!("\n  Deleting {} residual(s)...", selected.len());
-
-                                                                        // Step 1: Run fresh live audit to verify current membership
-                                                                        let fresh_j = store.read().await;
-                                                                        let fresh_gen = crate::teardown::audit::check_operator_generation(
-                                                                            &client, &fresh_j.operator, &fresh_j.audit_context.csv_baseline
-                                                                        ).await;
-                                                                        if !matches!(fresh_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
-                                                                            eprintln!("  ⚠ Operator generation is not Absent — cleanup blocked.");
-                                                                        } else if let Ok(fresh_audit) = crate::teardown::audit::run_residual_audit(&client, &fresh_j).await {
-                                                                            let fresh_status = crate::teardown::audit::residual_status_from_audit(&fresh_audit);
-                                                                            if matches!(fresh_status, journal::ResidualStatus::AuditIncomplete) {
-                                                                                eprintln!("  ⚠ Live audit incomplete — cleanup blocked.");
-                                                                            } else {
-                                                                                // Step 2: Verify each selection is in current residual set
-                                                                                // Key includes group to prevent cross-API-group collision
-                                                                                let residual_keys: std::collections::HashSet<String> = fresh_audit.likely_operator_residual.iter()
-                                                                                    .chain(fresh_audit.unattributed.iter())
-                                                                                    .map(|r| format!("{}/{}/{}/{}", r.resource.group, r.resource.kind,
-                                                                                        r.resource.namespace.as_deref().unwrap_or("-"), r.resource.name))
-                                                                                    .collect();
-
-                                                                                let valid_selected: Vec<&ResourceId> = selected.iter().filter(|res| {
-                                                                                    let key = format!("{}/{}/{}/{}", res.group, res.kind,
-                                                                                        res.namespace.as_deref().unwrap_or("-"), res.name);
-                                                                                    if residual_keys.contains(&key) {
-                                                                                        true
-                                                                                    } else {
-                                                                                        eprintln!("  ⚠ {}/{}/{} not in current residual set — skipped", res.group, res.kind, res.name);
-                                                                                        false
-                                                                                    }
-                                                                                }).cloned().collect();
-
-                                                                                // Set InteractiveCleanup state
-                                                                                store.update(|j| {
-                                                                                    j.state = RunState::InteractiveCleanup;
-                                                                                }).await
-                                                                                .context("Failed to persist InteractiveCleanup state")?;
-
-                                                                                // Step 3: Per-resource DELETE with durable decision record
-                                                                                for res in &valid_selected {
-                                                                                    // Re-check generation per resource
-                                                                                    let cur_j = store.read().await;
-                                                                                    let gen_per_res = crate::teardown::audit::check_operator_generation(
-                                                                                        &client, &cur_j.operator, &cur_j.audit_context.csv_baseline
-                                                                                    ).await;
-                                                                                    if !matches!(gen_per_res, crate::teardown::audit::OperatorGenerationState::Absent) {
-                                                                                        eprintln!("  ⚠ Generation changed — stopping cleanup");
-                                                                                        break;
-                                                                                    }
-
-                                                                                    // Per-resource fresh audit: verify still in residual set
-                                                                                    let per_res_j = store.read().await;
-                                                                                    match crate::teardown::audit::run_residual_audit(&client, &per_res_j).await {
-                                                                                        Ok(fresh_per_res) => {
-                                                                                            let still_in_set = fresh_per_res.likely_operator_residual.iter()
-                                                                                                .chain(fresh_per_res.unattributed.iter())
-                                                                                                .any(|r| r.resource.group == res.group
-                                                                                                    && r.resource.kind == res.kind
-                                                                                                    && r.resource.name == res.name
-                                                                                                    && r.resource.namespace == res.namespace);
-                                                                                            if !still_in_set {
-                                                                                                eprintln!("  ⚠ {}/{} no longer in residual set after per-resource audit — skipping", res.kind, res.name);
-                                                                                                continue;
-                                                                                            }
-                                                                                            let per_status = crate::teardown::audit::residual_status_from_audit(&fresh_per_res);
-                                                                                            if matches!(per_status, journal::ResidualStatus::AuditIncomplete) {
-                                                                                                eprintln!("  ⚠ Per-resource audit incomplete — skipping {}/{}", res.kind, res.name);
-                                                                                                continue;
-                                                                                            }
-                                                                                        }
-                                                                                        Err(e) => {
-                                                                                            eprintln!("  ⚠ Per-resource audit failed: {} — stopping cleanup", e);
-                                                                                            break;
-                                                                                        }
-                                                                                    }
-
-                                                                                    // Acquire permit
-                                                                                    let _permit = gate.acquire().await
-                                                                                        .context("Mutation gate closed during cleanup")?;
-
-                                                                                    // Record decision BEFORE mutation (durable)
-                                                                                    let decision_uid = res.uid.clone();
-                                                                                    let res_clone = (*res).clone();
-                                                                                    store.update(|j| {
-                                                                                        j.cleanup_decisions.push(journal::CleanupDecision {
-                                                                                            resource: res_clone.clone(),
-                                                                                            bound_uid: decision_uid.clone(),
-                                                                                            action: "delete".to_string(),
-                                                                                            result: None,
-                                                                                        });
-                                                                                        j.audit_revision += 1;
-                                                                                    }).await
-                                                                                    .context("Failed to persist cleanup decision — no mutation")?;
-
-                                                                                    // Core executor DELETE (UID-preconditioned)
-                                                                                    // Caller holds the permit — don't double-acquire in delete_resource_pub
-                                                                                    let del_result = crate::teardown::executor::delete_resource_pub(
-                                                                                        &client, res, &kind_map, &gk_map, None,
-                                                                                    ).await;
-
-                                                                                    let cleanup_result = match &del_result {
-                                                                                        Ok(msg) => {
-                                                                                            eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg);
-                                                                                            if msg == "deleted" {
-                                                                                                let mut gone_confirmed = false;
-                                                                                                if let Some((api, _)) = crate::kube::resource::resolve_api(&client, res, &kind_map, &gk_map) {
-                                                                                                    for _ in 0..30 {
-                                                                                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                                                                                        match api.get(&res.name).await {
-                                                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                                                                                eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
-                                                                                                                gone_confirmed = true;
-                                                                                                                break;
-                                                                                                            }
-                                                                                                            Ok(_) => continue,
-                                                                                                            Err(e) => {
-                                                                                                                eprintln!("    ⚠ Cannot verify Gone for {}/{}: {}", res.kind, res.name, e);
-                                                                                                                break;
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                                if gone_confirmed { CleanupResult::Gone } else { CleanupResult::DeleteRequested }
-                                                                                            } else if msg == "already_gone" {
-                                                                                                CleanupResult::AlreadyGone
-                                                                                            } else {
-                                                                                                CleanupResult::DeleteRequested
-                                                                                            }
-                                                                                        }
-                                                                                        Err(e) => { eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e); CleanupResult::Failed(e.to_string()) }
-                                                                                    };
-
-                                                                                    let res_clone2 = (*res).clone();
-                                                                                    store.update(|j| {
-                                                                                        if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                                            .find(|d| d.resource == res_clone2 && d.result.is_none())
-                                                                                        {
-                                                                                            d.result = Some(cleanup_result);
-                                                                                        }
-                                                                                    }).await
-                                                                                    .context("Failed to checkpoint cleanup result")?;
-
-                                                                                    drop(_permit);
+                                                                        let selected_owned: Vec<crate::kube::resource::ResourceId> =
+                                                                            selected.into_iter().cloned().collect();
+                                                                        match crate::teardown::executor::execute_residual_cleanup(
+                                                                            &client,
+                                                                            &selected_owned,
+                                                                            store.as_ref(),
+                                                                            gate.as_ref(),
+                                                                            &kind_map,
+                                                                            &gk_map,
+                                                                        ).await {
+                                                                            Ok(cleanup_result) => {
+                                                                                for res in &cleanup_result.deleted {
+                                                                                    eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
                                                                                 }
-
-                                                                                // Step 4: Re-audit after all cleanups
-                                                                                let post_j = store.read().await;
-                                                                                let post_gen = crate::teardown::audit::check_operator_generation(
-                                                                                    &client, &post_j.operator, &post_j.audit_context.csv_baseline
-                                                                                ).await;
-                                                                                if matches!(post_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
-                                                                                    eprintln!("\n  🔍 Re-running residual audit...");
-                                                                                    match crate::teardown::audit::run_residual_audit(&client, &post_j).await {
-                                                                                        Ok(new_audit) => {
-                                                                                            crate::teardown::audit::print_residual_audit(&new_audit, &post_j);
-                                                                                            let new_status = crate::teardown::audit::residual_status_from_audit(&new_audit);
-                                                                                            store.update(|j| {
-                                                                                                j.residual_status = new_status;
-                                                                                                j.audit_revision += 1;
-                                                                                                j.last_residual_audit = Some(new_audit);
-                                                                                            }).await
-                                                                                            .context("Failed to persist post-cleanup audit")?;
-                                                                                        }
-                                                                                        Err(e) => {
-                                                                                            eprintln!("  ⚠ Post-cleanup re-audit failed: {}", e);
-                                                                                            bail!("Residual re-audit failed after cleanup: {}. \
-                                                                                                   Cannot verify cleanup results.", e);
-                                                                                        }
-                                                                                    }
+                                                                                for (res, reason) in &cleanup_result.skipped {
+                                                                                    eprintln!("    ⚠ {}/{}: skipped — {}", res.kind, res.name, reason);
                                                                                 }
-
-                                                                                // Determine final cleanup state based on audit + decision results
-                                                                                let post_j_final = store.read().await;
-                                                                                let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| d.is_failed());
-                                                                                let final_cleanup_state = if has_failed_decisions {
-                                                                                    RunState::Failed
-                                                                                } else {
-                                                                                    match &post_j_final.residual_status {
-                                                                                        crate::teardown::journal::ResidualStatus::AuditIncomplete => {
-                                                                                            eprintln!("  ⚠ Audit incomplete after cleanup — staying in InteractiveCleanup");
-                                                                                            RunState::InteractiveCleanup
-                                                                                        }
-                                                                                        _ => RunState::ApplyCompleted,
-                                                                                    }
-                                                                                };
-                                                                                let is_failed = final_cleanup_state == RunState::Failed;
-                                                                                store.update(|j| {
-                                                                                    j.state = final_cleanup_state;
-                                                                                }).await
-                                                                                .context("Failed to restore state after cleanup")?;
-                                                                                if is_failed {
-                                                                                    bail!("Cleanup completed with failed or unconfirmed decisions");
+                                                                                for (res, reason) in &cleanup_result.failed {
+                                                                                    eprintln!("    ✗ {}/{}: {}", res.kind, res.name, reason);
+                                                                                }
+                                                                                if let Some(ref post_audit) = cleanup_result.post_audit {
+                                                                                    let post_j = store.read().await;
+                                                                                    crate::teardown::audit::print_residual_audit(post_audit, &post_j);
                                                                                 }
                                                                             }
-                                                                        } else {
-                                                                            eprintln!("  ⚠ Failed to run fresh audit — cleanup blocked.");
+                                                                            Err(e) => {
+                                                                                bail!("Residual cleanup failed: {:#}", e);
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -1560,6 +1417,15 @@ async fn main() -> Result<()> {
                                     || ((j.state == RunState::Applying || j.state == RunState::Paused) && has_pending_cleanup);
 
                                 if should_resume_cleanup {
+                                    // Schema gate: v5 journals cannot gain resume authority
+                                    if j.schema_version != journal::RUN_JOURNAL_SCHEMA_VERSION {
+                                        bail!(
+                                            "Journal schema v{} does not match current v{}. \
+                                             Cannot resume cleanup on incompatible journal.",
+                                            j.schema_version, journal::RUN_JOURNAL_SCHEMA_VERSION
+                                        );
+                                    }
+
                                     // Write InteractiveCleanup state for crash safety
                                     if j.state != RunState::InteractiveCleanup {
                                         store.update(|j| { j.state = RunState::InteractiveCleanup; }).await?;
@@ -1661,6 +1527,16 @@ async fn main() -> Result<()> {
                                             }
 
                                             // Below: result.is_none() — fresh DELETE needed
+                                            // Validate decision authority fields
+                                            if decision.action != "delete" {
+                                                bail!("Pending decision for {}/{} has action '{}', expected 'delete' — cannot resume",
+                                                    decision.resource.kind, decision.resource.name, decision.action);
+                                            }
+                                            if decision.bound_uid.as_deref().unwrap_or("").is_empty() {
+                                                bail!("Pending decision for {}/{} has no bound_uid — cannot verify identity for resume",
+                                                    decision.resource.kind, decision.resource.name);
+                                            }
+
                                             if !gate.is_open() {
                                                 eprintln!("⏸ Gate closed — stopping cleanup resume");
                                                 break;

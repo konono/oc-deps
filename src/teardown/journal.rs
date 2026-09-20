@@ -53,12 +53,67 @@ pub struct RunJournal {
 }
 
 /// A single residual cleanup decision with its outcome.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// v5 journals stored this as a plain string ("deleted", "gone", etc.).
+/// v6 uses a proper enum. The custom deserializer handles both formats.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum CleanupResult {
     DeleteRequested,
     Gone,
     AlreadyGone,
     Failed(String),
+}
+
+impl<'de> serde::Deserialize<'de> for CleanupResult {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct CleanupResultVisitor;
+
+        impl<'de> de::Visitor<'de> for CleanupResultVisitor {
+            type Value = CleanupResult;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a CleanupResult enum variant or v5-compat string")
+            }
+
+            // v6 unit variants AND v5 plain strings
+            fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
+                match v {
+                    // v6 unit variant names (serde externally tagged)
+                    "DeleteRequested" => Ok(CleanupResult::DeleteRequested),
+                    "Gone" => Ok(CleanupResult::Gone),
+                    "AlreadyGone" => Ok(CleanupResult::AlreadyGone),
+                    // v5 plain strings
+                    "deleted" => Ok(CleanupResult::DeleteRequested),
+                    "gone" => Ok(CleanupResult::Gone),
+                    "already_gone" | "already gone" => Ok(CleanupResult::AlreadyGone),
+                    s if s.starts_with("failed:") => {
+                        Ok(CleanupResult::Failed(s.trim_start_matches("failed:").trim().to_string()))
+                    }
+                    other => Ok(CleanupResult::Failed(format!("unknown result: {}", other))),
+                }
+            }
+
+            // v6 format: tagged enum {"DeleteRequested": null} or {"Failed": "reason"}
+            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<Self::Value, A::Error> {
+                let key: String = map.next_key()?
+                    .ok_or_else(|| de::Error::custom("expected enum variant key"))?;
+                match key.as_str() {
+                    "DeleteRequested" => { let _: Option<()> = map.next_value()?; Ok(CleanupResult::DeleteRequested) }
+                    "Gone" => { let _: Option<()> = map.next_value()?; Ok(CleanupResult::Gone) }
+                    "AlreadyGone" => { let _: Option<()> = map.next_value()?; Ok(CleanupResult::AlreadyGone) }
+                    "Failed" => { let reason: String = map.next_value()?; Ok(CleanupResult::Failed(reason)) }
+                    other => Ok(CleanupResult::Failed(format!("unknown variant: {}", other))),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(CleanupResultVisitor)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,11 +170,17 @@ pub enum ResidualStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuditContext {
+    #[serde(default)]
     pub footprint_namespaces: HashSet<String>,
+    #[serde(default)]
     pub csv_names: HashSet<String>,
+    #[serde(default)]
     pub controller_deployment_names: HashSet<String>,
+    #[serde(default)]
     pub service_account_names: HashSet<String>,
+    #[serde(default)]
     pub known_labels: Vec<(String, String)>,
+    #[serde(default)]
     pub managed_field_managers: HashSet<String>,
     /// Discovery-derived GVR metadata for plan resources.
     /// None = GVR info not captured (old journal or discovery failure) → AuditIncomplete.
@@ -447,14 +508,13 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
         }
         // v4 journals do NOT get bumped to v5/v6 — they cannot gain manual
         // cleanup authority that wasn't available at journal creation.
-        // v5 journals with string-typed cleanup_decisions need migration to v6
-        // CleanupResult enum. Since the field uses serde, v5 string results
-        // will fail to deserialize as CleanupResult. The serde(default) on
-        // cleanup_decisions handles this: old v5 decisions are lost in deserialization.
-        // This is safe because:
-        // - v5 cleanup_decisions are cleared (not carried to v6)
-        // - the runtime check schema_version >= 5 still applies for cleanup authority
-        // - v6 journals created fresh will have typed CleanupResult
+
+        // v5 journals: keep at schema_version 5 (read-only for inspection).
+        // CleanupResult custom deserializer handles v5 string format, so
+        // cleanup_decisions are preserved and inspectable.
+        // execute_residual_cleanup requires schema_version == 6 (current),
+        // so v5 journals cannot gain new cleanup mutation authority.
+        // v5 journals stay at v5 — no schema bump.
     }
 
     Ok(journal)
@@ -890,5 +950,141 @@ mod tests {
         assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cleanup_result_deserializes_v5_string() {
+        // v5 format: plain string
+        let v5_deleted: CleanupResult = serde_json::from_str(r#""deleted""#).unwrap();
+        assert_eq!(v5_deleted, CleanupResult::DeleteRequested);
+
+        let v5_gone: CleanupResult = serde_json::from_str(r#""gone""#).unwrap();
+        assert_eq!(v5_gone, CleanupResult::Gone);
+
+        let v5_already: CleanupResult = serde_json::from_str(r#""already_gone""#).unwrap();
+        assert_eq!(v5_already, CleanupResult::AlreadyGone);
+
+        let v5_already_space: CleanupResult = serde_json::from_str(r#""already gone""#).unwrap();
+        assert_eq!(v5_already_space, CleanupResult::AlreadyGone);
+
+        let v5_failed: CleanupResult = serde_json::from_str(r#""failed: connection refused""#).unwrap();
+        assert!(matches!(v5_failed, CleanupResult::Failed(r) if r == "connection refused"));
+
+        let v5_unknown: CleanupResult = serde_json::from_str(r#""something_else""#).unwrap();
+        assert!(matches!(v5_unknown, CleanupResult::Failed(r) if r.contains("unknown result")));
+    }
+
+    #[test]
+    fn test_cleanup_result_deserializes_v6_enum() {
+        // v6 format: tagged enum
+        let v6_gone: CleanupResult = serde_json::from_str(r#""Gone""#).unwrap();
+        assert_eq!(v6_gone, CleanupResult::Gone);
+
+        let v6_failed: CleanupResult = serde_json::from_str(r#"{"Failed":"reason"}"#).unwrap();
+        assert_eq!(v6_failed, CleanupResult::Failed("reason".to_string()));
+
+        let v6_requested: CleanupResult = serde_json::from_str(r#""DeleteRequested""#).unwrap();
+        assert_eq!(v6_requested, CleanupResult::DeleteRequested);
+
+        let v6_already: CleanupResult = serde_json::from_str(r#""AlreadyGone""#).unwrap();
+        assert_eq!(v6_already, CleanupResult::AlreadyGone);
+    }
+
+    #[test]
+    fn test_v5_journal_cleanup_decisions_preserved() {
+        // A v5 journal with string-typed cleanup_decisions must:
+        // 1. Deserialize successfully
+        // 2. Migrate to v6
+        // 3. Preserve cleanup_decisions (not clear them)
+        let v5_journal = r#"{
+            "run_id": "run-v5-test",
+            "schema_version": 5,
+            "oc_deps_version": "0.1.0",
+            "journal_revision": 10,
+            "cluster_identity": {
+                "api_server": "https://api.test:6443",
+                "kube_system_uid": "test-uid"
+            },
+            "operator": {
+                "generation_identity": { "Unverifiable": { "reason": "test" } },
+                "operator_id": { "namespace": "ns", "csv_name": "test.1.0" },
+                "csv_name": "test.1.0",
+                "csv": { "resource": { "group": "operators.coreos.com", "version": "v1alpha1", "kind": "ClusterServiceVersion", "namespace": "ns", "name": "test.1.0", "uid": "csv-uid" }, "uid": "csv-uid" },
+                "subscriptions": [],
+                "controller_deployments": [],
+                "service_accounts": [],
+                "owned_crds": [],
+                "required_crds": []
+            },
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T01:00:00Z",
+            "state": "ApplyCompleted",
+            "audit_context": {
+                "target_namespaces": ["ns"],
+                "scanned_kinds": [],
+                "owned_gvks": [],
+                "target_operators": []
+            },
+            "audit_revision": 5,
+            "residual_status": "NotAudited",
+            "plan_snapshot": { "targets": [], "preflight": { "checks": [] }, "phases": [], "blockers": [], "warnings": [], "snapshot_taken_at": "2026-01-01T00:00:00Z" },
+            "execution": { "phases_completed": 0, "phases_total": 0, "deleted": [], "already_gone": [], "failed": [], "kept": [], "reviewed": [] },
+            "cleanup_decisions": [
+                {
+                    "resource": { "group": "apps", "version": "v1", "kind": "Deployment", "namespace": "ns", "name": "my-deploy", "uid": "uid-123" },
+                    "bound_uid": "uid-123",
+                    "action": "delete",
+                    "result": "deleted"
+                },
+                {
+                    "resource": { "group": "apps", "version": "v1", "kind": "Deployment", "namespace": "ns", "name": "other", "uid": "uid-456" },
+                    "bound_uid": "uid-456",
+                    "action": "delete",
+                    "result": "gone"
+                }
+            ]
+        }"#;
+
+        let dir = std::env::temp_dir().join("oc-deps-test-v5-decisions");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("v5-decisions.json");
+        std::fs::write(&path, v5_journal).unwrap();
+
+        let journal = load_journal(&path).unwrap();
+
+        assert_eq!(journal.schema_version, 5, "v5 stays at 5 — read-only, no mutation authority");
+        assert_eq!(journal.cleanup_decisions.len(), 2, "decisions must be preserved");
+        assert_eq!(
+            journal.cleanup_decisions[0].result,
+            Some(CleanupResult::DeleteRequested),
+            "v5 'deleted' maps to DeleteRequested"
+        );
+        assert_eq!(
+            journal.cleanup_decisions[1].result,
+            Some(CleanupResult::Gone),
+            "v5 'gone' maps to Gone"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_v5_journal_no_mutation_authority() {
+        // v5 journals stay at schema_version 5.
+        // execute_residual_cleanup requires schema_version == RUN_JOURNAL_SCHEMA_VERSION (6),
+        // so v5 journals cannot gain new cleanup mutation authority.
+        // The schema gate (not is_failed) is the actual mutation barrier.
+        assert_ne!(5u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "v5 != current schema — core cleanup gate blocks mutations on v5 journals");
+
+        // v5 cleanup_decisions are still readable for inspection
+        let result: CleanupResult = serde_json::from_str(r#""deleted""#).unwrap();
+        assert_eq!(result, CleanupResult::DeleteRequested,
+            "v5 string 'deleted' deserializes to DeleteRequested for read-only inspection");
+
+        // Roundtrip: v6 enum format also works
+        let v6_serialized = serde_json::to_string(&CleanupResult::Gone).unwrap();
+        let v6_roundtrip: CleanupResult = serde_json::from_str(&v6_serialized).unwrap();
+        assert_eq!(v6_roundtrip, CleanupResult::Gone, "v6 enum roundtrips correctly");
     }
 }

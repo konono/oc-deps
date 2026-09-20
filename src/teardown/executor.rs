@@ -1303,19 +1303,50 @@ pub async fn execute_residual_cleanup(
             }
         }
 
-        // Final generation recheck immediately before durable decision
-        let pre_decision_j = journal_store.read().await;
-        let pre_decision_gen = audit::check_operator_generation(
-            client, &pre_decision_j.operator, &pre_decision_j.audit_context.csv_baseline,
-        ).await;
-        if !matches!(pre_decision_gen, audit::OperatorGenerationState::Absent) {
-            result.skipped.push(((*res).clone(), "generation changed before decision persist".to_string()));
-            break;
-        }
-
-        // Acquire gate permit
+        // Acquire gate permit FIRST — may block waiting for active permits
         let _permit = gate.acquire().await
             .context("Mutation gate closed during cleanup")?;
+
+        // Post-permit safety rechecks: generation + fresh audit + membership
+        // Conditions could have changed during permit wait
+        {
+            let post_permit_j = journal_store.read().await;
+            let post_permit_gen = audit::check_operator_generation(
+                client, &post_permit_j.operator, &post_permit_j.audit_context.csv_baseline,
+            ).await;
+            if !matches!(post_permit_gen, audit::OperatorGenerationState::Absent) {
+                result.skipped.push(((*res).clone(), "generation changed after permit acquisition".to_string()));
+                drop(_permit);
+                break;
+            }
+            // Fresh audit to verify current residual membership with permit held
+            match audit::run_residual_audit(client, &post_permit_j).await {
+                Ok(post_permit_audit) => {
+                    let post_permit_status = audit::residual_status_from_audit(&post_permit_audit);
+                    if matches!(post_permit_status, ResidualStatus::AuditIncomplete) {
+                        result.skipped.push(((*res).clone(), "post-permit audit incomplete".to_string()));
+                        drop(_permit);
+                        continue;
+                    }
+                    let still_in_set = post_permit_audit.likely_operator_residual.iter()
+                        .chain(post_permit_audit.unattributed.iter())
+                        .any(|r| r.resource.group == res.group
+                            && r.resource.kind == res.kind
+                            && r.resource.name == res.name
+                            && r.resource.namespace == res.namespace);
+                    if !still_in_set {
+                        result.skipped.push(((*res).clone(), "no longer in residual set after permit acquisition".to_string()));
+                        drop(_permit);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    result.failed.push(((*res).clone(), format!("post-permit audit failed: {}", e)));
+                    drop(_permit);
+                    break;
+                }
+            }
+        }
 
         // Record decision BEFORE mutation (durable)
         let decision_uid = res.uid.clone();
@@ -1416,9 +1447,11 @@ pub async fn execute_residual_cleanup(
         }
     }
 
-    // Determine final state
+    // Determine final state — consider skipped/failed resources
     let post_j_final = journal_store.read().await;
     let has_failed_decisions = post_j_final.cleanup_decisions.iter().any(|d| d.is_failed());
+    let has_incomplete = !result.skipped.is_empty() || !result.failed.is_empty();
+
     let final_cleanup_state = if has_failed_decisions {
         RunState::Failed
     } else {
@@ -1429,7 +1462,15 @@ pub async fn execute_residual_cleanup(
                 }).await.context("Failed to persist Failed state for incomplete audit")?;
                 bail!("Post-cleanup audit incomplete — cannot confirm cleanup success. State persisted as Failed.");
             }
-            _ => RunState::ApplyCompleted,
+            _ => {
+                if has_incomplete {
+                    // Some resources were skipped/failed — stay in InteractiveCleanup
+                    // so the user can retry after resolving the issues
+                    RunState::InteractiveCleanup
+                } else {
+                    RunState::ApplyCompleted
+                }
+            }
         }
     };
     journal_store.update(|j| {
@@ -1439,6 +1480,13 @@ pub async fn execute_residual_cleanup(
 
     if final_cleanup_state == RunState::Failed {
         bail!("Cleanup completed with failed or unconfirmed decisions");
+    }
+    if final_cleanup_state == RunState::InteractiveCleanup {
+        bail!(
+            "Cleanup incomplete: {} deleted, {} skipped, {} failed. \
+             State persisted as InteractiveCleanup — retry is safe.",
+            result.deleted.len(), result.skipped.len(), result.failed.len()
+        );
     }
 
     Ok(result)
