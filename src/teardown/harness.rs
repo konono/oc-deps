@@ -591,7 +591,7 @@ mod tests {
 
     // ── Cleanup decision predicate tests (uses CleanupDecision methods from journal.rs) ──
 
-    fn make_decision(result: Option<&str>) -> crate::teardown::journal::CleanupDecision {
+    fn make_decision(result: Option<crate::teardown::journal::CleanupResult>) -> crate::teardown::journal::CleanupDecision {
         crate::teardown::journal::CleanupDecision {
             resource: ResourceId {
                 group: "apps".to_string(),
@@ -603,13 +603,13 @@ mod tests {
             },
             bound_uid: Some("uid-1".to_string()),
             action: "delete".to_string(),
-            result: result.map(String::from),
+            result,
         }
     }
 
     #[test]
     fn test_delete_requested_is_pending_and_failed() {
-        let d = make_decision(Some("delete_requested"));
+        let d = make_decision(Some(crate::teardown::journal::CleanupResult::DeleteRequested));
         assert!(d.is_pending(), "delete_requested must be pending");
         assert!(d.is_failed(), "delete_requested must be failed (Gone not confirmed)");
         assert!(!d.is_complete(), "delete_requested must NOT be complete");
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_gone_is_complete_not_pending() {
-        let d = make_decision(Some("gone"));
+        let d = make_decision(Some(crate::teardown::journal::CleanupResult::Gone));
         assert!(d.is_complete());
         assert!(!d.is_pending());
         assert!(!d.is_failed());
@@ -631,14 +631,14 @@ mod tests {
 
     #[test]
     fn test_already_gone_is_complete() {
-        let d = make_decision(Some("already_gone"));
+        let d = make_decision(Some(crate::teardown::journal::CleanupResult::AlreadyGone));
         assert!(d.is_complete());
         assert!(!d.is_failed());
     }
 
     #[test]
     fn test_failed_result_is_failed() {
-        let d = make_decision(Some("failed: API timeout"));
+        let d = make_decision(Some(crate::teardown::journal::CleanupResult::Failed("API timeout".to_string())));
         assert!(d.is_failed());
         assert!(!d.is_complete());
         assert!(!d.is_pending());
@@ -648,8 +648,8 @@ mod tests {
     fn test_failed_decisions_block_apply_completed() {
         // Simulate final_state logic: any failed/unconfirmed → not ApplyCompleted
         let decisions = vec![
-            make_decision(Some("gone")),
-            make_decision(Some("failed: timeout")),
+            make_decision(Some(crate::teardown::journal::CleanupResult::Gone)),
+            make_decision(Some(crate::teardown::journal::CleanupResult::Failed("timeout".to_string()))),
         ];
         let has_failed = decisions.iter().any(|d| d.is_failed());
         assert!(has_failed, "failed decision must be detected");
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_delete_requested_not_confirmed_is_failed() {
-        let d = make_decision(Some("delete_requested_not_confirmed"));
+        let d = make_decision(Some(crate::teardown::journal::CleanupResult::DeleteRequested));
         assert!(d.is_failed());
         assert!(!d.is_complete());
     }

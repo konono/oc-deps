@@ -4,6 +4,7 @@ mod graph;
 mod kube;
 mod output;
 mod teardown;
+mod tui;
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -30,7 +31,8 @@ use crate::teardown::explain::explain_resource;
 use crate::teardown::inspect::{inspect_operator, print_inspection};
 use crate::teardown::permit::MutationGate;
 use crate::teardown::journal::{
-    self, AuditContext, ExecutionRecord, JournalStore, ResidualStatus, RunJournal, RunState,
+    self, AuditContext, CleanupDecision, CleanupResult, ExecutionRecord, JournalStore,
+    ResidualStatus, RunJournal, RunState,
 };
 use crate::teardown::planner::{
     DecisionPolicy, generate_teardown_plan, load_plan_from_file, print_teardown_plan,
@@ -179,6 +181,7 @@ async fn main() -> Result<()> {
                         approve_delete,
                         preserve,
                         script,
+                        tui: use_tui,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -214,6 +217,42 @@ async fn main() -> Result<()> {
                             Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                         }
 
+                        // TUI mode: ratatui interactive Plan Review → Execution → Residual Cleanup
+                        if use_tui && !dry_run {
+                            let journal_store = {
+                                let store = create_run_journal(
+                                    &client, &plan, &target_operators, &gk_map,
+                                ).await?;
+                                eprintln!("📓 Run journal: {}", store.path().display());
+
+                                let current_id = journal::fetch_cluster_identity(&client).await?;
+                                let stored = store.read().await;
+                                if !current_id.matches(&stored.cluster_identity) {
+                                    bail!("Cluster identity changed. Aborting.");
+                                }
+                                std::sync::Arc::new(store)
+                            };
+                            let gate = std::sync::Arc::new(MutationGate::new(16));
+
+                            // Ctrl-C handler
+                            {
+                                let gate_for_signal = gate.clone();
+                                tokio::spawn(async move {
+                                    if tokio::signal::ctrl_c().await.is_ok() {
+                                        gate_for_signal.close_and_drain().await;
+                                    }
+                                });
+                            }
+
+                            let mut plan = plan;
+                            crate::tui::run_tui(
+                                &client, &mut plan, &target_operators,
+                                &kind_map, &gk_map, &gvk_map, &gvr_map,
+                                &journal_store, &gate, force,
+                            ).await?;
+                            return Ok(());
+                        }
+
                         // Headless script mode: drive AppState with JSON commands
                         if let Some(script_path) = &script {
                             use crate::teardown::app::{AppState, AppScreen, AppCommand, apply_command, AppStateSnapshot};
@@ -225,6 +264,8 @@ async fn main() -> Result<()> {
                                 .with_context(|| format!("Failed to read script: {}", script_path))?;
 
                             let mut events = Vec::new();
+                            let mut script_journal: Option<std::sync::Arc<JournalStore>> = None;
+                            let mut script_gate: Option<std::sync::Arc<MutationGate>> = None;
                             for (i, line) in content.lines().enumerate() {
                                 let line = line.trim();
                                 if line.is_empty() || line.starts_with('#') {
@@ -385,7 +426,7 @@ async fn main() -> Result<()> {
                                     }
 
                                     // Run executor with the plan
-                                    let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
+                                    script_journal = if !dry_run {
                                         let store = create_run_journal(
                                             &client, &plan, &target_operators, &gk_map,
                                         ).await?;
@@ -393,6 +434,7 @@ async fn main() -> Result<()> {
                                     } else {
                                         None
                                     };
+                                    let journal_store = &script_journal;
 
                                     // Cluster identity re-check (same as normal apply path)
                                     if let Some(store) = &journal_store {
@@ -408,7 +450,8 @@ async fn main() -> Result<()> {
                                         }
                                     }
 
-                                    let gate = std::sync::Arc::new(MutationGate::new(16));
+                                    script_gate = Some(std::sync::Arc::new(MutationGate::new(16)));
+                                    let gate = script_gate.as_ref().unwrap();
                                     let exec_result = execute_plan(
                                         &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map,
                                         dry_run, force,
@@ -465,11 +508,46 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                 }
+
+                                // After execution completes, transition to ResidualCleanup
+                                // so subsequent SelectResidual/DeleteSelected commands work
+                                if app.screen == AppScreen::Executing {
+                                    app.screen = AppScreen::ResidualCleanup;
+                                    events.push(serde_json::json!({
+                                        "screen_transition": "ResidualCleanup",
+                                    }));
+                                }
+
+                                // Handle DeleteSelected: execute residual cleanup
+                                if matches!(cmd, AppCommand::DeleteSelected)
+                                    && result.is_ok()
+                                    && app.screen == AppScreen::ResidualCleanup
+                                    && !app.selected_residuals.is_empty()
+                                {
+                                    if let (Some(store), Some(g)) = (&script_journal, &script_gate) {
+                                        // Run cleanup via shared function
+                                        match crate::tui::run_residual_cleanup(
+                                            &client, &plan, store, g, &kind_map, &gk_map,
+                                        ).await {
+                                            Ok(()) => {
+                                                events.push(serde_json::json!({
+                                                    "residual_cleanup": "completed"
+                                                }));
+                                            }
+                                            Err(e) => {
+                                                events.push(serde_json::json!({
+                                                    "residual_cleanup_error": format!("{:#}", e)
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // Output full trace as JSON
                             let has_errors = events.iter().any(|e| {
                                 e.get("execution_error").is_some()
+                                    || e.get("residual_cleanup_error").is_some()
                                     || e.get("result")
                                         .and_then(|r| r.as_str())
                                         .is_some_and(|s| s.starts_with("error:"))
@@ -961,10 +1039,9 @@ async fn main() -> Result<()> {
                                                                                         &client, res, &kind_map, &gk_map, None,
                                                                                     ).await;
 
-                                                                                    let result_str = match &del_result {
+                                                                                    let cleanup_result = match &del_result {
                                                                                         Ok(msg) => {
                                                                                             eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg);
-                                                                                            // Wait for Gone confirmation after DELETE accepted
                                                                                             if msg == "deleted" {
                                                                                                 let mut gone_confirmed = false;
                                                                                                 if let Some((api, _)) = crate::kube::resource::resolve_api(&client, res, &kind_map, &gk_map) {
@@ -984,27 +1061,22 @@ async fn main() -> Result<()> {
                                                                                                         }
                                                                                                     }
                                                                                                 }
-                                                                                                if gone_confirmed {
-                                                                                                    "gone".to_string()
-                                                                                                } else {
-                                                                                                    "delete_requested_not_confirmed".to_string()
-                                                                                                }
+                                                                                                if gone_confirmed { CleanupResult::Gone } else { CleanupResult::DeleteRequested }
                                                                                             } else if msg == "already_gone" {
-                                                                                                "already_gone".to_string()
+                                                                                                CleanupResult::AlreadyGone
                                                                                             } else {
-                                                                                                msg.clone()
+                                                                                                CleanupResult::DeleteRequested
                                                                                             }
                                                                                         }
-                                                                                        Err(e) => { eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e); format!("failed: {}", e) }
+                                                                                        Err(e) => { eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e); CleanupResult::Failed(e.to_string()) }
                                                                                     };
 
-                                                                                    // Record result BEFORE dropping permit
                                                                                     let res_clone2 = (*res).clone();
                                                                                     store.update(|j| {
                                                                                         if let Some(d) = j.cleanup_decisions.iter_mut().rev()
                                                                                             .find(|d| d.resource == res_clone2 && d.result.is_none())
                                                                                         {
-                                                                                            d.result = Some(result_str);
+                                                                                            d.result = Some(cleanup_result);
                                                                                         }
                                                                                     }).await
                                                                                     .context("Failed to checkpoint cleanup result")?;
@@ -1509,7 +1581,7 @@ async fn main() -> Result<()> {
                                             // Handle delete_requested: DELETE was sent but Gone
                                             // was not confirmed. Reconcile via live GET — do NOT
                                             // re-send DELETE (authority already used).
-                                            if decision.result.as_deref() == Some("delete_requested") {
+                                            if matches!(decision.result, Some(CleanupResult::DeleteRequested)) {
                                                 let (api, _) = crate::kube::resource::resolve_api(
                                                     &client, &decision.resource, &kind_map, &gk_map,
                                                 ).ok_or_else(|| anyhow::anyhow!(
@@ -1520,8 +1592,8 @@ async fn main() -> Result<()> {
                                                         let res_up = decision.resource.clone();
                                                         store.update(|j| {
                                                             if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                .find(|d| d.resource == res_up && d.result.as_deref() == Some("delete_requested"))
-                                                            { d.result = Some("gone".to_string()); }
+                                                                .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
+                                                            { d.result = Some(CleanupResult::Gone); }
                                                         }).await?;
                                                         eprintln!("  {}/{}: gone (confirmed on resume)", decision.resource.kind, decision.resource.name);
                                                     }
@@ -1541,8 +1613,8 @@ async fn main() -> Result<()> {
                                                             let res_up = decision.resource.clone();
                                                             store.update(|j| {
                                                                 if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                    .find(|d| d.resource == res_up && d.result.as_deref() == Some("delete_requested"))
-                                                                { d.result = Some("gone".to_string()); }
+                                                                    .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
+                                                                { d.result = Some(CleanupResult::Gone); }
                                                             }).await?;
                                                             eprintln!("  {}/{}: old UID gone (new UID {} = recreated)", decision.resource.kind, decision.resource.name, live_uid);
                                                             continue;
@@ -1563,8 +1635,8 @@ async fn main() -> Result<()> {
                                                                 let res_up = decision.resource.clone();
                                                                 store.update(|j| {
                                                                     if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                        .find(|d| d.resource == res_up && d.result.as_deref() == Some("delete_requested"))
-                                                                    { d.result = Some("gone".to_string()); }
+                                                                        .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
+                                                                    { d.result = Some(CleanupResult::Gone); }
                                                                 }).await?;
                                                                 eprintln!("  {}/{}: gone (waited on resume)", decision.resource.kind, decision.resource.name);
                                                             } else {
@@ -1627,7 +1699,7 @@ async fn main() -> Result<()> {
                                                         store.update(|j| {
                                                             if let Some(d) = j.cleanup_decisions.iter_mut().rev()
                                                                 .find(|d| d.resource == res_up && d.result.is_none())
-                                                            { d.result = Some("already_gone".to_string()); }
+                                                            { d.result = Some(CleanupResult::AlreadyGone); }
                                                         }).await?;
                                                         eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
                                                         continue;
@@ -1663,7 +1735,7 @@ async fn main() -> Result<()> {
                                                     store.update(|j| {
                                                         if let Some(d) = j.cleanup_decisions.iter_mut().rev()
                                                             .find(|d| d.resource == res_up && d.result.is_none())
-                                                        { d.result = Some("already_gone".to_string()); }
+                                                        { d.result = Some(CleanupResult::AlreadyGone); }
                                                     }).await?;
                                                     eprintln!("  {}/{}: already gone", decision.resource.kind, decision.resource.name);
                                                     continue;
@@ -1679,12 +1751,12 @@ async fn main() -> Result<()> {
                                                 &client, &decision.resource, &kind_map, &gk_map, None,
                                             ).await;
 
-                                            // Record initial result: "delete_requested" (NOT "deleted")
-                                            // DELETE accepted != Gone. Gone is confirmed separately.
+                                            // Record initial result
                                             let initial_result = match &del {
-                                                Ok(msg) if msg == "deleted" => "delete_requested".to_string(),
-                                                Ok(msg) => msg.clone(), // "already_gone"
-                                                Err(e) => { any_failed = true; format!("failed: {}", e) },
+                                                Ok(msg) if msg == "deleted" => CleanupResult::DeleteRequested,
+                                                Ok(msg) if msg == "already_gone" => CleanupResult::AlreadyGone,
+                                                Ok(_) => CleanupResult::DeleteRequested,
+                                                Err(e) => { any_failed = true; CleanupResult::Failed(e.to_string()) },
                                             };
                                             let res_up = decision.resource.clone();
                                             let initial_clone = initial_result.clone();
@@ -1696,7 +1768,7 @@ async fn main() -> Result<()> {
                                             drop(_permit);
 
                                             // 5. Wait for Gone (only if DELETE was accepted)
-                                            if initial_result == "delete_requested" {
+                                            if matches!(initial_result, CleanupResult::DeleteRequested) {
                                                 let mut gone = false;
                                                 for _ in 0..30 {
                                                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1711,8 +1783,8 @@ async fn main() -> Result<()> {
                                                     let res_up2 = decision.resource.clone();
                                                     store.update(|j| {
                                                         if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                            .find(|d| d.resource == res_up2 && d.result.as_deref() == Some("delete_requested"))
-                                                        { d.result = Some("gone".to_string()); }
+                                                            .find(|d| d.resource == res_up2 && matches!(d.result, Some(CleanupResult::DeleteRequested)))
+                                                        { d.result = Some(CleanupResult::Gone); }
                                                     }).await?;
                                                     eprintln!("  {}/{}: gone (confirmed)", decision.resource.kind, decision.resource.name);
                                                 } else {
@@ -1720,7 +1792,7 @@ async fn main() -> Result<()> {
                                                     any_failed = true;
                                                 }
                                             } else {
-                                                eprintln!("  {}/{}: {}", decision.resource.kind, decision.resource.name, initial_result);
+                                                eprintln!("  {}/{}: {:?}", decision.resource.kind, decision.resource.name, initial_result);
                                             }
                                         }
                                     }
@@ -2442,7 +2514,7 @@ async fn fetch_observed_identities(
 /// - target manager alone → insufficient for DELETE authority
 /// - arbitrary ownerRef without target match → insufficient
 /// Re-classify fresh provenance from a live GET result using UID-based identity.
-fn classify_fresh_provenance(
+pub fn classify_fresh_provenance(
     obj: &::kube::api::DynamicObject,
     audit_ctx: &crate::teardown::journal::AuditContext,
     operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
@@ -2494,7 +2566,7 @@ fn classify_fresh_provenance(
 
 /// Validate that fresh provenance hasn't degraded from the stored review metadata.
 /// Provenance downgrade → BLOCK (basis drift detected).
-fn revalidate_review_basis(
+pub fn revalidate_review_basis(
     obj: &::kube::api::DynamicObject,
     metadata: &Option<crate::teardown::plan::ReviewMetadata>,
     audit_ctx: &crate::teardown::journal::AuditContext,

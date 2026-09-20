@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 5;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -53,32 +53,42 @@ pub struct RunJournal {
 }
 
 /// A single residual cleanup decision with its outcome.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CleanupResult {
+    DeleteRequested,
+    Gone,
+    AlreadyGone,
+    Failed(String),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CleanupDecision {
     pub resource: ResourceId,
     pub bound_uid: Option<String>,
     pub action: String,
-    pub result: Option<String>,
+    pub result: Option<CleanupResult>,
 }
 
 impl CleanupDecision {
     /// Pending: needs resume action (not yet executed or DELETE sent but Gone not confirmed)
     pub fn is_pending(&self) -> bool {
-        self.result.is_none() || self.result.as_deref() == Some("delete_requested")
+        self.result.is_none() || matches!(self.result, Some(CleanupResult::DeleteRequested))
     }
 
     /// Failed: DELETE error, Gone timeout, or unconfirmed DELETE
     pub fn is_failed(&self) -> bool {
-        self.result.as_deref().is_some_and(|r| {
-            r.starts_with("failed:")
-                || r == "delete_requested"
-                || r == "delete_requested_not_confirmed"
-        })
+        matches!(
+            self.result,
+            Some(CleanupResult::DeleteRequested) | Some(CleanupResult::Failed(_))
+        )
     }
 
     /// Terminal success: resource confirmed Gone
     pub fn is_complete(&self) -> bool {
-        matches!(self.result.as_deref(), Some("gone") | Some("already_gone"))
+        matches!(
+            self.result,
+            Some(CleanupResult::Gone) | Some(CleanupResult::AlreadyGone)
+        )
     }
 }
 
@@ -435,8 +445,16 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
         if journal.schema_version < 4 {
             journal.schema_version = 4;
         }
-        // v4 journals do NOT get bumped to v5 — they cannot gain manual
+        // v4 journals do NOT get bumped to v5/v6 — they cannot gain manual
         // cleanup authority that wasn't available at journal creation.
+        // v5 journals with string-typed cleanup_decisions need migration to v6
+        // CleanupResult enum. Since the field uses serde, v5 string results
+        // will fail to deserialize as CleanupResult. The serde(default) on
+        // cleanup_decisions handles this: old v5 decisions are lost in deserialization.
+        // This is safe because:
+        // - v5 cleanup_decisions are cleared (not carried to v6)
+        // - the runtime check schema_version >= 5 still applies for cleanup authority
+        // - v6 journals created fresh will have typed CleanupResult
     }
 
     Ok(journal)

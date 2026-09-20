@@ -197,6 +197,11 @@ pub enum TeardownAction {
         /// Uses same AppState + executor as interactive mode.
         #[arg(long, value_name = "PATH")]
         script: Option<String>,
+
+        /// Enable ratatui TUI mode for interactive Plan Review + Execution + Residual Cleanup.
+        /// Uses the same AppState + core executor as CLI and --script modes.
+        #[arg(long)]
+        tui: bool,
     },
 
     /// Inspect all resources belonging to an operator
