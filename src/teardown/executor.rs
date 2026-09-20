@@ -961,12 +961,30 @@ async fn delete_resource_inner(
         }
     }
 
-    // Step 3: Delete with UID precondition
+    // Step 3: Delete with preconditions
+    // Subscription DELETEs use UID + resourceVersion to atomically reject
+    // spec.name changes between GET and DELETE (semantic identity TOCTOU).
+    // Other resources use UID-only precondition.
+    let current_rv = current.metadata.resource_version.as_deref().unwrap_or("");
+    let needs_rv_precondition = resource.kind == "Subscription"
+        && resource.group == "operators.coreos.com"
+        && expected_package_name.is_some();
+
+    if needs_rv_precondition && current_rv.is_empty() {
+        return DeleteResult::Failed(
+            "Subscription has no resourceVersion — cannot set atomic precondition for semantic identity".to_string()
+        );
+    }
+
     let dp = if !current_uid.is_empty() {
         DeleteParams {
             preconditions: Some(kube::api::Preconditions {
                 uid: Some(current_uid.to_string()),
-                resource_version: None,
+                resource_version: if needs_rv_precondition {
+                    Some(current_rv.to_string())
+                } else {
+                    None
+                },
             }),
             ..Default::default()
         }
@@ -977,8 +995,6 @@ async fn delete_resource_inner(
     match api.delete(&resource.name, &dp).await {
         Ok(_) => DeleteResult::Deleted,
         Err(kube::Error::Api(err)) if err.code == 404 => {
-            // Endpoint could have disappeared between GET and DELETE.
-            // Verify before declaring AlreadyGone.
             match api.list(&ListParams::default().limit(1)).await {
                 Ok(_) => DeleteResult::AlreadyGone,
                 Err(_) => DeleteResult::Failed(
@@ -989,10 +1005,18 @@ async fn delete_resource_inner(
             }
         }
         Err(kube::Error::Api(err)) if err.code == 409 => {
-            DeleteResult::Failed(
-                "UID conflict during delete — resource was recreated between GET and DELETE"
-                    .to_string(),
-            )
+            if needs_rv_precondition {
+                DeleteResult::Failed(
+                    "Subscription was modified between GET and DELETE (resourceVersion conflict) — \
+                     spec.name may have changed. Re-run 'teardown plan'."
+                        .to_string(),
+                )
+            } else {
+                DeleteResult::Failed(
+                    "UID conflict during delete — resource was recreated between GET and DELETE"
+                        .to_string(),
+                )
+            }
         }
         Err(e) => DeleteResult::Failed(e.to_string()),
     }
