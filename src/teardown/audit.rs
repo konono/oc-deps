@@ -223,6 +223,9 @@ pub struct AttributedResidual {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResidualEvidence {
+    /// Added in schema v3. Defaults to false for v2 journals so that
+    /// deserialization succeeds before migration discards the old audit.
+    #[serde(default)]
     pub owner_ref_match: bool,
     pub matching_labels: Vec<(String, String)>,
     pub matching_managers: Vec<String>,
@@ -1350,5 +1353,80 @@ mod tests {
             namespace_affinity: false,
             service_account_match: false,
         }
+    }
+
+    #[test]
+    fn test_v2_residual_evidence_deserialize_without_owner_ref_match() {
+        // v2 journals have ResidualEvidence without owner_ref_match.
+        // serde(default) must allow deserialization so migration can proceed.
+        let json = r#"{
+            "matching_labels": [["app", "test"]],
+            "matching_managers": ["controller"],
+            "namespace_affinity": true,
+            "service_account_match": false
+        }"#;
+        let evidence: ResidualEvidence = serde_json::from_str(json).unwrap();
+        assert!(!evidence.owner_ref_match);
+        assert!(evidence.namespace_affinity);
+        assert_eq!(evidence.matching_labels.len(), 1);
+    }
+
+    #[test]
+    fn test_v2_attributed_residual_deserialize() {
+        // Full AttributedResidual from a v2 journal (no owner_ref_match in evidence)
+        let json = r#"{
+            "resource": {
+                "group": "apps", "version": "v1", "kind": "Deployment",
+                "namespace": "test-ns", "name": "test-dep", "uid": "uid-123"
+            },
+            "evidence": {
+                "matching_labels": [],
+                "matching_managers": ["mgr"],
+                "namespace_affinity": false,
+                "service_account_match": false
+            },
+            "confidence": "Low"
+        }"#;
+        let residual: AttributedResidual = serde_json::from_str(json).unwrap();
+        assert!(!residual.evidence.owner_ref_match);
+        assert_eq!(residual.confidence, ResidualConfidence::Low);
+    }
+
+    #[test]
+    fn test_v2_residual_audit_deserialize() {
+        // A complete ResidualAudit from v2 (no owner_ref_match, no recreation, no live_uid)
+        let json = r#"{
+            "planned_delete_still_present": [{
+                "resource": {
+                    "group": "", "version": "v1", "kind": "Service",
+                    "namespace": "ns", "name": "svc", "uid": "uid-1"
+                },
+                "planned_action": "DELETE"
+            }],
+            "planned_expect_still_present": [],
+            "expected_preserved": [],
+            "likely_operator_residual": [{
+                "resource": {
+                    "group": "apps", "version": "v1", "kind": "Deployment",
+                    "namespace": "ns", "name": "dep", "uid": "uid-2"
+                },
+                "evidence": {
+                    "matching_labels": [],
+                    "matching_managers": [],
+                    "namespace_affinity": true,
+                    "service_account_match": false
+                },
+                "confidence": "None"
+            }],
+            "unattributed": [],
+            "coverage": { "requested_probes": 10, "succeeded_probes": 10 },
+            "scan_errors": []
+        }"#;
+        let audit: ResidualAudit = serde_json::from_str(json).unwrap();
+        // ResidualItem defaults: recreation=Unknown, live_uid=None
+        assert_eq!(audit.planned_delete_still_present[0].recreation, RecreationState::Unknown);
+        assert!(audit.planned_delete_still_present[0].live_uid.is_none());
+        // ResidualEvidence defaults: owner_ref_match=false
+        assert!(!audit.likely_operator_residual[0].evidence.owner_ref_match);
     }
 }
