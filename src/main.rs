@@ -178,6 +178,7 @@ async fn main() -> Result<()> {
                         force,
                         approve_delete,
                         preserve,
+                        script,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -213,8 +214,129 @@ async fn main() -> Result<()> {
                             Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                         }
 
+                        // Headless script mode: drive AppState with JSON commands
+                        if let Some(script_path) = &script {
+                            use crate::teardown::app::{AppState, AppScreen, AppCommand, apply_command, AppStateSnapshot};
+                            let mut app = AppState::new();
+
+                            // Read commands from script file (one JSON per line)
+                            let content = std::fs::read_to_string(script_path)
+                                .with_context(|| format!("Failed to read script: {}", script_path))?;
+
+                            let mut events = Vec::new();
+                            for (i, line) in content.lines().enumerate() {
+                                let line = line.trim();
+                                if line.is_empty() || line.starts_with('#') {
+                                    continue;
+                                }
+                                let cmd: AppCommand = serde_json::from_str(line)
+                                    .with_context(|| format!("Invalid command on line {}: {}", i + 1, line))?;
+
+                                let result = apply_command(&mut app, &cmd);
+                                let snapshot = AppStateSnapshot::from(&app);
+                                events.push(serde_json::json!({
+                                    "step": i,
+                                    "command": format!("{:?}", cmd),
+                                    "result": match &result {
+                                        Ok(()) => "ok".to_string(),
+                                        Err(e) => format!("error: {}", e),
+                                    },
+                                    "state": snapshot,
+                                }));
+
+                                // On StartExecution, run the actual executor
+                                if matches!(cmd, AppCommand::StartExecution)
+                                    && result.is_ok()
+                                    && app.screen == AppScreen::Executing
+                                {
+                                    // Run executor with the plan
+                                    let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
+                                        let store = create_run_journal(
+                                            &client, &plan, &target_operators, &gk_map,
+                                        ).await?;
+                                        Some(std::sync::Arc::new(store))
+                                    } else {
+                                        None
+                                    };
+
+                                    let gate = std::sync::Arc::new(MutationGate::new(16));
+                                    let exec_result = execute_plan(
+                                        &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map,
+                                        dry_run, force,
+                                        journal_store.as_deref(),
+                                        Some(&gate),
+                                        0,
+                                    ).await;
+
+                                    match exec_result {
+                                        Ok(ref result) => {
+                                            if let Some(store) = &journal_store {
+                                                let _ = store.update(|j| {
+                                                    j.state = if result.failed.is_empty() && result.barrier_timeout.is_none() {
+                                                        RunState::ApplyCompleted
+                                                    } else {
+                                                        RunState::Failed
+                                                    };
+                                                }).await;
+                                            }
+                                            events.push(serde_json::json!({
+                                                "execution": {
+                                                    "phases_completed": result.phases_completed,
+                                                    "phases_total": result.phases_total,
+                                                    "deleted": result.deleted.len(),
+                                                    "failed": result.failed.len(),
+                                                }
+                                            }));
+                                        }
+                                        Err(e) => {
+                                            events.push(serde_json::json!({
+                                                "execution_error": format!("{:#}", e)
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Output full trace as JSON
+                            let has_errors = events.iter().any(|e| {
+                                e.get("execution_error").is_some()
+                                    || e.get("result")
+                                        .and_then(|r| r.as_str())
+                                        .is_some_and(|s| s.starts_with("error:"))
+                            });
+                            println!("{}", serde_json::to_string_pretty(&events)?);
+                            if has_errors {
+                                bail!("Script execution completed with errors");
+                            }
+                            return Ok(());
+                        }
+
+                        // Interactive Plan Review (if TTY and not dry-run/script)
+                        // Uses AppState to track draft overrides
+                        let is_tty = atty::is(atty::Stream::Stdin);
+                        if is_tty && !dry_run && script.is_none() {
+                            use crate::teardown::app::{AppState, AppScreen, AppCommand, apply_command};
+                            let mut app = AppState::new();
+
+                            // Show plan summary for review
+                            let review_count = plan.phases.iter()
+                                .flat_map(|p| &p.actions)
+                                .filter(|a| matches!(a, crate::teardown::planner::Action::Review { .. }))
+                                .count();
+
+                            if review_count > 0 && !force {
+                                eprintln!("\n📋 Plan Review: {} REVIEW item(s) available for approval", review_count);
+                                eprintln!("  (Use --approve-delete to approve, or --force to skip review)\n");
+                            }
+
+                            // Transition to Executing
+                            let _ = apply_command(&mut app, &AppCommand::StartExecution);
+                            // AppState is now Executing — BoundPlan is frozen
+                        }
+
                         // Create RunJournal before first mutation (fail-closed)
-                        let journal_store = if !dry_run {
+                        // Use process lock to prevent dual-writer from resume
+                        let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
                             let store = create_run_journal(
                                 &client, &plan, &target_operators, &gk_map,
                             ).await?;
@@ -232,7 +354,7 @@ async fn main() -> Result<()> {
                                 );
                             }
 
-                            Some(store)
+                            Some(std::sync::Arc::new(store))
                         } else {
                             None
                         };
@@ -240,52 +362,61 @@ async fn main() -> Result<()> {
                         // Create MutationGate for pause/Ctrl-C support
                         let gate = std::sync::Arc::new(MutationGate::new(16));
 
-                        // Set up Ctrl-C handler to close gate and persist Paused
+                        // Ctrl-C handler: close gate + drain only.
+                        // Does NOT write journal — main thread determines final state
+                        // after execute_plan returns, using gate.is_open() + result.
                         if !dry_run {
                             let gate_for_signal = gate.clone();
-                            let journal_for_signal = journal_store
-                                .as_ref()
-                                .map(|s| (s.path().to_path_buf(),));
                             tokio::spawn(async move {
                                 if tokio::signal::ctrl_c().await.is_ok() {
                                     eprintln!(
                                         "\n⏸ Pausing... waiting for active mutations to complete..."
                                     );
                                     gate_for_signal.close_and_drain().await;
-                                    eprintln!("⏸ Paused. Use 'teardown resume' to continue.");
-
-                                    // Best-effort persist Paused state
-                                    if let Some((path,)) = journal_for_signal {
-                                        if let Ok(mut j) = journal::load_journal(&path) {
-                                            j.state = RunState::Paused;
-                                            let _ =
-                                                journal::atomic_write_json_pub(&path, &j);
-                                        }
-                                    }
+                                    // Main thread will persist Paused after execute_plan returns
                                 }
                             });
                         }
 
                         let exec_result = execute_plan(
                             &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map,
-                            dry_run, force, journal_store.as_ref(),
+                            dry_run, force,
+                            journal_store.as_deref(),
                             Some(&gate),
+                            0, // start from phase 0 (fresh execution)
                         )
                         .await;
 
                         match exec_result {
                             Ok(result) => {
+                                // Determine final state: gate.is_open() distinguishes
+                                // completion from Ctrl-C pause. Single writer (main thread).
+                                let final_state = if !gate.is_open() {
+                                    RunState::Paused
+                                } else if result.failed.is_empty()
+                                    && result.barrier_timeout.is_none()
+                                    && result.phases_completed == result.phases_total
+                                {
+                                    RunState::ApplyCompleted
+                                } else {
+                                    RunState::Failed
+                                };
+
                                 if let Some(store) = &journal_store {
                                     store.update(|j| {
-                                        j.state = if result.failed.is_empty() && result.barrier_timeout.is_none() {
-                                            RunState::ApplyCompleted
-                                        } else {
-                                            RunState::Failed
-                                        };
+                                        j.state = final_state.clone();
                                         j.execution.phases_total = result.phases_total;
                                     }).await
                                     .context("Failed to persist final execution state")?;
                                 }
+
+                                if final_state == RunState::Paused {
+                                    eprintln!(
+                                        "\n⏸ Paused at phase {}/{}. Use 'teardown resume' to continue.",
+                                        result.phases_completed, result.phases_total
+                                    );
+                                }
+
                                 print_execution_result(&result);
 
                                 // Run post-apply residual audit (only if apply succeeded and operator is Absent)
@@ -327,6 +458,33 @@ async fn main() -> Result<()> {
                                             }
                                             _ => {
                                                 eprintln!("\nSkipping post-apply residual audit: operator generation not absent");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Residual cleanup transition — only if Absent + complete audit
+                                if final_state == RunState::ApplyCompleted {
+                                    if let Some(store) = &journal_store {
+                                        let j = store.read().await;
+                                        if let Some(ref audit) = j.last_residual_audit {
+                                            let rs = crate::teardown::audit::residual_status_from_audit(audit);
+                                            match rs {
+                                                journal::ResidualStatus::ResidualsObserved { count } => {
+                                                    eprintln!(
+                                                        "\n📋 {} residual(s) observed. Use 'teardown journal' to review.",
+                                                        count
+                                                    );
+                                                }
+                                                journal::ResidualStatus::AuditIncomplete => {
+                                                    eprintln!(
+                                                        "\n⚠ Residual audit incomplete — manual cleanup is not available."
+                                                    );
+                                                }
+                                                journal::ResidualStatus::NoneObservedInScope => {
+                                                    eprintln!("\n✅ No residuals observed in scanned scope.");
+                                                }
+                                                _ => {}
                                             }
                                         }
                                     }
@@ -552,9 +710,104 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // Resume: update journal to Applying, re-execute remaining phases
+                                // Acquire process lock — fail if another executor is active
                                 let path = journal::run_path(&cluster_id, &j.run_id)?;
-                                let store = JournalStore::new(j.clone(), path);
+                                let store = JournalStore::new_with_lock(j.clone(), path)?;
+
+                                // Reconcile completed phases via live GET.
+                                // Journal = hint, live GET = truth.
+                                use crate::teardown::planner::Action;
+                                let start_phase = {
+                                    let completed = j.execution.phases_completed;
+                                    let mut verified_through = completed;
+                                    'phase_check: for (pi, phase) in
+                                        j.plan_snapshot.phases.iter().take(completed).enumerate()
+                                    {
+                                        for action in &phase.actions {
+                                            let resource = match action {
+                                                Action::Delete { resource, .. }
+                                                | Action::ExpectGone { resource, .. } => resource,
+                                                _ => continue,
+                                            };
+                                            let (api, _) = match crate::kube::resource::resolve_api(
+                                                &client, resource, &kind_map, &gk_map,
+                                            ) {
+                                                Some(r) => r,
+                                                None => bail!(
+                                                    "Cannot resolve API for {}/{} — \
+                                                     cannot verify state for resume",
+                                                    resource.kind, resource.name,
+                                                ),
+                                            };
+                                            match api.get(&resource.name).await {
+                                                Ok(obj) => {
+                                                    let live_uid =
+                                                        obj.metadata.uid.as_deref().unwrap_or("");
+                                                    // UID check
+                                                    let plan_uid = match &resource.uid {
+                                                        Some(u) if !u.is_empty() => u.as_str(),
+                                                        _ => bail!(
+                                                            "Plan resource {}/{} has no UID — \
+                                                             cannot verify identity for resume",
+                                                            resource.kind, resource.name,
+                                                        ),
+                                                    };
+                                                    if live_uid != plan_uid {
+                                                        bail!(
+                                                            "Resource {}/{} was recreated \
+                                                             (plan UID {} vs live UID {}) — \
+                                                             cannot resume. Create a new plan.",
+                                                            resource.kind,
+                                                            resource.name,
+                                                            plan_uid,
+                                                            live_uid,
+                                                        );
+                                                    }
+                                                    // Same UID, still exists
+                                                    if !obj.metadata.deletion_timestamp.is_some() {
+                                                        // No deletionTimestamp → DELETE didn't happen
+                                                        eprintln!(
+                                                            "  ⚠ {}/{} still exists — \
+                                                             re-executing from phase {}",
+                                                            resource.kind, resource.name, pi
+                                                        );
+                                                        verified_through = pi;
+                                                        break 'phase_check;
+                                                    }
+                                                    // Has deletionTimestamp → still deleting, needs wait
+                                                    eprintln!(
+                                                        "  ⏳ {}/{} still deleting — \
+                                                         re-executing from phase {} to wait",
+                                                        resource.kind, resource.name, pi
+                                                    );
+                                                    verified_through = pi;
+                                                    break 'phase_check;
+                                                }
+                                                Err(::kube::Error::Api(ref err))
+                                                    if err.code == 404 =>
+                                                {
+                                                    // Gone — safe to skip
+                                                }
+                                                Err(e) => {
+                                                    bail!(
+                                                        "Cannot verify {}/{} state: {} — \
+                                                         cannot safely resume",
+                                                        resource.kind,
+                                                        resource.name,
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    verified_through
+                                };
+
+                                eprintln!(
+                                    "  Resuming from phase {}/{}",
+                                    start_phase, j.plan_snapshot.phases.len()
+                                );
+
                                 store
                                     .update(|journal| {
                                         journal.state = RunState::Applying;
@@ -564,7 +817,6 @@ async fn main() -> Result<()> {
 
                                 let gate = std::sync::Arc::new(MutationGate::new(16));
 
-                                // Execute from saved plan (phases_completed already tracks progress)
                                 let exec_result = execute_plan(
                                     &client,
                                     &j.plan_snapshot,
@@ -576,6 +828,7 @@ async fn main() -> Result<()> {
                                     true, // force — already confirmed
                                     Some(&store),
                                     Some(&gate),
+                                    start_phase,
                                 )
                                 .await;
 
@@ -1144,7 +1397,7 @@ async fn create_run_journal(
     let path = journal::run_path(&cluster_id, &run_id)?;
     journal::atomic_write_json_pub(&path, &journal)?;
 
-    Ok(JournalStore::new(journal, path))
+    JournalStore::new_with_lock(journal, path)
 }
 
 /// Fetch observed identities with UIDs for pre-execution snapshot.

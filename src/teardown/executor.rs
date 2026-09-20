@@ -175,6 +175,7 @@ pub async fn execute_plan(
     force: bool,
     journal: Option<&JournalStore>,
     gate: Option<&MutationGate>,
+    start_phase: usize,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -249,7 +250,8 @@ pub async fn execute_plan(
 
     if dry_run {
         eprintln!("\x1b[1;36m── DRY RUN ──\x1b[0m\n");
-    } else if !confirm_execution(plan) {
+    } else if start_phase == 0 && !confirm_execution(plan) {
+        // Only prompt for confirmation on fresh execution, not resume
         eprintln!("\nAborted.");
         return Ok(ExecutionResult {
             phases_completed: 0,
@@ -345,6 +347,32 @@ pub async fn execute_plan(
     }
 
     for (i, phase) in plan.phases.iter().enumerate() {
+        // Skip already-completed phases (resume support)
+        if i < start_phase {
+            eprintln!("\n\x1b[2mPhase {} {} (completed in prior run)\x1b[0m", i, phase.name);
+            result.phases_completed += 1;
+            continue;
+        }
+
+        // Acquire phase-level mutation permit before any phase work.
+        // Held through DELETEs + journal checkpoint so pause drain
+        // waits for the durable result. Dropped at end of loop iteration.
+        let _phase_permit = if !dry_run {
+            if let Some(g) = gate {
+                match g.acquire().await {
+                    Ok(permit) => Some(permit),
+                    Err(_) => {
+                        eprintln!("\n\x1b[1;33m⏸ Mutation gate closed — pausing\x1b[0m");
+                        break;
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         eprintln!("\n\x1b[1mPhase {}  {}\x1b[0m", i, phase.name);
 
         if phase.actions.is_empty() {
@@ -451,26 +479,8 @@ pub async fn execute_plan(
                     let km = km.clone();
                     let gk = gk.clone();
                     async move {
-                        // Acquire mutation permit before DELETE
-                        if let Some(g) = gate {
-                            match g.acquire().await {
-                                Ok(_permit) => {
-                                    let res =
-                                        delete_resource(&client, &resource, &km, &gk).await;
-                                    // _permit dropped here — mutation + store update complete
-                                    (resource, res)
-                                }
-                                Err(_) => (
-                                    resource.clone(),
-                                    DeleteResult::Failed(
-                                        "Mutation gate closed (pausing)".to_string(),
-                                    ),
-                                ),
-                            }
-                        } else {
-                            let res = delete_resource(&client, &resource, &km, &gk).await;
-                            (resource, res)
-                        }
+                        let res = delete_resource(&client, &resource, &km, &gk).await;
+                        (resource, res)
                     }
                 });
 

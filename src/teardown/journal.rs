@@ -194,21 +194,81 @@ impl Default for ExecutionRecord {
 pub struct JournalStore {
     path: PathBuf,
     inner: Arc<Mutex<RunJournal>>,
+    #[allow(dead_code)]
+    lock_file: Option<std::fs::File>,
 }
 
 impl JournalStore {
+    /// Create a JournalStore WITHOUT a process lock (for read-only or
+    /// backward-compat use). Callers must ensure single-writer semantics.
     pub fn new(journal: RunJournal, path: PathBuf) -> Self {
         Self {
             path,
             inner: Arc::new(Mutex::new(journal)),
+            lock_file: None,
         }
     }
 
+    /// Create a JournalStore WITH an exclusive process-level lock.
+    /// Fails if another process holds the lock (active executor).
+    /// The lock is held for the lifetime of this JournalStore.
+    pub fn new_with_lock(journal: RunJournal, path: PathBuf) -> Result<Self> {
+        let lock_path = path.with_extension("lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open lock file: {}", lock_path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if ret != 0 {
+                bail!(
+                    "Another process is already executing this run (lock: {}). \
+                     Wait for it to complete or remove stale lock.",
+                    lock_path.display()
+                );
+            }
+        }
+
+        Ok(Self {
+            path,
+            inner: Arc::new(Mutex::new(journal)),
+            lock_file: Some(lock_file),
+        })
+    }
+
+    /// Check whether a process lock is held on a journal path without acquiring it.
+    pub fn is_locked(journal_path: &Path) -> bool {
+        let lock_path = journal_path.with_extension("lock");
+        let lock_file = match std::fs::OpenOptions::new()
+            .create(false)
+            .read(true)
+            .open(&lock_path)
+        {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let ret =
+                unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if ret != 0 {
+                return true; // lock is held by another process
+            }
+            // We got the lock — release it immediately
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
+        }
+        false
+    }
+
     /// Update the journal via single-writer CAS.
-    ///
-    /// SAFETY: This uses in-process Mutex only. Only one JournalStore instance
-    /// per journal file should exist in a process. Cross-process writes are NOT
-    /// safe with this design — defer to PR3's full exclusive lock.
+    /// Uses in-process Mutex + optional process-level flock.
     pub async fn update<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(&mut RunJournal),

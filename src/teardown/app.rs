@@ -37,7 +37,7 @@ pub enum DraftAction {
 //  Commands
 // ──────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum AppCommand {
     // Plan Review
     ApproveReview { resource: ResourceId },

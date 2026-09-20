@@ -192,6 +192,11 @@ pub enum TeardownAction {
         /// Preserve a REVIEW resource (keep instead of delete). Kind/name or group/Kind/ns/name (repeatable)
         #[arg(long, value_name = "SPEC")]
         preserve: Vec<String>,
+
+        /// Headless mode: read JSON commands from script file, output JSON state traces.
+        /// Uses same AppState + executor as interactive mode.
+        #[arg(long, value_name = "PATH")]
+        script: Option<String>,
     },
 
     /// Inspect all resources belonging to an operator
