@@ -224,6 +224,20 @@ pub enum TeardownAction {
         no_cache: bool,
     },
 
+    /// Resume a paused or interrupted teardown run
+    Resume {
+        /// Operator CSV name to find latest run
+        operator: Option<String>,
+
+        /// Specific run ID
+        #[arg(long)]
+        run: Option<String>,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+    },
+
     /// List all teardown runs for the current cluster
     Runs,
 

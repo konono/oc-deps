@@ -28,6 +28,7 @@ use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
 use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::inspect::{inspect_operator, print_inspection};
+use crate::teardown::permit::MutationGate;
 use crate::teardown::journal::{
     self, AuditContext, ExecutionRecord, JournalStore, ResidualStatus, RunJournal, RunState,
 };
@@ -236,9 +237,39 @@ async fn main() -> Result<()> {
                             None
                         };
 
+                        // Create MutationGate for pause/Ctrl-C support
+                        let gate = std::sync::Arc::new(MutationGate::new(16));
+
+                        // Set up Ctrl-C handler to close gate and persist Paused
+                        if !dry_run {
+                            let gate_for_signal = gate.clone();
+                            let journal_for_signal = journal_store
+                                .as_ref()
+                                .map(|s| (s.path().to_path_buf(),));
+                            tokio::spawn(async move {
+                                if tokio::signal::ctrl_c().await.is_ok() {
+                                    eprintln!(
+                                        "\n⏸ Pausing... waiting for active mutations to complete..."
+                                    );
+                                    gate_for_signal.close_and_drain().await;
+                                    eprintln!("⏸ Paused. Use 'teardown resume' to continue.");
+
+                                    // Best-effort persist Paused state
+                                    if let Some((path,)) = journal_for_signal {
+                                        if let Ok(mut j) = journal::load_journal(&path) {
+                                            j.state = RunState::Paused;
+                                            let _ =
+                                                journal::atomic_write_json_pub(&path, &j);
+                                        }
+                                    }
+                                }
+                            });
+                        }
+
                         let exec_result = execute_plan(
                             &client, &plan, &kind_map, &gk_map, &gvk_map, &gvr_map,
                             dry_run, force, journal_store.as_ref(),
+                            Some(&gate),
                         )
                         .await;
 
@@ -437,6 +468,161 @@ async fn main() -> Result<()> {
                         let explanation =
                             explain_resource(&plan, &resource, &all_operators, &evidence_graph);
                         println!("{}", explanation);
+                    }
+                    TeardownAction::Resume { operator, run, no_cache } => {
+                        let cluster_id = journal::fetch_cluster_identity(&client).await?;
+
+                        let found = if let Some(run_id) = run {
+                            let path = journal::run_path(&cluster_id, &run_id)?;
+                            Some(journal::load_journal(&path)?)
+                        } else if let Some(op) = operator {
+                            journal::find_latest_run(&cluster_id, &op)?
+                        } else {
+                            bail!("Specify an operator name or --run <run-id>");
+                        };
+
+                        let j = match found {
+                            Some(j) => j,
+                            None => bail!("No teardown run found to resume"),
+                        };
+
+                        // Verify cluster identity
+                        if !j.cluster_identity.matches(&cluster_id) {
+                            bail!(
+                                "Journal cluster identity does not match current cluster \
+                                 (journal: {}, current: {})",
+                                j.cluster_identity.kube_system_uid,
+                                cluster_id.kube_system_uid,
+                            );
+                        }
+
+                        match j.state {
+                            RunState::Paused | RunState::Applying => {
+                                eprintln!(
+                                    "Resuming run {} (state: {:?}, operator: {})",
+                                    j.run_id, j.state, j.operator.csv_name
+                                );
+                                eprintln!(
+                                    "  {}/{} phases completed, {} deleted",
+                                    j.execution.phases_completed,
+                                    j.execution.phases_total,
+                                    j.execution.deleted.len(),
+                                );
+
+                                // Re-discover API resources
+                                let t0 = Instant::now();
+                                eprintln!("🔍 Re-discovering API resources...");
+                                let (kind_map, _gvr_map, gk_map, gvk_map) =
+                                    build_kind_lookup_cached(&client, &config, no_cache).await?;
+                                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                                // Re-verify operator generation
+                                use crate::teardown::audit::{
+                                    self, OperatorGenerationState,
+                                };
+                                let gen_state = audit::check_operator_generation(
+                                    &client,
+                                    &j.operator,
+                                    &j.audit_context.csv_baseline,
+                                )
+                                .await;
+
+                                match gen_state {
+                                    OperatorGenerationState::SameGeneration => {
+                                        // Original operator still active — can resume
+                                    }
+                                    OperatorGenerationState::Absent => {
+                                        eprintln!(
+                                            "  Operator generation absent — \
+                                             teardown may have completed. Check status."
+                                        );
+                                    }
+                                    OperatorGenerationState::Reappeared => {
+                                        bail!(
+                                            "Operator has been reinstalled (new generation). \
+                                             Cannot resume old teardown — create a new plan."
+                                        );
+                                    }
+                                    OperatorGenerationState::Unknown(reason) => {
+                                        bail!(
+                                            "Cannot verify operator generation: {}. \
+                                             Cannot safely resume.",
+                                            reason
+                                        );
+                                    }
+                                }
+
+                                // Resume: update journal to Applying, re-execute remaining phases
+                                let path = journal::run_path(&cluster_id, &j.run_id)?;
+                                let store = JournalStore::new(j.clone(), path);
+                                store
+                                    .update(|journal| {
+                                        journal.state = RunState::Applying;
+                                    })
+                                    .await
+                                    .context("Failed to persist Applying state for resume")?;
+
+                                let gate = std::sync::Arc::new(MutationGate::new(16));
+
+                                // Execute from saved plan (phases_completed already tracks progress)
+                                let exec_result = execute_plan(
+                                    &client,
+                                    &j.plan_snapshot,
+                                    &kind_map,
+                                    &gk_map,
+                                    &gvk_map,
+                                    &_gvr_map,
+                                    false,
+                                    true, // force — already confirmed
+                                    Some(&store),
+                                    Some(&gate),
+                                )
+                                .await;
+
+                                match exec_result {
+                                    Ok(result) => {
+                                        store.update(|journal| {
+                                            journal.state = if result.failed.is_empty()
+                                                && result.barrier_timeout.is_none()
+                                            {
+                                                RunState::ApplyCompleted
+                                            } else {
+                                                RunState::Failed
+                                            };
+                                        }).await.context("Failed to persist final state")?;
+                                        print_execution_result(&result);
+                                    }
+                                    Err(e) => {
+                                        let _ = store
+                                            .update(|journal| {
+                                                journal.state = RunState::Failed;
+                                            })
+                                            .await;
+                                        return Err(e);
+                                    }
+                                }
+                            }
+                            RunState::ApplyCompleted | RunState::Finished => {
+                                eprintln!(
+                                    "Run {} is already completed (state: {:?}). \
+                                     Nothing to resume.",
+                                    j.run_id, j.state
+                                );
+                            }
+                            RunState::Failed => {
+                                eprintln!(
+                                    "Run {} has failed. Review the journal and create a new plan \
+                                     if needed.",
+                                    j.run_id
+                                );
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Run {} is in state {:?} — cannot resume from this state.",
+                                    j.run_id, j.state
+                                );
+                            }
+                        }
                     }
                     TeardownAction::Runs => {
                         let cluster_id = journal::fetch_cluster_identity(&client).await?;

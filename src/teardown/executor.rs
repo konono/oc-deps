@@ -15,6 +15,7 @@ use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{ResourceId, resolve_api};
 use crate::teardown::events::EventNotifier;
 use crate::teardown::journal::JournalStore;
+use crate::teardown::permit::MutationGate;
 use crate::teardown::plan::PlannedPreserved;
 use crate::teardown::planner::{Action, PreflightSeverity, TeardownPlan};
 use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
@@ -173,6 +174,7 @@ pub async fn execute_plan(
     dry_run: bool,
     force: bool,
     journal: Option<&JournalStore>,
+    gate: Option<&MutationGate>,
 ) -> Result<ExecutionResult> {
     if !plan.blockers.is_empty() && !dry_run {
         eprintln!(
@@ -449,8 +451,26 @@ pub async fn execute_plan(
                     let km = km.clone();
                     let gk = gk.clone();
                     async move {
-                        let res = delete_resource(&client, &resource, &km, &gk).await;
-                        (resource, res)
+                        // Acquire mutation permit before DELETE
+                        if let Some(g) = gate {
+                            match g.acquire().await {
+                                Ok(_permit) => {
+                                    let res =
+                                        delete_resource(&client, &resource, &km, &gk).await;
+                                    // _permit dropped here — mutation + store update complete
+                                    (resource, res)
+                                }
+                                Err(_) => (
+                                    resource.clone(),
+                                    DeleteResult::Failed(
+                                        "Mutation gate closed (pausing)".to_string(),
+                                    ),
+                                ),
+                            }
+                        } else {
+                            let res = delete_resource(&client, &resource, &km, &gk).await;
+                            (resource, res)
+                        }
                     }
                 });
 
