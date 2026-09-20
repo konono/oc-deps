@@ -99,7 +99,20 @@ pub async fn check_operator_generation(
             };
         }
         Err(kube::Error::Api(ref resp)) if resp.code == 404 => {
-            // CSV gone — continue checking controllers
+            // GET 404 could be object gone or endpoint gone (OLM removed).
+            // Verify endpoint exists via LIST.
+            match csv_api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => {
+                    // Endpoint exists, CSV is genuinely gone — continue
+                }
+                Err(_) => {
+                    return OperatorGenerationState::Unknown(
+                        "CSV GET returned 404 but API endpoint verification failed; \
+                         cannot confirm CSV absence vs endpoint absence"
+                            .to_string(),
+                    );
+                }
+            }
         }
         Err(e) => {
             return OperatorGenerationState::Unknown(format!(
@@ -126,7 +139,19 @@ pub async fn check_operator_generation(
                 };
             }
             Err(kube::Error::Api(ref resp)) if resp.code == 404 => {
-                // Controller gone — continue
+                // Verify endpoint exists
+                match dep_api.list(&ListParams::default().limit(1)).await {
+                    Ok(_) => {
+                        // Endpoint exists, deployment genuinely gone
+                    }
+                    Err(_) => {
+                        return OperatorGenerationState::Unknown(format!(
+                            "Deployment GET returned 404 but API endpoint verification \
+                             failed for {}",
+                            saved_dep.resource.name
+                        ));
+                    }
+                }
             }
             Err(e) => {
                 return OperatorGenerationState::Unknown(format!(
@@ -137,7 +162,7 @@ pub async fn check_operator_generation(
         }
     }
 
-    // All checks succeeded, nothing found
+    // All checks succeeded with verified endpoint existence, nothing found
     OperatorGenerationState::Absent
 }
 
@@ -296,7 +321,7 @@ pub async fn run_residual_audit(
             match action {
                 Action::Delete { resource, .. } => {
                     audit.coverage.requested_probes += 1;
-                    match probe_resource(client, resource).await {
+                    match probe_resource(client, resource, &ctx.known_gvrs).await {
                         ProbeResult::Present { uid } => {
                             audit.coverage.succeeded_probes += 1;
                             let recreation = check_recreation(resource, &uid);
@@ -324,7 +349,7 @@ pub async fn run_residual_audit(
                 }
                 Action::ExpectGone { resource, .. } => {
                     audit.coverage.requested_probes += 1;
-                    match probe_resource(client, resource).await {
+                    match probe_resource(client, resource, &ctx.known_gvrs).await {
                         ProbeResult::Present { uid } => {
                             audit.coverage.succeeded_probes += 1;
                             let recreation = check_recreation(resource, &uid);
@@ -627,16 +652,31 @@ fn known_plural_for_gvk(group: &str, kind: &str) -> Option<&'static str> {
 }
 
 /// Probe a single resource by exact GET.
-/// GET 404 alone does not prove the object is Gone — the API endpoint itself
-/// may be absent (CRD removed). After 404, we verify endpoint existence via
-/// a minimal LIST. Only if the endpoint responds successfully is 404 treated
-/// as object Gone.
-async fn probe_resource(client: &Client, resource: &ResourceId) -> ProbeResult {
-    let plural = match known_plural_for_gvk(&resource.group, &resource.kind) {
-        Some(p) => p.to_string(),
+/// Uses discovery-derived GVR from known_gvrs, falling back to static allowlist.
+/// GET 404 verifies endpoint existence via LIST — endpoint absence is not Gone.
+async fn probe_resource(
+    client: &Client,
+    resource: &ResourceId,
+    known_gvrs: &Option<Vec<crate::teardown::journal::KnownGvr>>,
+) -> ProbeResult {
+    // First try discovery-derived GVR (accurate plural + scope)
+    let plural = if let Some(gvrs) = known_gvrs {
+        gvrs.iter()
+            .find(|g| g.group == resource.group && g.kind == resource.kind)
+            .map(|g| g.plural.clone())
+    } else {
+        None
+    };
+
+    // Fall back to static allowlist for well-known types
+    let plural = plural
+        .or_else(|| known_plural_for_gvk(&resource.group, &resource.kind).map(String::from));
+
+    let plural = match plural {
+        Some(p) => p,
         None => {
             return ProbeResult::Error(format!(
-                "Unknown GVR for {}/{} '{}' — cannot safely probe without discovery metadata",
+                "Unknown GVR for {}/{} '{}' — no discovery metadata and not in static allowlist",
                 resource.group, resource.kind, resource.name
             ));
         }

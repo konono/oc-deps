@@ -215,7 +215,7 @@ async fn main() -> Result<()> {
                         // Create RunJournal before first mutation (fail-closed)
                         let journal_store = if !dry_run {
                             let store = create_run_journal(
-                                &client, &plan, &target_operators,
+                                &client, &plan, &target_operators, &gk_map,
                             ).await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
 
@@ -792,6 +792,7 @@ async fn create_run_journal(
     client: &::kube::Client,
     plan: &crate::teardown::planner::TeardownPlan,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
+    gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> Result<JournalStore> {
     use crate::teardown::plan::{
         ObservedResourceIdentity, OperatorGenerationIdentity,
@@ -890,7 +891,7 @@ async fn create_run_journal(
         required_crds: first_op.required_crds.clone(),
     };
 
-    let audit_context = journal::build_audit_context(plan, target_operators);
+    let audit_context = journal::build_audit_context(plan, target_operators, &gk_map);
 
     let journal = RunJournal {
         run_id: run_id.clone(),

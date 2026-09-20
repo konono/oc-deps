@@ -77,6 +77,27 @@ pub struct AuditContext {
     pub service_account_names: HashSet<String>,
     pub known_labels: Vec<(String, String)>,
     pub managed_field_managers: HashSet<String>,
+    /// Discovery-derived GVR metadata for plan resources.
+    /// None = GVR info not captured (old journal or discovery failure) → AuditIncomplete.
+    /// Some(vec) = known GVRs for accurate probing.
+    #[serde(default)]
+    pub known_gvrs: Option<Vec<KnownGvr>>,
+}
+
+/// A GVR resolved during plan generation via API discovery.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct KnownGvr {
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    pub plural: String,
+    pub scope: GvrScope,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum GvrScope {
+    Namespaced,
+    Cluster,
 }
 
 impl Default for AuditContext {
@@ -88,6 +109,7 @@ impl Default for AuditContext {
             service_account_names: HashSet::new(),
             known_labels: Vec::new(),
             managed_field_managers: HashSet::new(),
+            known_gvrs: None,
         }
     }
 }
@@ -377,6 +399,7 @@ pub async fn fetch_cluster_identity(client: &kube::Client) -> Result<ClusterIden
 pub fn build_audit_context(
     plan: &TeardownPlan,
     operators: &[&crate::analyzers::olm::OperatorInstance],
+    gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> AuditContext {
     let mut ctx = AuditContext::default();
 
@@ -391,6 +414,12 @@ pub fn build_audit_context(
         }
     }
 
+    // Resolve GVR info from plan actions using GroupKindMap (group, kind) → KindInfo.
+    // Unresolved GVKs are tracked — their presence means audit is incomplete.
+    let mut seen_gvks: HashSet<(String, String)> = HashSet::new();
+    let mut known_gvrs = Vec::new();
+    let mut unresolved_gvks: Vec<(String, String, String)> = Vec::new();
+
     for phase in &plan.phases {
         for action in &phase.actions {
             let rid = match action {
@@ -403,8 +432,36 @@ pub fn build_audit_context(
             if let Some(ns) = &rid.namespace {
                 ctx.footprint_namespaces.insert(ns.clone());
             }
+
+            let gk_key = (rid.group.clone(), rid.kind.clone());
+            if seen_gvks.insert(gk_key.clone()) {
+                if let Some(info) = gk_map.get(&gk_key) {
+                    known_gvrs.push(KnownGvr {
+                        group: info.group.clone(),
+                        version: info.version.clone(),
+                        kind: rid.kind.clone(),
+                        plural: info.plural.clone(),
+                        scope: if info.namespaced {
+                            GvrScope::Namespaced
+                        } else {
+                            GvrScope::Cluster
+                        },
+                    });
+                } else {
+                    unresolved_gvks.push((rid.group.clone(), rid.version.clone(), rid.kind.clone()));
+                }
+            }
         }
     }
 
+    if !unresolved_gvks.is_empty() {
+        eprintln!(
+            "  ⚠ {} plan GVK(s) could not be resolved via API discovery \
+             (audit will be incomplete for exact-GET probes of these types)",
+            unresolved_gvks.len()
+        );
+    }
+
+    ctx.known_gvrs = Some(known_gvrs);
     ctx
 }
