@@ -218,6 +218,7 @@ async fn main() -> Result<()> {
                         if let Some(script_path) = &script {
                             use crate::teardown::app::{AppState, AppScreen, AppCommand, apply_command, AppStateSnapshot};
                             let mut app = AppState::new();
+                            let mut plan = plan.clone();  // mutable copy for script overrides
 
                             // Read commands from script file (one JSON per line)
                             let content = std::fs::read_to_string(script_path)
@@ -249,6 +250,57 @@ async fn main() -> Result<()> {
                                     && result.is_ok()
                                     && app.screen == AppScreen::Executing
                                 {
+                                    // Apply draft overrides with fresh evidence revalidation
+                                    // (same path as interactive Plan Review)
+                                    if !app.draft_overrides.is_empty() {
+                                        use crate::teardown::app::DraftAction;
+                                        use crate::teardown::planner::Action;
+                                        let mut mutated = plan.clone();
+                                        for ovr in &app.draft_overrides {
+                                            for phase in &mut mutated.phases {
+                                                for action in &mut phase.actions {
+                                                    if let Action::Review { resource, reason, .. } = action {
+                                                        if resource.kind == ovr.resource.kind
+                                                            && resource.name == ovr.resource.name
+                                                            && resource.namespace == ovr.resource.namespace
+                                                        {
+                                                            match ovr.new_action {
+                                                                DraftAction::Delete => {
+                                                                    if let Some((api, _)) = crate::kube::resource::resolve_api(
+                                                                        &client, resource, &kind_map, &gk_map,
+                                                                    ) {
+                                                                        match api.get(&resource.name).await {
+                                                                            Ok(obj) => {
+                                                                                let uid = obj.metadata.uid.clone();
+                                                                                if uid.is_some() {
+                                                                                    let mut bound = resource.clone();
+                                                                                    bound.uid = uid;
+                                                                                    *action = Action::Delete {
+                                                                                        resource: bound,
+                                                                                        reason: format!("{} (approved via script)", reason),
+                                                                                    };
+                                                                                }
+                                                                            }
+                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {}
+                                                                            Err(e) => bail!("Cannot verify {}/{} for script override: {}", resource.kind, resource.name, e),
+                                                                        }
+                                                                    }
+                                                                }
+                                                                DraftAction::Keep => {
+                                                                    *action = Action::Keep {
+                                                                        resource: resource.clone(),
+                                                                        reason: format!("{} (kept via script)", reason),
+                                                                    };
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        plan = mutated;
+                                    }
+
                                     // Run executor with the plan
                                     let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
                                         let store = create_run_journal(
@@ -401,20 +453,60 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // Apply draft overrides to plan
+                                // Apply draft overrides with fresh evidence revalidation.
+                                // Each REVIEW→DELETE conversion requires a live GET to
+                                // verify the resource still exists with a bindable UID.
                                 if !app.draft_overrides.is_empty() {
                                     let mut mutated_plan = plan.clone();
+                                    let mut approved_count = 0usize;
+
                                     for over in &app.draft_overrides {
                                         for phase in &mut mutated_plan.phases {
                                             for action in &mut phase.actions {
-                                                if let Action::Review { resource, reason, metadata } = action {
+                                                if let Action::Review { resource, reason, .. } = action {
                                                     if *resource == over.resource {
                                                         match over.new_action {
                                                             DraftAction::Delete => {
-                                                                *action = Action::Delete {
-                                                                    resource: resource.clone(),
-                                                                    reason: format!("{} (approved in Plan Review)", reason),
+                                                                // Fresh GET to verify identity + bind UID
+                                                                let verified = match crate::kube::resource::resolve_api(
+                                                                    &client, resource, &kind_map, &gk_map,
+                                                                ) {
+                                                                    Some((api, _)) => {
+                                                                        match api.get(&resource.name).await {
+                                                                            Ok(obj) => {
+                                                                                let uid = obj.metadata.uid.clone();
+                                                                                if uid.is_none() || uid.as_ref().is_some_and(|u| u.is_empty()) {
+                                                                                    eprintln!("  ⚠ {}/{} has no UID — override skipped", resource.kind, resource.name);
+                                                                                    false
+                                                                                } else {
+                                                                                    let mut bound = resource.clone();
+                                                                                    bound.uid = uid;
+                                                                                    *action = Action::Delete {
+                                                                                        resource: bound,
+                                                                                        reason: format!("{} (approved in Plan Review)", reason),
+                                                                                    };
+                                                                                    approved_count += 1;
+                                                                                    true
+                                                                                }
+                                                                            }
+                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                                eprintln!("  ⚠ {}/{} no longer present — override skipped", resource.kind, resource.name);
+                                                                                false
+                                                                            }
+                                                                            Err(e) => {
+                                                                                bail!(
+                                                                                    "Cannot verify {}/{} for draft override: {} — aborting start",
+                                                                                    resource.kind, resource.name, e
+                                                                                );
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    None => {
+                                                                        eprintln!("  ⚠ Cannot resolve API for {}/{} — override skipped", resource.kind, resource.name);
+                                                                        false
+                                                                    }
                                                                 };
+                                                                let _ = verified;
                                                             }
                                                             DraftAction::Keep => {
                                                                 *action = Action::Keep {
@@ -428,11 +520,10 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    eprintln!("  {} REVIEW item(s) approved for DELETE\n",
-                                        app.draft_overrides.iter()
-                                            .filter(|o| matches!(o.new_action, DraftAction::Delete))
-                                            .count()
-                                    );
+                                    if approved_count > 0 {
+                                        eprintln!("  {} REVIEW item(s) approved for DELETE (fresh UID bound)", approved_count);
+                                        eprintln!("  ℹ Fresh UID verification only — full basis drift detection deferred to PR5\n");
+                                    }
                                     plan = mutated_plan;
                                 }
                             }
@@ -627,42 +718,111 @@ async fn main() -> Result<()> {
                                                                     if !selected.is_empty() {
                                                                         eprintln!("\n  Deleting {} residual(s)...", selected.len());
 
-                                                                        // Verify generation is still Absent
-                                                                        let gen_check = crate::teardown::audit::check_operator_generation(
-                                                                            &client, &j.operator, &j.audit_context.csv_baseline
+                                                                        // Step 1: Run fresh live audit to verify current membership
+                                                                        let fresh_j = store.read().await;
+                                                                        let fresh_gen = crate::teardown::audit::check_operator_generation(
+                                                                            &client, &fresh_j.operator, &fresh_j.audit_context.csv_baseline
                                                                         ).await;
-                                                                        if !matches!(gen_check, crate::teardown::audit::OperatorGenerationState::Absent) {
-                                                                            eprintln!("  ⚠ Operator generation is no longer Absent — cleanup blocked.");
-                                                                        } else {
-                                                                            // Record decisions in journal, then DELETE each
-                                                                            for res in &selected {
-                                                                                // Record decision before mutation
-                                                                                store.update(|j| {
-                                                                                    j.audit_revision += 1;
-                                                                                }).await
-                                                                                .context("Failed to record cleanup decision")?;
+                                                                        if !matches!(fresh_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                                            eprintln!("  ⚠ Operator generation is not Absent — cleanup blocked.");
+                                                                        } else if let Ok(fresh_audit) = crate::teardown::audit::run_residual_audit(&client, &fresh_j).await {
+                                                                            let fresh_status = crate::teardown::audit::residual_status_from_audit(&fresh_audit);
+                                                                            if matches!(fresh_status, journal::ResidualStatus::AuditIncomplete) {
+                                                                                eprintln!("  ⚠ Live audit incomplete — cleanup blocked.");
+                                                                            } else {
+                                                                                // Step 2: Verify each selection is in current residual set
+                                                                                let residual_keys: std::collections::HashSet<String> = fresh_audit.likely_operator_residual.iter()
+                                                                                    .chain(fresh_audit.unattributed.iter())
+                                                                                    .map(|r| format!("{}/{}/{}", r.resource.kind,
+                                                                                        r.resource.namespace.as_deref().unwrap_or("-"), r.resource.name))
+                                                                                    .collect();
 
-                                                                                // Use core executor DELETE (UID-preconditioned)
-                                                                                let del_result = crate::teardown::executor::delete_resource_pub(
-                                                                                    &client, res, &kind_map, &gk_map, Some(&gate),
+                                                                                let valid_selected: Vec<&ResourceId> = selected.iter().filter(|res| {
+                                                                                    let key = format!("{}/{}/{}", res.kind,
+                                                                                        res.namespace.as_deref().unwrap_or("-"), res.name);
+                                                                                    if residual_keys.contains(&key) {
+                                                                                        true
+                                                                                    } else {
+                                                                                        eprintln!("  ⚠ {}/{} not in current residual set — skipped", res.kind, res.name);
+                                                                                        false
+                                                                                    }
+                                                                                }).cloned().collect();
+
+                                                                                // Step 3: Per-resource DELETE with durable decision record
+                                                                                for res in &valid_selected {
+                                                                                    // Re-check generation per resource
+                                                                                    let cur_j = store.read().await;
+                                                                                    let gen_per_res = crate::teardown::audit::check_operator_generation(
+                                                                                        &client, &cur_j.operator, &cur_j.audit_context.csv_baseline
+                                                                                    ).await;
+                                                                                    if !matches!(gen_per_res, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                                                        eprintln!("  ⚠ Generation changed — stopping cleanup");
+                                                                                        break;
+                                                                                    }
+
+                                                                                    // Acquire permit
+                                                                                    let _permit = gate.acquire().await
+                                                                                        .context("Mutation gate closed during cleanup")?;
+
+                                                                                    // Record decision BEFORE mutation (durable)
+                                                                                    let decision_uid = res.uid.clone();
+                                                                                    let res_clone = (*res).clone();
+                                                                                    store.update(|j| {
+                                                                                        j.cleanup_decisions.push(journal::CleanupDecision {
+                                                                                            resource: res_clone.clone(),
+                                                                                            bound_uid: decision_uid.clone(),
+                                                                                            action: "delete".to_string(),
+                                                                                            result: None,
+                                                                                        });
+                                                                                        j.audit_revision += 1;
+                                                                                    }).await
+                                                                                    .context("Failed to persist cleanup decision — no mutation")?;
+
+                                                                                    // Core executor DELETE (UID-preconditioned)
+                                                                                    let del_result = crate::teardown::executor::delete_resource_pub(
+                                                                                        &client, res, &kind_map, &gk_map, Some(&gate),
+                                                                                    ).await;
+
+                                                                                    let result_str = match &del_result {
+                                                                                        Ok(msg) => { eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg); msg.clone() }
+                                                                                        Err(e) => { eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e); format!("failed: {}", e) }
+                                                                                    };
+
+                                                                                    // Record result BEFORE dropping permit
+                                                                                    let res_clone2 = (*res).clone();
+                                                                                    store.update(|j| {
+                                                                                        if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                                            .find(|d| d.resource == res_clone2 && d.result.is_none())
+                                                                                        {
+                                                                                            d.result = Some(result_str);
+                                                                                        }
+                                                                                    }).await
+                                                                                    .context("Failed to checkpoint cleanup result")?;
+
+                                                                                    drop(_permit);
+                                                                                }
+
+                                                                                // Step 4: Re-audit after all cleanups
+                                                                                let post_j = store.read().await;
+                                                                                let post_gen = crate::teardown::audit::check_operator_generation(
+                                                                                    &client, &post_j.operator, &post_j.audit_context.csv_baseline
                                                                                 ).await;
-                                                                                match del_result {
-                                                                                    Ok(msg) => eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg),
-                                                                                    Err(e) => eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e),
+                                                                                if matches!(post_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                                                    eprintln!("\n  🔍 Re-running residual audit...");
+                                                                                    if let Ok(new_audit) = crate::teardown::audit::run_residual_audit(&client, &post_j).await {
+                                                                                        crate::teardown::audit::print_residual_audit(&new_audit, &post_j);
+                                                                                        let new_status = crate::teardown::audit::residual_status_from_audit(&new_audit);
+                                                                                        store.update(|j| {
+                                                                                            j.residual_status = new_status;
+                                                                                            j.audit_revision += 1;
+                                                                                            j.last_residual_audit = Some(new_audit);
+                                                                                        }).await
+                                                                                        .context("Failed to persist post-cleanup audit")?;
+                                                                                    }
                                                                                 }
                                                                             }
-
-                                                                            // Re-run audit after cleanup
-                                                                            eprintln!("\n  🔍 Re-running residual audit...");
-                                                                            if let Ok(new_audit) = crate::teardown::audit::run_residual_audit(&client, &j).await {
-                                                                                crate::teardown::audit::print_residual_audit(&new_audit, &j);
-                                                                                let new_status = crate::teardown::audit::residual_status_from_audit(&new_audit);
-                                                                                let _ = store.update(|j| {
-                                                                                    j.residual_status = new_status;
-                                                                                    j.audit_revision += 1;
-                                                                                    j.last_residual_audit = Some(new_audit);
-                                                                                }).await;
-                                                                            }
+                                                                        } else {
+                                                                            eprintln!("  ⚠ Failed to run fresh audit — cleanup blocked.");
                                                                         }
                                                                     }
                                                                 }
@@ -688,12 +848,35 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                if !result.failed.is_empty() || result.barrier_timeout.is_some() {
-                                    bail!(
-                                        "Teardown completed with {} failed action(s){}",
-                                        result.failed.len(),
-                                        if result.barrier_timeout.is_some() { " and barrier timeout" } else { "" }
-                                    );
+                                // Non-zero exit for non-ApplyCompleted states
+                                match final_state {
+                                    RunState::ApplyCompleted => {
+                                        // Success — exit 0
+                                    }
+                                    RunState::Paused => {
+                                        bail!(
+                                            "Teardown paused at phase {}/{}",
+                                            result.phases_completed, result.phases_total
+                                        );
+                                    }
+                                    _ => {
+                                        if !result.failed.is_empty() || result.barrier_timeout.is_some() {
+                                            bail!(
+                                                "Teardown completed with {} failed action(s){}",
+                                                result.failed.len(),
+                                                if result.barrier_timeout.is_some() {
+                                                    " and barrier timeout"
+                                                } else {
+                                                    ""
+                                                }
+                                            );
+                                        } else {
+                                            bail!(
+                                                "Teardown did not complete (state: {:?})",
+                                                final_state
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -911,6 +1094,10 @@ async fn main() -> Result<()> {
                                 // Acquire process lock — fail if another executor is active
                                 let path = journal::run_path(&cluster_id, &j.run_id)?;
                                 let store = JournalStore::new_with_lock(j.clone(), path)?;
+
+                                // Re-read from store — this is the authoritative state
+                                // after lock. The pre-lock `j` may be stale.
+                                let j = store.read().await;
 
                                 // Reconcile completed phases via live GET.
                                 // Journal = hint, live GET = truth.
@@ -1641,6 +1828,7 @@ async fn create_run_journal(
             ..Default::default()
         },
         last_residual_audit: None,
+        cleanup_decisions: Vec::new(),
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;

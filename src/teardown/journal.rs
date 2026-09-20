@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 4;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -46,6 +46,19 @@ pub struct RunJournal {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_residual_audit: Option<crate::teardown::audit::ResidualAudit>,
+
+    /// Durable record of manual residual cleanup decisions + results.
+    #[serde(default)]
+    pub cleanup_decisions: Vec<CleanupDecision>,
+}
+
+/// A single residual cleanup decision with its outcome.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupDecision {
+    pub resource: ResourceId,
+    pub bound_uid: Option<String>,
+    pub action: String,
+    pub result: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,28 +249,20 @@ impl JournalStore {
 
         // Re-load from disk AFTER acquiring lock to get the latest state.
         // Another process may have written between our initial read and lock acquisition.
+        // Never fall back to the caller's stale copy — if the file is gone, bail.
         let latest = if path.exists() {
-            match load_journal(&path) {
-                Ok(j) => {
-                    if j.journal_revision != journal.journal_revision {
-                        eprintln!(
-                            "  ℹ Journal updated between read and lock \
-                             (rev {} → {}), using latest",
-                            journal.journal_revision, j.journal_revision
-                        );
-                    }
-                    j
-                }
-                Err(e) => {
-                    bail!(
-                        "Failed to re-load journal after lock acquisition: {}. \
-                         Cannot safely proceed with stale state.",
-                        e
-                    );
-                }
-            }
+            load_journal(&path).with_context(|| {
+                format!(
+                    "Failed to re-load journal after lock acquisition: {}",
+                    path.display()
+                )
+            })?
         } else {
-            journal
+            bail!(
+                "Journal file {} no longer exists after lock acquisition. \
+                 Cannot proceed without authoritative journal state.",
+                path.display()
+            );
         };
 
         Ok(Self {
@@ -383,7 +388,8 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
     // v1 → v2: discard audit (lacks UID tracking / recreation state)
     // v2 → v3: discard audit if unresolved_crds is None with owned CRDs
     // v3 → v4: discard audit if unresolved_gvks/csv_baseline is None
-    //          (v3 lacks GVK resolution and CSV baseline tracking → false complete)
+    // v4 → v5: cleanup_decisions field added (authority-critical).
+    //          v4 journals cannot gain manual cleanup authority.
     if journal.schema_version < RUN_JOURNAL_SCHEMA_VERSION {
         let needs_audit_reset = journal.schema_version < 2
             || (journal.schema_version < 3
