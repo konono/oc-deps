@@ -782,6 +782,16 @@ async fn discover_api_service_instances(
     }
 }
 
+/// Check if a CR's CRD is directly owned by the target operator (exact CRD name match)
+/// and the CR's provenance indicates operator management.
+fn is_linked_by_crd_ownership(cr: &CrInstance, target_crd_set: &HashSet<&str>) -> bool {
+    target_crd_set.contains(cr.api_owner_key.as_str())
+        && matches!(
+            cr.provenance,
+            Provenance::Managed | Provenance::LikelyManaged
+        )
+}
+
 fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
     // ownerRef pointing to operator's CSV or Deployment → Managed
     for (ref_kind, ref_name, _) in &cr.owner_refs {
@@ -1755,16 +1765,8 @@ pub async fn generate_teardown_plan(
             });
 
             // Fallback: if no ownerRef chain, check if the CR's CRD is directly
-            // owned by the target operator's CSV (exact CRD name match via
-            // api_owner_key). Resources whose CRD is target-owned and whose
-            // provenance indicates operator management are treated as linked
-            // (managed operands created without ownerRef).
-            let linked_by_crd_ownership = !linked_by_owner_ref
-                && target_crd_set.contains(cr.api_owner_key.as_str())
-                && matches!(
-                    cr.provenance,
-                    Provenance::Managed | Provenance::LikelyManaged
-                );
+            let linked_by_crd_ownership =
+                !linked_by_owner_ref && is_linked_by_crd_ownership(&cr, &target_crd_set);
 
             if linked_by_owner_ref || linked_by_crd_ownership {
                 linked_count += 1;
@@ -3748,10 +3750,35 @@ mod tests {
         };
 
         // Exact CRD match must fail — bars.example.com is not in target_crd_set
-        let linked_by_crd = target_crd_set.contains(cr.api_owner_key.as_str());
         assert!(
-            !linked_by_crd,
+            !is_linked_by_crd_ownership(&cr, &target_crd_set),
             "same-group but non-owned CRD should NOT be linked"
+        );
+
+        // But if the CRD IS in the target set, it should link
+        let cr_owned = CrInstance {
+            id: cr.id.clone(),
+            owner_refs: vec![],
+            api_owner_key: "foos.example.com".to_string(),
+            labels: HashMap::new(),
+            managed_field_managers: vec![],
+            provenance: Provenance::LikelyManaged,
+            discovery_source: DiscoverySource::RelatedLabelOnly,
+        };
+        assert!(
+            is_linked_by_crd_ownership(&cr_owned, &target_crd_set),
+            "owned CRD with LikelyManaged provenance should be linked"
+        );
+
+        // Unknown provenance should NOT link even if CRD is owned
+        let cr_unknown = CrInstance {
+            provenance: Provenance::Unknown,
+            api_owner_key: "foos.example.com".to_string(),
+            ..cr_owned
+        };
+        assert!(
+            !is_linked_by_crd_ownership(&cr_unknown, &target_crd_set),
+            "owned CRD but Unknown provenance should NOT be linked"
         );
     }
 }

@@ -497,7 +497,7 @@ pub async fn execute_plan(
 
                     // Sequential deletion: delete one root CR at a time, barrier between each
                     for (seq_idx, resource) in eligible_resources.iter().enumerate() {
-                        let (s, d, last_err) = execute_delete_batch(
+                        let (s, d, mut errs) = execute_delete_batch(
                             client,
                             std::slice::from_ref(resource),
                             kind_map,
@@ -509,7 +509,6 @@ pub async fn execute_plan(
 
                         // Retry if webhook rejected
                         let mut d = d;
-                        let mut last_err = last_err;
                         for attempt in 0..2u64 {
                             if d.is_empty() {
                                 break;
@@ -528,17 +527,20 @@ pub async fn execute_plan(
                             .await;
                             phase_wait_targets.extend(s2);
                             d = d2;
-                            if e2.is_some() {
-                                last_err = e2;
+                            if !e2.is_empty() {
+                                errs = e2;
                             }
                         }
 
                         phase_wait_targets.extend(s);
                         if !d.is_empty() {
-                            let err_msg =
-                                last_err.unwrap_or_else(|| "failed after retries".to_string());
                             for r in &d {
-                                result.failed.push((r.clone(), err_msg.clone()));
+                                let err = errs
+                                    .iter()
+                                    .find(|(res, _)| res == r)
+                                    .map(|(_, e)| e.clone())
+                                    .unwrap_or_else(|| "failed after retries".to_string());
+                                result.failed.push((r.clone(), err));
                             }
                         }
 
@@ -632,7 +634,7 @@ pub async fn execute_plan(
                     }
                 } else {
                     // Standard parallel DELETE
-                    let (mut succeeded, mut deferred, mut last_err) = execute_delete_batch(
+                    let (mut succeeded, mut deferred, mut errs) = execute_delete_batch(
                         client,
                         &eligible_resources,
                         kind_map,
@@ -666,17 +668,20 @@ pub async fn execute_plan(
                         .await;
                         succeeded.extend(s);
                         deferred = d;
-                        if e.is_some() {
-                            last_err = e;
+                        if !e.is_empty() {
+                            errs = e;
                         }
                     }
 
                     phase_wait_targets.extend(succeeded);
                     if !deferred.is_empty() {
-                        let err_msg =
-                            last_err.unwrap_or_else(|| "failed after retries".to_string());
                         for r in &deferred {
-                            result.failed.push((r.clone(), err_msg.clone()));
+                            let err = errs
+                                .iter()
+                                .find(|(res, _)| res == r)
+                                .map(|(_, e)| e.clone())
+                                .unwrap_or_else(|| "failed after retries".to_string());
+                            result.failed.push((r.clone(), err));
                         }
                     }
                 }
@@ -987,7 +992,11 @@ async fn execute_delete_batch(
     gk_map: &GroupKindMap,
     result: &mut ExecutionResult,
     retry_num: Option<u64>,
-) -> (Vec<BarrierTarget>, Vec<ResourceId>, Option<String>) {
+) -> (
+    Vec<BarrierTarget>,
+    Vec<ResourceId>,
+    Vec<(ResourceId, String)>,
+) {
     let km = Arc::new(kind_map.clone());
     let gk = Arc::new(gk_map.clone());
     let del_futs = targets.iter().map(|resource| {
@@ -1013,7 +1022,7 @@ async fn execute_delete_batch(
 
     let mut succeeded = Vec::new();
     let mut deferred = Vec::new();
-    let mut last_error: Option<String> = None;
+    let mut errors: Vec<(ResourceId, String)> = Vec::new();
 
     for (resource, del_result) in del_results {
         match del_result {
@@ -1049,13 +1058,13 @@ async fn execute_delete_batch(
                     retry_suffix,
                     scope_suffix(&resource)
                 );
-                last_error = Some(err);
+                errors.push((resource.clone(), err));
                 deferred.push(resource);
             }
         }
     }
 
-    (succeeded, deferred, last_error)
+    (succeeded, deferred, errors)
 }
 
 // ── UID-bound DELETE: GET → resolve UID → preconditioned DELETE ──
