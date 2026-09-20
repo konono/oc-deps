@@ -582,8 +582,10 @@ pub async fn execute_plan(
                                             finalizers,
                                             reason,
                                         } => {
-                                            let current_stall: HashSet<ResourceId> =
-                                                remaining.iter().cloned().collect();
+                                            let current_stall: HashSet<ResourceId> = remaining
+                                                .iter()
+                                                .map(|t| t.resource.clone())
+                                                .collect();
                                             if let Some(prev) = &prev_stall_set {
                                                 if *prev == current_stall {
                                                     eprintln!(
@@ -604,14 +606,8 @@ pub async fn execute_plan(
                                                 );
                                             }
                                             prev_stall_set = Some(current_stall);
-                                            // Preserve remaining as ObserveOnly targets
-                                            phase_wait_targets = remaining
-                                                .iter()
-                                                .map(|r| BarrierTarget {
-                                                    resource: r.clone(),
-                                                    mode: BarrierMode::ObserveOnly,
-                                                })
-                                                .collect();
+                                            // Preserve remaining with their original modes
+                                            phase_wait_targets = remaining;
                                             for (r, f) in &finalizers {
                                                 if !f.is_empty()
                                                     && !phase_wait_targets
@@ -762,7 +758,8 @@ pub async fn execute_plan(
                             remaining.len(),
                             reason
                         );
-                        for res in &remaining {
+                        for target in &remaining {
+                            let res = &target.resource;
                             let fins: Vec<&str> = finalizers
                                 .iter()
                                 .filter(|(r, _)| r == res)
@@ -866,22 +863,8 @@ pub async fn execute_plan(
                             eprintln!(
                                 "  \x1b[33m⟳ Re-entering barrier after finalizer strip...\x1b[0m\n"
                             );
-                            // Re-enter barrier with ObserveOnly targets
-                            let remaining_targets: Vec<BarrierTarget> = remaining
-                                .iter()
-                                .map(|r| BarrierTarget {
-                                    resource: r.clone(),
-                                    mode: BarrierMode::ObserveOnly,
-                                })
-                                .collect();
-                            match wait_for_barrier(
-                                client,
-                                &remaining_targets,
-                                kind_map,
-                                gk_map,
-                                120,
-                            )
-                            .await
+                            // Re-enter barrier — remaining already carries modes
+                            match wait_for_barrier(client, &remaining, kind_map, gk_map, 120).await
                             {
                                 BarrierResult::Passed => {
                                     eprintln!(
@@ -900,7 +883,10 @@ pub async fn execute_plan(
                                     );
                                     result.barrier_timeout = Some(BarrierTimeout {
                                         phase: phase.name.clone(),
-                                        remaining: remaining2,
+                                        remaining: remaining2
+                                            .iter()
+                                            .map(|t| t.resource.clone())
+                                            .collect(),
                                         finalizers: finalizers2,
                                     });
                                     break;
@@ -914,7 +900,7 @@ pub async fn execute_plan(
                             }
                             result.barrier_timeout = Some(BarrierTimeout {
                                 phase: phase.name.clone(),
-                                remaining: remaining.clone(),
+                                remaining: remaining.iter().map(|t| t.resource.clone()).collect(),
                                 finalizers,
                             });
                             break;
@@ -1129,7 +1115,7 @@ async fn delete_resource(
 enum BarrierResult {
     Passed,
     Stalled {
-        remaining: Vec<ResourceId>,
+        remaining: Vec<BarrierTarget>,
         finalizers: Vec<(ResourceId, Vec<String>)>,
         reason: String,
     },
@@ -1153,30 +1139,19 @@ async fn strip_resource_finalizers(
         anyhow::anyhow!("cannot resolve API for {}/{}", resource.kind, resource.name)
     })?;
 
-    // JSON Merge Patch with UID check: GET first to verify UID hasn't changed
-    let obj = api.get(&resource.name).await?;
-    let current_uid = obj.metadata.uid.as_deref().unwrap_or("");
-    if current_uid != observed_uid {
-        bail!(
-            "UID changed ({} → {}), resource may have been recreated",
-            observed_uid,
-            current_uid
-        );
-    }
-    let current_finalizers = obj.metadata.finalizers.clone().unwrap_or_default();
-    if current_finalizers != observed_finalizers {
-        bail!("finalizer set changed since observation, refusing to strip");
-    }
-
-    let patch = serde_json::json!({
-        "metadata": { "finalizers": null }
-    });
-    api.patch(
-        &resource.name,
-        &PatchParams::default(),
-        &Patch::Merge(&patch),
-    )
-    .await?;
+    // Atomic compare-and-swap via JSON Patch test operations:
+    // verify UID and finalizer set haven't changed before stripping.
+    // If either changed (recreation or concurrent finalizer addition),
+    // the patch itself fails at the API server level — no TOCTOU race.
+    let patch_value = serde_json::json!([
+        { "op": "test", "path": "/metadata/uid", "value": observed_uid },
+        { "op": "test", "path": "/metadata/finalizers", "value": observed_finalizers },
+        { "op": "replace", "path": "/metadata/finalizers", "value": [] }
+    ]);
+    let json_patch: kube::core::params::Patch<serde_json::Value> =
+        Patch::Json(serde_json::from_value(patch_value)?);
+    api.patch(&resource.name, &PatchParams::default(), &json_patch)
+        .await?;
     Ok(())
 }
 
@@ -1250,19 +1225,19 @@ async fn wait_for_barrier(
     loop {
         let elapsed = start.elapsed().as_secs();
 
-        // Parallel state check for all resources — single GET per resource
-        let check_futs = targets.iter().map(|target| {
+        // Parallel state check — carry BarrierTarget through the future
+        // so completion order from buffer_unordered cannot misattribute modes
+        let check_futs = targets.iter().cloned().map(|target| {
             let client = client.clone();
-            let res = target.resource.clone();
             let km = kind_map.clone();
             let gk = gk_map.clone();
             async move {
-                let r = check_resource_state_full(&client, &res, &km, &gk).await;
-                (res, r)
+                let info = check_resource_state_full(&client, &target.resource, &km, &gk).await;
+                (target, info)
             }
         });
 
-        let states: Vec<_> = futures::stream::iter(check_futs)
+        let states: Vec<(BarrierTarget, ResourceStateInfo)> = futures::stream::iter(check_futs)
             .buffer_unordered(DEFAULT_CONCURRENCY)
             .collect()
             .await;
@@ -1271,11 +1246,12 @@ async fn wait_for_barrier(
         let mut unknown_count = 0;
         let mut deleting_count = 0;
         let mut total_finalizers = 0;
-        let mut remaining = Vec::new();
+        let mut remaining: Vec<BarrierTarget> = Vec::new();
         let mut remaining_finalizers = Vec::new();
         let mut unknown_reasons = Vec::new();
 
-        for (res, info) in &states {
+        for (target, info) in &states {
+            let res = &target.resource;
             match &info.state {
                 ObservationState::Gone => {
                     gone_count += 1;
@@ -1284,7 +1260,7 @@ async fn wait_for_barrier(
                     finalizer_count,
                     has_deletion_timestamp,
                 } => {
-                    remaining.push(res.clone());
+                    remaining.push(target.clone());
                     total_finalizers += finalizer_count;
                     if *has_deletion_timestamp {
                         deleting_count += 1;
@@ -1295,7 +1271,7 @@ async fn wait_for_barrier(
                 }
                 ObservationState::Unknown(reason) => {
                     unknown_count += 1;
-                    remaining.push(res.clone());
+                    remaining.push(target.clone());
                     unknown_reasons.push(format!("{}/{}: {}", res.kind, res.name, reason));
                 }
             }
@@ -1329,7 +1305,8 @@ async fn wait_for_barrier(
         // Re-DELETE only resources authorized via ReDeleteIfRecreated and
         // confirmed to have a different UID (recreated by controller)
         let mut redeleted = false;
-        for (idx, (res, info)) in states.iter().enumerate() {
+        for (target, info) in &states {
+            let res = &target.resource;
             let has_dt = matches!(
                 info.state,
                 ObservationState::Exists {
@@ -1337,7 +1314,6 @@ async fn wait_for_barrier(
                     ..
                 }
             );
-            let target = &targets[idx];
             let current_uid = info.uid.as_deref();
             if should_redelete(target, current_uid, has_dt) {
                 let original_uid = match &target.mode {
