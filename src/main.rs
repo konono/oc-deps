@@ -347,26 +347,98 @@ async fn main() -> Result<()> {
                         }
 
                         // Interactive Plan Review (if TTY and not dry-run/script)
-                        // Uses AppState to track draft overrides
-                        let is_tty = atty::is(atty::Stream::Stdin);
+                        let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
+                        let mut plan = plan; // shadow with mutable for draft overrides
                         if is_tty && !dry_run && script.is_none() {
-                            use crate::teardown::app::{AppState, AppScreen, AppCommand, apply_command};
+                            use crate::teardown::app::{AppState, AppScreen, AppCommand, DraftAction, apply_command};
+                            use crate::teardown::planner::Action;
+                            use crate::kube::resource::ResourceId;
                             let mut app = AppState::new();
 
-                            // Show plan summary for review
-                            let review_count = plan.phases.iter()
-                                .flat_map(|p| &p.actions)
-                                .filter(|a| matches!(a, crate::teardown::planner::Action::Review { .. }))
-                                .count();
+                            // Collect REVIEW items
+                            let review_items: Vec<(usize, usize, ResourceId)> = plan.phases.iter()
+                                .enumerate()
+                                .flat_map(|(pi, phase)| {
+                                    phase.actions.iter().enumerate().filter_map(move |(ai, a)| {
+                                        if let Action::Review { resource, .. } = a {
+                                            Some((pi, ai, resource.clone()))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .collect();
 
-                            if review_count > 0 && !force {
-                                eprintln!("\n📋 Plan Review: {} REVIEW item(s) available for approval", review_count);
-                                eprintln!("  (Use --approve-delete to approve, or --force to skip review)\n");
+                            if !review_items.is_empty() && !force {
+                                eprintln!("\n\x1b[1m📋 Plan Review\x1b[0m: {} REVIEW item(s)\n", review_items.len());
+                                for (i, (_, _, res)) in review_items.iter().enumerate() {
+                                    eprintln!("  [{}] {}/{}{}",
+                                        i + 1,
+                                        res.kind, res.name,
+                                        res.namespace.as_ref().map(|ns| format!(" ({})", ns)).unwrap_or_default()
+                                    );
+                                }
+                                eprintln!();
+                                eprintln!("  Enter item numbers to approve for DELETE (comma-separated),");
+                                eprintln!("  or press Enter to keep all as REVIEW:");
+                                eprint!("  > ");
+                                std::io::Write::flush(&mut std::io::stderr()).ok();
+
+                                let mut input = String::new();
+                                if std::io::stdin().read_line(&mut input).is_ok() {
+                                    let input = input.trim();
+                                    if !input.is_empty() {
+                                        for token in input.split(',') {
+                                            if let Ok(idx) = token.trim().parse::<usize>() {
+                                                if idx >= 1 && idx <= review_items.len() {
+                                                    let (_, _, ref res) = review_items[idx - 1];
+                                                    let _ = apply_command(&mut app, &AppCommand::ApproveReview {
+                                                        resource: res.clone(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Apply draft overrides to plan
+                                if !app.draft_overrides.is_empty() {
+                                    let mut mutated_plan = plan.clone();
+                                    for over in &app.draft_overrides {
+                                        for phase in &mut mutated_plan.phases {
+                                            for action in &mut phase.actions {
+                                                if let Action::Review { resource, reason, metadata } = action {
+                                                    if *resource == over.resource {
+                                                        match over.new_action {
+                                                            DraftAction::Delete => {
+                                                                *action = Action::Delete {
+                                                                    resource: resource.clone(),
+                                                                    reason: format!("{} (approved in Plan Review)", reason),
+                                                                };
+                                                            }
+                                                            DraftAction::Keep => {
+                                                                *action = Action::Keep {
+                                                                    resource: resource.clone(),
+                                                                    reason: format!("{} (kept in Plan Review)", reason),
+                                                                };
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    eprintln!("  {} REVIEW item(s) approved for DELETE\n",
+                                        app.draft_overrides.iter()
+                                            .filter(|o| matches!(o.new_action, DraftAction::Delete))
+                                            .count()
+                                    );
+                                    plan = mutated_plan;
+                                }
                             }
 
-                            // Transition to Executing
+                            // Transition to Executing — BoundPlan is frozen
                             let _ = apply_command(&mut app, &AppCommand::StartExecution);
-                            // AppState is now Executing — BoundPlan is frozen
                         }
 
                         // Create RunJournal before first mutation (fail-closed)
@@ -499,7 +571,7 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // Residual cleanup transition — only if Absent + complete audit
+                                // Residual cleanup transition — only if Absent + complete audit + TTY
                                 if final_state == RunState::ApplyCompleted {
                                     if let Some(store) = &journal_store {
                                         let j = store.read().await;
@@ -508,9 +580,99 @@ async fn main() -> Result<()> {
                                             match rs {
                                                 journal::ResidualStatus::ResidualsObserved { count } => {
                                                     eprintln!(
-                                                        "\n📋 {} residual(s) observed. Use 'teardown journal' to review.",
+                                                        "\n📋 {} residual(s) observed.",
                                                         count
                                                     );
+
+                                                    // Interactive residual cleanup (TTY only)
+                                                    if is_tty {
+                                                        let residuals: Vec<&crate::teardown::audit::AttributedResidual> =
+                                                            audit.likely_operator_residual.iter()
+                                                                .chain(audit.unattributed.iter())
+                                                                .collect();
+
+                                                        if !residuals.is_empty() {
+                                                        use crate::kube::resource::ResourceId;
+                                                            eprintln!("\n\x1b[1mResidual Cleanup\x1b[0m:");
+                                                            for (i, res) in residuals.iter().enumerate() {
+                                                                eprintln!("  [{}] {:?} {}/{}{}",
+                                                                    i + 1,
+                                                                    res.confidence,
+                                                                    res.resource.kind,
+                                                                    res.resource.name,
+                                                                    res.resource.namespace.as_ref()
+                                                                        .map(|ns| format!(" ({})", ns))
+                                                                        .unwrap_or_default()
+                                                                );
+                                                            }
+                                                            eprintln!();
+                                                            eprintln!("  Enter item numbers to DELETE (comma-separated),");
+                                                            eprintln!("  or press Enter to skip cleanup:");
+                                                            eprint!("  > ");
+                                                            std::io::Write::flush(&mut std::io::stderr()).ok();
+
+                                                            let mut input = String::new();
+                                                            if std::io::stdin().read_line(&mut input).is_ok() {
+                                                                let input = input.trim();
+                                                                if !input.is_empty() {
+                                                                    let mut selected: Vec<&ResourceId> = Vec::new();
+                                                                    for token in input.split(',') {
+                                                                        if let Ok(idx) = token.trim().parse::<usize>() {
+                                                                            if idx >= 1 && idx <= residuals.len() {
+                                                                                selected.push(&residuals[idx - 1].resource);
+                                                                            }
+                                                                        }
+                                                                    }
+
+                                                                    if !selected.is_empty() {
+                                                                        eprintln!("\n  Deleting {} residual(s)...", selected.len());
+
+                                                                        // Verify generation is still Absent
+                                                                        let gen_check = crate::teardown::audit::check_operator_generation(
+                                                                            &client, &j.operator, &j.audit_context.csv_baseline
+                                                                        ).await;
+                                                                        if !matches!(gen_check, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                                            eprintln!("  ⚠ Operator generation is no longer Absent — cleanup blocked.");
+                                                                        } else {
+                                                                            // Record decisions in journal, then DELETE each
+                                                                            for res in &selected {
+                                                                                // Record decision before mutation
+                                                                                store.update(|j| {
+                                                                                    j.audit_revision += 1;
+                                                                                }).await
+                                                                                .context("Failed to record cleanup decision")?;
+
+                                                                                // Use core executor DELETE (UID-preconditioned)
+                                                                                let del_result = crate::teardown::executor::delete_resource_pub(
+                                                                                    &client, res, &kind_map, &gk_map, Some(&gate),
+                                                                                ).await;
+                                                                                match del_result {
+                                                                                    Ok(msg) => eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg),
+                                                                                    Err(e) => eprintln!("    ✗ {}/{}: {}", res.kind, res.name, e),
+                                                                                }
+                                                                            }
+
+                                                                            // Re-run audit after cleanup
+                                                                            eprintln!("\n  🔍 Re-running residual audit...");
+                                                                            if let Ok(new_audit) = crate::teardown::audit::run_residual_audit(&client, &j).await {
+                                                                                crate::teardown::audit::print_residual_audit(&new_audit, &j);
+                                                                                let new_status = crate::teardown::audit::residual_status_from_audit(&new_audit);
+                                                                                let _ = store.update(|j| {
+                                                                                    j.residual_status = new_status;
+                                                                                    j.audit_revision += 1;
+                                                                                    j.last_residual_audit = Some(new_audit);
+                                                                                }).await;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            eprintln!("  Use 'teardown journal' to review details.");
+                                                        }
+                                                    } else {
+                                                        eprintln!("  Use 'teardown journal' to review.");
+                                                    }
                                                 }
                                                 journal::ResidualStatus::AuditIncomplete => {
                                                     eprintln!(

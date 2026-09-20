@@ -929,6 +929,29 @@ async fn delete_resource(
     }
 }
 
+/// Public wrapper for residual cleanup DELETE with MutationGate.
+/// Returns Ok(description) on success, Err on failure.
+pub async fn delete_resource_pub(
+    client: &Client,
+    resource: &ResourceId,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    gate: Option<&MutationGate>,
+) -> Result<String> {
+    // Acquire mutation permit
+    let _permit = if let Some(g) = gate {
+        Some(g.acquire().await.context("Mutation gate closed")?)
+    } else {
+        None
+    };
+
+    match delete_resource(client, resource, kind_map, gk_map).await {
+        DeleteResult::Deleted => Ok("deleted".to_string()),
+        DeleteResult::AlreadyGone => Ok("already gone".to_string()),
+        DeleteResult::Failed(reason) => bail!("{}", reason),
+    }
+}
+
 // Old wait_for_barrier removed — replaced by WatchManager::wait_for_gone
 // which uses RuntimeStateStore for state tracking and epoch-based reconciliation.
 
