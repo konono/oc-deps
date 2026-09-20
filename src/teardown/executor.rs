@@ -1290,6 +1290,173 @@ mod tests {
 
     // ── UID gate ordering test ──
 
+    // ── Mock API tests: real HTTP decision paths ──
+
+    use std::pin::pin;
+    use kube::client::Body;
+
+    fn test_kind_map() -> KindMap {
+        let mut km = std::collections::HashMap::new();
+        km.insert(
+            "ConfigMap".to_string(),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        km
+    }
+
+    fn test_gk_map() -> GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        gk.insert(
+            (String::new(), "ConfigMap".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        gk
+    }
+
+    fn make_cm_resource(name: &str, uid: Option<&str>) -> ResourceId {
+        ResourceId {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: "ConfigMap".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: uid.map(String::from),
+        }
+    }
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn not_found_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": "not found",
+            "reason": "NotFound",
+            "code": 404
+        });
+        http::Response::builder()
+            .status(404)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn forbidden_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status",
+            "apiVersion": "v1",
+            "metadata": {},
+            "status": "Failure",
+            "message": "forbidden",
+            "reason": "Forbidden",
+            "code": 403
+        });
+        http::Response::builder()
+            .status(403)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_mock_delete_uid_mismatch_zero_deletes() {
+        // Plan says UID=A, live resource has UID=B → DELETE should NOT be called
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_cm_resource("my-cm", Some("uid-A"));
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Request 1: GET /api/v1/namespaces/test-ns/configmaps/my-cm
+            let (request, send) = handle.next_request().await.expect("expected GET");
+            assert_eq!(request.method(), http::Method::GET);
+            assert!(request.uri().to_string().contains("my-cm"));
+
+            // Return resource with UID=B (different from plan UID=A)
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": "my-cm",
+                    "namespace": "test-ns",
+                    "uid": "uid-B"
+                }
+            })));
+
+            // No more requests should come — DELETE should NOT be called
+            // (the function should return Failed due to UID mismatch)
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource(&client, &resource, &km, &gk).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("UID mismatch")),
+            "UID mismatch should prevent DELETE: got {:?}",
+            result
+        );
+
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mock_delete_get404_list_forbidden_not_already_gone() {
+        // GET 404 + LIST 403 → cannot verify endpoint → Failed (not AlreadyGone)
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<Body>,
+            http::Response<Body>,
+        >();
+
+        let resource = make_cm_resource("gone-cm", Some("uid-A"));
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // Request 1: GET → 404
+            let (request, send) = handle.next_request().await.expect("expected GET");
+            assert_eq!(request.method(), http::Method::GET);
+            send.send_response(not_found_response());
+
+            // Request 2: LIST (endpoint verification) → 403
+            let (request, send) = handle.next_request().await.expect("expected LIST");
+            assert_eq!(request.method(), http::Method::GET); // LIST is also GET
+            send.send_response(forbidden_response());
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = delete_resource(&client, &resource, &km, &gk).await;
+
+        assert!(
+            matches!(result, DeleteResult::Failed(ref msg) if msg.contains("endpoint verification failed")),
+            "GET 404 + LIST 403 should NOT be AlreadyGone: got {:?}",
+            result
+        );
+
+        spawned.await.unwrap();
+    }
+
     #[test]
     fn test_uid_gate_runs_before_applying_state() {
         // Verify the code structure: UID gate (bail!) appears before
