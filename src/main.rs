@@ -1251,10 +1251,9 @@ async fn main() -> Result<()> {
                             RunState::Paused | RunState::Applying | RunState::InteractiveCleanup => {}
                             RunState::ApplyCompleted => {
                                 if j.last_residual_audit.is_none() {
-                                    // Crash between ApplyCompleted persist and audit — allow audit-only recovery
                                     eprintln!("Run {} is ApplyCompleted but has no residual audit — running audit recovery", j.run_id);
                                 } else {
-                                    bail!("Run {} already completed — nothing to resume", j.run_id);
+                                    eprintln!("Run {} is ApplyCompleted — re-entering Residual Cleanup", j.run_id);
                                 }
                             }
                             RunState::Finished => {
@@ -1485,8 +1484,9 @@ async fn main() -> Result<()> {
 
                                 let resume_stage = classify_resume_stage(&j)
                                     .map_err(|e| anyhow::anyhow!("Cannot resume: {}", e))?;
+                                let main_complete = j.execution.phases_completed == j.execution.phases_total;
                                 let paused_from_residual = j.state == RunState::Paused
-                                    && j.execution.phases_completed == j.execution.phases_total
+                                    && main_complete
                                     && j.last_residual_audit.is_some();
 
                                 if resume_stage == ResumeStage::Cleanup {
@@ -1519,10 +1519,13 @@ async fn main() -> Result<()> {
 
                                     let mut any_hard_failed = false;
                                     let mut any_retryable = false;
+                                    let is_residual_reentry = paused_from_residual
+                                        || (j.state == RunState::ApplyCompleted && main_complete)
+                                        || (j.state == RunState::InteractiveCleanup && main_complete);
+
                                     if pending.is_empty() {
-                                        if paused_from_residual {
-                                            eprintln!("Resuming from Residual stage (no pending decisions).");
-                                            // Re-verify generation before proceeding to re-audit
+                                        if is_residual_reentry {
+                                            eprintln!("Resuming Residual Cleanup stage.");
                                             let gen_check = audit::check_operator_generation(
                                                 &client, &j.operator, &j.audit_context.csv_baseline,
                                             ).await;
@@ -1984,6 +1987,83 @@ async fn main() -> Result<()> {
                                              State persisted as InteractiveCleanup (retryable)."
                                         );
                                     }
+
+                                    // Residual re-entry: offer interactive cleanup if TTY + residuals exist
+                                    if is_residual_reentry && final_state == RunState::ApplyCompleted {
+                                        let j_re = store.read().await;
+                                        if let Some(ref audit) = j_re.last_residual_audit {
+                                            let rs = audit::residual_status_from_audit(audit);
+                                            if let journal::ResidualStatus::ResidualsObserved { count } = rs {
+                                                let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
+                                                if count > 0 && is_tty && j_re.schema_version == journal::RUN_JOURNAL_SCHEMA_VERSION {
+                                                    let residuals: Vec<&crate::teardown::audit::AttributedResidual> =
+                                                        audit.likely_operator_residual.iter()
+                                                            .chain(audit.unattributed.iter())
+                                                            .collect();
+                                                    if !residuals.is_empty() {
+                                                        eprintln!("\n\x1b[1mResidual Cleanup\x1b[0m: {} item(s)", residuals.len());
+                                                        for (i, res) in residuals.iter().enumerate() {
+                                                            eprintln!("  [{}] {:?} {}/{}{}",
+                                                                i + 1,
+                                                                res.confidence,
+                                                                res.resource.kind,
+                                                                res.resource.name,
+                                                                res.resource.namespace.as_ref()
+                                                                    .map(|ns| format!(" ({})", ns))
+                                                                    .unwrap_or_default()
+                                                            );
+                                                        }
+                                                        eprintln!();
+                                                        eprintln!("  Enter item numbers to DELETE (comma-separated),");
+                                                        eprintln!("  'f' to finish, or press Enter to skip:");
+                                                        eprint!("  > ");
+                                                        std::io::Write::flush(&mut std::io::stderr()).ok();
+
+                                                        let mut input = String::new();
+                                                        if std::io::stdin().read_line(&mut input).is_ok() {
+                                                            let input = input.trim();
+                                                            if input == "f" {
+                                                                store.update(|j| { j.state = RunState::Finished; }).await?;
+                                                                eprintln!("Run finished.");
+                                                            } else if !input.is_empty() {
+                                                                let mut selected: Vec<crate::kube::resource::ResourceId> = Vec::new();
+                                                                for token in input.split(',') {
+                                                                    if let Ok(idx) = token.trim().parse::<usize>() {
+                                                                        if idx >= 1 && idx <= residuals.len() {
+                                                                            selected.push(residuals[idx - 1].resource.clone());
+                                                                        }
+                                                                    }
+                                                                }
+                                                                if !selected.is_empty() {
+                                                                    eprintln!("\n  Deleting {} residual(s)...", selected.len());
+                                                                    match crate::teardown::executor::execute_residual_cleanup(
+                                                                        &client, &selected, &store, gate.as_ref(),
+                                                                        &kind_map, &gk_map,
+                                                                    ).await {
+                                                                        Ok(cleanup_result) => {
+                                                                            for res in &cleanup_result.deleted {
+                                                                                eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
+                                                                            }
+                                                                            for (res, reason) in &cleanup_result.skipped {
+                                                                                eprintln!("    ⚠ {}/{}: skipped — {}", res.kind, res.name, reason);
+                                                                            }
+                                                                            for (res, reason) in &cleanup_result.failed {
+                                                                                eprintln!("    ✗ {}/{}: {}", res.kind, res.name, reason);
+                                                                            }
+                                                                        }
+                                                                        Err(e) => {
+                                                                            bail!("Residual cleanup failed: {:#}", e);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     return Ok(());
                                 }
 
@@ -3042,8 +3122,9 @@ pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, Str
         && main_complete
         && j.last_residual_audit.is_some();
 
-    let needs_audit_recovery = j.state == journal::RunState::ApplyCompleted
-        && j.last_residual_audit.is_none();
+    // ApplyCompleted → re-enter Residual (with or without prior audit)
+    let apply_completed_reentry = j.state == journal::RunState::ApplyCompleted
+        && main_complete;
 
     // Inconsistent: cleanup decisions exist but main not complete
     if !j.cleanup_decisions.is_empty() && !main_complete {
@@ -3074,7 +3155,7 @@ pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, Str
     if (j.state == journal::RunState::InteractiveCleanup && main_complete)
         || (j.state == journal::RunState::Paused && main_complete && has_pending_cleanup)
         || paused_from_residual
-        || needs_audit_recovery
+        || apply_completed_reentry
     {
         Ok(ResumeStage::Cleanup)
     } else {
@@ -3421,11 +3502,11 @@ mod basis_drift_tests {
     }
 
     #[test]
-    fn classify_resume_apply_completed_with_audit_goes_to_main() {
+    fn classify_resume_apply_completed_with_audit_routes_to_cleanup() {
         use crate::teardown::journal::RunState;
         let j = make_test_journal(RunState::ApplyCompleted, 7, 7, true, vec![]);
-        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::MainExecution,
-            "ApplyCompleted + has audit = fully completed (gate would bail first)");
+        assert_eq!(classify_resume_stage(&j).unwrap(), ResumeStage::Cleanup,
+            "ApplyCompleted + audit + complete = Residual re-entry");
     }
 
     #[test]
