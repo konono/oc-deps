@@ -856,6 +856,12 @@ async fn main() -> Result<()> {
                                                                                     }
                                                                                 }).cloned().collect();
 
+                                                                                // Set InteractiveCleanup state
+                                                                                store.update(|j| {
+                                                                                    j.state = RunState::InteractiveCleanup;
+                                                                                }).await
+                                                                                .context("Failed to persist InteractiveCleanup state")?;
+
                                                                                 // Step 3: Per-resource DELETE with durable decision record
                                                                                 for res in &valid_selected {
                                                                                     // Re-check generation per resource
@@ -913,15 +919,16 @@ async fn main() -> Result<()> {
                                                                                     .context("Failed to persist cleanup decision — no mutation")?;
 
                                                                                     // Core executor DELETE (UID-preconditioned)
+                                                                                    // Caller holds the permit — don't double-acquire in delete_resource_pub
                                                                                     let del_result = crate::teardown::executor::delete_resource_pub(
-                                                                                        &client, res, &kind_map, &gk_map, Some(&gate),
+                                                                                        &client, res, &kind_map, &gk_map, None,
                                                                                     ).await;
 
                                                                                     let result_str = match &del_result {
                                                                                         Ok(msg) => {
                                                                                             eprintln!("    ✓ {}/{}: {}", res.kind, res.name, msg);
-                                                                                            // Wait for Gone confirmation if Deleted
-                                                                                            if msg == "Deleted" {
+                                                                                            // Wait for Gone confirmation after DELETE accepted
+                                                                                            if msg == "deleted" {
                                                                                                 if let Some((api, _)) = crate::kube::resource::resolve_api(&client, res, &kind_map, &gk_map) {
                                                                                                     for _ in 0..30 {
                                                                                                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -961,17 +968,30 @@ async fn main() -> Result<()> {
                                                                                 ).await;
                                                                                 if matches!(post_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
                                                                                     eprintln!("\n  🔍 Re-running residual audit...");
-                                                                                    if let Ok(new_audit) = crate::teardown::audit::run_residual_audit(&client, &post_j).await {
-                                                                                        crate::teardown::audit::print_residual_audit(&new_audit, &post_j);
-                                                                                        let new_status = crate::teardown::audit::residual_status_from_audit(&new_audit);
-                                                                                        store.update(|j| {
-                                                                                            j.residual_status = new_status;
-                                                                                            j.audit_revision += 1;
-                                                                                            j.last_residual_audit = Some(new_audit);
-                                                                                        }).await
-                                                                                        .context("Failed to persist post-cleanup audit")?;
+                                                                                    match crate::teardown::audit::run_residual_audit(&client, &post_j).await {
+                                                                                        Ok(new_audit) => {
+                                                                                            crate::teardown::audit::print_residual_audit(&new_audit, &post_j);
+                                                                                            let new_status = crate::teardown::audit::residual_status_from_audit(&new_audit);
+                                                                                            store.update(|j| {
+                                                                                                j.residual_status = new_status;
+                                                                                                j.audit_revision += 1;
+                                                                                                j.last_residual_audit = Some(new_audit);
+                                                                                            }).await
+                                                                                            .context("Failed to persist post-cleanup audit")?;
+                                                                                        }
+                                                                                        Err(e) => {
+                                                                                            eprintln!("  ⚠ Post-cleanup re-audit failed: {}", e);
+                                                                                            bail!("Residual re-audit failed after cleanup: {}. \
+                                                                                                   Cannot verify cleanup results.", e);
+                                                                                        }
                                                                                     }
                                                                                 }
+
+                                                                                // Restore state after cleanup
+                                                                                store.update(|j| {
+                                                                                    j.state = RunState::ApplyCompleted;
+                                                                                }).await
+                                                                                .context("Failed to restore state after cleanup")?;
                                                                             }
                                                                         } else {
                                                                             eprintln!("  ⚠ Failed to run fresh audit — cleanup blocked.");
@@ -2056,48 +2076,82 @@ async fn fetch_observed_identities(
     Ok(results)
 }
 
-/// Check if a resource still has evidence linking to the target operator.
-/// Returns true if ANY evidence (labels, managedFields managers, ownerRefs)
-/// connects the resource to the operator identity in the AuditContext.
-/// This prevents basis drift where a resource keeps the same UID but changes
-/// its operator affiliation.
+/// Check if a resource still has evidence linking to the TARGET operator.
+/// Evidence rules (matching audit.rs compute_confidence):
+/// - ownerRef to target operator identity → sufficient
+/// - target manager + target label → sufficient
+/// - target label alone → insufficient for DELETE authority
+/// - target manager alone → insufficient for DELETE authority
+/// - arbitrary ownerRef without target match → insufficient
 fn check_target_evidence(
     obj: &::kube::api::DynamicObject,
     audit_ctx: &crate::teardown::journal::AuditContext,
 ) -> bool {
-    // Check labels for target operator patterns (csv name prefix)
+    let mut has_target_label = false;
+    let mut has_target_manager = false;
+    let mut has_target_ownerref = false;
+
+    // Check labels for target operator CSV name patterns
     if let Some(labels) = &obj.metadata.labels {
         for csv_name in &audit_ctx.csv_names {
             let prefix = csv_name.split('.').next().unwrap_or(csv_name);
             if !prefix.is_empty() {
                 for key in labels.keys() {
                     if key.contains(prefix) {
-                        return true;
+                        has_target_label = true;
+                        break;
                     }
                 }
+            }
+            if has_target_label {
+                break;
             }
         }
     }
 
-    // Check managedFields for target controller deployments
+    // Check managedFields for target controller deployment names
     if let Some(managed_fields) = &obj.metadata.managed_fields {
         for mf in managed_fields {
             if let Some(manager) = &mf.manager {
                 for dep_name in &audit_ctx.controller_deployment_names {
                     if manager.contains(dep_name.as_str()) {
-                        return true;
+                        has_target_manager = true;
+                        break;
                     }
                 }
+            }
+            if has_target_manager {
+                break;
             }
         }
     }
 
-    // Check ownerReferences for known target UIDs
-    // (CSV, controller deployments — the UID identity we saved)
-    // For safety, any ownerRef is considered evidence of operator management
-    if obj.metadata.owner_references.as_ref().is_some_and(|refs| !refs.is_empty()) {
-        return true;
+    // Check ownerRefs specifically for target operator identity (deployment/CSV names)
+    // NOT any arbitrary ownerRef
+    if let Some(owner_refs) = &obj.metadata.owner_references {
+        for oref in owner_refs {
+            for dep_name in &audit_ctx.controller_deployment_names {
+                if oref.name.contains(dep_name.as_str()) {
+                    has_target_ownerref = true;
+                    break;
+                }
+            }
+            if !has_target_ownerref {
+                for csv_name in &audit_ctx.csv_names {
+                    if oref.name == *csv_name {
+                        has_target_ownerref = true;
+                        break;
+                    }
+                }
+            }
+            if has_target_ownerref {
+                break;
+            }
+        }
     }
 
-    false
+    // ownerRef to target → sufficient
+    // target manager + target label → sufficient
+    // either alone → insufficient
+    has_target_ownerref || (has_target_manager && has_target_label)
 }
