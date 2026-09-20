@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use kube::Client;
 use kube::api::{Api, ApiResource, DynamicObject, ListParams};
 use kube::core::GroupVersion;
@@ -279,12 +279,11 @@ pub async fn check_operator_generation(
                         if let Some(labels) = &csv_obj.metadata.labels {
                             let suffix = format!(".{}", csv_ns);
                             for key in labels.keys() {
-                                if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
-                                    if let Some(pkg) = rest.strip_suffix(&suffix) {
-                                        if !pkg.is_empty() {
-                                            evidence_packages.insert(pkg.to_string());
-                                        }
-                                    }
+                                if let Some(rest) = key.strip_prefix("operators.coreos.com/")
+                                    && let Some(pkg) = rest.strip_suffix(&suffix)
+                                    && !pkg.is_empty()
+                                {
+                                    evidence_packages.insert(pkg.to_string());
                                 }
                             }
                         }
@@ -341,6 +340,7 @@ pub fn is_exclusively_other_package(
     !has_target && other_count == 1
 }
 
+#[allow(dead_code)]
 fn csv_label_attributes_to_other_package(
     labels: &std::collections::BTreeMap<String, String>,
     csv_namespace: &str,
@@ -351,15 +351,14 @@ fn csv_label_attributes_to_other_package(
     let mut has_other_package = false;
 
     for key in labels.keys() {
-        if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
-            if let Some(pkg) = rest.strip_suffix(&suffix) {
-                if !pkg.is_empty() {
-                    if pkg == our_package {
-                        has_our_package = true;
-                    } else {
-                        has_other_package = true;
-                    }
-                }
+        if let Some(rest) = key.strip_prefix("operators.coreos.com/")
+            && let Some(pkg) = rest.strip_suffix(&suffix)
+            && !pkg.is_empty()
+        {
+            if pkg == our_package {
+                has_our_package = true;
+            } else {
+                has_other_package = true;
             }
         }
     }
@@ -397,20 +396,19 @@ fn csv_packages_from_annotations(csv: &DynamicObject) -> Vec<String> {
             };
 
         for prop in &props {
-            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
-                if let Some(value) = prop.get("value") {
-                    let pkg_value = if let Some(s) = value.as_str() {
-                        serde_json::from_str::<serde_json::Value>(s).ok()
-                    } else {
-                        Some(value.clone())
-                    };
-                    if let Some(pkg_info) = pkg_value {
-                        if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str()) {
-                            if !packages.contains(&name.to_string()) {
-                                packages.push(name.to_string());
-                            }
-                        }
-                    }
+            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package")
+                && let Some(value) = prop.get("value")
+            {
+                let pkg_value = if let Some(s) = value.as_str() {
+                    serde_json::from_str::<serde_json::Value>(s).ok()
+                } else {
+                    Some(value.clone())
+                };
+                if let Some(pkg_info) = pkg_value
+                    && let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
+                    && !packages.contains(&name.to_string())
+                {
+                    packages.push(name.to_string());
                 }
             }
         }
@@ -922,6 +920,7 @@ pub async fn run_residual_audit(client: &Client, journal: &RunJournal) -> Result
 
 /// Scan a single GVR in a namespace for residual resources.
 /// All LIST failures (404/403/timeout) are scan errors → AuditIncomplete.
+#[allow(clippy::too_many_arguments)]
 async fn scan_namespace_for_target(
     client: &Client,
     group: &str,
@@ -965,6 +964,7 @@ async fn scan_namespace_for_target(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_list_results(
     items: Vec<DynamicObject>,
     kind: &str,
@@ -1082,10 +1082,8 @@ fn classify_evidence(
                 }
                 for csv_name in &ctx.csv_names {
                     let prefix = csv_name.split('.').next().unwrap_or(csv_name);
-                    if manager.contains(prefix) {
-                        if !matching_managers.contains(manager) {
-                            matching_managers.push(manager.clone());
-                        }
+                    if manager.contains(prefix) && !matching_managers.contains(manager) {
+                        matching_managers.push(manager.clone());
                     }
                 }
             }
@@ -1101,10 +1099,10 @@ fn classify_evidence(
             .and_then(|n| n.as_str())
             .or_else(|| spec.get("serviceAccountName").and_then(|n| n.as_str()));
 
-        if let Some(sa) = sa_name {
-            if ctx.service_account_names.contains(sa) {
-                service_account_match = true;
-            }
+        if let Some(sa) = sa_name
+            && ctx.service_account_names.contains(sa)
+        {
+            service_account_match = true;
         }
     }
 
@@ -1882,7 +1880,7 @@ mod tests {
     fn test_residual_status_unresolved_gvks_none_is_incomplete() {
         // If unresolved_gvks is None (old journal), audit scan pushes a
         // scan_error for plan GVK resolution → AuditIncomplete
-        let mut audit = ResidualAudit {
+        let audit = ResidualAudit {
             planned_delete_still_present: vec![],
             planned_expect_still_present: vec![],
             expected_preserved: vec![],

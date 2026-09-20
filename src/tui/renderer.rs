@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
@@ -127,6 +127,7 @@ pub fn draw_plan_review(
 }
 
 /// Draw the Execution screen — live resource state from RuntimeStateStore.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_execution(
     f: &mut Frame,
     entries: &[RuntimeEntry],
@@ -303,6 +304,7 @@ pub fn draw_execution(
 
 /// Per-resource cleanup state for rendering.
 #[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
 pub enum ResidualResourceState {
     #[default]
     Pending,

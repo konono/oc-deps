@@ -192,7 +192,7 @@ pub enum ResidualStatus {
     SupersededByNewGeneration,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct AuditContext {
     #[serde(default)]
     pub footprint_namespaces: HashSet<String>,
@@ -256,25 +256,7 @@ pub enum GvrScope {
     Cluster,
 }
 
-impl Default for AuditContext {
-    fn default() -> Self {
-        Self {
-            footprint_namespaces: HashSet::new(),
-            csv_names: HashSet::new(),
-            controller_deployment_names: HashSet::new(),
-            service_account_names: HashSet::new(),
-            known_labels: Vec::new(),
-            managed_field_managers: HashSet::new(),
-            known_gvrs: None,
-            unresolved_crds: None,
-            unresolved_gvks: None,
-            owned_cr_gvrs: None,
-            csv_baseline: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ExecutionRecord {
     pub phases_completed: usize,
     pub phases_total: usize,
@@ -302,20 +284,6 @@ impl From<&PlannedPreserved> for PreservedRecord {
     }
 }
 
-impl Default for ExecutionRecord {
-    fn default() -> Self {
-        Self {
-            phases_completed: 0,
-            phases_total: 0,
-            deleted: Vec::new(),
-            already_gone: Vec::new(),
-            failed: Vec::new(),
-            kept: Vec::new(),
-            reviewed: Vec::new(),
-        }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────
 //  JournalStore — single-writer, revision-based CAS
 // ──────────────────────────────────────────────────────────────
@@ -330,6 +298,7 @@ pub struct JournalStore {
 impl JournalStore {
     /// Create a JournalStore WITHOUT a process lock (for read-only or
     /// backward-compat use). Callers must ensure single-writer semantics.
+    #[allow(dead_code)]
     pub fn new(journal: RunJournal, path: PathBuf) -> Self {
         Self {
             path,
@@ -341,7 +310,7 @@ impl JournalStore {
     /// Create a JournalStore WITH an exclusive process-level lock.
     /// Fails if another process holds the lock (active executor).
     /// The lock is held for the lifetime of this JournalStore.
-    pub fn new_with_lock(journal: RunJournal, path: PathBuf) -> Result<Self> {
+    pub fn new_with_lock(_journal: RunJournal, path: PathBuf) -> Result<Self> {
         let lock_path = path.with_extension("lock");
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
@@ -389,7 +358,9 @@ impl JournalStore {
     }
 
     /// Check whether a process lock is held on a journal path without acquiring it.
+    #[allow(dead_code)]
     pub fn is_locked(journal_path: &Path) -> bool {
+        #[allow(dead_code)]
         let lock_path = journal_path.with_extension("lock");
         let lock_file = match std::fs::OpenOptions::new()
             .create(false)
@@ -446,7 +417,7 @@ impl JournalStore {
 
 fn state_dir() -> Result<PathBuf> {
     let base = dirs::state_dir()
-        .or_else(|| dirs::data_local_dir())
+        .or_else(dirs::data_local_dir)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     Ok(base.join("oc-deps"))
 }

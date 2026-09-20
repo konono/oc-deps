@@ -13,6 +13,7 @@ use crate::teardown::app::{AppCommand, AppState, AppStateSnapshot, apply_command
 // ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct HarnessEvent {
     pub step: usize,
     pub command: String,
@@ -21,6 +22,7 @@ pub struct HarnessEvent {
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub enum HarnessResult {
     Ok,
     Error(String),
@@ -33,6 +35,7 @@ pub enum HarnessResult {
 /// Run a sequence of [`AppCommand`]s against an [`AppState`],
 /// returning the full event trace.  No Kubernetes I/O is performed
 /// — this exercises the pure state-machine layer only.
+#[allow(dead_code)]
 pub fn run_scenario(initial: AppState, commands: &[AppCommand]) -> Vec<HarnessEvent> {
     let mut state = initial;
     let mut events = Vec::with_capacity(commands.len());
@@ -669,7 +672,7 @@ mod tests {
     #[test]
     fn test_failed_decisions_block_apply_completed() {
         // Simulate final_state logic: any failed/unconfirmed → not ApplyCompleted
-        let decisions = vec![
+        let decisions = [
             make_decision(Some(crate::teardown::journal::CleanupResult::Gone)),
             make_decision(Some(crate::teardown::journal::CleanupResult::Failed(
                 "timeout".to_string(),

@@ -211,12 +211,11 @@ pub fn csv_package_evidence_is_exclusive(
     if let Some(labels) = &csv.metadata.labels {
         let suffix = format!(".{}", csv_ns);
         for key in labels.keys() {
-            if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
-                if let Some(pkg) = rest.strip_suffix(&suffix) {
-                    if !pkg.is_empty() {
-                        evidence_packages.insert(pkg.to_string());
-                    }
-                }
+            if let Some(rest) = key.strip_prefix("operators.coreos.com/")
+                && let Some(pkg) = rest.strip_suffix(&suffix)
+                && !pkg.is_empty()
+            {
+                evidence_packages.insert(pkg.to_string());
             }
         }
     }
@@ -254,20 +253,19 @@ fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
                 Vec::new()
             };
         for prop in &props {
-            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
-                if let Some(value) = prop.get("value") {
-                    let pkg_value = if let Some(s) = value.as_str() {
-                        serde_json::from_str::<serde_json::Value>(s).ok()
-                    } else {
-                        Some(value.clone())
-                    };
-                    if let Some(pkg_info) = pkg_value {
-                        if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str()) {
-                            if !packages.contains(&name.to_string()) {
-                                packages.push(name.to_string());
-                            }
-                        }
-                    }
+            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package")
+                && let Some(value) = prop.get("value")
+            {
+                let pkg_value = if let Some(s) = value.as_str() {
+                    serde_json::from_str::<serde_json::Value>(s).ok()
+                } else {
+                    Some(value.clone())
+                };
+                if let Some(pkg_info) = pkg_value
+                    && let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
+                    && !packages.contains(&name.to_string())
+                {
+                    packages.push(name.to_string());
                 }
             }
         }
@@ -399,12 +397,11 @@ pub async fn discover_operators(
                 if csv.metadata.namespace.as_deref() != Some(sub_ns) {
                     continue;
                 }
-                if let Some(labels) = &csv.metadata.labels {
-                    if labels.contains_key(&label_key) {
-                        if let Some(csv_name) = &csv.metadata.name {
-                            matched_csvs.push(csv_name.clone());
-                        }
-                    }
+                if let Some(labels) = &csv.metadata.labels
+                    && labels.contains_key(&label_key)
+                    && let Some(csv_name) = &csv.metadata.name
+                {
+                    matched_csvs.push(csv_name.clone());
                 }
             }
 
@@ -422,6 +419,7 @@ pub async fn discover_operators(
     // Key: (subscription_namespace, csv_name) — different Subscriptions = different installations.
     // For each installation, prefer the CSV copy in the Subscription's namespace.
     // (csv_object, subscription_resource_id, package_name, csv_phase)
+    #[allow(clippy::type_complexity)]
     let mut best_csv: HashMap<
         (String, String),
         (&DynamicObject, Option<ResourceId>, Option<String>, String),

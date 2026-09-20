@@ -14,19 +14,20 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use crate::analyzers::olm::OperatorInstance;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::ResourceId;
-use crate::teardown::app::{AppCommand, AppScreen, AppState, DraftAction, apply_command};
-use crate::teardown::audit::{self, OperatorGenerationState, ResidualAudit};
+use crate::teardown::app::{AppCommand, AppState, DraftAction, apply_command};
+use crate::teardown::audit::{self, OperatorGenerationState};
 use crate::teardown::executor::{self, ExecutionResult};
-use crate::teardown::journal::{self, CleanupDecision, JournalStore, ResidualStatus, RunState};
+use crate::teardown::journal::{self, JournalStore, RunState};
 use crate::teardown::permit::MutationGate;
 use crate::teardown::plan::ReviewMetadata;
 use crate::teardown::planner::{Action, TeardownPlan};
-use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
+use crate::teardown::runtime::ResourceRuntimeState;
 
 /// Run the interactive TUI workflow: Plan Review → Execution → Residual Cleanup.
 ///
 /// The TUI never calls Kubernetes DELETE directly — all mutations go through
 /// the core executor's UID-preconditioned DELETE.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tui(
     client: &::kube::Client,
     plan: &mut TeardownPlan,
@@ -68,6 +69,7 @@ pub async fn run_tui(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_tui_inner(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     client: &::kube::Client,
@@ -113,44 +115,44 @@ async fn run_tui_inner(
             renderer::draw_plan_review(f, plan, &app, &review_items, selected_index);
         })?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(());
-                    }
-                    KeyCode::Up | KeyCode::Char('k') if !review_items.is_empty() => {
-                        selected_index = selected_index.saturating_sub(1);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') if !review_items.is_empty() => {
-                        if selected_index + 1 < review_items.len() {
-                            selected_index += 1;
-                        }
-                    }
-                    KeyCode::Char('a') if !review_items.is_empty() => {
-                        let (_, _, ref res, _) = review_items[selected_index];
-                        let _ = apply_command(
-                            &mut app,
-                            &AppCommand::ApproveReview {
-                                resource: res.clone(),
-                            },
-                        );
-                    }
-                    KeyCode::Char('K') if !review_items.is_empty() => {
-                        let (_, _, ref res, _) = review_items[selected_index];
-                        let _ = apply_command(
-                            &mut app,
-                            &AppCommand::KeepReview {
-                                resource: res.clone(),
-                            },
-                        );
-                    }
-                    KeyCode::Char('s') | KeyCode::Enter => {
-                        break; // Proceed to execution
-                    }
-                    _ => {}
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(());
                 }
+                KeyCode::Up | KeyCode::Char('k') if !review_items.is_empty() => {
+                    selected_index = selected_index.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') if !review_items.is_empty() => {
+                    if selected_index + 1 < review_items.len() {
+                        selected_index += 1;
+                    }
+                }
+                KeyCode::Char('a') if !review_items.is_empty() => {
+                    let (_, _, ref res, _) = review_items[selected_index];
+                    let _ = apply_command(
+                        &mut app,
+                        &AppCommand::ApproveReview {
+                            resource: res.clone(),
+                        },
+                    );
+                }
+                KeyCode::Char('K') if !review_items.is_empty() => {
+                    let (_, _, ref res, _) = review_items[selected_index];
+                    let _ = apply_command(
+                        &mut app,
+                        &AppCommand::KeepReview {
+                            resource: res.clone(),
+                        },
+                    );
+                }
+                KeyCode::Char('s') | KeyCode::Enter => {
+                    break; // Proceed to execution
+                }
+                _ => {}
             }
         }
     }
@@ -200,112 +202,108 @@ async fn run_tui_inner(
                         metadata,
                         ..
                     } = action
+                        && resource.group == ovr.resource.group
+                        && resource.version == ovr.resource.version
+                        && resource.kind == ovr.resource.kind
+                        && resource.name == ovr.resource.name
+                        && resource.namespace == ovr.resource.namespace
                     {
-                        if resource.group == ovr.resource.group
-                            && resource.version == ovr.resource.version
-                            && resource.kind == ovr.resource.kind
-                            && resource.name == ovr.resource.name
-                            && resource.namespace == ovr.resource.namespace
-                        {
-                            match ovr.new_action {
-                                DraftAction::Delete => {
-                                    let ovr_uid = ovr.resource.uid.as_deref().unwrap_or("");
-                                    let plan_uid = resource.uid.as_deref().unwrap_or("");
-                                    if plan_uid.is_empty() {
-                                        bail!(
-                                            "Cannot approve DELETE for {}/{}: plan resource has no UID",
-                                            resource.kind,
-                                            resource.name
-                                        );
-                                    }
-                                    if ovr_uid.is_empty() {
-                                        bail!(
-                                            "Cannot approve DELETE for {}/{} without UID in approval",
-                                            resource.kind,
-                                            resource.name
-                                        );
-                                    }
-                                    if ovr_uid != plan_uid {
-                                        bail!(
-                                            "Override UID {} does not match plan UID {} for {}/{}",
-                                            ovr_uid,
-                                            plan_uid,
-                                            resource.kind,
-                                            resource.name
-                                        );
-                                    }
-                                    let (api, _) = crate::kube::resource::resolve_api(
+                        match ovr.new_action {
+                            DraftAction::Delete => {
+                                let ovr_uid = ovr.resource.uid.as_deref().unwrap_or("");
+                                let plan_uid = resource.uid.as_deref().unwrap_or("");
+                                if plan_uid.is_empty() {
+                                    bail!(
+                                        "Cannot approve DELETE for {}/{}: plan resource has no UID",
+                                        resource.kind,
+                                        resource.name
+                                    );
+                                }
+                                if ovr_uid.is_empty() {
+                                    bail!(
+                                        "Cannot approve DELETE for {}/{} without UID in approval",
+                                        resource.kind,
+                                        resource.name
+                                    );
+                                }
+                                if ovr_uid != plan_uid {
+                                    bail!(
+                                        "Override UID {} does not match plan UID {} for {}/{}",
+                                        ovr_uid,
+                                        plan_uid,
+                                        resource.kind,
+                                        resource.name
+                                    );
+                                }
+                                let (api, _) = crate::kube::resource::resolve_api(
                                         client, resource, kind_map, gk_map,
                                     ).ok_or_else(|| anyhow::anyhow!(
                                         "Cannot resolve API for {}/{} — refusing to skip approved DELETE override",
                                         resource.kind, resource.name
                                     ))?;
-                                    match api.get(&resource.name).await {
-                                        Ok(obj) => {
-                                            let live_uid =
-                                                obj.metadata.uid.as_deref().unwrap_or("");
-                                            if live_uid.is_empty() {
-                                                bail!(
-                                                    "Cannot apply override for {}/{}: live resource has no UID",
-                                                    resource.kind,
-                                                    resource.name
-                                                );
-                                            }
-                                            if live_uid != plan_uid {
-                                                bail!(
-                                                    "UID changed for {}/{}: plan {} vs live {}",
-                                                    resource.kind,
-                                                    resource.name,
-                                                    plan_uid,
-                                                    live_uid
-                                                );
-                                            }
-                                            let action_meta = metadata.clone();
-                                            if let Err(drift_reason) =
-                                                crate::revalidate_review_basis(
-                                                    client,
-                                                    &obj,
-                                                    resource,
-                                                    &action_meta,
-                                                    &audit_ctx,
-                                                    operator_snapshot,
-                                                )
-                                                .await
-                                            {
-                                                bail!(
-                                                    "BLOCKED: {}/{} — basis drift: {}",
-                                                    resource.kind,
-                                                    resource.name,
-                                                    drift_reason
-                                                );
-                                            }
-                                            let mut bound = resource.clone();
-                                            bound.uid = Some(live_uid.to_string());
-                                            *action = Action::Delete {
-                                                resource: bound,
-                                                reason: format!("{} (approved in TUI)", reason),
-                                            };
-                                        }
-                                        Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                            eprintln!(
-                                                "  ⚠ {}/{} no longer present — skipped",
-                                                resource.kind, resource.name
+                                match api.get(&resource.name).await {
+                                    Ok(obj) => {
+                                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                                        if live_uid.is_empty() {
+                                            bail!(
+                                                "Cannot apply override for {}/{}: live resource has no UID",
+                                                resource.kind,
+                                                resource.name
                                             );
                                         }
-                                        Err(e) => bail!(
-                                            "Cannot verify {}/{}: {}",
-                                            resource.kind,
-                                            resource.name,
-                                            e
-                                        ),
+                                        if live_uid != plan_uid {
+                                            bail!(
+                                                "UID changed for {}/{}: plan {} vs live {}",
+                                                resource.kind,
+                                                resource.name,
+                                                plan_uid,
+                                                live_uid
+                                            );
+                                        }
+                                        let action_meta = metadata.clone();
+                                        if let Err(drift_reason) = crate::revalidate_review_basis(
+                                            client,
+                                            &obj,
+                                            resource,
+                                            &action_meta,
+                                            &audit_ctx,
+                                            operator_snapshot,
+                                        )
+                                        .await
+                                        {
+                                            bail!(
+                                                "BLOCKED: {}/{} — basis drift: {}",
+                                                resource.kind,
+                                                resource.name,
+                                                drift_reason
+                                            );
+                                        }
+                                        let mut bound = resource.clone();
+                                        bound.uid = Some(live_uid.to_string());
+                                        *action = Action::Delete {
+                                            resource: bound,
+                                            reason: format!("{} (approved in TUI)", reason),
+                                        };
                                     }
+                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                        eprintln!(
+                                            "  ⚠ {}/{} no longer present — skipped",
+                                            resource.kind, resource.name
+                                        );
+                                    }
+                                    Err(e) => bail!(
+                                        "Cannot verify {}/{}: {}",
+                                        resource.kind,
+                                        resource.name,
+                                        e
+                                    ),
                                 }
-                                DraftAction::Keep => {
-                                    *action = Action::Keep {
-                                        resource: resource.clone(),
-                                        reason: format!("{} (kept in TUI)", reason),
-                                    };
-                                }
+                            }
+                            DraftAction::Keep => {
+                                *action = Action::Keep {
+                                    resource: resource.clone(),
+                                    reason: format!("{} (kept in TUI)", reason),
+                                };
                             }
                         }
                     }
@@ -391,6 +389,7 @@ async fn run_tui_inner(
 ///
 /// Invariant: ALL exit paths (success, error, pause) perform:
 ///   gate.close_and_drain() → executor stops → durable state checkpoint
+#[allow(clippy::too_many_arguments)]
 async fn run_execution_screen(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     client: &::kube::Client,
@@ -507,8 +506,8 @@ async fn run_execution_screen(
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
                 // Check for key events (non-blocking, within async context)
-                if event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
-                    if let Ok(Event::Key(key)) = event::read() {
+                if event::poll(std::time::Duration::from_millis(0)).unwrap_or(false)
+                    && let Ok(Event::Key(key)) = event::read() {
                         let should_pause = match key.code {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
                             KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('p') => true,
@@ -538,7 +537,6 @@ async fn run_execution_screen(
                             break;
                         }
                     }
-                }
             }
         }
     }
@@ -581,11 +579,12 @@ async fn run_execution_screen(
 }
 
 /// Handle post-execution: persist state, check residual transition conditions, enter residual screen.
+#[allow(clippy::too_many_arguments)]
 async fn handle_execution_completed(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     client: &::kube::Client,
     result: ExecutionResult,
-    plan: &TeardownPlan,
+    _plan: &TeardownPlan,
     journal_store: &Arc<JournalStore>,
     gate: &Arc<MutationGate>,
     kind_map: &KindMap,
@@ -771,164 +770,166 @@ async fn run_residual_screen(
             return Ok(());
         }
 
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(());
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(());
+                }
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('f') => {
+                    journal_store
+                        .update(|j| {
+                            j.state = RunState::Finished;
+                        })
+                        .await
+                        .context("Failed to persist Finished state")?;
+                    return Ok(());
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    cursor = cursor.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if cursor + 1 < current_residuals.len() {
+                        cursor += 1;
                     }
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Char('f') => {
-                        journal_store
-                            .update(|j| {
-                                j.state = RunState::Finished;
-                            })
-                            .await
-                            .context("Failed to persist Finished state")?;
-                        return Ok(());
+                }
+                KeyCode::Char(' ') if !current_residuals.is_empty() => {
+                    let res = &current_residuals[cursor].0;
+                    let already = selected.iter().position(|s| {
+                        s.kind == res.kind
+                            && s.name == res.name
+                            && s.namespace == res.namespace
+                            && s.group == res.group
+                    });
+                    if let Some(idx) = already {
+                        selected.remove(idx);
+                    } else {
+                        selected.push(res.clone());
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        cursor = cursor.saturating_sub(1);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if cursor + 1 < current_residuals.len() {
-                            cursor += 1;
-                        }
-                    }
-                    KeyCode::Char(' ') if !current_residuals.is_empty() => {
-                        let res = &current_residuals[cursor].0;
-                        let already = selected.iter().position(|s| {
-                            s.kind == res.kind
-                                && s.name == res.name
-                                && s.namespace == res.namespace
-                                && s.group == res.group
-                        });
-                        if let Some(idx) = already {
-                            selected.remove(idx);
-                        } else {
-                            selected.push(res.clone());
-                        }
-                    }
-                    KeyCode::Char('d') if !selected.is_empty() => {
-                        // Run cleanup in TUI with live rendering via progress channel
-                        let selected_for_cleanup = selected.clone();
-                        selected.clear();
-                        status_msg = Some("Deleting...".to_string());
+                }
+                KeyCode::Char('d') if !selected.is_empty() => {
+                    // Run cleanup in TUI with live rendering via progress channel
+                    let selected_for_cleanup = selected.clone();
+                    selected.clear();
+                    status_msg = Some("Deleting...".to_string());
 
-                        let (progress_tx, mut progress_rx) =
-                            tokio::sync::mpsc::unbounded_channel::<executor::CleanupProgress>();
+                    let (progress_tx, mut progress_rx) =
+                        tokio::sync::mpsc::unbounded_channel::<executor::CleanupProgress>();
 
-                        let mut cleanup_fut =
-                            Box::pin(executor::execute_residual_cleanup_with_progress(
-                                client,
+                    let mut cleanup_fut =
+                        Box::pin(executor::execute_residual_cleanup_with_progress(
+                            client,
+                            &selected_for_cleanup,
+                            journal_store.as_ref(),
+                            gate.as_ref(),
+                            kind_map,
+                            gk_map,
+                            Some(&progress_tx),
+                        ));
+
+                    // Render loop during cleanup — show per-resource progress.
+                    // All exit paths (draw error, signal cancel, completion) must
+                    // drain cleanup_fut and checkpoint before returning.
+                    let cancel_signal = gate.cancel_signal();
+                    let cleanup_result = loop {
+                        if let Err(draw_err) = terminal.draw(|f| {
+                            renderer::draw_residual(
+                                f,
+                                &current_residuals,
                                 &selected_for_cleanup,
-                                journal_store.as_ref(),
-                                gate.as_ref(),
-                                kind_map,
-                                gk_map,
-                                Some(&progress_tx),
+                                cursor,
+                                status_msg.as_deref(),
+                                if cleanup_states.is_empty() {
+                                    None
+                                } else {
+                                    Some(&cleanup_states)
+                                },
+                            );
+                        }) {
+                            let (_, cleanup_r) =
+                                tokio::join!(gate.close_and_drain(), &mut cleanup_fut);
+                            let _ = cleanup_r;
+                            return Err(anyhow::anyhow!(
+                                "TUI draw error during cleanup: {}",
+                                draw_err
                             ));
+                        }
 
-                        // Render loop during cleanup — show per-resource progress.
-                        // All exit paths (draw error, signal cancel, completion) must
-                        // drain cleanup_fut and checkpoint before returning.
-                        let cancel_signal = gate.cancel_signal();
-                        let cleanup_result = loop {
-                            if let Err(draw_err) = terminal.draw(|f| {
-                                renderer::draw_residual(
-                                    f,
-                                    &current_residuals,
-                                    &selected_for_cleanup,
-                                    cursor,
-                                    status_msg.as_deref(),
-                                    if cleanup_states.is_empty() {
-                                        None
-                                    } else {
-                                        Some(&cleanup_states)
-                                    },
-                                );
-                            }) {
-                                let (_, cleanup_r) =
-                                    tokio::join!(gate.close_and_drain(), &mut cleanup_fut);
-                                let _ = cleanup_r;
-                                return Err(anyhow::anyhow!(
-                                    "TUI draw error during cleanup: {}",
-                                    draw_err
-                                ));
+                        tokio::select! {
+                            result = &mut cleanup_fut => {
+                                break result;
                             }
-
-                            tokio::select! {
-                                result = &mut cleanup_fut => {
-                                    break result;
+                            progress = progress_rx.recv() => {
+                                if let Some(p) = progress {
+                                    let (key, state) = match p {
+                                        executor::CleanupProgress::Validating { resource } =>
+                                            (resource, renderer::ResidualResourceState::Validating),
+                                        executor::CleanupProgress::DeleteRequested { resource } =>
+                                            (resource, renderer::ResidualResourceState::DeleteRequested),
+                                        executor::CleanupProgress::WaitingGone { resource } =>
+                                            (resource, renderer::ResidualResourceState::WaitingGone),
+                                        executor::CleanupProgress::Gone { resource } =>
+                                            (resource, renderer::ResidualResourceState::Gone),
+                                        executor::CleanupProgress::Skipped { resource, reason } =>
+                                            (resource, renderer::ResidualResourceState::Skipped(reason)),
+                                        executor::CleanupProgress::Failed { resource, reason } =>
+                                            (resource, renderer::ResidualResourceState::Failed(reason)),
+                                    };
+                                    cleanup_states.insert(key, state);
                                 }
-                                progress = progress_rx.recv() => {
-                                    if let Some(p) = progress {
-                                        let (key, state) = match p {
-                                            executor::CleanupProgress::Validating { resource } =>
-                                                (resource, renderer::ResidualResourceState::Validating),
-                                            executor::CleanupProgress::DeleteRequested { resource } =>
-                                                (resource, renderer::ResidualResourceState::DeleteRequested),
-                                            executor::CleanupProgress::WaitingGone { resource } =>
-                                                (resource, renderer::ResidualResourceState::WaitingGone),
-                                            executor::CleanupProgress::Gone { resource } =>
-                                                (resource, renderer::ResidualResourceState::Gone),
-                                            executor::CleanupProgress::Skipped { resource, reason } =>
-                                                (resource, renderer::ResidualResourceState::Skipped(reason)),
-                                            executor::CleanupProgress::Failed { resource, reason } =>
-                                                (resource, renderer::ResidualResourceState::Failed(reason)),
-                                        };
-                                        cleanup_states.insert(key, state);
+                            }
+                            _ = cancel_signal.cancelled() => {
+                                // Signal-based pause during cleanup.
+                                // Drain cleanup future — it will stop at next permit acquire.
+                                let cleanup_r = (&mut cleanup_fut).await;
+                                match cleanup_r {
+                                    Ok(_) => {
+                                        journal_store.update(|j| {
+                                            j.state = RunState::Paused;
+                                        }).await
+                                        .context("Failed to persist Paused during cleanup signal pause")?;
+                                        return Ok(());
                                     }
-                                }
-                                _ = cancel_signal.cancelled() => {
-                                    // Signal-based pause during cleanup.
-                                    // Drain cleanup future — it will stop at next permit acquire.
-                                    let cleanup_r = (&mut cleanup_fut).await;
-                                    match cleanup_r {
-                                        Ok(_) => {
+                                    Err(e) => {
+                                        if executor::is_gate_closed_error(&e) {
+                                            // Normal pause — gate closed caused core to stop
                                             journal_store.update(|j| {
                                                 j.state = RunState::Paused;
                                             }).await
-                                            .context("Failed to persist Paused during cleanup signal pause")?;
+                                            .context("Failed to persist Paused during cleanup pause")?;
                                             return Ok(());
                                         }
-                                        Err(e) => {
-                                            if executor::is_gate_closed_error(&e) {
-                                                // Normal pause — gate closed caused core to stop
-                                                journal_store.update(|j| {
-                                                    j.state = RunState::Paused;
-                                                }).await
-                                                .context("Failed to persist Paused during cleanup pause")?;
-                                                return Ok(());
-                                            }
-                                            // Hard error — propagate
-                                            return Err(e.context(
-                                                "Cleanup error during signal pause — \
-                                                 journal reflects actual state"
-                                            ));
-                                        }
+                                        // Hard error — propagate
+                                        return Err(e.context(
+                                            "Cleanup error during signal pause — \
+                                             journal reflects actual state"
+                                        ));
                                     }
                                 }
-                                _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
-                                    // Tick — redraw
-                                }
                             }
-                        };
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                                // Tick — redraw
+                            }
+                        }
+                    };
 
-                        match cleanup_result {
-                            Ok(result) => {
-                                // If gate was closed during cleanup (signal pause after last resource)
-                                if !gate.is_open() {
-                                    journal_store
-                                        .update(|j| {
-                                            j.state = RunState::Paused;
-                                        })
-                                        .await
-                                        .context("Failed to persist Paused after cleanup signal")?;
-                                    return Ok(());
-                                }
-                                if let Some(ref post_audit) = result.post_audit {
-                                    current_residuals = post_audit
+                    match cleanup_result {
+                        Ok(result) => {
+                            // If gate was closed during cleanup (signal pause after last resource)
+                            if !gate.is_open() {
+                                journal_store
+                                    .update(|j| {
+                                        j.state = RunState::Paused;
+                                    })
+                                    .await
+                                    .context("Failed to persist Paused after cleanup signal")?;
+                                return Ok(());
+                            }
+                            if let Some(ref post_audit) = result.post_audit {
+                                current_residuals =
+                                    post_audit
                                         .likely_operator_residual
                                         .iter()
                                         .map(|r| {
@@ -941,52 +942,52 @@ async fn run_residual_screen(
                                             (r.resource.clone(), "unattributed".to_string())
                                         }))
                                         .collect();
-                                    cursor = cursor.min(current_residuals.len().saturating_sub(1));
-                                }
-                                // Clear stale cleanup states — post-audit may have new UIDs
-                                cleanup_states.clear();
-                                status_msg = Some(format!(
-                                    "{} deleted, {} skipped, {} failed",
-                                    result.deleted.len(),
-                                    result.skipped.len(),
-                                    result.failed.len(),
-                                ));
+                                cursor = cursor.min(current_residuals.len().saturating_sub(1));
                             }
-                            Err(e) => {
-                                if executor::is_gate_closed_error(&e) {
-                                    journal_store
-                                        .update(|j| {
-                                            j.state = RunState::Paused;
-                                        })
-                                        .await
-                                        .context(
-                                            "Failed to persist Paused after gate-closed cleanup",
-                                        )?;
-                                    return Ok(());
-                                }
-                                gate.close_and_drain().await;
-                                return Err(e.context(
+                            // Clear stale cleanup states — post-audit may have new UIDs
+                            cleanup_states.clear();
+                            status_msg = Some(format!(
+                                "{} deleted, {} skipped, {} failed",
+                                result.deleted.len(),
+                                result.skipped.len(),
+                                result.failed.len(),
+                            ));
+                        }
+                        Err(e) => {
+                            if executor::is_gate_closed_error(&e) {
+                                journal_store
+                                    .update(|j| {
+                                        j.state = RunState::Paused;
+                                    })
+                                    .await
+                                    .context(
+                                        "Failed to persist Paused after gate-closed cleanup",
+                                    )?;
+                                return Ok(());
+                            }
+                            gate.close_and_drain().await;
+                            return Err(e.context(
                                     "Residual cleanup failed — gate closed, no further mutations allowed. \
                                      Use 'teardown journal' to inspect state before retry."
                                 ));
-                            }
                         }
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
     }
 }
 
 /// Residual cleanup flow — shared between TUI and script paths (non-TUI version).
+#[allow(dead_code)]
 pub async fn run_residual_cleanup(
     client: &::kube::Client,
-    plan: &TeardownPlan,
+    _plan: &TeardownPlan,
     journal_store: &Arc<JournalStore>,
-    gate: &Arc<MutationGate>,
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
+    _gate: &Arc<MutationGate>,
+    _kind_map: &KindMap,
+    _gk_map: &GroupKindMap,
 ) -> Result<()> {
     let j = journal_store.read().await;
 

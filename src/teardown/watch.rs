@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 
 use futures::stream::StreamExt;
 use kube::Client;
-use kube::api::{Api, ApiResource, DynamicObject, ListParams};
-use kube::core::GroupVersion;
+use kube::api::{Api, DynamicObject, ListParams};
 use tokio::task::JoinHandle;
 
 use crate::kube::discovery::{GroupKindMap, KindMap};
@@ -100,6 +99,7 @@ impl WatchManager {
     /// WATCH events are non-authoritative: Deleted → needs_verification hint,
     /// UID change → needs_verification hint. Only authoritative GETs can
     /// confirm Gone or Recreated.
+    #[allow(dead_code)]
     pub async fn wait_for_gone(
         &self,
         client: &Client,
@@ -121,6 +121,7 @@ impl WatchManager {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn wait_for_gone_cancellable(
         &self,
         client: &Client,
@@ -168,15 +169,14 @@ impl WatchManager {
 
             // Authoritative reconcile — cancellable
             let needs_verify = self.store.resources_needing_verification(resources);
-            if !needs_verify.is_empty() {
-                if cancellable!(
+            if !needs_verify.is_empty()
+                && cancellable!(
                     self.reconcile(client, &needs_verify, kind_map, gk_map),
                     cancel
                 )
                 .is_none()
-                {
-                    break WatchWaitResult::Cancelled;
-                }
+            {
+                break WatchWaitResult::Cancelled;
             }
 
             if cancellable!(self.reconcile(client, resources, kind_map, gk_map), cancel).is_none() {
@@ -368,6 +368,7 @@ enum ObserveResult {
 ///   - Matching UID + state change → updates deletionTimestamp/finalizer
 ///
 /// Each reconnection gets a new stream_id to reject old-stream events.
+#[allow(clippy::too_many_arguments)]
 async fn run_watch_loop(
     api: Api<DynamicObject>,
     group: &str,
@@ -503,7 +504,9 @@ async fn run_watch_loop(
 /// 404 → verify endpoint via LIST(limit=1):
 ///   - LIST success → resource genuinely absent (exists=false)
 ///   - LIST failure → API endpoint may be gone → ApiError (NOT Gone)
+///
 /// 403/timeout/transport → ApiError (NOT Gone).
+#[allow(clippy::too_many_arguments)]
 async fn observe_resource(
     client: &Client,
     resource: &ResourceId,

@@ -30,8 +30,7 @@ use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::inspect::{inspect_operator, print_inspection};
 use crate::teardown::journal::{
-    self, AuditContext, CleanupDecision, CleanupResult, ExecutionRecord, JournalStore,
-    ResidualStatus, RunJournal, RunState,
+    self, CleanupResult, ExecutionRecord, JournalStore, ResidualStatus, RunJournal, RunState,
 };
 use crate::teardown::permit::MutationGate;
 use crate::teardown::planner::{
@@ -345,153 +344,147 @@ async fn main() -> Result<()> {
                                                         reason,
                                                         metadata,
                                                     } = action
+                                                        && resource.group == ovr.resource.group
+                                                        && resource.version == ovr.resource.version
+                                                        && resource.kind == ovr.resource.kind
+                                                        && resource.name == ovr.resource.name
+                                                        && resource.namespace
+                                                            == ovr.resource.namespace
                                                     {
-                                                        if resource.group == ovr.resource.group
-                                                            && resource.version
-                                                                == ovr.resource.version
-                                                            && resource.kind == ovr.resource.kind
-                                                            && resource.name == ovr.resource.name
-                                                            && resource.namespace
-                                                                == ovr.resource.namespace
-                                                        {
-                                                            // P0: Three-way UID verification:
-                                                            // 1. Override UID must be provided for DELETE
-                                                            // 2. Override UID must match plan UID
-                                                            // 3. Live UID must match plan UID
-                                                            let ovr_uid = ovr
-                                                                .resource
-                                                                .uid
-                                                                .as_deref()
-                                                                .unwrap_or("");
-                                                            let plan_uid = resource
-                                                                .uid
-                                                                .as_deref()
-                                                                .unwrap_or("");
+                                                        // P0: Three-way UID verification:
+                                                        // 1. Override UID must be provided for DELETE
+                                                        // 2. Override UID must match plan UID
+                                                        // 3. Live UID must match plan UID
+                                                        let ovr_uid = ovr
+                                                            .resource
+                                                            .uid
+                                                            .as_deref()
+                                                            .unwrap_or("");
+                                                        let plan_uid =
+                                                            resource.uid.as_deref().unwrap_or("");
 
-                                                            match ovr.new_action {
-                                                                DraftAction::Delete => {
-                                                                    if ovr_uid.is_empty() {
-                                                                        bail!(
-                                                                            "Cannot approve DELETE for {}/{} without UID in approval",
-                                                                            resource.kind,
-                                                                            resource.name
-                                                                        );
-                                                                    }
-                                                                    if plan_uid.is_empty() {
-                                                                        bail!(
-                                                                            "Cannot approve DELETE for {}/{}: plan resource has no UID",
-                                                                            resource.kind,
-                                                                            resource.name
-                                                                        );
-                                                                    }
-                                                                    if ovr_uid != plan_uid {
-                                                                        bail!(
-                                                                            "Override UID {} does not match plan UID {} for {}/{}",
-                                                                            ovr_uid,
-                                                                            plan_uid,
-                                                                            resource.kind,
-                                                                            resource.name
-                                                                        );
-                                                                    }
+                                                        match ovr.new_action {
+                                                            DraftAction::Delete => {
+                                                                if ovr_uid.is_empty() {
+                                                                    bail!(
+                                                                        "Cannot approve DELETE for {}/{} without UID in approval",
+                                                                        resource.kind,
+                                                                        resource.name
+                                                                    );
+                                                                }
+                                                                if plan_uid.is_empty() {
+                                                                    bail!(
+                                                                        "Cannot approve DELETE for {}/{}: plan resource has no UID",
+                                                                        resource.kind,
+                                                                        resource.name
+                                                                    );
+                                                                }
+                                                                if ovr_uid != plan_uid {
+                                                                    bail!(
+                                                                        "Override UID {} does not match plan UID {} for {}/{}",
+                                                                        ovr_uid,
+                                                                        plan_uid,
+                                                                        resource.kind,
+                                                                        resource.name
+                                                                    );
+                                                                }
 
-                                                                    let (api, _) = crate::kube::resource::resolve_api(
+                                                                let (api, _) = crate::kube::resource::resolve_api(
                                                                         &client, resource, &kind_map, &gk_map,
                                                                     ).ok_or_else(|| anyhow::anyhow!(
                                                                         "Cannot resolve API for {}/{} — refusing to skip approved DELETE override",
                                                                         resource.kind, resource.name
                                                                     ))?;
-                                                                    match api
-                                                                        .get(&resource.name)
-                                                                        .await
-                                                                    {
-                                                                        Ok(obj) => {
-                                                                            let live_uid = obj
-                                                                                .metadata
-                                                                                .uid
-                                                                                .as_deref()
-                                                                                .unwrap_or("");
-                                                                            if live_uid.is_empty() {
-                                                                                bail!(
-                                                                                    "Cannot apply override for {}/{}: live resource has no UID",
-                                                                                    resource.kind,
-                                                                                    resource.name
-                                                                                );
-                                                                            }
-                                                                            if !plan_uid.is_empty()
-                                                                                && live_uid
-                                                                                    != plan_uid
+                                                                match api.get(&resource.name).await
+                                                                {
+                                                                    Ok(obj) => {
+                                                                        let live_uid = obj
+                                                                            .metadata
+                                                                            .uid
+                                                                            .as_deref()
+                                                                            .unwrap_or("");
+                                                                        if live_uid.is_empty() {
+                                                                            bail!(
+                                                                                "Cannot apply override for {}/{}: live resource has no UID",
+                                                                                resource.kind,
+                                                                                resource.name
+                                                                            );
+                                                                        }
+                                                                        if !plan_uid.is_empty()
+                                                                            && live_uid != plan_uid
+                                                                        {
+                                                                            bail!(
+                                                                                "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created.",
+                                                                                resource.kind,
+                                                                                resource.name,
+                                                                                plan_uid,
+                                                                                live_uid
+                                                                            );
+                                                                        }
+                                                                        // Basis drift: verify provenance hasn't degraded
+                                                                        // Use journal's operator snapshot (has full controller deployment UIDs)
+                                                                        {
+                                                                            let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
+                                                                            let action_metadata =
+                                                                                metadata.clone();
+                                                                            let snap = if let Some(
+                                                                                ref jstore,
+                                                                            ) =
+                                                                                script_journal
                                                                             {
-                                                                                bail!(
-                                                                                    "Cannot apply override for {}/{}: UID changed from {} to {} since plan was created.",
-                                                                                    resource.kind,
-                                                                                    resource.name,
-                                                                                    plan_uid,
-                                                                                    live_uid
-                                                                                );
-                                                                            }
-                                                                            // Basis drift: verify provenance hasn't degraded
-                                                                            // Use journal's operator snapshot (has full controller deployment UIDs)
-                                                                            {
-                                                                                let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
-                                                                                let action_metadata =
-                                                                                    metadata.clone();
-                                                                                let snap = if let Some(ref jstore) = script_journal {
-                                                                                    let j = jstore.read().await;
-                                                                                    j.operator.clone()
-                                                                                } else {
-                                                                                    build_operator_identity_snapshot(&client, &target_operators).await
+                                                                                let j = jstore
+                                                                                    .read()
+                                                                                    .await;
+                                                                                j.operator.clone()
+                                                                            } else {
+                                                                                build_operator_identity_snapshot(&client, &target_operators).await
                                                                                         .context("Cannot build identity snapshot for basis drift check")?
-                                                                                };
-                                                                                if let Err(reason) = revalidate_review_basis(&client, &obj, resource, &action_metadata, &ctx, &snap).await {
+                                                                            };
+                                                                            if let Err(reason) = revalidate_review_basis(&client, &obj, resource, &action_metadata, &ctx, &snap).await {
                                                                                     bail!(
                                                                                         "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
                                                                                         resource.kind, resource.name, reason
                                                                                     );
                                                                                 }
-                                                                            }
-                                                                            let mut bound =
-                                                                                resource.clone();
-                                                                            bound.uid = Some(
-                                                                                live_uid
-                                                                                    .to_string(),
-                                                                            );
-                                                                            *action =
-                                                                                Action::Delete {
-                                                                                    resource: bound,
-                                                                                    reason: format!(
-                                                                                        "{} (approved via script)",
-                                                                                        reason
-                                                                                    ),
-                                                                                };
                                                                         }
-                                                                        Err(
-                                                                            ::kube::Error::Api(
-                                                                                ref err,
+                                                                        let mut bound =
+                                                                            resource.clone();
+                                                                        bound.uid = Some(
+                                                                            live_uid.to_string(),
+                                                                        );
+                                                                        *action = Action::Delete {
+                                                                            resource: bound,
+                                                                            reason: format!(
+                                                                                "{} (approved via script)",
+                                                                                reason
                                                                             ),
-                                                                        ) if err.code == 404 => {
-                                                                            eprintln!(
-                                                                                "  ⚠ {}/{} no longer present — override skipped",
-                                                                                resource.kind,
-                                                                                resource.name
-                                                                            );
-                                                                        }
-                                                                        Err(e) => bail!(
-                                                                            "Cannot verify {}/{} for script override: {}",
-                                                                            resource.kind,
-                                                                            resource.name,
-                                                                            e
-                                                                        ),
+                                                                        };
                                                                     }
+                                                                    Err(::kube::Error::Api(
+                                                                        ref err,
+                                                                    )) if err.code == 404 => {
+                                                                        eprintln!(
+                                                                            "  ⚠ {}/{} no longer present — override skipped",
+                                                                            resource.kind,
+                                                                            resource.name
+                                                                        );
+                                                                    }
+                                                                    Err(e) => bail!(
+                                                                        "Cannot verify {}/{} for script override: {}",
+                                                                        resource.kind,
+                                                                        resource.name,
+                                                                        e
+                                                                    ),
                                                                 }
-                                                                DraftAction::Keep => {
-                                                                    *action = Action::Keep {
-                                                                        resource: resource.clone(),
-                                                                        reason: format!(
-                                                                            "{} (kept via script)",
-                                                                            reason
-                                                                        ),
-                                                                    };
-                                                                }
+                                                            }
+                                                            DraftAction::Keep => {
+                                                                *action = Action::Keep {
+                                                                    resource: resource.clone(),
+                                                                    reason: format!(
+                                                                        "{} (kept via script)",
+                                                                        reason
+                                                                    ),
+                                                                };
                                                             }
                                                         }
                                                     }
@@ -543,7 +536,7 @@ async fn main() -> Result<()> {
                                         dry_run,
                                         force,
                                         journal_store.as_deref(),
-                                        Some(&gate),
+                                        Some(gate),
                                         0,
                                         true, // skip_confirm in script mode
                                     )
@@ -608,31 +601,42 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Transition to ResidualCleanup: ApplyCompleted + generation Absent + complete audit
-                                if app.screen == AppScreen::Executing {
-                                    if let (Some(store), true) = (&script_journal, result.is_ok()) {
-                                        let j = store.read().await;
-                                        if j.state == RunState::ApplyCompleted {
-                                            let gen_check =
-                                                crate::teardown::audit::check_operator_generation(
-                                                    &client,
-                                                    &j.operator,
-                                                    &j.audit_context.csv_baseline,
-                                                )
-                                                .await;
-                                            if matches!(gen_check, crate::teardown::audit::OperatorGenerationState::Absent) {
-                                                match crate::teardown::audit::run_residual_audit(&client, &j).await {
-                                                    Ok(audit_result) => {
-                                                        let status = crate::teardown::audit::residual_status_from_audit(&audit_result);
-                                                        if matches!(status, journal::ResidualStatus::AuditIncomplete) {
-                                                            events.push(serde_json::json!({
+                                if app.screen == AppScreen::Executing
+                                    && let (Some(store), true) = (&script_journal, result.is_ok())
+                                {
+                                    let j = store.read().await;
+                                    if j.state == RunState::ApplyCompleted {
+                                        let gen_check =
+                                            crate::teardown::audit::check_operator_generation(
+                                                &client,
+                                                &j.operator,
+                                                &j.audit_context.csv_baseline,
+                                            )
+                                            .await;
+                                        if matches!(
+                                            gen_check,
+                                            crate::teardown::audit::OperatorGenerationState::Absent
+                                        ) {
+                                            match crate::teardown::audit::run_residual_audit(
+                                                &client, &j,
+                                            )
+                                            .await
+                                            {
+                                                Ok(audit_result) => {
+                                                    let status = crate::teardown::audit::residual_status_from_audit(&audit_result);
+                                                    if matches!(
+                                                        status,
+                                                        journal::ResidualStatus::AuditIncomplete
+                                                    ) {
+                                                        events.push(serde_json::json!({
                                                                 "screen_transition_blocked": "audit incomplete",
                                                             }));
-                                                        } else {
-                                                            // Re-verify generation after audit
-                                                            let gen_recheck = crate::teardown::audit::check_operator_generation(
+                                                    } else {
+                                                        // Re-verify generation after audit
+                                                        let gen_recheck = crate::teardown::audit::check_operator_generation(
                                                                 &client, &j.operator, &j.audit_context.csv_baseline,
                                                             ).await;
-                                                            if !matches!(gen_recheck, crate::teardown::audit::OperatorGenerationState::Absent) {
+                                                        if !matches!(gen_recheck, crate::teardown::audit::OperatorGenerationState::Absent) {
                                                                 events.push(serde_json::json!({
                                                                     "screen_transition_blocked": "generation changed during audit",
                                                                 }));
@@ -648,24 +652,23 @@ async fn main() -> Result<()> {
                                                                     "screen_transition": "ResidualCleanup",
                                                                 }));
                                                             }
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        events.push(serde_json::json!({
-                                                            "screen_transition_blocked": format!("audit failed: {}", e),
-                                                        }));
                                                     }
                                                 }
-                                            } else {
-                                                events.push(serde_json::json!({
-                                                    "screen_transition_blocked": format!("generation: {:?}", gen_check),
-                                                }));
+                                                Err(e) => {
+                                                    events.push(serde_json::json!({
+                                                            "screen_transition_blocked": format!("audit failed: {}", e),
+                                                        }));
+                                                }
                                             }
                                         } else {
                                             events.push(serde_json::json!({
+                                                    "screen_transition_blocked": format!("generation: {:?}", gen_check),
+                                                }));
+                                        }
+                                    } else {
+                                        events.push(serde_json::json!({
                                                 "screen_transition_blocked": format!("state is {:?}, not ApplyCompleted", j.state),
                                             }));
-                                        }
                                     }
                                 }
 
@@ -674,21 +677,20 @@ async fn main() -> Result<()> {
                                     && result.is_ok()
                                     && app.screen == AppScreen::ResidualCleanup
                                     && !app.selected_residuals.is_empty()
+                                    && let (Some(store), Some(g)) = (&script_journal, &script_gate)
                                 {
-                                    if let (Some(store), Some(g)) = (&script_journal, &script_gate)
+                                    match crate::teardown::executor::execute_residual_cleanup(
+                                        &client,
+                                        &app.selected_residuals,
+                                        store.as_ref(),
+                                        g.as_ref(),
+                                        &kind_map,
+                                        &gk_map,
+                                    )
+                                    .await
                                     {
-                                        match crate::teardown::executor::execute_residual_cleanup(
-                                            &client,
-                                            &app.selected_residuals,
-                                            store.as_ref(),
-                                            g.as_ref(),
-                                            &kind_map,
-                                            &gk_map,
-                                        )
-                                        .await
-                                        {
-                                            Ok(cleanup_result) => {
-                                                events.push(serde_json::json!({
+                                        Ok(cleanup_result) => {
+                                            events.push(serde_json::json!({
                                                     "residual_cleanup": {
                                                         "status": "completed",
                                                         "deleted": cleanup_result.deleted.len(),
@@ -702,58 +704,61 @@ async fn main() -> Result<()> {
                                                             .collect::<Vec<_>>(),
                                                     }
                                                 }));
-                                            }
-                                            Err(e) => {
-                                                // Cleanup error may include post-mutation journal failure.
-                                                // Close gate to prevent further mutations and stop script.
-                                                g.close_and_drain().await;
-                                                events.push(serde_json::json!({
-                                                    "residual_cleanup_error": format!("{:#}", e),
-                                                    "gate_closed": true,
-                                                    "script_stopped": true,
-                                                }));
-                                                // Break out of script command loop — no further mutations
-                                                app.selected_residuals.clear();
-                                                break;
-                                            }
                                         }
-                                        app.selected_residuals.clear();
+                                        Err(e) => {
+                                            // Cleanup error may include post-mutation journal failure.
+                                            // Close gate to prevent further mutations and stop script.
+                                            g.close_and_drain().await;
+                                            events.push(serde_json::json!({
+                                                "residual_cleanup_error": format!("{:#}", e),
+                                                "gate_closed": true,
+                                                "script_stopped": true,
+                                            }));
+                                            // Break out of script command loop — no further mutations
+                                            app.selected_residuals.clear();
+                                            break;
+                                        }
                                     }
+                                    app.selected_residuals.clear();
                                 }
 
                                 // Handle Finish: durable persist with guards
                                 if matches!(cmd, AppCommand::Finish)
                                     && result.is_ok()
                                     && app.screen == AppScreen::Finished
+                                    && let Some(store) = &script_journal
                                 {
-                                    if let Some(store) = &script_journal {
-                                        let j = store.read().await;
-                                        if let Err(reason) = can_finish_run(&j) {
+                                    let j = store.read().await;
+                                    if let Err(reason) = can_finish_run(&j) {
+                                        events.push(serde_json::json!({
+                                            "finish_error": reason,
+                                        }));
+                                    } else {
+                                        // Final generation check before Finished persist
+                                        let fin_gen =
+                                            crate::teardown::audit::check_operator_generation(
+                                                &client,
+                                                &j.operator,
+                                                &j.audit_context.csv_baseline,
+                                            )
+                                            .await;
+                                        if matches!(
+                                            fin_gen,
+                                            crate::teardown::audit::OperatorGenerationState::Absent
+                                        ) {
+                                            store
+                                                .update(|j| {
+                                                    j.state = RunState::Finished;
+                                                })
+                                                .await
+                                                .context("Failed to persist Finished state")?;
                                             events.push(serde_json::json!({
-                                                "finish_error": reason,
+                                                "finish": "persisted",
                                             }));
                                         } else {
-                                            // Final generation check before Finished persist
-                                            let fin_gen =
-                                                crate::teardown::audit::check_operator_generation(
-                                                    &client,
-                                                    &j.operator,
-                                                    &j.audit_context.csv_baseline,
-                                                )
-                                                .await;
-                                            if matches!(fin_gen, crate::teardown::audit::OperatorGenerationState::Absent) {
-                                                store.update(|j| {
-                                                    j.state = RunState::Finished;
-                                                }).await
-                                                .context("Failed to persist Finished state")?;
-                                                events.push(serde_json::json!({
-                                                    "finish": "persisted",
-                                                }));
-                                            } else {
-                                                events.push(serde_json::json!({
+                                            events.push(serde_json::json!({
                                                     "finish_error": "generation not Absent at Finish time",
                                                 }));
-                                            }
                                         }
                                     }
                                 }
@@ -781,7 +786,7 @@ async fn main() -> Result<()> {
                         if is_tty && !dry_run && script.is_none() {
                             use crate::kube::resource::ResourceId;
                             use crate::teardown::app::{
-                                AppCommand, AppScreen, AppState, DraftAction, apply_command,
+                                AppCommand, AppState, DraftAction, apply_command,
                             };
                             use crate::teardown::planner::Action;
                             let mut app = AppState::new();
@@ -832,16 +837,17 @@ async fn main() -> Result<()> {
                                     let input = input.trim();
                                     if !input.is_empty() {
                                         for token in input.split(',') {
-                                            if let Ok(idx) = token.trim().parse::<usize>() {
-                                                if idx >= 1 && idx <= review_items.len() {
-                                                    let (_, _, ref res) = review_items[idx - 1];
-                                                    let _ = apply_command(
-                                                        &mut app,
-                                                        &AppCommand::ApproveReview {
-                                                            resource: res.clone(),
-                                                        },
-                                                    );
-                                                }
+                                            if let Ok(idx) = token.trim().parse::<usize>()
+                                                && idx >= 1
+                                                && idx <= review_items.len()
+                                            {
+                                                let (_, _, ref res) = review_items[idx - 1];
+                                                let _ = apply_command(
+                                                    &mut app,
+                                                    &AppCommand::ApproveReview {
+                                                        resource: res.clone(),
+                                                    },
+                                                );
                                             }
                                         }
                                     }
@@ -862,51 +868,49 @@ async fn main() -> Result<()> {
                                                     reason,
                                                     metadata,
                                                 } = action
+                                                    && resource.group == over.resource.group
+                                                    && resource.version == over.resource.version
+                                                    && resource.kind == over.resource.kind
+                                                    && resource.name == over.resource.name
+                                                    && resource.namespace == over.resource.namespace
                                                 {
-                                                    if resource.group == over.resource.group
-                                                        && resource.version == over.resource.version
-                                                        && resource.kind == over.resource.kind
-                                                        && resource.name == over.resource.name
-                                                        && resource.namespace
-                                                            == over.resource.namespace
-                                                    {
-                                                        match over.new_action {
-                                                            DraftAction::Delete => {
-                                                                // P0: Three-way UID check — all must be non-empty and match
-                                                                let ovr_uid = over
-                                                                    .resource
-                                                                    .uid
-                                                                    .as_deref()
-                                                                    .unwrap_or("");
-                                                                let plan_uid = resource
-                                                                    .uid
-                                                                    .as_deref()
-                                                                    .unwrap_or("");
-                                                                if ovr_uid.is_empty() {
-                                                                    bail!(
-                                                                        "Cannot approve DELETE for {}/{} without UID in approval",
-                                                                        resource.kind,
-                                                                        resource.name
-                                                                    );
-                                                                }
-                                                                if plan_uid.is_empty() {
-                                                                    bail!(
-                                                                        "Cannot approve DELETE for {}/{}: plan resource has no UID",
-                                                                        resource.kind,
-                                                                        resource.name
-                                                                    );
-                                                                }
-                                                                if ovr_uid != plan_uid {
-                                                                    bail!(
-                                                                        "Override UID {} does not match plan UID {} for {}/{}",
-                                                                        ovr_uid,
-                                                                        plan_uid,
-                                                                        resource.kind,
-                                                                        resource.name
-                                                                    );
-                                                                }
-                                                                // Fresh GET to verify identity + bind UID + basis drift check
-                                                                let verified = match crate::kube::resource::resolve_api(
+                                                    match over.new_action {
+                                                        DraftAction::Delete => {
+                                                            // P0: Three-way UID check — all must be non-empty and match
+                                                            let ovr_uid = over
+                                                                .resource
+                                                                .uid
+                                                                .as_deref()
+                                                                .unwrap_or("");
+                                                            let plan_uid = resource
+                                                                .uid
+                                                                .as_deref()
+                                                                .unwrap_or("");
+                                                            if ovr_uid.is_empty() {
+                                                                bail!(
+                                                                    "Cannot approve DELETE for {}/{} without UID in approval",
+                                                                    resource.kind,
+                                                                    resource.name
+                                                                );
+                                                            }
+                                                            if plan_uid.is_empty() {
+                                                                bail!(
+                                                                    "Cannot approve DELETE for {}/{}: plan resource has no UID",
+                                                                    resource.kind,
+                                                                    resource.name
+                                                                );
+                                                            }
+                                                            if ovr_uid != plan_uid {
+                                                                bail!(
+                                                                    "Override UID {} does not match plan UID {} for {}/{}",
+                                                                    ovr_uid,
+                                                                    plan_uid,
+                                                                    resource.kind,
+                                                                    resource.name
+                                                                );
+                                                            }
+                                                            // Fresh GET to verify identity + bind UID + basis drift check
+                                                            let verified = match crate::kube::resource::resolve_api(
                                                                     &client, resource, &kind_map, &gk_map,
                                                                 ) {
                                                                     Some((api, _)) => {
@@ -964,17 +968,16 @@ async fn main() -> Result<()> {
                                                                         );
                                                                     }
                                                                 };
-                                                                let _ = verified;
-                                                            }
-                                                            DraftAction::Keep => {
-                                                                *action = Action::Keep {
-                                                                    resource: resource.clone(),
-                                                                    reason: format!(
-                                                                        "{} (kept in Plan Review)",
-                                                                        reason
-                                                                    ),
-                                                                };
-                                                            }
+                                                            let _ = verified;
+                                                        }
+                                                        DraftAction::Keep => {
+                                                            *action = Action::Keep {
+                                                                resource: resource.clone(),
+                                                                reason: format!(
+                                                                    "{} (kept in Plan Review)",
+                                                                    reason
+                                                                ),
+                                                            };
                                                         }
                                                     }
                                                 }
@@ -1090,199 +1093,181 @@ async fn main() -> Result<()> {
                                 print_execution_result(&result);
 
                                 // Run post-apply residual audit (only if apply succeeded and operator is Absent)
-                                if let Some(store) = &journal_store {
-                                    if result.failed.is_empty() && result.barrier_timeout.is_none()
-                                    {
-                                        use crate::teardown::audit::{
-                                            self, OperatorGenerationState,
-                                        };
-                                        let j = store.read().await;
-                                        let gen_state = audit::check_operator_generation(
-                                            &client,
-                                            &j.operator,
-                                            &j.audit_context.csv_baseline,
-                                        )
-                                        .await;
-                                        match gen_state {
-                                            OperatorGenerationState::Absent => {
-                                                eprintln!(
-                                                    "\n🔍 Running post-apply residual audit..."
-                                                );
-                                                match audit::run_residual_audit(&client, &j).await {
-                                                    Ok(audit_result) => {
-                                                        let status =
-                                                            audit::residual_status_from_audit(
-                                                                &audit_result,
-                                                            );
-                                                        audit::print_residual_audit(
-                                                            &audit_result,
-                                                            &j,
-                                                        );
-                                                        // Re-verify generation before saving
-                                                        let gen_recheck =
-                                                            audit::check_operator_generation(
-                                                                &client,
-                                                                &j.operator,
-                                                                &j.audit_context.csv_baseline,
-                                                            )
-                                                            .await;
-                                                        if matches!(
-                                                            gen_recheck,
-                                                            OperatorGenerationState::Absent
-                                                        ) {
-                                                            match store
-                                                                .update(|j| {
-                                                                    j.residual_status = status;
-                                                                    j.audit_revision += 1;
-                                                                    j.last_residual_audit =
-                                                                        Some(audit_result);
-                                                                })
-                                                                .await
-                                                            {
-                                                                Ok(()) => {}
-                                                                Err(e) => {
-                                                                    eprintln!(
-                                                                        "⚠ Failed to persist audit results: {}",
-                                                                        e
-                                                                    );
-                                                                    eprintln!(
-                                                                        "  Audit results were displayed but are NOT durable."
-                                                                    );
-                                                                    eprintln!(
-                                                                        "  Do not use this audit for cleanup authority."
-                                                                    );
-                                                                }
+                                if let Some(store) = &journal_store
+                                    && result.failed.is_empty()
+                                    && result.barrier_timeout.is_none()
+                                {
+                                    use crate::teardown::audit::{self, OperatorGenerationState};
+                                    let j = store.read().await;
+                                    let gen_state = audit::check_operator_generation(
+                                        &client,
+                                        &j.operator,
+                                        &j.audit_context.csv_baseline,
+                                    )
+                                    .await;
+                                    match gen_state {
+                                        OperatorGenerationState::Absent => {
+                                            eprintln!("\n🔍 Running post-apply residual audit...");
+                                            match audit::run_residual_audit(&client, &j).await {
+                                                Ok(audit_result) => {
+                                                    let status = audit::residual_status_from_audit(
+                                                        &audit_result,
+                                                    );
+                                                    audit::print_residual_audit(&audit_result, &j);
+                                                    // Re-verify generation before saving
+                                                    let gen_recheck =
+                                                        audit::check_operator_generation(
+                                                            &client,
+                                                            &j.operator,
+                                                            &j.audit_context.csv_baseline,
+                                                        )
+                                                        .await;
+                                                    if matches!(
+                                                        gen_recheck,
+                                                        OperatorGenerationState::Absent
+                                                    ) {
+                                                        match store
+                                                            .update(|j| {
+                                                                j.residual_status = status;
+                                                                j.audit_revision += 1;
+                                                                j.last_residual_audit =
+                                                                    Some(audit_result);
+                                                            })
+                                                            .await
+                                                        {
+                                                            Ok(()) => {}
+                                                            Err(e) => {
+                                                                eprintln!(
+                                                                    "⚠ Failed to persist audit results: {}",
+                                                                    e
+                                                                );
+                                                                eprintln!(
+                                                                    "  Audit results were displayed but are NOT durable."
+                                                                );
+                                                                eprintln!(
+                                                                    "  Do not use this audit for cleanup authority."
+                                                                );
                                                             }
-                                                        } else {
-                                                            eprintln!(
-                                                                "⚠ Operator generation changed during audit; discarding results"
-                                                            );
                                                         }
-                                                    }
-                                                    Err(e) => {
+                                                    } else {
                                                         eprintln!(
-                                                            "⚠ Post-apply residual audit failed: {}",
-                                                            e
+                                                            "⚠ Operator generation changed during audit; discarding results"
                                                         );
                                                     }
                                                 }
+                                                Err(e) => {
+                                                    eprintln!(
+                                                        "⚠ Post-apply residual audit failed: {}",
+                                                        e
+                                                    );
+                                                }
                                             }
-                                            _ => {
-                                                eprintln!(
-                                                    "\nSkipping post-apply residual audit: operator generation not absent"
-                                                );
-                                            }
+                                        }
+                                        _ => {
+                                            eprintln!(
+                                                "\nSkipping post-apply residual audit: operator generation not absent"
+                                            );
                                         }
                                     }
                                 }
 
                                 // Residual cleanup transition — only if Absent + complete audit + TTY
-                                if final_state == RunState::ApplyCompleted {
-                                    if let Some(store) = &journal_store {
-                                        let j = store.read().await;
-                                        if let Some(ref audit) = j.last_residual_audit {
-                                            let rs =
-                                                crate::teardown::audit::residual_status_from_audit(
-                                                    audit,
-                                                );
-                                            match rs {
-                                                journal::ResidualStatus::ResidualsObserved {
-                                                    count,
-                                                } => {
+                                if final_state == RunState::ApplyCompleted
+                                    && let Some(store) = &journal_store
+                                {
+                                    let j = store.read().await;
+                                    if let Some(ref audit) = j.last_residual_audit {
+                                        let rs = crate::teardown::audit::residual_status_from_audit(
+                                            audit,
+                                        );
+                                        match rs {
+                                            journal::ResidualStatus::ResidualsObserved {
+                                                count,
+                                            } => {
+                                                eprintln!("\n📋 {} residual(s) observed.", count);
+
+                                                // Interactive residual cleanup (TTY only)
+                                                // Check schema supports cleanup authority
+                                                let j_for_schema = store.read().await;
+                                                if j_for_schema.schema_version < 5 {
                                                     eprintln!(
-                                                        "\n📋 {} residual(s) observed.",
-                                                        count
-                                                    );
-
-                                                    // Interactive residual cleanup (TTY only)
-                                                    // Check schema supports cleanup authority
-                                                    let j_for_schema = store.read().await;
-                                                    if j_for_schema.schema_version < 5 {
-                                                        eprintln!(
-                                                            "  ℹ Journal schema v{} does not support residual cleanup. \
+                                                        "  ℹ Journal schema v{} does not support residual cleanup. \
                                                              Create a new teardown plan to enable cleanup.",
-                                                            j_for_schema.schema_version
+                                                        j_for_schema.schema_version
+                                                    );
+                                                } else if is_tty {
+                                                    let residuals: Vec<
+                                                        &crate::teardown::audit::AttributedResidual,
+                                                    > = audit
+                                                        .likely_operator_residual
+                                                        .iter()
+                                                        .chain(audit.unattributed.iter())
+                                                        .collect();
+
+                                                    if !residuals.is_empty() {
+                                                        use crate::kube::resource::ResourceId;
+                                                        eprintln!(
+                                                            "\n\x1b[1mResidual Cleanup\x1b[0m:"
                                                         );
-                                                    } else if is_tty {
-                                                        let residuals: Vec<&crate::teardown::audit::AttributedResidual> =
-                                                            audit.likely_operator_residual.iter()
-                                                                .chain(audit.unattributed.iter())
-                                                                .collect();
-
-                                                        if !residuals.is_empty() {
-                                                            use crate::kube::resource::ResourceId;
+                                                        for (i, res) in residuals.iter().enumerate()
+                                                        {
                                                             eprintln!(
-                                                                "\n\x1b[1mResidual Cleanup\x1b[0m:"
+                                                                "  [{}] {:?} {}/{}{}",
+                                                                i + 1,
+                                                                res.confidence,
+                                                                res.resource.kind,
+                                                                res.resource.name,
+                                                                res.resource
+                                                                    .namespace
+                                                                    .as_ref()
+                                                                    .map(|ns| format!(" ({})", ns))
+                                                                    .unwrap_or_default()
                                                             );
-                                                            for (i, res) in
-                                                                residuals.iter().enumerate()
-                                                            {
-                                                                eprintln!(
-                                                                    "  [{}] {:?} {}/{}{}",
-                                                                    i + 1,
-                                                                    res.confidence,
-                                                                    res.resource.kind,
-                                                                    res.resource.name,
-                                                                    res.resource
-                                                                        .namespace
-                                                                        .as_ref()
-                                                                        .map(|ns| format!(
-                                                                            " ({})",
-                                                                            ns
-                                                                        ))
-                                                                        .unwrap_or_default()
-                                                                );
-                                                            }
-                                                            eprintln!();
-                                                            eprintln!(
-                                                                "  Enter item numbers to DELETE (comma-separated),"
-                                                            );
-                                                            eprintln!(
-                                                                "  or press Enter to skip cleanup:"
-                                                            );
-                                                            eprint!("  > ");
-                                                            std::io::Write::flush(
-                                                                &mut std::io::stderr(),
-                                                            )
-                                                            .ok();
+                                                        }
+                                                        eprintln!();
+                                                        eprintln!(
+                                                            "  Enter item numbers to DELETE (comma-separated),"
+                                                        );
+                                                        eprintln!(
+                                                            "  or press Enter to skip cleanup:"
+                                                        );
+                                                        eprint!("  > ");
+                                                        std::io::Write::flush(
+                                                            &mut std::io::stderr(),
+                                                        )
+                                                        .ok();
 
-                                                            let mut input = String::new();
-                                                            if std::io::stdin()
-                                                                .read_line(&mut input)
-                                                                .is_ok()
-                                                            {
-                                                                let input = input.trim();
-                                                                if !input.is_empty() {
-                                                                    let mut selected: Vec<
-                                                                        &ResourceId,
-                                                                    > = Vec::new();
-                                                                    for token in input.split(',') {
-                                                                        if let Ok(idx) = token
-                                                                            .trim()
-                                                                            .parse::<usize>()
-                                                                        {
-                                                                            if idx >= 1
-                                                                                && idx
-                                                                                    <= residuals
-                                                                                        .len()
-                                                                            {
-                                                                                selected.push(
-                                                                                    &residuals
-                                                                                        [idx - 1]
-                                                                                        .resource,
-                                                                                );
-                                                                            }
-                                                                        }
-                                                                    }
-
-                                                                    if !selected.is_empty() {
-                                                                        eprintln!(
-                                                                            "\n  Deleting {} residual(s)...",
-                                                                            selected.len()
+                                                        let mut input = String::new();
+                                                        if std::io::stdin()
+                                                            .read_line(&mut input)
+                                                            .is_ok()
+                                                        {
+                                                            let input = input.trim();
+                                                            if !input.is_empty() {
+                                                                let mut selected: Vec<&ResourceId> =
+                                                                    Vec::new();
+                                                                for token in input.split(',') {
+                                                                    if let Ok(idx) = token
+                                                                        .trim()
+                                                                        .parse::<usize>(
+                                                                    ) && idx >= 1
+                                                                        && idx <= residuals.len()
+                                                                    {
+                                                                        selected.push(
+                                                                            &residuals[idx - 1]
+                                                                                .resource,
                                                                         );
-                                                                        let selected_owned: Vec<crate::kube::resource::ResourceId> =
+                                                                    }
+                                                                }
+
+                                                                if !selected.is_empty() {
+                                                                    eprintln!(
+                                                                        "\n  Deleting {} residual(s)...",
+                                                                        selected.len()
+                                                                    );
+                                                                    let selected_owned: Vec<crate::kube::resource::ResourceId> =
                                                                             selected.into_iter().cloned().collect();
-                                                                        match crate::teardown::executor::execute_residual_cleanup(
+                                                                    match crate::teardown::executor::execute_residual_cleanup(
                                                                             &client,
                                                                             &selected_owned,
                                                                             store.as_ref(),
@@ -1309,32 +1294,31 @@ async fn main() -> Result<()> {
                                                                                 bail!("Residual cleanup failed: {:#}", e);
                                                                             }
                                                                         }
-                                                                    }
                                                                 }
                                                             }
-                                                        } else {
-                                                            eprintln!(
-                                                                "  Use 'teardown journal' to review details."
-                                                            );
                                                         }
                                                     } else {
                                                         eprintln!(
-                                                            "  Use 'teardown journal' to review."
+                                                            "  Use 'teardown journal' to review details."
                                                         );
                                                     }
-                                                }
-                                                journal::ResidualStatus::AuditIncomplete => {
+                                                } else {
                                                     eprintln!(
-                                                        "\n⚠ Residual audit incomplete — manual cleanup is not available."
+                                                        "  Use 'teardown journal' to review."
                                                     );
                                                 }
-                                                journal::ResidualStatus::NoneObservedInScope => {
-                                                    eprintln!(
-                                                        "\n✅ No residuals observed in scanned scope."
-                                                    );
-                                                }
-                                                _ => {}
                                             }
+                                            journal::ResidualStatus::AuditIncomplete => {
+                                                eprintln!(
+                                                    "\n⚠ Residual audit incomplete — manual cleanup is not available."
+                                                );
+                                            }
+                                            journal::ResidualStatus::NoneObservedInScope => {
+                                                eprintln!(
+                                                    "\n✅ No residuals observed in scanned scope."
+                                                );
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
@@ -1375,18 +1359,17 @@ async fn main() -> Result<()> {
                             }
                             Err(e) => {
                                 // Best-effort: record Failed state in journal, then propagate error
-                                if let Some(store) = &journal_store {
-                                    if let Err(je) = store
+                                if let Some(store) = &journal_store
+                                    && let Err(je) = store
                                         .update(|j| {
                                             j.state = RunState::Failed;
                                         })
                                         .await
-                                    {
-                                        eprintln!(
-                                            "⚠ Additionally, failed to persist Failed state to journal: {}",
-                                            je
-                                        );
-                                    }
+                                {
+                                    eprintln!(
+                                        "⚠ Additionally, failed to persist Failed state to journal: {}",
+                                        je
+                                    );
                                 }
                                 return Err(e);
                             }
@@ -3117,10 +3100,6 @@ async fn create_run_journal(
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> Result<JournalStore> {
-    use crate::teardown::plan::{
-        ObservedResourceIdentity, OperatorGenerationIdentity, OperatorIdentitySnapshot,
-    };
-
     if target_operators.len() > 1 {
         bail!(
             "Run journal currently supports single-operator teardown. \
@@ -3136,7 +3115,7 @@ async fn create_run_journal(
         .context("Failed to build operator identity snapshot for journal")?;
 
     let first_op = target_operators[0];
-    let mut audit_context = journal::build_audit_context(plan, target_operators, &gk_map);
+    let mut audit_context = journal::build_audit_context(plan, target_operators, gk_map);
 
     // Capture CSV baseline: all CSVs in install namespace at plan time (name → uid).
     // Used by generation check to detect new CSVs not present before teardown.
@@ -3252,7 +3231,7 @@ async fn build_operator_identity_snapshot(
     let csv_observed = {
         let fresh = fetch_observed_identities(
             client,
-            &[first_op.csv.name.clone()],
+            std::slice::from_ref(&first_op.csv.name),
             "ClusterServiceVersion",
             "operators.coreos.com/v1alpha1",
             &first_op.install_namespace,
@@ -3303,7 +3282,7 @@ async fn build_operator_identity_snapshot(
     let sub_observed: Vec<ObservedResourceIdentity> = if let Some(sub) = &first_op.subscription {
         let fresh = fetch_observed_identities(
             client,
-            &[sub.name.clone()],
+            std::slice::from_ref(&sub.name),
             "Subscription",
             "operators.coreos.com/v1alpha1",
             sub.namespace
@@ -3326,16 +3305,16 @@ async fn build_operator_identity_snapshot(
                 sub.name
             );
         }
-        if let Some(obs) = fresh.first() {
-            if obs.uid != discovery_uid {
-                bail!(
-                    "Subscription {} UID changed between discovery ({}) and snapshot ({}) — \
+        if let Some(obs) = fresh.first()
+            && obs.uid != discovery_uid
+        {
+            bail!(
+                "Subscription {} UID changed between discovery ({}) and snapshot ({}) — \
                      operator may have been recreated. Re-run 'teardown plan'.",
-                    sub.name,
-                    discovery_uid,
-                    obs.uid
-                );
-            }
+                sub.name,
+                discovery_uid,
+                obs.uid
+            );
         }
         // Verify spec.name matches expected package
         if let Some(ref expected_package) = first_op.package_name {
@@ -3464,6 +3443,7 @@ async fn fetch_observed_identities(
 /// - target label alone → insufficient for DELETE authority
 /// - target manager alone → insufficient for DELETE authority
 /// - arbitrary ownerRef without target match → insufficient
+///
 /// Re-classify fresh provenance from a live GET result using UID-based identity.
 pub fn classify_fresh_provenance(
     obj: &::kube::api::DynamicObject,
@@ -4221,7 +4201,7 @@ mod basis_drift_tests {
 
     #[test]
     fn classify_resume_paused_with_pending_complete_routes_to_cleanup() {
-        use crate::teardown::journal::{CleanupResult, RunState};
+        use crate::teardown::journal::RunState;
         let j = make_test_journal(
             RunState::Paused,
             7,
@@ -4234,7 +4214,7 @@ mod basis_drift_tests {
 
     #[test]
     fn classify_resume_pending_with_incomplete_phases_is_error() {
-        use crate::teardown::journal::{CleanupResult, RunState};
+        use crate::teardown::journal::RunState;
         let j = make_test_journal(
             RunState::Paused,
             5,

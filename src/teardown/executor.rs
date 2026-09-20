@@ -49,6 +49,7 @@ pub struct BarrierTimeout {
 
 // P0-1: three-value state for resource checks — Unknown is never treated as Gone
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ObservationState {
     Gone,
     Exists {
@@ -196,6 +197,7 @@ pub async fn execute_plan(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_plan_with_store(
     client: &Client,
     plan: &TeardownPlan,
@@ -981,6 +983,7 @@ pub fn verify_delete_identity(plan_uid: &Option<String>, current_uid: &str) -> R
 /// 3. DELETE with UID precondition to prevent TOCTOU race
 ///
 /// Failure/AlreadyGone does NOT grant re-delete authority.
+#[allow(dead_code)]
 async fn delete_resource(
     client: &Client,
     resource: &ResourceId,
@@ -1384,6 +1387,7 @@ pub enum CleanupProgress {
     Gone {
         resource: ResourceId,
     },
+    #[allow(dead_code)]
     Skipped {
         resource: ResourceId,
         reason: String,
@@ -1428,7 +1432,7 @@ pub async fn execute_residual_cleanup(
 }
 
 pub async fn execute_residual_cleanup_with_progress(
-    client: &Client,
+    #[allow(clippy::too_many_arguments)] client: &Client,
     selected: &[ResourceId],
     journal_store: &JournalStore,
     gate: &MutationGate,
@@ -2591,7 +2595,7 @@ mod tests {
     #[test]
     fn pending_decisions_prevent_apply_completed() {
         use crate::teardown::journal::{CleanupDecision, CleanupResult};
-        let decisions = vec![
+        let decisions = [
             CleanupDecision {
                 resource: make_resource("Pod", "a"),
                 bound_uid: Some("uid".to_string()),

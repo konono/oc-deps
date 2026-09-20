@@ -21,7 +21,7 @@ use crate::kube::resource::{ResourceId, resolve_api};
 
 // ── UID binding result ──
 
-enum BindResult {
+pub(crate) enum BindResult {
     Bound(String),
     Absent,
     Failed(String),

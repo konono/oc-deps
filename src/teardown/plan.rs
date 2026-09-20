@@ -71,9 +71,11 @@ impl ClusterIdentity {
 //  Saved teardown plan — reusable across clusters, no UIDs
 // ──────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub const SAVED_PLAN_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SavedTeardownPlan {
     pub schema_version: u32,
     pub target: SavedOperatorTarget,
@@ -82,12 +84,14 @@ pub struct SavedTeardownPlan {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SavedOperatorTarget {
     pub package_name: Option<String>,
     pub csv_name_pattern: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SavedDecision {
     pub match_spec: ResourceMatch,
     pub action: SavedAction,
@@ -96,6 +100,7 @@ pub struct SavedDecision {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ResourceMatch {
     pub group: Option<String>,
     pub kind: String,
@@ -104,6 +109,7 @@ pub struct ResourceMatch {
 }
 
 impl ResourceMatch {
+    #[allow(dead_code)]
     pub fn from_resource_id(rid: &ResourceId) -> Self {
         Self {
             group: if rid.group.is_empty() {
@@ -117,23 +123,26 @@ impl ResourceMatch {
         }
     }
 
+    #[allow(dead_code)]
     pub fn matches(&self, rid: &ResourceId) -> bool {
-        if let Some(ref g) = self.group {
-            if &rid.group != g {
-                return false;
-            }
+        if let Some(ref g) = self.group
+            && &rid.group != g
+        {
+            return false;
         }
         self.kind == rid.kind && self.namespace == rid.namespace && self.name == rid.name
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub enum SavedAction {
     Delete,
     Keep,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub enum ApprovalKind {
     Explicit,
     ExplicitUnattributed,
@@ -144,6 +153,7 @@ pub enum ApprovalKind {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct DecisionBasis {
     pub provenance: Option<String>,
     pub review_category: Option<String>,
@@ -151,6 +161,7 @@ pub struct DecisionBasis {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub enum SavedEvidenceSignature {
     OwnerReference {
         group: String,

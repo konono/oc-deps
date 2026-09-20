@@ -115,6 +115,7 @@ impl MutationGate {
     }
 
     /// Re-open the gate (used on resume after Paused).
+    #[allow(dead_code)]
     pub fn reopen(&self) {
         self.open.store(true, Ordering::SeqCst);
         self.cancel_tx.send_replace(false);

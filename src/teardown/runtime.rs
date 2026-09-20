@@ -81,9 +81,11 @@ pub struct RuntimeObservation {
     ///   - Set Recreated (confirmed UID change)
     ///   - Change tracked UID
     ///   - Revive a Gone resource (transient 404)
+    ///
     /// Non-authoritative (WATCH) events can only:
     ///   - Update deletionTimestamp / finalizer state for matching UID
     ///   - Set needs_verification flag (hint for barrier to re-GET)
+    #[allow(dead_code)]
     pub authoritative: bool,
 }
 
@@ -102,8 +104,11 @@ pub struct StateSummary {
     pub finalizer_blocked: usize,
     pub stalled: usize,
     pub failed: usize,
+    #[allow(dead_code)]
     pub unknown: usize,
+    #[allow(dead_code)]
     pub recreated: usize,
+    #[allow(dead_code)]
     pub total: usize,
 }
 
@@ -249,17 +254,17 @@ impl RuntimeStateStore {
         }
 
         // Check UID change (for non-Gone states)
-        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, live_uid) {
-            if tracked_uid != new_uid {
-                entry.state = ResourceRuntimeState::Recreated {
-                    old_uid: tracked_uid.clone(),
-                    new_uid: new_uid.clone(),
-                };
-                entry.uid = Some(new_uid.clone());
-                entry.last_meaningful_progress = Instant::now();
-                self.notifier.notify();
-                return;
-            }
+        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, live_uid)
+            && tracked_uid != new_uid
+        {
+            entry.state = ResourceRuntimeState::Recreated {
+                old_uid: tracked_uid.clone(),
+                new_uid: new_uid.clone(),
+            };
+            entry.uid = Some(new_uid.clone());
+            entry.last_meaningful_progress = Instant::now();
+            self.notifier.notify();
+            return;
         }
 
         if entry.uid.is_none() && live_uid.is_some() {
@@ -295,12 +300,12 @@ impl RuntimeStateStore {
 
         // WATCH event for existing resource
         // Check UID mismatch — hint for re-GET, don't change UID
-        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, &obs.uid) {
-            if tracked_uid != new_uid {
-                entry.needs_verification = true;
-                self.notifier.notify();
-                return;
-            }
+        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, &obs.uid)
+            && tracked_uid != new_uid
+        {
+            entry.needs_verification = true;
+            self.notifier.notify();
+            return;
         }
 
         // Matching UID — safe to update deletionTimestamp/finalizer state
@@ -365,6 +370,7 @@ impl RuntimeStateStore {
         self.entries.read().unwrap().values().cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, resource: &ResourceId) -> Option<RuntimeEntry> {
         let key = Self::resource_key(resource);
         self.entries.read().unwrap().get(&key).cloned()
@@ -442,6 +448,7 @@ impl RuntimeStateStore {
 ///   - Transition TO Gone
 ///   - Transition TO Recreated (UID change)
 ///   - Finalizer count DECREASE (not increase)
+///
 /// Finalizer count increase, FinalizerBlocked count changes, and
 /// resourceVersion/status heartbeats are NOT meaningful.
 /// Only specific transitions count as meaningful progress for stall detection:
@@ -701,7 +708,7 @@ mod tests {
 
         // WATCH hint (not authoritative)
         store.update_from_observation(&res, obs_gone(false), 1);
-        assert!(!store.all_gone_for(&[res.clone()]));
+        assert!(!store.all_gone_for(std::slice::from_ref(&res)));
 
         // Authoritative confirm
         store.update_from_observation(&res, obs_gone(true), 0);
@@ -1051,7 +1058,7 @@ mod tests {
 
         // Barrier should NOT pass — needs_verification is true
         assert!(
-            !store.all_gone_for(&[res.clone()]),
+            !store.all_gone_for(std::slice::from_ref(&res)),
             "WATCH hint should not pass barrier"
         );
 
@@ -1150,7 +1157,7 @@ mod tests {
         );
 
         // Should NOT be Gone
-        assert!(!store.all_gone_for(&[res.clone()]));
+        assert!(!store.all_gone_for(std::slice::from_ref(&res)));
         let entry = store.get(&res).unwrap();
         assert_ne!(entry.state, ResourceRuntimeState::Gone);
     }
@@ -1179,7 +1186,7 @@ mod tests {
 
         // Barrier should NOT pass (needs_verification)
         assert!(
-            !store.all_gone_for(&[res.clone()]),
+            !store.all_gone_for(std::slice::from_ref(&res)),
             "WATCH hint alone must not pass barrier"
         );
 
