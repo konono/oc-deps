@@ -211,8 +211,8 @@ async fn run_tui_inner(
                                             }
                                             let action_meta = metadata.clone();
                                             if let Err(drift_reason) = crate::revalidate_review_basis(
-                                                &obj, &action_meta, &audit_ctx, operator_snapshot,
-                                            ) {
+                                                client, &obj, resource, &action_meta, &audit_ctx, operator_snapshot,
+                                            ).await {
                                                 bail!("BLOCKED: {}/{} — basis drift: {}",
                                                     resource.kind, resource.name, drift_reason);
                                             }

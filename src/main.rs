@@ -387,7 +387,7 @@ async fn main() -> Result<()> {
                                                                                     build_operator_identity_snapshot(&client, &target_operators).await
                                                                                         .context("Cannot build identity snapshot for basis drift check")?
                                                                                 };
-                                                                                if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
+                                                                                if let Err(reason) = revalidate_review_basis(&client, &obj, resource, &action_metadata, &ctx, &snap).await {
                                                                                     bail!(
                                                                                         "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
                                                                                         resource.kind, resource.name, reason
@@ -499,6 +499,12 @@ async fn main() -> Result<()> {
                                             }));
                                         }
                                         Err(e) => {
+                                            // Best-effort Failed checkpoint (journal may already be in error state)
+                                            if let Some(ref store) = script_journal {
+                                                let _ = store.update(|j| {
+                                                    j.state = RunState::Failed;
+                                                }).await;
+                                            }
                                             events.push(serde_json::json!({
                                                 "execution_error": format!("{:#}", e)
                                             }));
@@ -740,7 +746,7 @@ async fn main() -> Result<()> {
                                                                                     let action_metadata = metadata.clone();
                                                                                     let snap = build_operator_identity_snapshot(&client, &target_operators).await
                                                                                         .context("Cannot build identity snapshot for basis drift check")?;
-                                                                                    if let Err(reason) = revalidate_review_basis(&obj, &action_metadata, &ctx, &snap) {
+                                                                                    if let Err(reason) = revalidate_review_basis(&client, &obj, resource, &action_metadata, &ctx, &snap).await {
                                                                                         bail!(
                                                                                             "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
                                                                                             resource.kind, resource.name, reason
@@ -2549,8 +2555,25 @@ pub fn classify_fresh_provenance(
 
 /// Validate that fresh provenance hasn't degraded from the stored review metadata.
 /// Provenance downgrade → BLOCK (basis drift detected).
-pub fn revalidate_review_basis(
+///
+/// For RelatedLabelOnly resources (Unknown provenance from CRD-based discovery),
+/// performs a fresh GET on the governing CRD to verify the label still links to
+/// the target operator's part-of set.
+pub async fn revalidate_review_basis(
+    client: &::kube::Client,
     obj: &::kube::api::DynamicObject,
+    resource: &crate::kube::resource::ResourceId,
+    metadata: &Option<crate::teardown::plan::ReviewMetadata>,
+    audit_ctx: &crate::teardown::journal::AuditContext,
+    operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+) -> Result<(), String> {
+    revalidate_review_basis_inner(client, obj, resource, metadata, audit_ctx, operator_snapshot).await
+}
+
+async fn revalidate_review_basis_inner(
+    client: &::kube::Client,
+    obj: &::kube::api::DynamicObject,
+    resource: &crate::kube::resource::ResourceId,
     metadata: &Option<crate::teardown::plan::ReviewMetadata>,
     audit_ctx: &crate::teardown::journal::AuditContext,
     operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
@@ -2573,11 +2596,125 @@ pub fn revalidate_review_basis(
             Err("provenance downgraded from LikelyManaged to Unknown".to_string())
         }
         (Some(ProvenanceSer::Unknown), _) => {
-            // Stored was Unknown — cannot verify basis, BLOCK
-            Err("stored provenance was Unknown — cannot verify approval basis".to_string())
+            let discovery_source = metadata.as_ref().and_then(|m| m.discovery_source.as_ref());
+            match discovery_source {
+                Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly) => {
+                    verify_governing_crd_label(client, resource, operator_snapshot).await
+                }
+                _ => {
+                    Err("stored provenance was Unknown with no verifiable discovery source — \
+                         cannot verify approval basis".to_string())
+                }
+            }
         }
         (None, _) => {
             Err("no stored provenance to verify against".to_string())
+        }
+    }
+}
+
+/// Verify the governing CRD for a resource still has a part-of label linking to the target operator.
+///
+/// Uses operator_snapshot.owned_crds to compute fresh part-of seeds and verifies
+/// the governing CRD's label value is in that set.
+async fn verify_governing_crd_label(
+    client: &::kube::Client,
+    resource: &crate::kube::resource::ResourceId,
+    operator_snapshot: &crate::teardown::plan::OperatorIdentitySnapshot,
+) -> Result<(), String> {
+    use ::kube::api::{Api, DynamicObject, ApiResource};
+    use ::kube::core::GroupVersion;
+
+    let label_key = "platform.opendatahub.io/part-of";
+
+    if resource.group.is_empty() {
+        return Err("resource has no API group — cannot determine governing CRD".to_string());
+    }
+
+    // Find CRD name from operator's owned_crds that matches resource's API group
+    let matching_crds: Vec<&str> = operator_snapshot.owned_crds.iter()
+        .filter(|crd| {
+            crd.split_once('.').map(|(_, g)| g == resource.group).unwrap_or(false)
+        })
+        .map(|s| s.as_str())
+        .collect();
+
+    // Also try constructing from group (for related CRDs not in owned_crds)
+    // List all CRDs in the resource's API group
+    let crd_gvk = GroupVersion::gv("apiextensions.k8s.io", "v1")
+        .with_kind("CustomResourceDefinition");
+    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, "customresourcedefinitions");
+    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+
+    // Compute fresh part-of seeds from owned CRDs
+    let mut seed_values: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for crd_name in &operator_snapshot.owned_crds {
+        match crd_api.get(crd_name).await {
+            Ok(crd) => {
+                if let Some(labels) = &crd.metadata.labels {
+                    if let Some(val) = labels.get(label_key) {
+                        seed_values.insert(val.clone());
+                    }
+                }
+            }
+            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                // Owned CRD already removed — expected during teardown
+            }
+            Err(e) => {
+                return Err(format!("cannot GET owned CRD for seed computation: {} — BLOCKED", e));
+            }
+        }
+    }
+
+    if seed_values.is_empty() {
+        return Err("no part-of label seeds found on owned CRDs — cannot verify CRD-based evidence".to_string());
+    }
+
+    // Find governing CRD: the CRD in resource.group that has a matching part-of label
+    // We need to find the specific CRD for this resource's kind
+    // List CRDs and find the one matching our group + kind
+    let crd_list = crd_api.list(&::kube::api::ListParams::default()).await
+        .map_err(|e| format!("cannot list CRDs: {} — BLOCKED", e))?;
+
+    let governing_crd = crd_list.items.iter().find(|crd| {
+        let crd_name = crd.metadata.name.as_deref().unwrap_or("");
+        crd_name.split_once('.').map(|(_, g)| g == resource.group).unwrap_or(false)
+            && crd.data.get("spec")
+                .and_then(|s| s.get("names"))
+                .and_then(|n| n.get("kind"))
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| k == resource.kind)
+    });
+
+    let crd = match governing_crd {
+        Some(c) => c,
+        None => {
+            return Err(format!(
+                "governing CRD for {}/{} not found — cannot verify label basis",
+                resource.group, resource.kind
+            ));
+        }
+    };
+
+    // Verify CRD has part-of label with a value in the seed set
+    let crd_labels = crd.metadata.labels.as_ref();
+    let crd_part_of = crd_labels.and_then(|labels| labels.get(label_key));
+    match crd_part_of {
+        Some(value) => {
+            if seed_values.contains(value.as_str()) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "governing CRD has '{}={}' but value not in target seed set {:?} — evidence invalidated",
+                    label_key, value, seed_values
+                ))
+            }
+        }
+        None => {
+            Err(format!(
+                "governing CRD for {}/{} no longer has '{}' label — CRD-based evidence invalidated",
+                resource.group, resource.kind, label_key
+            ))
         }
     }
 }
