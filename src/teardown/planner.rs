@@ -17,7 +17,15 @@ use crate::analyzers::olm::{
 use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
-use crate::kube::resource::ResourceId;
+use crate::kube::resource::{ResourceId, resolve_api};
+
+// ── UID binding result ──
+
+enum BindResult {
+    Bound(String),
+    Absent,
+    Failed(String),
+}
 
 // ── Decision types ──
 
@@ -2873,6 +2881,107 @@ pub async fn generate_teardown_plan(
     }
     phases.push(phase4);
     phases.push(phase5);
+
+    // UID binding: bind current UIDs to all DELETE/EXPECT actions that lack them
+    // (e.g., --prune-apis CRDs). This happens at plan generation time so the plan
+    // presented to the user for confirmation includes the actual resource identities.
+    // Binding failure → blocker (no mutation allowed).
+    {
+        let needs_binding: Vec<(usize, usize, ResourceId)> = phases
+            .iter()
+            .enumerate()
+            .flat_map(|(pi, phase)| {
+                phase.actions.iter().enumerate().filter_map(move |(ai, a)| {
+                    match a {
+                        Action::Delete { resource, .. }
+                        | Action::ExpectGone { resource, .. } => {
+                            if resource.uid.is_none()
+                                || resource.uid.as_ref().is_some_and(|u| u.is_empty())
+                            {
+                                Some((pi, ai, resource.clone()))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+            })
+            .collect();
+
+        if !needs_binding.is_empty() {
+            // Each future carries its phase/action indices so result ordering
+            // from buffer_unordered doesn't matter.
+            let futs = needs_binding.iter().map(|(pi, ai, res)| {
+                let client = client.clone();
+                let res = res.clone();
+                let km = kind_map.clone();
+                let gk = gk_map.clone();
+                let pi = *pi;
+                let ai = *ai;
+                async move {
+                    let result = match resolve_api(&client, &res, &km, &gk) {
+                        Some((api, _)) => match api.get(&res.name).await {
+                            Ok(obj) => match obj.metadata.uid {
+                                Some(uid) => BindResult::Bound(uid),
+                                None => BindResult::Failed(
+                                    "live resource has no UID".to_string(),
+                                ),
+                            },
+                            Err(kube::Error::Api(err)) if err.code == 404 => {
+                                match api.list(&ListParams::default().limit(1)).await {
+                                    Ok(_) => BindResult::Absent,
+                                    Err(_) => BindResult::Failed(
+                                        "GET 404 but endpoint verification failed"
+                                            .to_string(),
+                                    ),
+                                }
+                            }
+                            Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
+                        },
+                        None => BindResult::Failed(
+                            "cannot resolve API for resource".to_string(),
+                        ),
+                    };
+                    (pi, ai, res, result)
+                }
+            });
+
+            let results: Vec<_> = futures::stream::iter(futs)
+                .buffer_unordered(16)
+                .collect()
+                .await;
+
+            // Apply by carried indices — order-independent
+            for (pi, ai, res, bind_result) in &results {
+                match bind_result {
+                    BindResult::Bound(uid) => {
+                        let action_res = match &mut phases[*pi].actions[*ai] {
+                            Action::Delete { resource, .. }
+                            | Action::ExpectGone { resource, .. } => resource,
+                            _ => continue,
+                        };
+                        action_res.uid = Some(uid.clone());
+                    }
+                    BindResult::Absent => {
+                        // Resource already gone at plan time — keep in plan,
+                        // executor will handle as AlreadyGone
+                    }
+                    BindResult::Failed(reason) => {
+                        blockers.push(Blocker {
+                            resource: res.clone(),
+                            reason: format!(
+                                "Cannot bind UID for safe DELETE: {}. \
+                                 Cannot safely proceed without verified identity.",
+                                reason
+                            ),
+                            external_dependency: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     let plan = TeardownPlan {
         targets,

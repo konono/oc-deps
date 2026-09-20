@@ -457,17 +457,44 @@ impl RuntimeStateStore {
 ///   - Finalizer count DECREASE (not increase)
 /// Finalizer count increase, FinalizerBlocked count changes, and
 /// resourceVersion/status heartbeats are NOT meaningful.
+/// Only specific transitions count as meaningful progress for stall detection:
+/// - Transition TO Deleting (deletionTimestamp first appeared, no finalizers)
+/// - Transition TO FinalizerBlocked from non-Deleting/FinalizerBlocked state
+///   (deletionTimestamp first appeared, has finalizers)
+/// - Transition TO Gone
+/// - Transition TO Recreated (UID change)
+/// - Finalizer count DECREASE (only decrease, not increase)
+/// - Planned → DeleteRequested (initial delete issued)
+///
+/// NOT meaningful: finalizer increase, status heartbeat, resourceVersion change,
+/// FinalizerBlocked{3} → FinalizerBlocked{4}.
 fn is_meaningful_transition(
     prev: &ResourceRuntimeState,
     new: &ResourceRuntimeState,
     finalizer_decreased: bool,
 ) -> bool {
     match (prev, new) {
+        // deletionTimestamp first appeared (no finalizers)
         (s, ResourceRuntimeState::Deleting) if *s != ResourceRuntimeState::Deleting => true,
+        // deletionTimestamp first appeared (with finalizers)
+        (s, ResourceRuntimeState::FinalizerBlocked { .. })
+            if !matches!(
+                s,
+                ResourceRuntimeState::FinalizerBlocked { .. }
+                    | ResourceRuntimeState::Deleting
+            ) =>
+        {
+            true
+        }
+        // Resource gone
         (_, ResourceRuntimeState::Gone) => true,
+        // UID recreation
         (_, ResourceRuntimeState::Recreated { .. }) => true,
-        (_, ResourceRuntimeState::DeleteRequested) if *prev == ResourceRuntimeState::Planned => true,
+        // Initial delete issued
+        (ResourceRuntimeState::Planned, ResourceRuntimeState::DeleteRequested) => true,
+        // Finalizer count decreased
         _ if finalizer_decreased => true,
+        // Everything else (including finalizer increase, heartbeat) → NOT meaningful
         _ => false,
     }
 }
@@ -487,6 +514,23 @@ mod tests {
             Duration::from_secs(120),
         ));
         (store, notifier)
+    }
+
+    fn make_resource_with(
+        group: &str,
+        kind: &str,
+        namespace: Option<&str>,
+        name: &str,
+        uid: Option<&str>,
+    ) -> ResourceId {
+        ResourceId {
+            group: group.to_string(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: namespace.map(String::from),
+            name: name.to_string(),
+            uid: uid.map(String::from),
+        }
     }
 
     fn make_resource(kind: &str, name: &str) -> ResourceId {
@@ -960,5 +1004,132 @@ mod tests {
             &ResourceRuntimeState::Deleting,
             false
         ));
+    }
+
+    #[test]
+    fn test_deletion_timestamp_with_finalizers_is_progress() {
+        // DeleteRequested → FinalizerBlocked means deletionTimestamp appeared
+        // with finalizers present. This IS meaningful progress.
+        assert!(is_meaningful_transition(
+            &ResourceRuntimeState::DeleteRequested,
+            &ResourceRuntimeState::FinalizerBlocked { count: 2 },
+            false
+        ));
+        // Planned → FinalizerBlocked is also meaningful
+        assert!(is_meaningful_transition(
+            &ResourceRuntimeState::Planned,
+            &ResourceRuntimeState::FinalizerBlocked { count: 1 },
+            false
+        ));
+    }
+
+    #[test]
+    fn test_finalizer_increase_is_not_progress() {
+        // FinalizerBlocked{2} → FinalizerBlocked{3} is NOT meaningful
+        assert!(!is_meaningful_transition(
+            &ResourceRuntimeState::FinalizerBlocked { count: 2 },
+            &ResourceRuntimeState::FinalizerBlocked { count: 3 },
+            false
+        ));
+        // Deleting → FinalizerBlocked (finalizer appeared after delete) is NOT meaningful
+        assert!(!is_meaningful_transition(
+            &ResourceRuntimeState::Deleting,
+            &ResourceRuntimeState::FinalizerBlocked { count: 1 },
+            false
+        ));
+    }
+
+    #[test]
+    fn test_barrier_requires_authoritative_gone() {
+        // WATCH hint (non-authoritative) should NOT pass barrier
+        let (store, _) = make_store();
+        let res =
+            make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        // WATCH says deleted (non-authoritative)
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: false,
+            },
+            1,
+        );
+
+        // Barrier should NOT pass — needs_verification is true
+        assert!(
+            !store.all_gone_for(&[res.clone()]),
+            "WATCH hint should not pass barrier"
+        );
+
+        // Authoritative GET confirms
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            0,
+        );
+
+        assert!(
+            store.all_gone_for(&[res]),
+            "Authoritative GET should pass barrier"
+        );
+    }
+
+    #[test]
+    fn test_watch_stale_deleted_does_not_affect_new_uid() {
+        // Resource A is deleted, B (new UID) is observed. Late WATCH Deleted
+        // for A should not affect B's state.
+        let (store, _) = make_store();
+        let res =
+            make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        // Authoritative: resource exists with new UID B → Recreated
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: true,
+                uid: Some("uid-b".to_string()),
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: true,
+            },
+            0,
+        );
+
+        let entry = store.get(&res).unwrap();
+        assert!(matches!(entry.state, ResourceRuntimeState::Recreated { .. }));
+
+        // Old WATCH Deleted arrives (non-authoritative, uid-a era)
+        store.update_from_observation(
+            &res,
+            RuntimeObservation {
+                exists: false,
+                uid: None,
+                has_deletion_timestamp: false,
+                finalizer_count: 0,
+                authoritative: false,
+            },
+            1,
+        );
+
+        // B should still be Recreated, not Gone or needs_verification
+        let entry = store.get(&res).unwrap();
+        assert!(
+            matches!(entry.state, ResourceRuntimeState::Recreated { .. }),
+            "stale WATCH Deleted should not affect Recreated state"
+        );
     }
 }

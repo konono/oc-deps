@@ -281,83 +281,37 @@ pub async fn execute_plan(
         .context("Failed to persist Applying state — aborting before first mutation")?;
     }
 
-    // Pre-mutation UID binding: GET current UIDs for DELETE/EXPECT actions
-    // that lack them (e.g., --prune-apis CRDs). This happens ONCE before
-    // any mutation, so the plan_snapshot in journal reflects bound UIDs.
-    let mut bound_plan = plan.clone();
+    // Verify all DELETE/EXPECT actions have bound UIDs.
+    // UID binding happens at plan generation time (in generate_teardown_plan).
+    // If any action lacks a UID here, it means binding failed or was skipped.
     if !dry_run {
-        let km = Arc::new(kind_map.clone());
-        let gk = Arc::new(gk_map.clone());
-        let bind_futs = bound_plan.phases.iter().flat_map(|p| p.actions.iter()).filter_map(|a| {
-            match a {
+        let uid_missing: Vec<String> = plan
+            .phases
+            .iter()
+            .flat_map(|p| &p.actions)
+            .filter_map(|a| match a {
                 Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
-                    if resource.uid.is_none() || resource.uid.as_ref().is_some_and(|u| u.is_empty()) {
-                        Some(resource.clone())
+                    if resource.uid.is_none()
+                        || resource.uid.as_ref().is_some_and(|u| u.is_empty())
+                    {
+                        Some(format!("{}/{}", resource.kind, resource.name))
                     } else {
                         None
                     }
                 }
                 _ => None,
-            }
-        }).collect::<Vec<_>>();
+            })
+            .collect();
 
-        if !bind_futs.is_empty() {
-            eprintln!("  Binding UIDs for {} plan action(s)...", bind_futs.len());
-            let futs = bind_futs.iter().map(|res| {
-                let client = client.clone();
-                let res = res.clone();
-                let km = km.clone();
-                let gk = gk.clone();
-                async move {
-                    let uid = match resolve_api(&client, &res, &km, &gk) {
-                        Some((api, _)) => match api.get(&res.name).await {
-                            Ok(obj) => obj.metadata.uid,
-                            Err(kube::Error::Api(err)) if err.code == 404 => None,
-                            Err(_) => None,
-                        },
-                        None => None,
-                    };
-                    (res, uid)
-                }
-            });
-            let results: Vec<_> = futures::stream::iter(futs)
-                .buffer_unordered(16)
-                .collect()
-                .await;
-
-            for (res, uid) in results {
-                if let Some(uid) = uid {
-                    // Update the bound_plan's action resource UID
-                    for phase in &mut bound_plan.phases {
-                        for action in &mut phase.actions {
-                            let action_res = match action {
-                                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => resource,
-                                _ => continue,
-                            };
-                            if action_res.group == res.group
-                                && action_res.kind == res.kind
-                                && action_res.namespace == res.namespace
-                                && action_res.name == res.name
-                            {
-                                action_res.uid = Some(uid.clone());
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Update journal with UID-bound plan
-            if let Some(j) = journal {
-                let bound_snapshot = bound_plan.clone();
-                j.update(|journal| {
-                    journal.plan_snapshot = bound_snapshot;
-                })
-                .await
-                .context("Failed to persist UID-bound plan to journal")?;
-            }
+        if !uid_missing.is_empty() {
+            bail!(
+                "Cannot execute: {} action(s) have unbound UIDs \
+                 (UID binding should happen at plan time): {}",
+                uid_missing.len(),
+                uid_missing.join(", ")
+            );
         }
     }
-    let plan = &bound_plan;
 
     // Initialize RuntimeStateStore — canonical state for all tracked resources.
     // The store is purely observational: it never calls delete/mutation APIs.
