@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
                                     if result.failed.is_empty() && result.barrier_timeout.is_none() {
                                         use crate::teardown::audit::{self, OperatorGenerationState};
                                         let j = store.read().await;
-                                        let gen_state = audit::check_operator_generation(&client, &j.operator).await;
+                                        let gen_state = audit::check_operator_generation(&client, &j.operator, &j.audit_context.csv_baseline).await;
                                         match gen_state {
                                             OperatorGenerationState::Absent => {
                                                 eprintln!("\n🔍 Running post-apply residual audit...");
@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
                                                         let status = audit::residual_status_from_audit(&audit_result);
                                                         audit::print_residual_audit(&audit_result, &j);
                                                         // Re-verify generation before saving
-                                                        let gen_recheck = audit::check_operator_generation(&client, &j.operator).await;
+                                                        let gen_recheck = audit::check_operator_generation(&client, &j.operator, &j.audit_context.csv_baseline).await;
                                                         if matches!(gen_recheck, OperatorGenerationState::Absent) {
                                                             match store.update(|j| {
                                                                 j.residual_status = status;
@@ -481,7 +481,7 @@ async fn main() -> Result<()> {
                                     eprintln!("\n(audit skipped via --no-audit)");
                                 } else {
                                     let gen_state =
-                                        audit::check_operator_generation(&client, &j.operator)
+                                        audit::check_operator_generation(&client, &j.operator, &j.audit_context.csv_baseline)
                                             .await;
 
                                     match gen_state {
@@ -891,7 +891,40 @@ async fn create_run_journal(
         required_crds: first_op.required_crds.clone(),
     };
 
-    let audit_context = journal::build_audit_context(plan, target_operators, &gk_map);
+    let mut audit_context = journal::build_audit_context(plan, target_operators, &gk_map);
+
+    // Capture CSV baseline: all CSVs in install namespace at plan time (name → uid).
+    // Used by generation check to detect new CSVs not present before teardown.
+    {
+        use ::kube::api::{Api, DynamicObject, ApiResource, ListParams};
+        use ::kube::core::GroupVersion;
+
+        let csv_gvk = GroupVersion::gv("operators.coreos.com", "v1alpha1")
+            .with_kind("ClusterServiceVersion");
+        let csv_ar = ApiResource::from_gvk_with_plural(&csv_gvk, "clusterserviceversions");
+        let csv_api: Api<DynamicObject> =
+            Api::namespaced_with(client.clone(), &first_op.install_namespace, &csv_ar);
+
+        audit_context.csv_baseline = match csv_api.list(&ListParams::default()).await {
+            Ok(list) => Some(
+                list.items
+                    .iter()
+                    .filter_map(|csv| {
+                        let name = csv.metadata.name.clone()?;
+                        let uid = csv.metadata.uid.clone()?;
+                        Some(journal::CsvBaselineEntry { name, uid })
+                    })
+                    .collect(),
+            ),
+            Err(e) => {
+                bail!(
+                    "Failed to capture CSV baseline for generation safety: {}. \
+                     Cannot proceed without baseline.",
+                    e
+                );
+            }
+        };
+    }
 
     let journal = RunJournal {
         run_id: run_id.clone(),

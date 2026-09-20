@@ -28,6 +28,7 @@ pub enum OperatorGenerationState {
 pub async fn check_operator_generation(
     client: &Client,
     snapshot: &OperatorIdentitySnapshot,
+    csv_baseline: &Option<Vec<crate::teardown::journal::CsvBaselineEntry>>,
 ) -> OperatorGenerationState {
     let (package_name, install_namespace) = match &snapshot.generation_identity {
         OperatorGenerationIdentity::Unverifiable { reason } => {
@@ -162,7 +163,54 @@ pub async fn check_operator_generation(
         }
     }
 
-    // All checks succeeded with verified endpoint existence, nothing found
+    // Step 4: All saved identities are gone. Check if any new CSVs appeared
+    // since plan time by comparing against the pre-execution CSV baseline.
+    // Without prefix or label guessing — purely UID-based comparison.
+    match csv_baseline {
+        None => {
+            // No baseline captured — cannot safely verify absence
+            return OperatorGenerationState::Unknown(
+                "No CSV baseline captured at plan time; cannot verify \
+                 that no new operator generation has been installed"
+                    .to_string(),
+            );
+        }
+        Some(baseline) => {
+            match csv_api.list(&ListParams::default()).await {
+                Ok(csv_list) => {
+                    for csv_obj in &csv_list.items {
+                        let name = csv_obj.metadata.name.as_deref().unwrap_or("");
+                        let uid = csv_obj.metadata.uid.as_deref().unwrap_or("");
+
+                        if name.is_empty() || uid.is_empty() {
+                            continue;
+                        }
+
+                        // Check if this CSV was in baseline (same name AND same UID)
+                        let in_baseline =
+                            baseline.iter().any(|b| b.name == name && b.uid == uid);
+
+                        if !in_baseline {
+                            // New CSV or recreated CSV not in baseline
+                            return OperatorGenerationState::Unknown(format!(
+                                "CSV '{}' (uid: {}) in {} was not present at plan time — \
+                                 possible new operator generation",
+                                name, uid, install_namespace
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return OperatorGenerationState::Unknown(format!(
+                        "failed to LIST CSVs in {} for baseline comparison: {}",
+                        install_namespace, e
+                    ));
+                }
+            }
+        }
+    }
+
+    // All checks succeeded: saved identities gone, no new CSVs since baseline
     OperatorGenerationState::Absent
 }
 
@@ -439,22 +487,16 @@ pub async fn run_residual_audit(
         }
     }
 
-    // Phase D: Known CR API scan using discovery-derived GVR/scope
-    let covered_gvks: HashSet<(&str, &str)> = NATIVE_WORKLOAD_TARGETS
-        .iter()
-        .chain(OLM_TARGETS.iter())
-        .chain(OPENSHIFT_TARGETS.iter())
-        .map(|t| (t.group, t.kind))
-        .collect();
-
-    match &ctx.known_gvrs {
+    // Phase D: Owned CR API scan using owned_cr_gvrs (NOT known_gvrs which
+    // includes Namespace/CRD/APIService etc. from plan KEEP actions)
+    match &ctx.owned_cr_gvrs {
         None => {
-            // Old journal without GVR info — mark incomplete if operator owns CRDs
+            // Old journal without owned_cr_gvrs — mark incomplete if operator owns CRDs
             if !journal.operator.owned_crds.is_empty() {
                 audit.scan_errors.push(AuditScanError {
-                    resource_type: "(known CR APIs)".to_string(),
+                    resource_type: "(owned CR APIs)".to_string(),
                     namespace: "(all)".to_string(),
-                    error: "Journal lacks GVR/scope metadata (pre-v2). \
+                    error: "Journal lacks owned CR GVR metadata. \
                             Residual CRs beyond plan resources are not covered."
                         .to_string(),
                 });
@@ -462,8 +504,35 @@ pub async fn run_residual_audit(
         }
         Some(gvrs) => {
             for gvr in gvrs {
-                if covered_gvks.contains(&(gvr.group.as_str(), gvr.kind.as_str())) {
-                    continue;
+                // Check if this GVR's governing CRD was approved for deletion
+                // and confirmed Gone (GoneByCrdRemoval exception for --prune-apis)
+                let crd_name = format!("{}.{}", gvr.plural, gvr.group);
+                let crd_approved_delete = plan
+                    .phases
+                    .iter()
+                    .flat_map(|p| &p.actions)
+                    .any(|a| {
+                        matches!(a, Action::Delete { resource, .. }
+                            if resource.kind == "CustomResourceDefinition"
+                                && resource.name == crd_name)
+                    });
+
+                if crd_approved_delete {
+                    let crd_still_present = audit
+                        .planned_delete_still_present
+                        .iter()
+                        .any(|item| {
+                            item.resource.kind == "CustomResourceDefinition"
+                                && item.resource.name == crd_name
+                        });
+
+                    if !crd_still_present {
+                        // CRD approved for delete and confirmed gone —
+                        // CR API 404 is expected (GoneByCrdRemoval)
+                        audit.coverage.requested_probes += 1;
+                        audit.coverage.succeeded_probes += 1;
+                        continue;
+                    }
                 }
 
                 match gvr.scope {
@@ -548,6 +617,33 @@ pub async fn run_residual_audit(
         }
     }
 
+    // Unresolved plan GVKs → cannot probe those plan resources
+    match &ctx.unresolved_gvks {
+        None => {
+            // Old journal without GVK resolution metadata → AuditIncomplete
+            audit.scan_errors.push(AuditScanError {
+                resource_type: "(plan GVK resolution)".to_string(),
+                namespace: "(all)".to_string(),
+                error: "Journal lacks plan GVK resolution metadata. \
+                        Cannot verify exact-GET probe coverage."
+                    .to_string(),
+            });
+        }
+        Some(unresolved) => {
+            for (g, v, k) in unresolved {
+                audit.scan_errors.push(AuditScanError {
+                    resource_type: format!("{}/{}/{}", g, v, k),
+                    namespace: "(all)".to_string(),
+                    error: format!(
+                        "Plan GVK {}/{} '{}' could not be resolved via API discovery. \
+                         Exact-GET probes for this type are not possible.",
+                        g, v, k
+                    ),
+                });
+            }
+        }
+    }
+
     Ok(audit)
 }
 
@@ -602,8 +698,24 @@ fn classify_list_results(
     for obj in items {
         let name = match &obj.metadata.name {
             Some(n) => n.clone(),
-            None => continue,
+            None => {
+                audit.scan_errors.push(AuditScanError {
+                    resource_type: kind.to_string(),
+                    namespace: namespace.to_string(),
+                    error: "Object found without metadata.name — identity unknown".to_string(),
+                });
+                continue;
+            }
         };
+
+        let uid = obj.metadata.uid.clone();
+        if uid.is_none() {
+            audit.scan_errors.push(AuditScanError {
+                resource_type: kind.to_string(),
+                namespace: namespace.to_string(),
+                error: format!("{}/{} has no UID — identity unverifiable", kind, name),
+            });
+        }
 
         let obj_ns = obj.metadata.namespace.clone();
         let key = (group.to_string(), kind.to_string(), obj_ns.clone(), name.clone());
@@ -617,7 +729,7 @@ fn classify_list_results(
             kind: kind.to_string(),
             namespace: obj_ns,
             name,
-            uid: obj.metadata.uid.clone(),
+            uid,
         };
 
         let evidence = classify_evidence(&obj, ctx, target_uids);
@@ -1428,5 +1540,92 @@ mod tests {
         assert!(audit.planned_delete_still_present[0].live_uid.is_none());
         // ResidualEvidence defaults: owner_ref_match=false
         assert!(!audit.likely_operator_residual[0].evidence.owner_ref_match);
+    }
+
+    #[test]
+    fn test_residual_status_unresolved_gvks_none_is_incomplete() {
+        // If unresolved_gvks is None (old journal), audit scan pushes a
+        // scan_error for plan GVK resolution → AuditIncomplete
+        let mut audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 5,
+                succeeded_probes: 5,
+            },
+            scan_errors: vec![AuditScanError {
+                resource_type: "(plan GVK resolution)".to_string(),
+                namespace: "(all)".to_string(),
+                error: "Journal lacks plan GVK resolution metadata.".to_string(),
+            }],
+        };
+        let status = residual_status_from_audit(&audit);
+        assert!(matches!(status, ResidualStatus::AuditIncomplete));
+    }
+
+    #[test]
+    fn test_plan_resources_different_group_not_excluded() {
+        // Verify that resources from different API groups with same Kind/name
+        // are NOT excluded from scan results
+        let plan_resources: HashSet<(String, String, Option<String>, String)> =
+            [("apps".to_string(), "Deployment".to_string(),
+              Some("ns".to_string()), "my-dep".to_string())]
+            .into_iter()
+            .collect();
+
+        // Same kind/name but different group should NOT be excluded
+        let key = (
+            "custom.io".to_string(),
+            "Deployment".to_string(),
+            Some("ns".to_string()),
+            "my-dep".to_string(),
+        );
+        assert!(!plan_resources.contains(&key));
+
+        // Same group/kind/name SHOULD be excluded
+        let key2 = (
+            "apps".to_string(),
+            "Deployment".to_string(),
+            Some("ns".to_string()),
+            "my-dep".to_string(),
+        );
+        assert!(plan_resources.contains(&key2));
+    }
+
+    #[test]
+    fn test_classify_list_results_missing_uid_creates_scan_error() {
+        // Objects without UID should generate a scan_error
+        use crate::teardown::journal::AuditContext;
+        let mut audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![],
+            unattributed: vec![],
+            coverage: AuditCoverage { requested_probes: 0, succeeded_probes: 0 },
+            scan_errors: vec![],
+        };
+        let ctx = AuditContext::default();
+        let target_uids = HashSet::new();
+        let plan_resources = HashSet::new();
+
+        // Create a DynamicObject with name but no UID
+        let mut obj = DynamicObject::new("test-obj", &ApiResource::erase::<k8s_openapi::api::core::v1::Service>(&()));
+        obj.metadata.namespace = Some("ns".to_string());
+        obj.metadata.uid = None;
+
+        classify_list_results(
+            vec![obj],
+            "Service", "", "v1", "ns",
+            &ctx, &target_uids, &plan_resources, &mut audit,
+        );
+
+        // Should have a scan error about missing UID
+        assert!(audit.scan_errors.iter().any(|e| e.error.contains("no UID")));
+        // Resource should still be classified (not silently dropped)
+        assert_eq!(audit.unattributed.len(), 1);
     }
 }

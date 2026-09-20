@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 3;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -88,6 +88,27 @@ pub struct AuditContext {
     /// Some([...]) = listed CRDs unresolved → AuditIncomplete.
     #[serde(default)]
     pub unresolved_crds: Option<Vec<String>>,
+    /// Plan action GVKs that could not be resolved to a plural/scope via API discovery.
+    /// None = info not captured (old journal) → AuditIncomplete.
+    /// Some([]) = all plan GVKs resolved.
+    /// Some([...]) = listed GVKs unresolved → AuditIncomplete.
+    #[serde(default)]
+    pub unresolved_gvks: Option<Vec<(String, String, String)>>,
+    /// GVRs resolved from owned CRDs only (for Phase D LIST scan).
+    /// Separate from known_gvrs to avoid scanning Namespace/CRD/APIService etc.
+    #[serde(default)]
+    pub owned_cr_gvrs: Option<Vec<KnownGvr>>,
+    /// Pre-execution CSV inventory in install namespace (name → uid).
+    /// Used by generation check to detect new CSVs not present at plan time.
+    /// None = not captured (old journal) → generation check returns Unknown.
+    #[serde(default)]
+    pub csv_baseline: Option<Vec<CsvBaselineEntry>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CsvBaselineEntry {
+    pub name: String,
+    pub uid: String,
 }
 
 /// A GVR resolved during plan generation via API discovery.
@@ -117,6 +138,9 @@ impl Default for AuditContext {
             managed_field_managers: HashSet::new(),
             known_gvrs: None,
             unresolved_crds: None,
+            unresolved_gvks: None,
+            owned_cr_gvrs: None,
+            csv_baseline: None,
         }
     }
 }
@@ -269,14 +293,19 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
         );
     }
 
-    // v1 → v2: discard old audit data (lacks UID tracking / recreation state)
-    // v2 → v3: discard old audit if unresolved_crds is None with owned CRDs
-    //          (v2 journals lack CRD resolution tracking → false complete)
+    // Schema migration chain:
+    // v1 → v2: discard audit (lacks UID tracking / recreation state)
+    // v2 → v3: discard audit if unresolved_crds is None with owned CRDs
+    // v3 → v4: discard audit if unresolved_gvks/csv_baseline is None
+    //          (v3 lacks GVK resolution and CSV baseline tracking → false complete)
     if journal.schema_version < RUN_JOURNAL_SCHEMA_VERSION {
         let needs_audit_reset = journal.schema_version < 2
             || (journal.schema_version < 3
                 && journal.audit_context.unresolved_crds.is_none()
-                && !journal.operator.owned_crds.is_empty());
+                && !journal.operator.owned_crds.is_empty())
+            || (journal.schema_version < 4
+                && (journal.audit_context.unresolved_gvks.is_none()
+                    || journal.audit_context.csv_baseline.is_none()));
 
         if needs_audit_reset && journal.last_residual_audit.is_some() {
             eprintln!(
@@ -468,13 +497,15 @@ pub fn build_audit_context(
     }
 
     // Also resolve owned CRDs — residual CR instances may exist outside the plan.
+    // These go into owned_cr_gvrs (separate from known_gvrs) so Phase D only scans
+    // owned CR APIs, not Namespace/CRD/APIService etc. from plan KEEP actions.
     // CRD name format: "pluralname.group" (e.g. "datascienceclusters.datasciencecluster.opendatahub.io")
     let mut unresolved_crds: Vec<String> = Vec::new();
+    let mut owned_cr_gvrs: Vec<KnownGvr> = Vec::new();
     for op in operators {
         for crd_name in &op.owned_crds {
             let parts: Vec<&str> = crd_name.splitn(2, '.').collect();
             if parts.len() < 2 {
-                // CRD name parse failure — cannot resolve GVR
                 unresolved_crds.push(crd_name.clone());
                 continue;
             }
@@ -483,6 +514,7 @@ pub fn build_audit_context(
             let mut found = false;
             for ((g, k), info) in gk_map.iter() {
                 if g == group && info.plural == plural {
+                    // Add to known_gvrs for exact-GET probe resolution
                     let gk_key = (g.clone(), k.clone());
                     if seen_gvks.insert(gk_key) {
                         known_gvrs.push(KnownGvr {
@@ -497,6 +529,18 @@ pub fn build_audit_context(
                             },
                         });
                     }
+                    // Also add to owned_cr_gvrs for Phase D LIST
+                    owned_cr_gvrs.push(KnownGvr {
+                        group: info.group.clone(),
+                        version: info.version.clone(),
+                        kind: k.clone(),
+                        plural: info.plural.clone(),
+                        scope: if info.namespaced {
+                            GvrScope::Namespaced
+                        } else {
+                            GvrScope::Cluster
+                        },
+                    });
                     found = true;
                     break;
                 }
@@ -518,6 +562,9 @@ pub fn build_audit_context(
 
     ctx.known_gvrs = Some(known_gvrs);
     ctx.unresolved_crds = Some(unresolved_crds);
+    ctx.unresolved_gvks = Some(unresolved_gvks);
+    ctx.owned_cr_gvrs = Some(owned_cr_gvrs);
+    // csv_baseline is captured separately in create_run_journal (requires async client)
     ctx
 }
 
@@ -615,7 +662,7 @@ mod tests {
 
         // Schema migrated to v3
         assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
-        assert_eq!(journal.schema_version, 3);
+        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
 
         // Old audit discarded (operator has owned CRDs but no unresolved_crds metadata)
         assert!(journal.last_residual_audit.is_none());
@@ -629,9 +676,9 @@ mod tests {
     }
 
     #[test]
-    fn test_load_journal_v3_with_no_owned_crds_keeps_audit() {
-        // A v2 journal with NO owned CRDs → audit should NOT be discarded
-        // (no CRD resolution concern)
+    fn test_load_journal_v2_no_owned_crds_discards_audit_for_v4() {
+        // A v2 journal with NO owned CRDs — still discards audit because
+        // csv_baseline and unresolved_gvks are missing (v4 safety requirement)
         let v2_journal = r#"{
             "run_id": "run-test-no-crds",
             "schema_version": 2,
@@ -700,10 +747,10 @@ mod tests {
 
         let journal = load_journal(&path).unwrap();
 
-        assert_eq!(journal.schema_version, 3);
-        // Audit preserved — no owned CRDs, so CRD resolution concern doesn't apply
-        assert!(journal.last_residual_audit.is_some());
-        assert!(matches!(journal.residual_status, ResidualStatus::NoneObservedInScope));
+        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
+        // v4 migration discards audit — unresolved_gvks and csv_baseline are None
+        assert!(journal.last_residual_audit.is_none());
+        assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
