@@ -160,15 +160,25 @@ pub struct ResidualAudit {
 pub struct ResidualItem {
     pub resource: ResourceId,
     pub planned_action: String,
+    #[serde(default)]
     pub live_uid: Option<String>,
+    #[serde(default = "RecreationState::default_unknown")]
     pub recreation: RecreationState,
 }
 
+/// Recreation state cannot default to SameResource (false safety).
+/// Default is Unknown — which triggers AuditIncomplete, blocking cleanup.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum RecreationState {
     SameResource,
     Recreated,
     Unknown,
+}
+
+impl RecreationState {
+    fn default_unknown() -> Self {
+        RecreationState::Unknown
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -591,40 +601,43 @@ enum ProbeResult {
 
 /// Map well-known Kinds to their API plural. Returns None for unknown types
 /// where guessing would produce false Gone results.
-fn known_plural(kind: &str) -> Option<&'static str> {
-    match kind {
-        // Native workloads
-        "Deployment" => Some("deployments"),
-        "StatefulSet" => Some("statefulsets"),
-        "DaemonSet" => Some("daemonsets"),
-        "Service" => Some("services"),
-        "Pod" => Some("pods"),
-        "ReplicaSet" => Some("replicasets"),
-        "ConfigMap" => Some("configmaps"),
-        "Secret" => Some("secrets"),
-        "ServiceAccount" => Some("serviceaccounts"),
-        "Namespace" => Some("namespaces"),
-        // OpenShift
-        "Route" => Some("routes"),
-        "ImageStream" => Some("imagestreams"),
-        // OLM
-        "Subscription" => Some("subscriptions"),
-        "ClusterServiceVersion" => Some("clusterserviceversions"),
-        "InstallPlan" => Some("installplans"),
-        "OperatorGroup" => Some("operatorgroups"),
-        // CRDs
-        "CustomResourceDefinition" => Some("customresourcedefinitions"),
+/// Resolve plural for a known (group, kind) pair.
+/// Uses both group and kind to avoid cross-group collisions.
+fn known_plural_for_gvk(group: &str, kind: &str) -> Option<&'static str> {
+    match (group, kind) {
+        ("", "Service") => Some("services"),
+        ("", "Namespace") => Some("namespaces"),
+        ("", "ConfigMap") => Some("configmaps"),
+        ("", "ServiceAccount") => Some("serviceaccounts"),
+        ("", "Pod") => Some("pods"),
+        ("", "Secret") => Some("secrets"),
+        ("apps", "Deployment") => Some("deployments"),
+        ("apps", "StatefulSet") => Some("statefulsets"),
+        ("apps", "DaemonSet") => Some("daemonsets"),
+        ("apps", "ReplicaSet") => Some("replicasets"),
+        ("route.openshift.io", "Route") => Some("routes"),
+        ("image.openshift.io", "ImageStream") => Some("imagestreams"),
+        ("operators.coreos.com", "Subscription") => Some("subscriptions"),
+        ("operators.coreos.com", "ClusterServiceVersion") => Some("clusterserviceversions"),
+        ("operators.coreos.com", "InstallPlan") => Some("installplans"),
+        ("operators.coreos.com", "OperatorGroup") => Some("operatorgroups"),
+        ("apiextensions.k8s.io", "CustomResourceDefinition") => Some("customresourcedefinitions"),
         _ => None,
     }
 }
 
+/// Probe a single resource by exact GET.
+/// GET 404 alone does not prove the object is Gone — the API endpoint itself
+/// may be absent (CRD removed). After 404, we verify endpoint existence via
+/// a minimal LIST. Only if the endpoint responds successfully is 404 treated
+/// as object Gone.
 async fn probe_resource(client: &Client, resource: &ResourceId) -> ProbeResult {
-    let plural = match known_plural(&resource.kind) {
+    let plural = match known_plural_for_gvk(&resource.group, &resource.kind) {
         Some(p) => p.to_string(),
         None => {
             return ProbeResult::Error(format!(
-                "Unknown plural for Kind '{}' — cannot safely probe without GVR metadata",
-                resource.kind
+                "Unknown GVR for {}/{} '{}' — cannot safely probe without discovery metadata",
+                resource.group, resource.kind, resource.name
             ));
         }
     };
@@ -643,7 +656,19 @@ async fn probe_resource(client: &Client, resource: &ResourceId) -> ProbeResult {
         Ok(obj) => ProbeResult::Present {
             uid: obj.metadata.uid,
         },
-        Err(kube::Error::Api(ref resp)) if resp.code == 404 => ProbeResult::Gone,
+        Err(kube::Error::Api(ref resp)) if resp.code == 404 => {
+            // GET 404 could mean object gone OR endpoint gone (CRD removed).
+            // Verify endpoint exists via LIST(limit=1). If LIST succeeds,
+            // the object is genuinely gone. If LIST fails, we can't tell.
+            match api.list(&ListParams::default().limit(1)).await {
+                Ok(_) => ProbeResult::Gone,
+                Err(_) => ProbeResult::Error(format!(
+                    "GET returned 404 but API endpoint verification failed for {}/{}; \
+                     cannot distinguish object absence from endpoint absence",
+                    resource.kind, resource.name
+                )),
+            }
+        }
         Err(e) => ProbeResult::Error(e.to_string()),
     }
 }
