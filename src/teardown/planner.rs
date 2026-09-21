@@ -435,6 +435,7 @@ pub struct CrInstance {
     pub provenance: Provenance,
     pub discovery_source: DiscoverySource,
     pub decisive_part_of_seeds: Vec<String>,
+    pub ownerref_to_owned_api_kind: Option<String>,
 }
 
 pub fn resolve_operator_targets(
@@ -638,6 +639,7 @@ async fn discover_one_crd(
                 provenance: Provenance::Unknown,
                 discovery_source: DiscoverySource::Direct,
                 decisive_part_of_seeds: vec![],
+                ownerref_to_owned_api_kind: None,
             })
         })
         .collect::<Vec<_>>();
@@ -774,6 +776,7 @@ async fn discover_api_service_instances(
                                 provenance: Provenance::Unknown,
                                 discovery_source: DiscoverySource::Direct,
                                 decisive_part_of_seeds: vec![],
+                                ownerref_to_owned_api_kind: None,
                             })
                         })
                         .collect();
@@ -819,20 +822,62 @@ async fn discover_api_service_instances(
     }
 }
 
-fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
-    // ownerRef pointing to operator's CSV or Deployment → Managed
-    for (ref_kind, ref_name, _) in &cr.owner_refs {
+fn owned_crd_kinds(operators: &[&OperatorInstance], gk_map: &GroupKindMap) -> HashSet<String> {
+    let mut kinds = HashSet::new();
+    for op in operators {
+        for crd_name in &op.owned_crds {
+            let (plural, group) = match crd_name.split_once('.') {
+                Some((p, g)) => (p, g),
+                None => continue,
+            };
+            // Find kind from gk_map by matching group + plural
+            for ((g, k), info) in gk_map {
+                if g == group && info.plural == plural {
+                    kinds.insert(k.clone());
+                }
+            }
+        }
+    }
+    kinds
+}
+
+fn classify_provenance(
+    cr: &mut CrInstance,
+    operators: &[&OperatorInstance],
+    owned_kinds: &HashSet<String>,
+) {
+    // ownerRef pointing to operator's CSV → Managed ONLY if UID matches
+    // (name-only match would accept stale generation's CSV)
+    for (ref_kind, ref_name, ref_uid) in &cr.owner_refs {
         for op in operators {
             if ref_kind == "ClusterServiceVersion" && ref_name == &op.csv.name {
-                cr.provenance = Provenance::Managed;
-                return;
-            }
-            for deploy in &op.deployments {
-                if ref_kind == "Deployment" && ref_name == deploy {
+                let csv_uid = op.csv.uid.as_deref().unwrap_or("");
+                if !csv_uid.is_empty() && !ref_uid.is_empty() && ref_uid == csv_uid {
                     cr.provenance = Provenance::Managed;
                     return;
                 }
+                // Same name but UID mismatch or missing → LikelyManaged (not Managed)
+                cr.provenance = Provenance::LikelyManaged;
+                return;
             }
+            // Deployment ownerRef: name match only (no UID snapshot in OperatorInstance)
+            // → LikelyManaged, not Managed (cannot verify identity)
+            for deploy in &op.deployments {
+                if ref_kind == "Deployment" && ref_name == deploy {
+                    cr.provenance = Provenance::LikelyManaged;
+                    return;
+                }
+            }
+        }
+    }
+
+    // ownerRef kind matches an owned CRD kind (via authoritative gk_map)
+    // Attribution evidence only — does NOT change provenance or grant DELETE authority
+    for (ref_kind, ref_name, ref_uid) in &cr.owner_refs {
+        if owned_kinds.contains(ref_kind.as_str()) {
+            cr.ownerref_to_owned_api_kind =
+                Some(format!("{}/{} (uid: {})", ref_kind, ref_name, ref_uid));
+            return;
         }
     }
 
@@ -1891,8 +1936,9 @@ pub async fn generate_teardown_plan(
     }
 
     // Classify provenance (applies to both direct and related CRs)
+    let owned_kinds = owned_crd_kinds(target_operators, gk_map);
     for cr in &mut cr_instances {
-        classify_provenance(cr, target_operators);
+        classify_provenance(cr, target_operators, &owned_kinds);
     }
 
     let review_provenance_count = cr_instances
@@ -2262,9 +2308,17 @@ pub async fn generate_teardown_plan(
                 }
             }
             (GraphPosition::Root, _) if approval == DeleteApprovalClass::ExplicitOnly => {
+                let reason = if let Some(ref evidence) = cr.ownerref_to_owned_api_kind {
+                    format!(
+                        "ownerRef points to operator-owned API kind: {} (parent absent, kind match only — explicit approval required)",
+                        evidence
+                    )
+                } else {
+                    "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string()
+                };
                 Action::Review {
                     resource: cr.id.clone(),
-                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    reason,
                     metadata: build_review_metadata(cr, position, approval),
                 }
             }
@@ -2284,9 +2338,17 @@ pub async fn generate_teardown_plan(
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
             (GraphPosition::Independent, _) if approval == DeleteApprovalClass::ExplicitOnly => {
+                let reason = if let Some(ref evidence) = cr.ownerref_to_owned_api_kind {
+                    format!(
+                        "ownerRef points to operator-owned API kind: {} (parent absent, kind match only — explicit approval required)",
+                        evidence
+                    )
+                } else {
+                    "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string()
+                };
                 Action::Review {
                     resource: cr.id.clone(),
-                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    reason,
                     metadata: build_review_metadata(cr, position, approval),
                 }
             }
@@ -3373,6 +3435,16 @@ fn print_plan_tree(plan: &TeardownPlan) {
         plan.blockers.len(),
         plan.warnings.len()
     );
+    if !plan.blockers.is_empty() {
+        let explicit_only_count = plan.blockers.len();
+        println!(
+            "\n  ℹ {} blocker(s) require explicit approval (--approve-delete all does not cover ExplicitOnly items).",
+            explicit_only_count
+        );
+        println!(
+            "    Use the exact --approve-delete commands shown above, or approve individually in --tui."
+        );
+    }
 }
 
 fn print_plan_json(plan: &TeardownPlan) {
@@ -3399,7 +3471,7 @@ mod tests {
                 kind: "ClusterServiceVersion".to_string(),
                 namespace: Some("test-ns".to_string()),
                 name: csv_name.to_string(),
-                uid: None,
+                uid: Some("csv-uid-current".to_string()),
             },
             csv_phase: "Succeeded".to_string(),
             owned_crds: vec![],
@@ -3438,6 +3510,7 @@ mod tests {
             provenance: Provenance::Unknown,
             discovery_source: DiscoverySource::Direct,
             decisive_part_of_seeds: vec![],
+            ownerref_to_owned_api_kind: None,
         }
     }
 
@@ -3529,17 +3602,41 @@ mod tests {
             vec![(
                 "ClusterServiceVersion".to_string(),
                 "rhods-operator.3.5.0".to_string(),
-                "csv-uid".to_string(),
+                "csv-uid-current".to_string(), // matches operator CSV UID
             )],
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::Managed));
     }
 
     #[test]
-    fn provenance_ownerref_to_deployment_is_managed() {
+    fn provenance_ownerref_to_csv_stale_uid_not_managed() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-1",
+            vec![(
+                "ClusterServiceVersion".to_string(),
+                "rhods-operator.3.5.0".to_string(),
+                "stale-csv-uid".to_string(), // does NOT match current CSV UID
+            )],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr, &ops, &HashSet::new());
+        assert!(
+            matches!(cr.provenance, Provenance::LikelyManaged),
+            "stale CSV UID ownerRef must NOT grant Managed: got {:?}",
+            cr.provenance
+        );
+    }
+
+    #[test]
+    fn provenance_ownerref_to_deployment_is_likely_managed() {
         let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
         let ops: Vec<&OperatorInstance> = vec![&op];
         let mut cr = make_cr_instance(
@@ -3554,8 +3651,11 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
-        assert!(matches!(cr.provenance, Provenance::Managed));
+        classify_provenance(&mut cr, &ops, &HashSet::new());
+        assert!(
+            matches!(cr.provenance, Provenance::LikelyManaged),
+            "Deployment ownerRef (no UID snapshot) must be LikelyManaged, not Managed"
+        );
     }
 
     #[test]
@@ -3568,7 +3668,7 @@ mod tests {
             "true".to_string(),
         );
         let mut cr = make_cr_instance("MyResource", "test", "uid-1", vec![], labels, vec![]);
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::LikelyManaged));
     }
 
@@ -3582,7 +3682,7 @@ mod tests {
             "something".to_string(),
         );
         let mut cr = make_cr_instance("MyResource", "test", "uid-1", vec![], labels, vec![]);
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::Unknown));
     }
 
@@ -3598,7 +3698,7 @@ mod tests {
             HashMap::new(),
             vec!["test-controller".to_string()],
         );
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::LikelyManaged));
     }
 
@@ -3691,7 +3791,7 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::Unknown));
     }
 
@@ -3809,12 +3909,12 @@ mod tests {
             vec![(
                 "ClusterServiceVersion".to_string(),
                 "test-op.v1".to_string(),
-                "csv-uid".to_string(),
+                "csv-uid-current".to_string(), // matches operator CSV UID
             )],
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr_managed, &ops);
+        classify_provenance(&mut cr_managed, &ops, &HashSet::new());
         assert!(matches!(cr_managed.provenance, Provenance::Managed));
         assert!(!is_exact_delete_approvable(
             &cr_managed,
@@ -3835,7 +3935,7 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr_unknown, &ops);
+        classify_provenance(&mut cr_unknown, &ops, &HashSet::new());
         assert!(matches!(cr_unknown.provenance, Provenance::Unknown));
         assert!(is_exact_delete_approvable(
             &cr_unknown,
