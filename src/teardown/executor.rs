@@ -451,7 +451,7 @@ pub async fn execute_plan_with_store(
                 }
             } else {
                 // CRD/APIService live count checks (must be sequential for safety)
-                let mut api_blocked: HashSet<String> = HashSet::new();
+                let mut api_blocked: HashSet<ResourceId> = HashSet::new();
                 for (resource, _) in &delete_actions {
                     let live = if resource.kind == "CustomResourceDefinition" {
                         Some(
@@ -486,7 +486,7 @@ pub async fn execute_plan_with_store(
                                     resource.clone(),
                                     format!("{} live instances remain", n),
                                 ));
-                                api_blocked.insert(resource.name.clone());
+                                api_blocked.insert(resource.clone());
                             }
                             LiveCount::Unknown(err) => {
                                 eprintln!(
@@ -502,9 +502,99 @@ pub async fn execute_plan_with_store(
                                 result
                                     .failed
                                     .push((resource.clone(), format!("cannot verify: {}", err)));
-                                api_blocked.insert(resource.name.clone());
+                                api_blocked.insert(resource.clone());
                             }
                             LiveCount::Zero => {}
+                        }
+                    }
+                }
+
+                // DSCI guard: DSCInitialization DELETE requires DataScienceCluster LIST = 0
+                let has_dsci_delete = delete_actions.iter().any(|(r, _)| {
+                    r.kind == "DSCInitialization" && r.group == "dscinitialization.opendatahub.io"
+                });
+                if has_dsci_delete && !dry_run {
+                    // Resolve DSC API via discovery (not hardcoded version)
+                    let dsc_gk = (
+                        "datasciencecluster.opendatahub.io".to_string(),
+                        "DataScienceCluster".to_string(),
+                    );
+                    let dsc_list_result = if let Some(dsc_info) = gk_map.get(&dsc_gk) {
+                        let dsc_gvk =
+                            kube::core::GroupVersion::gv(&dsc_info.group, &dsc_info.version)
+                                .with_kind("DataScienceCluster");
+                        let dsc_ar = kube::api::ApiResource::from_gvk_with_plural(
+                            &dsc_gvk,
+                            &dsc_info.plural,
+                        );
+                        let dsc_api: kube::api::Api<kube::api::DynamicObject> =
+                            kube::api::Api::all_with(client.clone(), &dsc_ar);
+                        Some(dsc_api.list(&ListParams::default().limit(1)).await)
+                    } else {
+                        None
+                    };
+                    match dsc_list_result {
+                        None => {
+                            eprintln!(
+                                "  \x1b[1;31m⛔ BLOCKED\x1b[0m Cannot resolve DataScienceCluster API — DSCI DELETE blocked (fail-closed)"
+                            );
+                            for (resource, _) in &delete_actions {
+                                if resource.kind == "DSCInitialization"
+                                    && resource.group == "dscinitialization.opendatahub.io"
+                                {
+                                    result.failed.push((
+                                        resource.clone(),
+                                        "Cannot resolve DataScienceCluster API — fail-closed"
+                                            .to_string(),
+                                    ));
+                                    api_blocked.insert(resource.clone());
+                                }
+                            }
+                        }
+                        Some(Err(e)) => {
+                            eprintln!(
+                                "  \x1b[1;31m⛔ BLOCKED\x1b[0m Cannot LIST DataScienceCluster: {} — DSCI DELETE blocked (fail-closed)",
+                                e
+                            );
+                            for (resource, _) in &delete_actions {
+                                if resource.kind == "DSCInitialization"
+                                    && resource.group == "dscinitialization.opendatahub.io"
+                                {
+                                    result.failed.push((
+                                        resource.clone(),
+                                        format!(
+                                            "Cannot LIST DataScienceCluster: {} — fail-closed",
+                                            e
+                                        ),
+                                    ));
+                                    api_blocked.insert(resource.clone());
+                                }
+                            }
+                        }
+                        Some(Ok(list)) if list.items.is_empty() => {
+                            eprintln!("  ✓ DataScienceCluster LIST = 0 — DSCI DELETE safe");
+                        }
+                        Some(Ok(list)) => {
+                            let names: Vec<String> = list
+                                .items
+                                .iter()
+                                .filter_map(|o| o.metadata.name.clone())
+                                .collect();
+                            eprintln!(
+                                "  \x1b[1;31m⛔ BLOCKED\x1b[0m DataScienceCluster still exists: {:?} — DSCI DELETE blocked",
+                                names
+                            );
+                            for (resource, _) in &delete_actions {
+                                if resource.kind == "DSCInitialization"
+                                    && resource.group == "dscinitialization.opendatahub.io"
+                                {
+                                    result.failed.push((
+                                        resource.clone(),
+                                        "DataScienceCluster still exists — DSCI DELETE blocked by webhook prerequisite".to_string(),
+                                    ));
+                                    api_blocked.insert(resource.clone());
+                                }
+                            }
                         }
                     }
                 }
@@ -512,7 +602,7 @@ pub async fn execute_plan_with_store(
                 // Parallel DELETE (excluding blocked APIs)
                 let eligible: Vec<_> = delete_actions
                     .iter()
-                    .filter(|(r, _)| !api_blocked.contains(&r.name))
+                    .filter(|(r, _)| !api_blocked.contains(r))
                     .collect();
 
                 let km = Arc::new(kind_map.clone());

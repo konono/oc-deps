@@ -2780,10 +2780,7 @@ pub async fn generate_teardown_plan(
     for phase in &operand_phases {
         for action in &phase.actions {
             if let Action::Review {
-                resource,
-                reason,
-                metadata,
-                ..
+                resource, reason, ..
             } = action
             {
                 let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
