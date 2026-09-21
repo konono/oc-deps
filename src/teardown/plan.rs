@@ -196,7 +196,7 @@ pub struct ReviewMetadata {
     pub provenance: Option<ProvenanceSer>,
     pub discovery_source: Option<DiscoverySourceSer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub decisive_part_of_seeds: Vec<String>,
+    pub decisive_label_pairs: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

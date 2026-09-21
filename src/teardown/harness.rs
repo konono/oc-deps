@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn test_plan_review_to_execution_scenario() {
         let events = run_scenario(
-            AppState::new(),
+            AppState::new(false),
             &[
                 AppCommand::ApproveReview { resource: res("a") },
                 AppCommand::KeepReview { resource: res("b") },
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn test_execution_rejects_plan_changes() {
         let events = run_scenario(
-            AppState::new(),
+            AppState::new(false),
             &[
                 AppCommand::StartExecution,
                 AppCommand::ApproveReview { resource: res("a") },
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_pause_and_finish_scenario() {
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         // Finish requires ResidualCleanup screen
         apply_command(&mut state, &AppCommand::StartExecution).unwrap();
         state.screen = AppScreen::ResidualCleanup;
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_residual_cleanup_scenario() {
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         state.screen = AppScreen::ResidualCleanup;
 
         let events = run_scenario(
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn test_residual_ops_rejected_outside_cleanup_screen() {
         let events = run_scenario(
-            AppState::new(), // PlanReview
+            AppState::new(false), // PlanReview
             &[
                 AppCommand::SelectResidual { resource: res("x") },
                 AppCommand::DeleteSelected,
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn test_snapshot_json_serializable() {
         let events = run_scenario(
-            AppState::new(),
+            AppState::new(false),
             &[AppCommand::ApproveReview { resource: res("a") }],
         );
 
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn test_full_lifecycle_scenario() {
         // PlanReview → approve → start → (simulated execution) → residual → finish
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         apply_command(
             &mut state,
             &AppCommand::ApproveReview {
@@ -349,7 +349,7 @@ mod tests {
         // The state machine only enforces screen transitions.
         // Here we verify that the DELETE command is accepted by the
         // state machine (the executor will check audit completeness).
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         state.screen = AppScreen::ResidualCleanup;
 
         let events = run_scenario(
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn test_crash_resume_state_transitions() {
         // Simulates: Execution → Pause, then ResidualCleanup → Finish
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         state.screen = AppScreen::Executing;
         apply_command(&mut state, &AppCommand::Pause).unwrap();
         assert_eq!(state.screen, AppScreen::Paused);
@@ -390,7 +390,7 @@ mod tests {
     fn test_bound_plan_frozen_after_start() {
         // After StartExecution, plan modifications must be rejected.
         // This tests the actual validate_command path, not just state.
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
 
         // Pre-start: approve a REVIEW → OK
         let r = apply_command(
@@ -425,7 +425,7 @@ mod tests {
     fn test_audit_incomplete_prevents_residual_operations() {
         // Residual operations are only allowed in ResidualCleanup screen.
         // If we're in Executing (audit not yet run), they must be rejected.
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         state.screen = AppScreen::Executing;
 
         let r = apply_command(
@@ -452,7 +452,7 @@ mod tests {
     fn test_full_screen_transition_chain() {
         // PlanReview → Start → Executing → (auto-transition to ResidualCleanup
         // happens via executor, not AppCommand) → Finish
-        let mut state = AppState::new();
+        let mut state = AppState::new(false);
         assert_eq!(state.screen, AppScreen::PlanReview);
 
         let _ = apply_command(&mut state, &AppCommand::StartExecution);

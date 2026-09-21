@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
                             use crate::teardown::app::{
                                 AppCommand, AppScreen, AppState, AppStateSnapshot, apply_command,
                             };
-                            let mut app = AppState::new();
+                            let mut app = AppState::new(approve_finalizer_recovery);
                             let mut plan = plan.clone(); // mutable copy for script overrides
 
                             // Read commands from script file (one JSON per line)
@@ -507,7 +507,7 @@ async fn main() -> Result<()> {
                                             &plan,
                                             &target_operators,
                                             &gk_map,
-                                            approve_finalizer_recovery,
+                                            app.finalizer_recovery_approved,
                                         )
                                         .await?;
                                         Some(std::sync::Arc::new(store))
@@ -648,16 +648,61 @@ async fn main() -> Result<()> {
                                                                     "screen_transition_blocked": "generation changed during audit",
                                                                 }));
                                                             } else {
+                                                                // Compute auto candidates BEFORE audit_result is moved
+                                                                let auto_candidates = crate::teardown::executor::auto_cleanup_candidates(
+                                                                    &audit_result,
+                                                                    &j.execution.deleted,
+                                                                );
+                                                                drop(j);
+
                                                                 store.update(|j| {
                                                                     j.residual_status = status;
                                                                     j.audit_revision += 1;
                                                                     j.last_residual_audit = Some(audit_result);
                                                                 }).await
                                                                 .context("Failed to persist residual audit for screen transition")?;
-                                                                app.screen = AppScreen::ResidualCleanup;
-                                                                events.push(serde_json::json!({
-                                                                    "screen_transition": "ResidualCleanup",
-                                                                }));
+
+                                                                // Auto cleanup planned DELETE/EXPECT still present
+                                                                let mut cleanup_ok = true;
+                                                                if !auto_candidates.is_empty() {
+                                                                    events.push(serde_json::json!({
+                                                                        "auto_selected_residuals": auto_candidates.len(),
+                                                                    }));
+                                                                    let g = match &script_gate {
+                                                                        Some(g) => g.as_ref(),
+                                                                        None => {
+                                                                            events.push(serde_json::json!({"auto_cleanup_error": "no mutation gate"}));
+                                                                            continue;
+                                                                        }
+                                                                    };
+                                                                    match crate::teardown::executor::execute_residual_cleanup(
+                                                                        &client, &auto_candidates, store.as_ref(), g, &kind_map, &gk_map,
+                                                                    ).await {
+                                                                        Ok(cr) => {
+                                                                            let complete = cr.failed.is_empty() && cr.skipped.is_empty();
+                                                                            events.push(serde_json::json!({
+                                                                                "auto_cleanup": {
+                                                                                    "deleted": cr.deleted.len(),
+                                                                                    "skipped": cr.skipped.len(),
+                                                                                    "failed": cr.failed.len(),
+                                                                                    "complete": complete,
+                                                                                }
+                                                                            }));
+                                                                            if !complete { cleanup_ok = false; }
+                                                                        }
+                                                                        Err(e) => {
+                                                                            events.push(serde_json::json!({"auto_cleanup_error": format!("{:#}", e)}));
+                                                                            cleanup_ok = false;
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                if cleanup_ok {
+                                                                    app.screen = AppScreen::ResidualCleanup;
+                                                                    events.push(serde_json::json!({"screen_transition": "ResidualCleanup"}));
+                                                                } else {
+                                                                    events.push(serde_json::json!({"screen_transition_blocked": "auto cleanup incomplete or failed"}));
+                                                                }
                                                             }
                                                     }
                                                 }
@@ -790,13 +835,14 @@ async fn main() -> Result<()> {
                         // Interactive Plan Review (if TTY and not dry-run/script)
                         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
                         let mut plan = plan; // shadow with mutable for draft overrides
+                        let mut effective_finalizer_recovery = approve_finalizer_recovery;
                         if is_tty && !dry_run && script.is_none() {
                             use crate::kube::resource::ResourceId;
                             use crate::teardown::app::{
                                 AppCommand, AppState, DraftAction, apply_command,
                             };
                             use crate::teardown::planner::Action;
-                            let mut app = AppState::new();
+                            let mut app = AppState::new(approve_finalizer_recovery);
 
                             // Collect REVIEW items
                             let review_items: Vec<(usize, usize, ResourceId)> = plan
@@ -1011,6 +1057,7 @@ async fn main() -> Result<()> {
 
                             // Transition to Executing — BoundPlan is frozen
                             let _ = apply_command(&mut app, &AppCommand::StartExecution);
+                            effective_finalizer_recovery = app.finalizer_recovery_approved;
                         }
 
                         // Create RunJournal before first mutation (fail-closed)
@@ -1021,7 +1068,7 @@ async fn main() -> Result<()> {
                                 &plan,
                                 &target_operators,
                                 &gk_map,
-                                approve_finalizer_recovery,
+                                effective_finalizer_recovery,
                             )
                             .await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
@@ -2061,75 +2108,89 @@ async fn main() -> Result<()> {
                                                                                 drop(_re_permit);
                                                                                 continue;
                                                                             }
+                                                                    use crate::teardown::executor::DeleteOutcome;
                                                                     let re_del = crate::teardown::executor::delete_resource_pub(
                                                                                 &client, &decision.resource, &kind_map, &gk_map,
                                                                                 None, // permit already held
                                                                                 decision.approved_spec_name.as_deref(),
                                                                             ).await;
                                                                     match re_del {
-                                                                        Ok(msg) => {
+                                                                        DeleteOutcome::Accepted => {
                                                                             eprintln!(
-                                                                                "    {}/{}: {}",
-                                                                                decision
-                                                                                    .resource
-                                                                                    .kind,
-                                                                                decision
-                                                                                    .resource
-                                                                                    .name,
-                                                                                msg
+                                                                                "    {}/{}: re-DELETE accepted",
+                                                                                decision.resource.kind,
+                                                                                decision.resource.name,
                                                                             );
-                                                                            // Wait for Gone + checkpoint
-                                                                            if msg == "deleted" {
-                                                                                let mut re_gone =
-                                                                                    false;
-                                                                                for _ in 0..30 {
-                                                                                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                                                                    match api.get(&decision.resource.name).await {
-                                                                                                Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                                                                    match api.list(&::kube::api::ListParams::default().limit(1)).await {
-                                                                                                        Ok(_) => { re_gone = true; break; }
-                                                                                                        Err(_) => break,
-                                                                                                    }
-                                                                                                }
-                                                                                                Ok(_) => continue,
-                                                                                                Err(_) => break,
-                                                                                            }
-                                                                                }
-                                                                                let re_result =
-                                                                                    if re_gone {
-                                                                                        CleanupResult::Gone
-                                                                                    } else {
-                                                                                        CleanupResult::DeleteRequested
-                                                                                    };
-                                                                                let res_up =
-                                                                                    decision
-                                                                                        .resource
-                                                                                        .clone();
-                                                                                let re_result_clone =
-                                                                                    re_result
-                                                                                        .clone();
-                                                                                store.update(|j| {
-                                                                                            if let Some(d) = j.cleanup_decisions.iter_mut().rev()
-                                                                                                .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested)))
-                                                                                            { d.result = Some(re_result_clone); }
-                                                                                        }).await
-                                                                                        .context("Failed to checkpoint re-DELETE result")?;
-                                                                                if !re_gone {
-                                                                                    any_retryable =
-                                                                                        true;
+                                                                            let mut re_gone = false;
+                                                                            for _ in 0..30 {
+                                                                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                                                match api.get(&decision.resource.name).await {
+                                                                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                                                                        match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                                                                                            Ok(_) => { re_gone = true; break; }
+                                                                                            Err(_) => break,
+                                                                                        }
+                                                                                    }
+                                                                                    Ok(_) => continue,
+                                                                                    Err(_) => break,
                                                                                 }
                                                                             }
+                                                                            let re_result = if re_gone {
+                                                                                CleanupResult::Gone
+                                                                            } else {
+                                                                                CleanupResult::DeleteRequested
+                                                                            };
+                                                                            let res_up = decision.resource.clone();
+                                                                            let re_result_clone = re_result.clone();
+                                                                            store.update(|j| {
+                                                                                if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                                    .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested) | Some(CleanupResult::UnknownOutcome(_))))
+                                                                                { d.result = Some(re_result_clone); }
+                                                                            }).await
+                                                                            .context("Failed to checkpoint re-DELETE result")?;
+                                                                            if !re_gone {
+                                                                                any_retryable = true;
+                                                                            }
                                                                         }
-                                                                        Err(e) => {
+                                                                        DeleteOutcome::AlreadyGone => {
                                                                             eprintln!(
-                                                                                "    ⚠ {}/{}: re-DELETE failed: {}",
-                                                                                decision
-                                                                                    .resource
-                                                                                    .kind,
-                                                                                decision
-                                                                                    .resource
-                                                                                    .name,
-                                                                                e
+                                                                                "    {}/{}: already gone",
+                                                                                decision.resource.kind,
+                                                                                decision.resource.name,
+                                                                            );
+                                                                            let res_up = decision.resource.clone();
+                                                                            store.update(|j| {
+                                                                                if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                                    .find(|d| d.resource == res_up && matches!(d.result, Some(CleanupResult::DeleteRequested) | Some(CleanupResult::UnknownOutcome(_))))
+                                                                                { d.result = Some(CleanupResult::Gone); }
+                                                                            }).await
+                                                                            .context("Failed to checkpoint re-DELETE already gone")?;
+                                                                        }
+                                                                        DeleteOutcome::Unknown(reason) => {
+                                                                            eprintln!(
+                                                                                "    ⚠ {}/{}: unknown outcome: {} — stopping (resumable)",
+                                                                                decision.resource.kind,
+                                                                                decision.resource.name,
+                                                                                reason
+                                                                            );
+                                                                            let res_up = decision.resource.clone();
+                                                                            store.update(|j| {
+                                                                                if let Some(d) = j.cleanup_decisions.iter_mut().rev()
+                                                                                    .find(|d| d.resource == res_up)
+                                                                                { d.result = Some(CleanupResult::UnknownOutcome(reason.clone())); }
+                                                                            }).await
+                                                                            .context("Failed to checkpoint unknown re-DELETE")?;
+                                                                            // NOT any_hard_failed: Unknown is resumable via reconciliation
+                                                                            any_retryable = true;
+                                                                            drop(_re_permit);
+                                                                            break;
+                                                                        }
+                                                                        DeleteOutcome::Blocked(reason) | DeleteOutcome::Rejected(reason) => {
+                                                                            eprintln!(
+                                                                                "    ⚠ {}/{}: re-DELETE blocked/rejected: {}",
+                                                                                decision.resource.kind,
+                                                                                decision.resource.name,
+                                                                                reason
                                                                             );
                                                                             any_hard_failed = true;
                                                                         }
@@ -2439,6 +2500,7 @@ async fn main() -> Result<()> {
                                         }
                                     }
 
+                                    use crate::teardown::executor::DeleteOutcome;
                                     let del = crate::teardown::executor::delete_resource_pub(
                                         &client,
                                         &decision.resource,
@@ -2449,18 +2511,17 @@ async fn main() -> Result<()> {
                                     )
                                     .await;
 
-                                    // Record initial result
+                                    let must_stop = del.is_stop();
                                     let initial_result = match &del {
-                                        Ok(msg) if msg == "deleted" => {
-                                            CleanupResult::DeleteRequested
+                                        DeleteOutcome::Accepted => CleanupResult::DeleteRequested,
+                                        DeleteOutcome::AlreadyGone => CleanupResult::AlreadyGone,
+                                        DeleteOutcome::Unknown(reason) => {
+                                            CleanupResult::UnknownOutcome(reason.clone())
                                         }
-                                        Ok(msg) if msg == "already_gone" => {
-                                            CleanupResult::AlreadyGone
-                                        }
-                                        Ok(_) => CleanupResult::DeleteRequested,
-                                        Err(e) => {
+                                        DeleteOutcome::Blocked(reason)
+                                        | DeleteOutcome::Rejected(reason) => {
                                             any_hard_failed = true;
-                                            CleanupResult::Failed(e.to_string())
+                                            CleanupResult::Failed(reason.clone())
                                         }
                                     };
                                     let res_up = decision.resource.clone();
@@ -2478,6 +2539,19 @@ async fn main() -> Result<()> {
                                         .await
                                         .context("Failed to checkpoint cleanup result")?;
                                     drop(_permit);
+
+                                    // Unknown/Blocked → stop loop (Unknown is resumable)
+                                    if must_stop {
+                                        if matches!(
+                                            initial_result,
+                                            CleanupResult::UnknownOutcome(_)
+                                        ) {
+                                            any_retryable = true;
+                                        } else {
+                                            any_hard_failed = true;
+                                        }
+                                        break;
+                                    }
 
                                     // 5. Wait for Gone (only if DELETE was accepted)
                                     if matches!(initial_result, CleanupResult::DeleteRequested) {
@@ -3119,7 +3193,7 @@ async fn create_run_journal(
     plan: &crate::teardown::planner::TeardownPlan,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
-    finalizer_recovery_approved: bool,
+    _finalizer_recovery_approved: bool,
 ) -> Result<JournalStore> {
     if target_operators.len() > 1 {
         bail!(
@@ -3196,7 +3270,7 @@ async fn create_run_journal(
         },
         last_residual_audit: None,
         cleanup_decisions: Vec::new(),
-        finalizer_recovery_approved,
+        finalizer_recovery_approved: true,
         finalizer_recoveries: Vec::new(),
     };
 
@@ -3592,28 +3666,20 @@ async fn revalidate_review_basis_inner(
         ProvenanceDriftResult::Ok => Ok(()),
         ProvenanceDriftResult::Blocked(reason) => Err(reason),
         ProvenanceDriftResult::NeedsCrdVerification => {
-            let saved_seeds: std::collections::HashSet<String> = metadata
+            let saved_pairs: std::collections::HashSet<(String, String)> = metadata
                 .as_ref()
-                .map(|m| m.decisive_part_of_seeds.iter().cloned().collect())
+                .map(|m| m.decisive_label_pairs.iter().cloned().collect())
                 .unwrap_or_default();
-            if saved_seeds.is_empty() {
-                return Err("RelatedLabelOnly resource has no saved part-of seeds — \
+            if saved_pairs.is_empty() {
+                return Err("RelatedLabelOnly resource has no saved label pairs — \
                             cannot verify CRD-based evidence"
                     .to_string());
-            }
-            if saved_seeds.len() > 1 {
-                return Err(format!(
-                    "RelatedLabelOnly resource has {} part-of seed values {:?} — \
-                     multi-value seed verification not yet supported (BLOCKED)",
-                    saved_seeds.len(),
-                    saved_seeds
-                ));
             }
             let crd_items = match cached_crd_items {
                 Some(items) => items.to_vec(),
                 None => fetch_crd_list(client).await?,
             };
-            verify_governing_crd_label(resource, &saved_seeds, &crd_items)
+            verify_governing_crd_label(resource, &saved_pairs, &crd_items)
         }
     }
 }
@@ -3666,36 +3732,31 @@ fn check_provenance_drift(
     }
 }
 
-/// Pure sync CRD label value verification — testable without cluster.
-/// Checks if a CRD label value is in the target-owned seed set.
-fn verify_crd_label_value_in_seeds(
-    crd_label_value: Option<&str>,
-    seed_values: &std::collections::HashSet<String>,
+/// Pure sync CRD label verification — testable without cluster.
+/// Checks if any label (key, value) pair on the CRD matches the saved exact pairs.
+fn verify_crd_label_pairs(
+    crd_labels: Option<&std::collections::BTreeMap<String, String>>,
+    saved_pairs: &std::collections::HashSet<(String, String)>,
     resource_group: &str,
     resource_kind: &str,
 ) -> Result<(), String> {
-    let label_key = "platform.opendatahub.io/part-of";
-    if seed_values.is_empty() {
+    if saved_pairs.is_empty() {
         return Err(
-            "no part-of label seeds found on owned CRDs — cannot verify CRD-based evidence"
-                .to_string(),
+            "no label pairs found on owned CRDs — cannot verify CRD-based evidence".to_string(),
         );
     }
-    match crd_label_value {
-        Some(value) => {
-            if seed_values.contains(value) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "governing CRD has '{}={}' but value not in target seed set {:?} — evidence invalidated",
-                    label_key, value, seed_values
-                ))
-            }
-        }
-        None => Err(format!(
-            "governing CRD for {}/{} no longer has '{}' label — CRD-based evidence invalidated",
-            resource_group, resource_kind, label_key
-        )),
+    let has_match = crd_labels.is_some_and(|labels| {
+        labels
+            .iter()
+            .any(|(k, v)| saved_pairs.contains(&(k.clone(), v.clone())))
+    });
+    if has_match {
+        Ok(())
+    } else {
+        Err(format!(
+            "governing CRD for {}/{} has no label matching saved pairs {:?}",
+            resource_group, resource_kind, saved_pairs
+        ))
     }
 }
 
@@ -3726,11 +3787,9 @@ async fn fetch_crd_list(
 
 fn verify_governing_crd_label(
     resource: &crate::kube::resource::ResourceId,
-    saved_seeds: &std::collections::HashSet<String>,
+    saved_pairs: &std::collections::HashSet<(String, String)>,
     crd_items: &[::kube::api::DynamicObject],
 ) -> Result<(), String> {
-    let label_key = "platform.opendatahub.io/part-of";
-
     if resource.group.is_empty() {
         return Err("resource has no API group — cannot determine governing CRD".to_string());
     }
@@ -3760,12 +3819,9 @@ fn verify_governing_crd_label(
         }
     };
 
-    // Verify CRD's label value is in the plan-time saved seed set
-    let crd_labels = crd.metadata.labels.as_ref();
-    let crd_part_of = crd_labels.and_then(|labels| labels.get(label_key));
-    verify_crd_label_value_in_seeds(
-        crd_part_of.map(|s| s.as_str()),
-        saved_seeds,
+    verify_crd_label_pairs(
+        crd.metadata.labels.as_ref(),
+        saved_pairs,
         &resource.group,
         &resource.kind,
     )
@@ -3780,6 +3836,38 @@ pub enum ResumeStage {
 }
 
 pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, String> {
+    // Block resume if any finalizer recovery is in PatchRequested state (crash between
+    // intent record and outcome record — commit outcome unknown without live verification)
+    let unresolved_patch = j
+        .finalizer_recoveries
+        .iter()
+        .any(|r| matches!(r.result, journal::FinalizerRecoveryResult::PatchRequested));
+    if unresolved_patch {
+        return Err(
+            "Journal contains unresolved PatchRequested finalizer recovery record(s). \
+             Crash occurred between intent and outcome — manual verification required before resume."
+                .to_string(),
+        );
+    }
+
+    // Block resume if any re-delete record is not terminal (Gone/Failed).
+    // MVP: re-delete crash recovery requires fresh plan. Stale authority not reused.
+    let has_unresolved_redelete = j.execution.re_delete_records.iter().any(|r| {
+        matches!(
+            r.result,
+            journal::ReDeleteResult::Authorized
+                | journal::ReDeleteResult::Accepted
+                | journal::ReDeleteResult::UnknownOutcome(_)
+        )
+    });
+    if has_unresolved_redelete {
+        return Err(
+            "Journal contains unresolved re-delete record(s) (Authorized/Accepted/Unknown). \
+             Re-delete crash recovery requires a fresh teardown plan."
+                .to_string(),
+        );
+    }
+
     let main_complete = j.execution.phases_completed == j.execution.phases_total;
 
     let has_pending_cleanup =
@@ -3813,6 +3901,15 @@ pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, Str
             "Journal inconsistent: ApplyCompleted but only {}/{} phases complete",
             j.execution.phases_completed, j.execution.phases_total,
         ));
+    }
+
+    // Prepared → user quit Plan Review without pressing Start. No mutation occurred.
+    if j.state == journal::RunState::Prepared {
+        return Err(
+            "Journal is in Prepared state — Plan Review was not completed. \
+             Create a new teardown plan."
+                .to_string(),
+        );
     }
 
     if (j.state == journal::RunState::InteractiveCleanup && main_complete)
@@ -3862,6 +3959,11 @@ pub fn can_finish_run(j: &journal::RunJournal) -> Result<(), String> {
     if j.cleanup_decisions.iter().any(|d| d.is_hard_failed()) {
         return Err("hard-failed cleanup decisions exist".to_string());
     }
+    if j.cleanup_decisions.iter().any(|d| d.is_pending()) {
+        return Err(
+            "pending cleanup decisions exist (UnknownOutcome or DeleteRequested)".to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -3880,7 +3982,7 @@ mod basis_drift_tests {
             approval_class: None,
             provenance,
             discovery_source,
-            decisive_part_of_seeds: vec![],
+            decisive_label_pairs: vec![],
         })
     }
 
@@ -3963,161 +4065,148 @@ mod basis_drift_tests {
         ));
     }
 
-    // ── verify_crd_label_value_in_seeds ──
+    // ── verify_crd_label_pairs ──
 
-    #[test]
-    fn crd_label_matches_seed_ok() {
-        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
-        assert!(
-            verify_crd_label_value_in_seeds(
-                Some("platform"),
-                &seeds,
-                "maas.opendatahub.io",
-                "Config"
+    fn make_labels(pairs: &[(&str, &str)]) -> Option<std::collections::BTreeMap<String, String>> {
+        if pairs.is_empty() {
+            None
+        } else {
+            Some(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
             )
-            .is_ok()
-        );
+        }
+    }
+
+    fn make_seed_pairs(pairs: &[(&str, &str)]) -> HashSet<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
-    fn crd_label_value_not_in_seeds_blocked() {
-        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
-        let result = verify_crd_label_value_in_seeds(
-            Some("other-project"),
-            &seeds,
-            "maas.opendatahub.io",
-            "Config",
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not in target seed set"));
+    fn crd_label_exact_pair_matches() {
+        let pairs = make_seed_pairs(&[("example.io/part-of", "platform")]);
+        let labels = make_labels(&[("example.io/part-of", "platform")]);
+        assert!(verify_crd_label_pairs(labels.as_ref(), &pairs, "test.io", "Foo").is_ok());
+    }
+
+    #[test]
+    fn crd_label_wrong_value_blocked() {
+        let pairs = make_seed_pairs(&[("example.io/part-of", "platform")]);
+        let labels = make_labels(&[("example.io/part-of", "other")]);
+        assert!(verify_crd_label_pairs(labels.as_ref(), &pairs, "test.io", "Foo").is_err());
+    }
+
+    #[test]
+    fn crd_label_wrong_key_blocked() {
+        let pairs = make_seed_pairs(&[("example.io/part-of", "platform")]);
+        let labels = make_labels(&[("other.io/part-of", "platform")]);
+        assert!(verify_crd_label_pairs(labels.as_ref(), &pairs, "test.io", "Foo").is_err());
     }
 
     #[test]
     fn crd_label_missing_blocked() {
-        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
-        let result = verify_crd_label_value_in_seeds(None, &seeds, "maas.opendatahub.io", "Config");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("no longer has"));
+        let pairs = make_seed_pairs(&[("example.io/part-of", "platform")]);
+        assert!(verify_crd_label_pairs(None, &pairs, "test.io", "Foo").is_err());
     }
 
     #[test]
-    fn empty_seeds_blocked() {
-        let seeds: HashSet<String> = HashSet::new();
-        let result = verify_crd_label_value_in_seeds(
-            Some("platform"),
-            &seeds,
-            "maas.opendatahub.io",
-            "Config",
-        );
+    fn empty_pairs_blocked() {
+        let pairs: HashSet<(String, String)> = HashSet::new();
+        let labels = make_labels(&[("example.io/part-of", "platform")]);
+        let result = verify_crd_label_pairs(labels.as_ref(), &pairs, "test.io", "Foo");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("no part-of label seeds"));
+        assert!(result.unwrap_err().contains("no label pairs"));
     }
 
     #[test]
-    fn candidate_self_label_does_not_seed() {
-        // Candidate CRD has label value "other" but target-owned CRDs only have "platform".
-        // Candidate's own value must NOT appear in seeds (seeds come from owned CRDs only).
-        let seeds: HashSet<String> = ["platform"].iter().map(|s| s.to_string()).collect();
-        let result = verify_crd_label_value_in_seeds(
-            Some("other"),
-            &seeds,
-            "components.platform.opendatahub.io",
-            "Dashboard",
-        );
+    fn multiple_pairs_match_any() {
+        let pairs = make_seed_pairs(&[
+            ("example.io/part-of", "platform"),
+            ("app.kubernetes.io/managed-by", "operator-x"),
+        ]);
+        let labels = make_labels(&[("app.kubernetes.io/managed-by", "operator-x")]);
+        assert!(verify_crd_label_pairs(labels.as_ref(), &pairs, "test.io", "Foo").is_ok());
+    }
+
+    #[test]
+    fn basis_drift_pair_a_removed_pair_b_only_blocked() {
+        // Seed has pairs A and B. CRD was discovered via pair A.
+        // decisive_label_pairs stores only [A] (the intersection).
+        // On revalidation, CRD now only has pair B (A removed) → BLOCKED.
+        let saved = make_seed_pairs(&[("vendor.io/part-of", "platform-a")]);
+        let live_labels = make_labels(&[("other.io/part-of", "platform-b")]);
+        let result = verify_crd_label_pairs(live_labels.as_ref(), &saved, "vendor.io", "Widget");
         assert!(
             result.is_err(),
-            "candidate's own label value must not match target seeds"
+            "pair A removed, only B present → must block"
         );
     }
 
     #[test]
-    fn multiple_seeds_match_any() {
-        let seeds: HashSet<String> = ["platform", "workbenches"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+    fn basis_drift_pair_a_maintained_ok() {
+        let saved = make_seed_pairs(&[("vendor.io/part-of", "platform-a")]);
+        let live_labels = make_labels(&[
+            ("vendor.io/part-of", "platform-a"),
+            ("other.io/part-of", "platform-b"),
+        ]);
         assert!(
-            verify_crd_label_value_in_seeds(
-                Some("workbenches"),
-                &seeds,
-                "x.opendatahub.io",
-                "Notebook"
-            )
-            .is_ok()
+            verify_crd_label_pairs(live_labels.as_ref(), &saved, "vendor.io", "Widget").is_ok()
         );
     }
 
     // ── Multi-seed MVP restriction ──
 
     #[test]
-    fn multi_seed_blocked_in_provenance_drift() {
+    fn multi_pair_allows_crd_verification() {
         let meta = Some(ReviewMetadata {
             category: None,
             approval_class: None,
             provenance: Some(ProvenanceSer::Unknown),
             discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
-            decisive_part_of_seeds: vec!["platform".to_string(), "workbenches".to_string()],
+            decisive_label_pairs: vec![
+                ("x.io/part-of".to_string(), "platform".to_string()),
+                ("x.io/managed-by".to_string(), "operator-a".to_string()),
+            ],
         });
-        // Multi-seed → NeedsCrdVerification, but caller blocks at len() > 1
         assert!(matches!(
             check_provenance_drift(&meta, &ProvenanceSer::Unknown),
             ProvenanceDriftResult::NeedsCrdVerification
         ));
-        // Verify the caller-side restriction
-        let seeds: HashSet<String> = meta
-            .as_ref()
-            .unwrap()
-            .decisive_part_of_seeds
-            .iter()
-            .cloned()
-            .collect();
-        assert!(seeds.len() > 1, "multi-seed set must be blocked by caller");
     }
 
     #[test]
-    fn single_seed_allows_crd_verification() {
+    fn single_pair_allows_crd_verification() {
         let meta = Some(ReviewMetadata {
             category: None,
             approval_class: None,
             provenance: Some(ProvenanceSer::Unknown),
             discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
-            decisive_part_of_seeds: vec!["platform".to_string()],
+            decisive_label_pairs: vec![("x.io/part-of".to_string(), "platform".to_string())],
         });
         assert!(matches!(
             check_provenance_drift(&meta, &ProvenanceSer::Unknown),
             ProvenanceDriftResult::NeedsCrdVerification
         ));
-        let seeds: HashSet<String> = meta
-            .as_ref()
-            .unwrap()
-            .decisive_part_of_seeds
-            .iter()
-            .cloned()
-            .collect();
-        assert_eq!(seeds.len(), 1, "single seed passes caller restriction");
     }
 
     #[test]
-    fn empty_seeds_in_metadata_blocked_at_caller() {
+    fn empty_pairs_in_metadata_blocked_at_caller() {
         let meta = Some(ReviewMetadata {
             category: None,
             approval_class: None,
             provenance: Some(ProvenanceSer::Unknown),
             discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
-            decisive_part_of_seeds: vec![],
+            decisive_label_pairs: vec![],
         });
         assert!(matches!(
             check_provenance_drift(&meta, &ProvenanceSer::Unknown),
             ProvenanceDriftResult::NeedsCrdVerification
         ));
-        let seeds: HashSet<String> = meta
-            .as_ref()
-            .unwrap()
-            .decisive_part_of_seeds
-            .iter()
-            .cloned()
-            .collect();
-        assert!(seeds.is_empty(), "empty seeds blocked by caller");
     }
 
     // ── Resume stage + crash recovery tests (call extracted functions) ──
@@ -4355,6 +4444,78 @@ mod basis_drift_tests {
         );
     }
 
+    // ── PatchRequested resume block ──
+
+    #[test]
+    fn classify_resume_blocks_on_unresolved_patch_requested() {
+        use crate::teardown::journal::{
+            FinalizerRecoveryRecord, FinalizerRecoveryResult, OwnerRefSnapshot, RunState,
+        };
+        let mut j = make_test_journal(RunState::Paused, 3, 7, false, vec![]);
+        j.finalizer_recoveries.push(FinalizerRecoveryRecord {
+            resource: crate::kube::resource::ResourceId {
+                group: "test".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+                uid: Some("uid-w1".to_string()),
+            },
+            live_uid: "uid-w1".to_string(),
+            finalizer_values: vec!["test/fin".to_string()],
+            owner_references_snapshot: vec![OwnerRefSnapshot {
+                api_version: "v1".to_string(),
+                kind: "Parent".to_string(),
+                name: "p1".to_string(),
+                uid: "uid-p1".to_string(),
+                controller: Some(true),
+            }],
+            root_uid: "uid-p1".to_string(),
+            root_kind: "Parent".to_string(),
+            result: FinalizerRecoveryResult::PatchRequested,
+        });
+        let err = classify_resume_stage(&j).unwrap_err();
+        assert!(
+            err.contains("PatchRequested"),
+            "Should block on PatchRequested: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn classify_resume_allows_resolved_recovery() {
+        use crate::teardown::journal::{
+            FinalizerRecoveryRecord, FinalizerRecoveryResult, OwnerRefSnapshot, RunState,
+        };
+        let mut j = make_test_journal(RunState::Paused, 3, 7, false, vec![]);
+        j.finalizer_recoveries.push(FinalizerRecoveryRecord {
+            resource: crate::kube::resource::ResourceId {
+                group: "test".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+                uid: Some("uid-w1".to_string()),
+            },
+            live_uid: "uid-w1".to_string(),
+            finalizer_values: vec!["test/fin".to_string()],
+            owner_references_snapshot: vec![OwnerRefSnapshot {
+                api_version: "v1".to_string(),
+                kind: "Parent".to_string(),
+                name: "p1".to_string(),
+                uid: "uid-p1".to_string(),
+                controller: Some(true),
+            }],
+            root_uid: "uid-p1".to_string(),
+            root_kind: "Parent".to_string(),
+            result: FinalizerRecoveryResult::Stripped,
+        });
+        assert!(
+            classify_resume_stage(&j).is_ok(),
+            "Resolved recovery (Stripped) should not block resume"
+        );
+    }
+
     // ── can_finish_run tests ──
 
     #[test]
@@ -4467,5 +4628,173 @@ mod basis_drift_tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── MVP safety boundary tests ──
+
+    #[test]
+    fn prepared_journal_rejects_resume_mutation() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::Prepared, 0, 7, false, vec![]);
+        let result = classify_resume_stage(&j);
+        assert!(result.is_err(), "Prepared journal must reject resume");
+        assert!(
+            result.unwrap_err().contains("Prepared"),
+            "Error must mention Prepared state"
+        );
+    }
+
+    #[test]
+    fn expect_resources_do_not_create_re_delete_authority() {
+        use crate::teardown::journal::{ReDeleteRecord, ReDeleteResult, RunState};
+        let mut j = make_test_journal(RunState::Applying, 3, 7, false, vec![]);
+        // Simulate: EXPECT descendant was observed as Gone, no re-delete authority
+        // Re-delete authority can only come from explicit DELETE accepted+Gone+Recreated
+        assert!(
+            j.execution.re_delete_records.is_empty(),
+            "Fresh journal must have no re-delete authority"
+        );
+        // Manually adding a record simulates executor behavior
+        j.execution.re_delete_records.push(ReDeleteRecord {
+            resource_identity: crate::kube::resource::ResourceId {
+                group: "test".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+                uid: None,
+            },
+            original_uid: "uid-orig".to_string(),
+            new_uid: "uid-new".to_string(),
+            result: ReDeleteResult::Authorized,
+        });
+        // Authority exists — this is valid only if original DELETE was accepted+Gone
+        assert_eq!(j.execution.re_delete_records.len(), 1);
+        assert_eq!(
+            j.execution.re_delete_records[0].result,
+            ReDeleteResult::Authorized
+        );
+    }
+
+    #[test]
+    fn unresolved_redelete_blocks_resume() {
+        use crate::teardown::journal::{ReDeleteRecord, ReDeleteResult, RunState};
+        // MVP: any Authorized/Accepted/Unknown re-delete blocks resume
+        for (variant, label) in [
+            (ReDeleteResult::Authorized, "Authorized must block resume"),
+            (ReDeleteResult::Accepted, "Accepted must block resume"),
+            (
+                ReDeleteResult::UnknownOutcome("500".to_string()),
+                "Unknown must block resume",
+            ),
+        ] {
+            let mut j = make_test_journal(RunState::Paused, 3, 7, false, vec![]);
+            j.execution.re_delete_records.push(ReDeleteRecord {
+                resource_identity: crate::kube::resource::ResourceId {
+                    group: "test".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    namespace: None,
+                    name: "w1".to_string(),
+                    uid: None,
+                },
+                original_uid: "uid-old".to_string(),
+                new_uid: "uid-new".to_string(),
+                result: variant,
+            });
+            let result = classify_resume_stage(&j);
+            assert!(result.is_err(), "{}", label);
+            assert!(
+                result.unwrap_err().contains("re-delete"),
+                "Error must mention re-delete"
+            );
+        }
+    }
+
+    #[test]
+    fn resolved_redelete_allows_resume() {
+        use crate::teardown::journal::{ReDeleteRecord, ReDeleteResult, RunState};
+        let mut j = make_test_journal(RunState::Paused, 3, 7, false, vec![]);
+        j.execution.re_delete_records.push(ReDeleteRecord {
+            resource_identity: crate::kube::resource::ResourceId {
+                group: "test".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                namespace: None,
+                name: "w1".to_string(),
+                uid: None,
+            },
+            original_uid: "uid-old".to_string(),
+            new_uid: "uid-new".to_string(),
+            result: ReDeleteResult::Gone,
+        });
+        assert!(
+            classify_resume_stage(&j).is_ok(),
+            "Gone re-delete must allow resume"
+        );
+    }
+
+    #[test]
+    fn re_delete_record_roundtrip() {
+        use crate::teardown::journal::{ReDeleteRecord, ReDeleteResult, RunState};
+        let mut j = make_test_journal(RunState::Applying, 3, 7, false, vec![]);
+        j.execution.re_delete_records.push(ReDeleteRecord {
+            resource_identity: crate::kube::resource::ResourceId {
+                group: "test".to_string(),
+                version: "v1".to_string(),
+                kind: "Auth".to_string(),
+                namespace: None,
+                name: "auth".to_string(),
+                uid: None,
+            },
+            original_uid: "uid-orig".to_string(),
+            new_uid: "uid-new".to_string(),
+            result: ReDeleteResult::Gone,
+        });
+        let serialized = serde_json::to_string(&j).unwrap();
+        let deser: crate::teardown::journal::RunJournal =
+            serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deser.execution.re_delete_records.len(), 1);
+        assert_eq!(
+            deser.execution.re_delete_records[0].original_uid,
+            "uid-orig"
+        );
+        assert_eq!(deser.execution.re_delete_records[0].new_uid, "uid-new");
+        assert!(
+            deser.execution.re_delete_records[0]
+                .resource_identity
+                .uid
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn pending_cleanup_blocks_finish() {
+        use crate::teardown::journal::{CleanupDecision, CleanupResult, RunState};
+        let mut j = make_test_journal(RunState::InteractiveCleanup, 7, 7, true, vec![]);
+        j.residual_status = crate::teardown::journal::ResidualStatus::NoneObservedInScope;
+        j.cleanup_decisions.push(CleanupDecision {
+            resource: crate::kube::resource::ResourceId {
+                group: "test".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                namespace: None,
+                name: "w1".to_string(),
+                uid: Some("uid-w1".to_string()),
+            },
+            bound_uid: Some("uid-w1".to_string()),
+            action: "delete".to_string(),
+            result: Some(CleanupResult::UnknownOutcome("500".to_string())),
+            approved_spec_name: None,
+        });
+        let result = can_finish_run(&j);
+        assert!(
+            result.is_err(),
+            "Pending cleanup (UnknownOutcome) must block Finish"
+        );
+        assert!(
+            result.unwrap_err().contains("pending"),
+            "Error must mention pending"
+        );
     }
 }

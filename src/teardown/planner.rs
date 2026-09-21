@@ -434,7 +434,7 @@ pub struct CrInstance {
     pub managed_field_managers: Vec<String>,
     pub provenance: Provenance,
     pub discovery_source: DiscoverySource,
-    pub decisive_part_of_seeds: Vec<String>,
+    pub decisive_label_pairs: Vec<(String, String)>,
     pub ownerref_to_owned_api_kind: Option<String>,
 }
 
@@ -638,7 +638,7 @@ async fn discover_one_crd(
                 managed_field_managers,
                 provenance: Provenance::Unknown,
                 discovery_source: DiscoverySource::Direct,
-                decisive_part_of_seeds: vec![],
+                decisive_label_pairs: vec![],
                 ownerref_to_owned_api_kind: None,
             })
         })
@@ -775,7 +775,7 @@ async fn discover_api_service_instances(
                                 managed_field_managers,
                                 provenance: Provenance::Unknown,
                                 discovery_source: DiscoverySource::Direct,
-                                decisive_part_of_seeds: vec![],
+                                decisive_label_pairs: vec![],
                                 ownerref_to_owned_api_kind: None,
                             })
                         })
@@ -1246,16 +1246,14 @@ const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca
 /// Strategy:
 /// 1. Direct seed: part-of labels on target-owned CRDs themselves
 /// 2. Group seed: part-of labels on CRDs sharing a full API group
-///    with target-owned CRDs (e.g. both under `components.platform.opendatahub.io`)
+///    with target-owned CRDs (e.g. both under the same API group)
 ///
 /// No domain suffix guessing — avoids public suffix ambiguity.
 pub async fn compute_part_of_seeds(
     target_crds: &[String],
     kind_map: &KindMap,
     client: &Client,
-) -> (HashSet<String>, Vec<(String, String)>) {
-    let label_key = "platform.opendatahub.io/part-of";
-
+) -> (HashSet<(String, String)>, Vec<(String, String)>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
     }
@@ -1294,20 +1292,34 @@ pub async fn compute_part_of_seeds(
         }
     };
 
+    // Discover part-of label key/value pairs from target-owned CRDs.
+    // Checks standard app.kubernetes.io/part-of and any */part-of key present on
+    // target CRDs or CRDs sharing the exact same API group.
+    let part_of_suffixes = ["/part-of", "/managed-by"];
+    let standard_keys = [
+        "app.kubernetes.io/part-of",
+        "app.kubernetes.io/managed-by",
+        "app.kubernetes.io/instance",
+    ];
+
     let mut values = HashSet::new();
     for crd in &crd_list.items {
         let crd_name = crd.metadata.name.as_deref().unwrap_or("");
         let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
 
-        // Seed from: target-owned CRDs or CRDs sharing exact API group
         let is_target = target_crd_set.contains(crd_name);
         let shares_group = target_groups.contains(crd_group);
 
         if (is_target || shares_group)
             && let Some(labels) = &crd.metadata.labels
-            && let Some(v) = labels.get(label_key)
         {
-            values.insert(v.clone());
+            for (k, v) in labels {
+                let is_part_of = part_of_suffixes.iter().any(|s| k.ends_with(s))
+                    || standard_keys.contains(&k.as_str());
+                if is_part_of {
+                    values.insert((k.clone(), v.clone()));
+                }
+            }
         }
     }
 
@@ -1325,7 +1337,7 @@ pub struct RelatedCrdReport {
 pub async fn discover_related_crd_instances(
     client: &Client,
     target_crds: &HashSet<&str>,
-    target_part_of_values: &HashSet<String>,
+    target_label_pairs: &HashSet<(String, String)>,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
@@ -1333,7 +1345,7 @@ pub async fn discover_related_crd_instances(
     let mut actions = Vec::new();
 
     // If target operator has no part-of labels, skip related discovery entirely
-    if target_part_of_values.is_empty() {
+    if target_label_pairs.is_empty() {
         return RelatedCrdReport {
             actions,
             instances: vec![],
@@ -1364,7 +1376,6 @@ pub async fn discover_related_crd_instances(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let label_key = "platform.opendatahub.io/part-of";
     let all_crds = match crd_api.list(&ListParams::default()).await {
         Ok(list) => list.items,
         Err(e) => {
@@ -1381,8 +1392,9 @@ pub async fn discover_related_crd_instances(
         }
     };
 
-    // Scope CRD types by label VALUE match (not just key existence)
-    let mut related_crd_names: Vec<String> = Vec::new();
+    // Scope CRD types by label pair match — record which pairs matched per CRD
+    let mut related_crd_pairs: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
     for crd in &all_crds {
         let crd_name = match &crd.metadata.name {
             Some(n) => n,
@@ -1391,18 +1403,19 @@ pub async fn discover_related_crd_instances(
         if target_crds.contains(crd_name.as_str()) {
             continue;
         }
-        let matches_value = crd
-            .metadata
-            .labels
-            .as_ref()
-            .and_then(|l| l.get(label_key))
-            .is_some_and(|v| target_part_of_values.contains(v));
-        if matches_value {
-            related_crd_names.push(crd_name.clone());
+        if let Some(labels) = &crd.metadata.labels {
+            let intersection: Vec<(String, String)> = labels
+                .iter()
+                .filter(|(k, v)| target_label_pairs.contains(&((*k).clone(), (*v).clone())))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if !intersection.is_empty() {
+                related_crd_pairs.insert(crd_name.clone(), intersection);
+            }
         }
     }
 
-    if related_crd_names.is_empty() {
+    if related_crd_pairs.is_empty() {
         return RelatedCrdReport {
             actions,
             instances: vec![],
@@ -1412,12 +1425,20 @@ pub async fn discover_related_crd_instances(
         };
     }
 
+    let related_crd_names: Vec<String> = related_crd_pairs.keys().cloned().collect();
     let related_report = discover_cr_instances(client, &related_crd_names, gvr_map, gk_map).await;
 
     let crd_count = related_crd_names.len();
     let instance_count = related_report.instances.len();
 
-    for cr in &related_report.instances {
+    let mut instances = related_report.instances;
+    for cr in &mut instances {
+        let decisive = related_crd_pairs
+            .get(&cr.api_owner_key)
+            .cloned()
+            .unwrap_or_default();
+        cr.decisive_label_pairs = decisive.clone();
+
         actions.push(Action::Review {
             resource: cr.id.clone(),
             reason: "related CRD instance (not CSV-owned, discovered via label)".to_string(),
@@ -1432,14 +1453,14 @@ pub async fn discover_related_crd_instances(
                     Provenance::Unknown => Some(crate::teardown::plan::ProvenanceSer::Unknown),
                 },
                 discovery_source: Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly),
-                decisive_part_of_seeds: target_part_of_values.iter().cloned().collect(),
+                decisive_label_pairs: decisive,
             }),
         });
     }
 
     RelatedCrdReport {
         actions,
-        instances: related_report.instances,
+        instances,
         unavailable_crds: related_report.unavailable_crds,
         crd_count,
         instance_count,
@@ -1504,9 +1525,11 @@ async fn discover_namespace_resources(
                         reason: "other operators remain in namespace".to_string(),
                     });
                 } else {
-                    actions.push(Action::Delete {
+                    actions.push(Action::Review {
                         resource: og_id,
-                        reason: "no other operators in namespace".to_string(),
+                        reason: "no other operators in namespace — verify before deleting"
+                            .to_string(),
+                        metadata: None,
                     });
                 }
             }
@@ -1532,14 +1555,10 @@ async fn discover_namespace_resources(
                     .iter()
                     .any(|dep| holder.contains(dep));
 
-                let name_matches = csv_prefix.iter().any(|prefix| {
-                    lease_name.contains(prefix)
-                        || lease_name.contains("opendatahub")
-                        || lease_name.contains("odh")
-                });
+                let name_matches = csv_prefix.iter().any(|prefix| lease_name.contains(prefix));
 
                 if holder_matches || name_matches {
-                    actions.push(Action::Delete {
+                    actions.push(Action::Review {
                         resource: ResourceId {
                             group: "coordination.k8s.io".to_string(),
                             version: "v1".to_string(),
@@ -1554,6 +1573,7 @@ async fn discover_namespace_resources(
                         } else {
                             "leader election lease (name matches operator)".to_string()
                         },
+                        metadata: None,
                     });
                 }
             }
@@ -1594,7 +1614,7 @@ async fn discover_namespace_resources(
                                 ),
                                 provenance: None,
                                 discovery_source: None,
-                                decisive_part_of_seeds: vec![],
+                                decisive_label_pairs: vec![],
                             }),
                         });
                     }
@@ -1819,14 +1839,14 @@ pub async fn generate_teardown_plan(
 
     // Related CRD discovery — scoped by label VALUE match
     eprint!("🔍 Discovering related CRD instances...");
-    let (target_part_of_values, seed_unavailable) =
+    let (target_label_pairs, seed_unavailable) =
         compute_part_of_seeds(&target_crds, kind_map, client).await;
     all_unavailable.extend(seed_unavailable);
 
     let related_report = discover_related_crd_instances(
         client,
         &target_crd_set,
-        &target_part_of_values,
+        &target_label_pairs,
         kind_map,
         gvr_map,
         gk_map,
@@ -1905,7 +1925,7 @@ pub async fn generate_teardown_plan(
                 unlinked_count += 1;
                 let mut cr = cr;
                 cr.discovery_source = DiscoverySource::RelatedLabelOnly;
-                cr.decisive_part_of_seeds = target_part_of_values.iter().cloned().collect();
+                // decisive_label_pairs already set per-CRD by discover_related_crd_instances
                 cr_instances.push(cr);
             }
         }
@@ -2282,7 +2302,7 @@ pub async fn generate_teardown_plan(
             approval_class: approval_ser,
             provenance,
             discovery_source: discovery,
-            decisive_part_of_seeds: cr.decisive_part_of_seeds.clone(),
+            decisive_label_pairs: cr.decisive_label_pairs.clone(),
         })
     }
 
@@ -2529,149 +2549,46 @@ pub async fn generate_teardown_plan(
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
 
     if layers.len() <= 1 {
-        // Split DSC/DSCI: DSCI webhook requires DSC Gone before DSCI can be deleted.
-        // Phase 1a: DSC DELETE only + barrier (DSC Gone + LIST empty)
-        // Phase 1b: DSCI + descendants + independents + barrier (all Gone)
-        let dsc_roots: Vec<&&CrInstance> = root_crs
-            .iter()
-            .filter(|cr| {
-                cr.id.kind == "DataScienceCluster"
-                    && cr.id.group == "datasciencecluster.opendatahub.io"
-            })
-            .collect();
-        let dsci_roots: Vec<&&CrInstance> = root_crs
-            .iter()
-            .filter(|cr| {
-                cr.id.kind == "DSCInitialization"
-                    && cr.id.group == "dscinitialization.opendatahub.io"
-            })
-            .collect();
-        let other_roots: Vec<&&CrInstance> = root_crs
-            .iter()
-            .filter(|cr| {
-                !(cr.id.kind == "DataScienceCluster"
-                    && cr.id.group == "datasciencecluster.opendatahub.io")
-                    && !(cr.id.kind == "DSCInitialization"
-                        && cr.id.group == "dscinitialization.opendatahub.io")
-            })
-            .collect();
+        let mut phase_actions: Vec<Action> = Vec::new();
 
-        if !dsc_roots.is_empty() && !dsci_roots.is_empty() {
-            // Phase 1a: DSC only
-            let mut dsc_actions: Vec<Action> = Vec::new();
-            for cr in &dsc_roots {
-                dsc_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
-            }
-            let dsc_conds: Vec<String> = dsc_actions
-                .iter()
-                .filter_map(|a| match a {
-                    Action::Delete { resource, .. } => {
-                        Some(format!("DataScienceCluster/{} is gone", resource.name))
-                    }
-                    _ => None,
-                })
-                .collect();
-            if !dsc_actions.is_empty() {
-                operand_phases.push(PlanPhase {
-                    name: "Delete DataScienceCluster".to_string(),
-                    description:
-                        "DSCInitialization webhook requires DSC Gone before DSCI can be deleted"
-                            .to_string(),
-                    actions: dsc_actions,
-                    barrier: Some(Barrier {
-                        description: "DataScienceCluster confirmed Gone".to_string(),
-                        conditions: dsc_conds,
-                    }),
-                });
-            }
-
-            // Phase 1b: DSCI + other roots + descendants + independents
-            let mut phase_actions: Vec<Action> = Vec::new();
-            for cr in &dsci_roots {
-                phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
-            }
-            for cr in &other_roots {
-                phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
-            }
-            for cr in &managed_descendants {
-                phase_actions.push(cr_to_action(
-                    cr,
-                    GraphPosition::Descendant,
-                    &resolved_decisions,
-                ));
-            }
-            for cr in &independent_crs {
-                phase_actions.push(cr_to_action(
-                    cr,
-                    GraphPosition::Independent,
-                    &resolved_decisions,
-                ));
-            }
-
-            let conds: Vec<String> = phase_actions
-                .iter()
-                .filter_map(|action| match action {
-                    Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
-                    Action::ExpectGone { resource, .. } => {
-                        Some(format!("{} is gone (expected)", resource))
-                    }
-                    _ => None,
-                })
-                .collect();
-
-            operand_phases.push(PlanPhase {
-                name: "Trigger operand cleanup".to_string(),
-                description: "Delete DSCI + root CRs; expect managed descendants to vanish"
-                    .to_string(),
-                actions: phase_actions,
-                barrier: Some(Barrier {
-                    description: "All operands removed (deleted + expected)".to_string(),
-                    conditions: conds,
-                }),
-            });
-        } else {
-            // No DSC/DSCI pair — original single phase
-            let mut phase_actions: Vec<Action> = Vec::new();
-
-            for cr in &root_crs {
-                phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
-            }
-            for cr in &managed_descendants {
-                phase_actions.push(cr_to_action(
-                    cr,
-                    GraphPosition::Descendant,
-                    &resolved_decisions,
-                ));
-            }
-            for cr in &independent_crs {
-                phase_actions.push(cr_to_action(
-                    cr,
-                    GraphPosition::Independent,
-                    &resolved_decisions,
-                ));
-            }
-
-            let conds: Vec<String> = phase_actions
-                .iter()
-                .filter_map(|action| match action {
-                    Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
-                    Action::ExpectGone { resource, .. } => {
-                        Some(format!("{} is gone (expected)", resource))
-                    }
-                    _ => None,
-                })
-                .collect();
-
-            operand_phases.push(PlanPhase {
-                name: "Trigger operand cleanup".to_string(),
-                description: "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish".to_string(),
-                actions: phase_actions,
-                barrier: Some(Barrier {
-                    description: "All operands removed (deleted + expected)".to_string(),
-                    conditions: conds,
-                }),
-            });
+        for cr in &root_crs {
+            phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
         }
+        for cr in &managed_descendants {
+            phase_actions.push(cr_to_action(
+                cr,
+                GraphPosition::Descendant,
+                &resolved_decisions,
+            ));
+        }
+        for cr in &independent_crs {
+            phase_actions.push(cr_to_action(
+                cr,
+                GraphPosition::Independent,
+                &resolved_decisions,
+            ));
+        }
+
+        let conds: Vec<String> = phase_actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
+                Action::ExpectGone { resource, .. } => {
+                    Some(format!("{} is gone (expected)", resource))
+                }
+                _ => None,
+            })
+            .collect();
+
+        operand_phases.push(PlanPhase {
+            name: "Trigger operand cleanup".to_string(),
+            description: "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish".to_string(),
+            actions: phase_actions,
+            barrier: Some(Barrier {
+                description: "All operands removed (deleted + expected)".to_string(),
+                conditions: conds,
+            }),
+        });
     } else {
         // Multiple layers — split operands by owning operator's layer
         for (layer_idx, layer) in layers.iter().enumerate() {
@@ -3632,7 +3549,7 @@ mod tests {
             managed_field_managers: managers,
             provenance: Provenance::Unknown,
             discovery_source: DiscoverySource::Direct,
-            decisive_part_of_seeds: vec![],
+            decisive_label_pairs: vec![],
             ownerref_to_owned_api_kind: None,
         }
     }
@@ -4430,49 +4347,15 @@ mod tests {
     }
 
     #[test]
-    fn dsci_guard_exact_group_kind() {
-        // Only exact (group, kind) triggers DSCI guard — different group must not
-        let dsci_exact = ResourceId {
-            group: "dscinitialization.opendatahub.io".to_string(),
-            version: "v2".to_string(),
-            kind: "DSCInitialization".to_string(),
-            namespace: None,
-            name: "default-dsci".to_string(),
-            uid: Some("uid-dsci".to_string()),
-        };
-        let is_guard_target = dsci_exact.kind == "DSCInitialization"
-            && dsci_exact.group == "dscinitialization.opendatahub.io";
-        assert!(is_guard_target, "exact DSCInitialization triggers guard");
-
-        let dsci_wrong_group = ResourceId {
-            group: "other.example.com".to_string(),
-            version: "v1".to_string(),
-            kind: "DSCInitialization".to_string(),
-            namespace: None,
-            name: "default-dsci".to_string(),
-            uid: Some("uid-other".to_string()),
-        };
-        let is_guard_target2 = dsci_wrong_group.kind == "DSCInitialization"
-            && dsci_wrong_group.group == "dscinitialization.opendatahub.io";
-        assert!(
-            !is_guard_target2,
-            "same Kind from different group must NOT trigger guard"
-        );
-    }
-
-    #[test]
     fn phase_failed_prevents_subsequent_phases() {
-        // Verify the hard stop condition: non-empty result.failed prevents
-        // phases_completed from advancing, which prevents subsequent phases
-        // (CSV DELETE) from executing.
         let result = crate::teardown::executor::ExecutionResult {
-            phases_completed: 1, // completed Phase 0 (Subscription)
+            phases_completed: 1,
             phases_total: 5,
-            deleted: vec![make_res("Subscription", "rhods-operator", "uid-sub")],
+            deleted: vec![make_res("Subscription", "test-operator", "uid-sub")],
             already_gone: vec![],
             failed: vec![(
-                make_res("DSCInitialization", "default-dsci", "uid-dsci"),
-                "DataScienceCluster LIST blocked".to_string(),
+                make_res("ResourceA", "res-a", "uid-a"),
+                "blocked by webhook".to_string(),
             )],
             barrier_timeout: None,
             kept: vec![],
@@ -4486,9 +4369,57 @@ mod tests {
             result.phases_completed < result.phases_total,
             "phases_completed must not reach total when failed actions exist"
         );
+    }
+
+    #[test]
+    fn api_owner_key_used_not_kind_plural_guess() {
+        // Irregular plural: Kind="Ingress" → plural="ingresses", NOT "ingresss"
+        // CrInstance.api_owner_key must hold the CRD name from discovery,
+        // not a Kind.to_lowercase()+"s" guess.
+        let cr = CrInstance {
+            id: ResourceId {
+                group: "networking.k8s.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Ingress".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "my-ingress".to_string(),
+                uid: Some("uid-1".to_string()),
+            },
+            api_owner_key: "ingresses.networking.k8s.io".to_string(),
+            labels: std::collections::HashMap::new(),
+            owner_refs: vec![],
+            managed_field_managers: vec![],
+            provenance: Provenance::Unknown,
+            discovery_source: DiscoverySource::RelatedLabelOnly,
+            decisive_label_pairs: vec![],
+            ownerref_to_owned_api_kind: None,
+        };
+
+        // Incorrect guess would be "ingresss.networking.k8s.io" — must not match
+        let wrong_guess = format!("{}s.{}", cr.id.kind.to_lowercase(), cr.id.group);
+        assert_ne!(
+            wrong_guess, cr.api_owner_key,
+            "Kind.to_lowercase()+s gives wrong plural for irregular kinds"
+        );
+        assert_eq!(cr.api_owner_key, "ingresses.networking.k8s.io");
+
+        // Lookup with api_owner_key works; lookup with wrong guess does not
+        let mut crd_pairs = std::collections::HashMap::new();
+        crd_pairs.insert(
+            "ingresses.networking.k8s.io".to_string(),
+            vec![("k8s.io/part-of".to_string(), "platform".to_string())],
+        );
+
+        let decisive = crd_pairs
+            .get(&cr.api_owner_key)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(decisive.len(), 1, "api_owner_key lookup must succeed");
+
+        let wrong_decisive = crd_pairs.get(&wrong_guess).cloned().unwrap_or_default();
         assert!(
-            result.phases_completed < 3,
-            "CSV DELETE phase must not be reached when DSCI failed"
+            wrong_decisive.is_empty(),
+            "wrong plural guess must not match"
         );
     }
 }

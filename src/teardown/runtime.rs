@@ -481,7 +481,16 @@ fn is_meaningful_transition(
         }
         // Resource gone
         (_, ResourceRuntimeState::Gone) => true,
-        // UID recreation
+        // UID recreation — only meaningful if transitioning INTO Recreated
+        // (not Recreated→Recreated with same UIDs, which is just a re-observe)
+        (
+            ResourceRuntimeState::Recreated {
+                new_uid: prev_new, ..
+            },
+            ResourceRuntimeState::Recreated {
+                new_uid: cur_new, ..
+            },
+        ) => prev_new != cur_new,
         (_, ResourceRuntimeState::Recreated { .. }) => true,
         // Initial delete issued
         (ResourceRuntimeState::Planned, ResourceRuntimeState::DeleteRequested) => true,
@@ -998,6 +1007,36 @@ mod tests {
         assert!(!is_meaningful_transition(
             &ResourceRuntimeState::Deleting,
             &ResourceRuntimeState::Deleting,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_recreated_to_recreated_same_uid_not_meaningful() {
+        assert!(!is_meaningful_transition(
+            &ResourceRuntimeState::Recreated {
+                old_uid: "a".to_string(),
+                new_uid: "b".to_string(),
+            },
+            &ResourceRuntimeState::Recreated {
+                old_uid: "a".to_string(),
+                new_uid: "b".to_string(),
+            },
+            false
+        ));
+    }
+
+    #[test]
+    fn test_recreated_to_recreated_different_uid_is_meaningful() {
+        assert!(is_meaningful_transition(
+            &ResourceRuntimeState::Recreated {
+                old_uid: "a".to_string(),
+                new_uid: "b".to_string(),
+            },
+            &ResourceRuntimeState::Recreated {
+                old_uid: "b".to_string(),
+                new_uid: "c".to_string(),
+            },
             false
         ));
     }

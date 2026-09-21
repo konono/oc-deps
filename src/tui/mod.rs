@@ -83,7 +83,7 @@ async fn run_tui_inner(
     gate: &Arc<MutationGate>,
     force: bool,
 ) -> Result<()> {
-    let mut app = AppState::new();
+    let mut app = AppState::new(journal_store.read().await.finalizer_recovery_approved);
     let mut selected_index: usize = 0;
 
     // Collect REVIEW items for Plan Review navigation
@@ -148,6 +148,9 @@ async fn run_tui_inner(
                             resource: res.clone(),
                         },
                     );
+                }
+                KeyCode::Char('r') => {
+                    let _ = apply_command(&mut app, &AppCommand::ToggleFinalizerRecovery);
                 }
                 KeyCode::Char('s') | KeyCode::Enter => {
                     break; // Proceed to execution
@@ -381,10 +384,12 @@ async fn run_tui_inner(
         }
     }
 
-    // P0: Persist Bound Plan to journal BEFORE mutation.
+    // P0: Fix finalizer recovery flag + Bound Plan to journal BEFORE mutation.
     let bound_snapshot = plan.clone();
     journal_store
         .update(|j| {
+            j.state = crate::teardown::journal::RunState::Applying;
+            j.finalizer_recovery_approved = true;
             j.plan_snapshot = bound_snapshot;
         })
         .await
@@ -716,7 +721,57 @@ async fn handle_execution_completed(
         return Ok(());
     }
 
-    // Collect candidates: likely_operator_residual + unattributed only
+    // Auto cleanup planned DELETE/EXPECT still present
+    {
+        let j = journal_store.read().await;
+        let auto_candidates =
+            executor::auto_cleanup_candidates(&audit_result, &j.execution.deleted);
+        drop(j);
+        if !auto_candidates.is_empty() {
+            eprintln!(
+                "\n🔧 Auto-cleaning {} planned residual(s)...",
+                auto_candidates.len()
+            );
+            match executor::execute_residual_cleanup(
+                client,
+                &auto_candidates,
+                journal_store.as_ref(),
+                gate.as_ref(),
+                kind_map,
+                gk_map,
+            )
+            .await
+            {
+                Ok(cr) => {
+                    eprintln!(
+                        "  {} deleted, {} skipped, {} failed",
+                        cr.deleted.len(),
+                        cr.skipped.len(),
+                        cr.failed.len()
+                    );
+                    if !cr.failed.is_empty() || !cr.skipped.is_empty() {
+                        bail!(
+                            "Auto cleanup incomplete: {} failed, {} skipped",
+                            cr.failed.len(),
+                            cr.skipped.len()
+                        );
+                    }
+                    // executor already ran post-audit and persisted to journal
+                }
+                Err(e) => {
+                    bail!("Auto cleanup failed: {}", e);
+                }
+            }
+        }
+    }
+
+    // Reload audit for remaining candidates
+    let audit_result = {
+        let j = journal_store.read().await;
+        j.last_residual_audit.clone().unwrap_or(audit_result)
+    };
+
+    // Collect remaining candidates: likely_operator_residual + unattributed only (ambiguous)
     let residuals: Vec<(ResourceId, String)> = audit_result
         .likely_operator_residual
         .iter()
@@ -805,13 +860,22 @@ async fn run_residual_screen(
                 }
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                 KeyCode::Char('f') => {
-                    journal_store
-                        .update(|j| {
-                            j.state = RunState::Finished;
-                        })
-                        .await
-                        .context("Failed to persist Finished state")?;
-                    return Ok(());
+                    let j = journal_store.read().await;
+                    match crate::can_finish_run(&j) {
+                        Ok(()) => {
+                            drop(j);
+                            journal_store
+                                .update(|j| {
+                                    j.state = RunState::Finished;
+                                })
+                                .await
+                                .context("Failed to persist Finished state")?;
+                            return Ok(());
+                        }
+                        Err(reason) => {
+                            status_msg = Some(format!("Cannot finish: {}", reason));
+                        }
+                    }
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     cursor = cursor.saturating_sub(1);

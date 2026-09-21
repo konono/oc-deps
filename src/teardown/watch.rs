@@ -35,6 +35,12 @@ pub enum WatchWaitResult {
         finalizer_details: Vec<(ResourceId, usize)>,
         reason: String,
     },
+    /// One or more resources were recreated (new UID observed).
+    /// Executor should handle re-delete authority, not wait for timeout.
+    Recreated {
+        remaining: Vec<ResourceId>,
+        recreated: Vec<(ResourceId, String, String)>,
+    },
 }
 
 impl WatchManager {
@@ -220,6 +226,47 @@ impl WatchManager {
                     resources,
                     format!("timeout after {}s", start.elapsed().as_secs()),
                 );
+            }
+
+            // Recreated → return immediately so executor can handle re-delete
+            if summary.recreated > 0 {
+                let entries = self.store.snapshot();
+                let recreated: Vec<(ResourceId, String, String)> = entries
+                    .iter()
+                    .filter(|e| {
+                        resources.contains(&e.resource)
+                            && matches!(
+                                &e.state,
+                                crate::teardown::runtime::ResourceRuntimeState::Recreated { .. }
+                            )
+                    })
+                    .filter_map(|e| {
+                        if let crate::teardown::runtime::ResourceRuntimeState::Recreated {
+                            old_uid,
+                            new_uid,
+                        } = &e.state
+                        {
+                            Some((e.resource.clone(), old_uid.clone(), new_uid.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let remaining = entries
+                    .iter()
+                    .filter(|e| {
+                        resources.contains(&e.resource)
+                            && !matches!(
+                                e.state,
+                                crate::teardown::runtime::ResourceRuntimeState::Gone
+                            )
+                    })
+                    .map(|e| e.resource.clone())
+                    .collect();
+                break WatchWaitResult::Recreated {
+                    remaining,
+                    recreated,
+                };
             }
 
             if last_progress_check.elapsed() >= stall_timeout {
@@ -657,6 +704,7 @@ mod tests {
                 WatchWaitResult::AllGone => "AllGone",
                 WatchWaitResult::Cancelled => "Cancelled",
                 WatchWaitResult::Stalled { .. } => "Stalled",
+                WatchWaitResult::Recreated { .. } => "Recreated",
             }
         );
         assert!(

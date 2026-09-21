@@ -114,11 +114,25 @@ pub fn draw_plan_review(
     f.render_stateful_widget(review_list, chunks[2], &mut list_state);
 
     // Help
+    let recovery_label = if app.finalizer_recovery_approved {
+        "recovery:ON"
+    } else {
+        "recovery:OFF"
+    };
+    let recovery_color = if app.finalizer_recovery_approved {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
     let help = Paragraph::new(Line::from(vec![
         Span::styled(" a", Style::default().fg(Color::Green)),
         Span::raw(" approve  "),
         Span::styled("K", Style::default().fg(Color::Green)),
         Span::raw(" keep  "),
+        Span::styled("r", Style::default().fg(Color::Green)),
+        Span::raw(" "),
+        Span::styled(recovery_label, Style::default().fg(recovery_color)),
+        Span::raw("  "),
         Span::styled("↑↓", Style::default().fg(Color::Green)),
         Span::raw(" navigate  "),
         Span::styled("s/Enter", Style::default().fg(Color::Green)),

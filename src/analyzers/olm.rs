@@ -776,7 +776,7 @@ pub async fn find_crd_origin(
             && let Some(labels) = &crd_obj.metadata.labels
         {
             for (k, v) in labels {
-                if k.contains("part-of") || k.contains("managed-by") || k.contains("opendatahub") {
+                if k.contains("part-of") || k.contains("managed-by") {
                     crd_labels.push((k.clone(), v.clone()));
                 }
             }
