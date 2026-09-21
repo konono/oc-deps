@@ -822,29 +822,31 @@ async fn discover_api_service_instances(
     }
 }
 
-fn owned_crd_kinds(operators: &[&OperatorInstance], gk_map: &GroupKindMap) -> HashSet<String> {
-    let mut kinds = HashSet::new();
+fn owned_crd_group_kinds(
+    operators: &[&OperatorInstance],
+    gk_map: &GroupKindMap,
+) -> HashSet<(String, String)> {
+    let mut group_kinds = HashSet::new();
     for op in operators {
         for crd_name in &op.owned_crds {
             let (plural, group) = match crd_name.split_once('.') {
                 Some((p, g)) => (p, g),
                 None => continue,
             };
-            // Find kind from gk_map by matching group + plural
             for ((g, k), info) in gk_map {
                 if g == group && info.plural == plural {
-                    kinds.insert(k.clone());
+                    group_kinds.insert((g.clone(), k.clone()));
                 }
             }
         }
     }
-    kinds
+    group_kinds
 }
 
 fn classify_provenance(
     cr: &mut CrInstance,
     operators: &[&OperatorInstance],
-    owned_kinds: &HashSet<String>,
+    owned_group_kinds: &HashSet<(String, String)>,
 ) {
     // ownerRef pointing to operator's CSV → Managed ONLY if UID matches
     // (name-only match would accept stale generation's CSV)
@@ -871,12 +873,17 @@ fn classify_provenance(
         }
     }
 
-    // ownerRef kind matches an owned CRD kind (via authoritative gk_map)
-    // Attribution evidence only — does NOT change provenance or grant DELETE authority
+    // ownerRef kind matches an owned CRD kind (via authoritative gk_map).
+    // Attribution hint only — does NOT change provenance or grant DELETE authority.
+    // ownerRef lacks apiVersion, so kind match alone is a weak hint
+    // (different API groups could share the same Kind name).
     for (ref_kind, ref_name, ref_uid) in &cr.owner_refs {
-        if owned_kinds.contains(ref_kind.as_str()) {
-            cr.ownerref_to_owned_api_kind =
-                Some(format!("{}/{} (uid: {})", ref_kind, ref_name, ref_uid));
+        let kind_matches = owned_group_kinds.iter().any(|(_, k)| k == ref_kind);
+        if kind_matches {
+            cr.ownerref_to_owned_api_kind = Some(format!(
+                "{}/{} (uid: {}, kind-only match — ownerRef group unverified)",
+                ref_kind, ref_name, ref_uid
+            ));
             return;
         }
     }
@@ -1936,9 +1943,9 @@ pub async fn generate_teardown_plan(
     }
 
     // Classify provenance (applies to both direct and related CRs)
-    let owned_kinds = owned_crd_kinds(target_operators, gk_map);
+    let owned_group_kinds = owned_crd_group_kinds(target_operators, gk_map);
     for cr in &mut cr_instances {
-        classify_provenance(cr, target_operators, &owned_kinds);
+        classify_provenance(cr, target_operators, &owned_group_kinds);
     }
 
     let review_provenance_count = cr_instances
@@ -2310,7 +2317,7 @@ pub async fn generate_teardown_plan(
             (GraphPosition::Root, _) if approval == DeleteApprovalClass::ExplicitOnly => {
                 let reason = if let Some(ref evidence) = cr.ownerref_to_owned_api_kind {
                     format!(
-                        "ownerRef points to operator-owned API kind: {} (parent absent, kind match only — explicit approval required)",
+                        "ownerRef points to operator-owned API kind: {} (parent not in current graph, kind-only hint — explicit approval required)",
                         evidence
                     )
                 } else {
@@ -2340,7 +2347,7 @@ pub async fn generate_teardown_plan(
             (GraphPosition::Independent, _) if approval == DeleteApprovalClass::ExplicitOnly => {
                 let reason = if let Some(ref evidence) = cr.ownerref_to_owned_api_kind {
                     format!(
-                        "ownerRef points to operator-owned API kind: {} (parent absent, kind match only — explicit approval required)",
+                        "ownerRef points to operator-owned API kind: {} (parent not in current graph, kind-only hint — explicit approval required)",
                         evidence
                     )
                 } else {
@@ -3435,16 +3442,8 @@ fn print_plan_tree(plan: &TeardownPlan) {
         plan.blockers.len(),
         plan.warnings.len()
     );
-    if !plan.blockers.is_empty() {
-        let explicit_only_count = plan.blockers.len();
-        println!(
-            "\n  ℹ {} blocker(s) require explicit approval (--approve-delete all does not cover ExplicitOnly items).",
-            explicit_only_count
-        );
-        println!(
-            "    Use the exact --approve-delete commands shown above, or approve individually in --tui."
-        );
-    }
+    // Blocker reasons are shown individually above — no additional summary needed.
+    // Each blocker's reason text includes the exact --approve-delete command.
 }
 
 fn print_plan_json(plan: &TeardownPlan) {
