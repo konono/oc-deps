@@ -529,7 +529,7 @@ pub async fn execute_plan_with_store(
                         );
                         let dsc_api: kube::api::Api<kube::api::DynamicObject> =
                             kube::api::Api::all_with(client.clone(), &dsc_ar);
-                        Some(dsc_api.list(&ListParams::default().limit(1)).await)
+                        Some(dsc_api.list(&ListParams::default()).await)
                     } else {
                         None
                     };
@@ -1002,6 +1002,42 @@ pub async fn execute_plan_with_store(
                     break;
                 }
             }
+        }
+
+        // Hard stop: if any DELETE failed/blocked in this phase, do NOT proceed
+        // to subsequent phases. Checkpoint current results and break.
+        if !result.failed.is_empty() && !dry_run {
+            eprintln!(
+                "\n  \x1b[1;31m⛔ Phase has {} failed action(s) — stopping before next phase\x1b[0m",
+                result.failed.len()
+            );
+            // Checkpoint failed state before stopping
+            if let Some(j) = journal {
+                let deleted_snapshot = result.deleted.clone();
+                let already_gone_snapshot = result.already_gone.clone();
+                let failed_snapshot = result.failed.clone();
+                let kept_snapshot: Vec<_> = result
+                    .kept
+                    .iter()
+                    .map(crate::teardown::journal::PreservedRecord::from)
+                    .collect();
+                let reviewed_snapshot: Vec<_> = result
+                    .reviewed
+                    .iter()
+                    .map(crate::teardown::journal::PreservedRecord::from)
+                    .collect();
+                j.update(|journal| {
+                    journal.execution.phases_completed = result.phases_completed;
+                    journal.execution.deleted = deleted_snapshot;
+                    journal.execution.already_gone = already_gone_snapshot;
+                    journal.execution.failed = failed_snapshot;
+                    journal.execution.kept = kept_snapshot;
+                    journal.execution.reviewed = reviewed_snapshot;
+                })
+                .await
+                .context("Failed to checkpoint failed phase — aborting")?;
+            }
+            break;
         }
 
         result.phases_completed += 1;

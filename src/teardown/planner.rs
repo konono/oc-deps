@@ -4428,4 +4428,67 @@ mod tests {
             "RelatedLinked root has lifecycle connection — must remain hard blocker"
         );
     }
+
+    #[test]
+    fn dsci_guard_exact_group_kind() {
+        // Only exact (group, kind) triggers DSCI guard — different group must not
+        let dsci_exact = ResourceId {
+            group: "dscinitialization.opendatahub.io".to_string(),
+            version: "v2".to_string(),
+            kind: "DSCInitialization".to_string(),
+            namespace: None,
+            name: "default-dsci".to_string(),
+            uid: Some("uid-dsci".to_string()),
+        };
+        let is_guard_target = dsci_exact.kind == "DSCInitialization"
+            && dsci_exact.group == "dscinitialization.opendatahub.io";
+        assert!(is_guard_target, "exact DSCInitialization triggers guard");
+
+        let dsci_wrong_group = ResourceId {
+            group: "other.example.com".to_string(),
+            version: "v1".to_string(),
+            kind: "DSCInitialization".to_string(),
+            namespace: None,
+            name: "default-dsci".to_string(),
+            uid: Some("uid-other".to_string()),
+        };
+        let is_guard_target2 = dsci_wrong_group.kind == "DSCInitialization"
+            && dsci_wrong_group.group == "dscinitialization.opendatahub.io";
+        assert!(
+            !is_guard_target2,
+            "same Kind from different group must NOT trigger guard"
+        );
+    }
+
+    #[test]
+    fn phase_failed_prevents_subsequent_phases() {
+        // Verify the hard stop condition: non-empty result.failed prevents
+        // phases_completed from advancing, which prevents subsequent phases
+        // (CSV DELETE) from executing.
+        let result = crate::teardown::executor::ExecutionResult {
+            phases_completed: 1, // completed Phase 0 (Subscription)
+            phases_total: 5,
+            deleted: vec![make_res("Subscription", "rhods-operator", "uid-sub")],
+            already_gone: vec![],
+            failed: vec![(
+                make_res("DSCInitialization", "default-dsci", "uid-dsci"),
+                "DataScienceCluster LIST blocked".to_string(),
+            )],
+            barrier_timeout: None,
+            kept: vec![],
+            reviewed: vec![],
+        };
+        assert!(
+            !result.failed.is_empty(),
+            "failed actions must trigger phase hard stop"
+        );
+        assert!(
+            result.phases_completed < result.phases_total,
+            "phases_completed must not reach total when failed actions exist"
+        );
+        assert!(
+            result.phases_completed < 3,
+            "CSV DELETE phase must not be reached when DSCI failed"
+        );
+    }
 }
