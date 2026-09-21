@@ -2845,4 +2845,158 @@ mod tests {
             "acquire on closed gate must fail"
         );
     }
+
+    #[tokio::test]
+    async fn test_dsci_guard_blocks_csv_phase() {
+        // 2-phase plan: Phase 0 = DSCI DELETE, Phase 1 = CSV DELETE.
+        // gk_map has NO DataScienceCluster entry → DSCI guard can't resolve
+        // DSC API → fail-closed → Phase 0 fails → Phase 1 (CSV) never reached.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dsci_res = ResourceId {
+            group: "dscinitialization.opendatahub.io".to_string(),
+            version: "v2".to_string(),
+            kind: "DSCInitialization".to_string(),
+            namespace: None,
+            name: "default-dsci".to_string(),
+            uid: Some("uid-dsci".to_string()),
+        };
+        let csv_res = ResourceId {
+            group: "operators.coreos.com".to_string(),
+            version: "v1alpha1".to_string(),
+            kind: "ClusterServiceVersion".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: "test-op.v1".to_string(),
+            uid: Some("uid-csv".to_string()),
+        };
+
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![
+                PlanPhase {
+                    name: "DSCI phase".to_string(),
+                    description: "".to_string(),
+                    actions: vec![Action::Delete {
+                        resource: dsci_res.clone(),
+                        reason: "test".to_string(),
+                    }],
+                    barrier: None,
+                },
+                PlanPhase {
+                    name: "CSV phase".to_string(),
+                    description: "".to_string(),
+                    actions: vec![Action::Delete {
+                        resource: csv_res.clone(),
+                        reason: "test".to_string(),
+                    }],
+                    barrier: None,
+                },
+            ],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        // gk_map with DSCI but NO DSC → guard can't resolve DSC API
+        let mut gk = std::collections::HashMap::new();
+        gk.insert(
+            (
+                "dscinitialization.opendatahub.io".to_string(),
+                "DSCInitialization".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "dscinitialization.opendatahub.io".to_string(),
+                version: "v2".to_string(),
+                plural: "dscinitializations".to_string(),
+                namespaced: false,
+            },
+        );
+        // CSV in gk_map so resolve_api works IF reached (it shouldn't be)
+        gk.insert(
+            (
+                "operators.coreos.com".to_string(),
+                "ClusterServiceVersion".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                plural: "clusterserviceversions".to_string(),
+                namespaced: true,
+            },
+        );
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count_clone = request_count.clone();
+
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+
+        // Mock: track all requests. DSCI guard doesn't make API calls
+        // (it only checks gk_map). The DSCI DELETE itself would make a GET
+        // but it's blocked before reaching parallel DELETE.
+        // CSV phase should make ZERO requests.
+        let spawned = tokio::spawn(async move {
+            let mut handle = std::pin::pin!(handle);
+            // No requests expected — DSCI blocked at guard, CSV phase not reached
+            // If any request comes, record it
+            while let Some((_req, send)) = handle.next_request().await {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+                // Return 404 for anything unexpected
+                let body = serde_json::json!({
+                    "kind": "Status", "apiVersion": "v1", "metadata": {},
+                    "status": "Failure", "reason": "NotFound", "code": 404
+                });
+                send.send_response(
+                    http::Response::builder()
+                        .status(404)
+                        .body(kube::client::Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                );
+            }
+        });
+
+        let km = std::collections::HashMap::new(); // empty kind_map
+        let gvk = std::collections::HashMap::new();
+        let gvr = std::collections::HashMap::new();
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = execute_plan_with_store(
+            &client, &plan, &km, &gk, &gvk, &gvr, false, true, None, None, 0, true, None,
+        )
+        .await;
+
+        // Executor should return Err (failed phase) or Ok with failed actions
+        match result {
+            Ok(ref r) => {
+                assert!(
+                    !r.failed.is_empty(),
+                    "DSCI must be in failed: {:?}",
+                    r.failed
+                );
+                assert!(
+                    r.phases_completed < 2,
+                    "CSV phase (index 1) must NOT be reached, phases_completed={}",
+                    r.phases_completed
+                );
+            }
+            Err(_) => {
+                // Also acceptable — executor bailed due to failure
+            }
+        }
+
+        // Drop client to close mock handle
+        drop(client);
+        spawned.abort();
+
+        // Verify: zero API requests means CSV phase never started
+        let total_requests = request_count.load(Ordering::SeqCst);
+        assert_eq!(
+            total_requests, 0,
+            "CSV phase must make ZERO API requests when DSCI guard blocks — got {}",
+            total_requests
+        );
+    }
 }
