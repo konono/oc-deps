@@ -2529,47 +2529,149 @@ pub async fn generate_teardown_plan(
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
 
     if layers.len() <= 1 {
-        // Single layer — all operands in one phase (original behavior)
-        let mut phase_actions: Vec<Action> = Vec::new();
-
-        for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
-        }
-        for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Descendant,
-                &resolved_decisions,
-            ));
-        }
-        for cr in &independent_crs {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Independent,
-                &resolved_decisions,
-            ));
-        }
-
-        let conds: Vec<String> = phase_actions
+        // Split DSC/DSCI: DSCI webhook requires DSC Gone before DSCI can be deleted.
+        // Phase 1a: DSC DELETE only + barrier (DSC Gone + LIST empty)
+        // Phase 1b: DSCI + descendants + independents + barrier (all Gone)
+        let dsc_roots: Vec<&&CrInstance> = root_crs
             .iter()
-            .filter_map(|action| match action {
-                Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
-                Action::ExpectGone { resource, .. } => {
-                    Some(format!("{} is gone (expected)", resource))
-                }
-                _ => None,
+            .filter(|cr| {
+                cr.id.kind == "DataScienceCluster"
+                    && cr.id.group == "datasciencecluster.opendatahub.io"
+            })
+            .collect();
+        let dsci_roots: Vec<&&CrInstance> = root_crs
+            .iter()
+            .filter(|cr| {
+                cr.id.kind == "DSCInitialization"
+                    && cr.id.group == "dscinitialization.opendatahub.io"
+            })
+            .collect();
+        let other_roots: Vec<&&CrInstance> = root_crs
+            .iter()
+            .filter(|cr| {
+                !(cr.id.kind == "DataScienceCluster"
+                    && cr.id.group == "datasciencecluster.opendatahub.io")
+                    && !(cr.id.kind == "DSCInitialization"
+                        && cr.id.group == "dscinitialization.opendatahub.io")
             })
             .collect();
 
-        operand_phases.push(PlanPhase {
-            name: "Trigger operand cleanup".to_string(),
-            description: "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish".to_string(),
-            actions: phase_actions,
-            barrier: Some(Barrier {
-                description: "All operands removed (deleted + expected)".to_string(),
-                conditions: conds,
-            }),
-        });
+        if !dsc_roots.is_empty() && !dsci_roots.is_empty() {
+            // Phase 1a: DSC only
+            let mut dsc_actions: Vec<Action> = Vec::new();
+            for cr in &dsc_roots {
+                dsc_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
+            }
+            let dsc_conds: Vec<String> = dsc_actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::Delete { resource, .. } => {
+                        Some(format!("DataScienceCluster/{} is gone", resource.name))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if !dsc_actions.is_empty() {
+                operand_phases.push(PlanPhase {
+                    name: "Delete DataScienceCluster".to_string(),
+                    description:
+                        "DSCInitialization webhook requires DSC Gone before DSCI can be deleted"
+                            .to_string(),
+                    actions: dsc_actions,
+                    barrier: Some(Barrier {
+                        description: "DataScienceCluster confirmed Gone".to_string(),
+                        conditions: dsc_conds,
+                    }),
+                });
+            }
+
+            // Phase 1b: DSCI + other roots + descendants + independents
+            let mut phase_actions: Vec<Action> = Vec::new();
+            for cr in &dsci_roots {
+                phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
+            }
+            for cr in &other_roots {
+                phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
+            }
+            for cr in &managed_descendants {
+                phase_actions.push(cr_to_action(
+                    cr,
+                    GraphPosition::Descendant,
+                    &resolved_decisions,
+                ));
+            }
+            for cr in &independent_crs {
+                phase_actions.push(cr_to_action(
+                    cr,
+                    GraphPosition::Independent,
+                    &resolved_decisions,
+                ));
+            }
+
+            let conds: Vec<String> = phase_actions
+                .iter()
+                .filter_map(|action| match action {
+                    Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
+                    Action::ExpectGone { resource, .. } => {
+                        Some(format!("{} is gone (expected)", resource))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            operand_phases.push(PlanPhase {
+                name: "Trigger operand cleanup".to_string(),
+                description: "Delete DSCI + root CRs; expect managed descendants to vanish"
+                    .to_string(),
+                actions: phase_actions,
+                barrier: Some(Barrier {
+                    description: "All operands removed (deleted + expected)".to_string(),
+                    conditions: conds,
+                }),
+            });
+        } else {
+            // No DSC/DSCI pair — original single phase
+            let mut phase_actions: Vec<Action> = Vec::new();
+
+            for cr in &root_crs {
+                phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
+            }
+            for cr in &managed_descendants {
+                phase_actions.push(cr_to_action(
+                    cr,
+                    GraphPosition::Descendant,
+                    &resolved_decisions,
+                ));
+            }
+            for cr in &independent_crs {
+                phase_actions.push(cr_to_action(
+                    cr,
+                    GraphPosition::Independent,
+                    &resolved_decisions,
+                ));
+            }
+
+            let conds: Vec<String> = phase_actions
+                .iter()
+                .filter_map(|action| match action {
+                    Action::Delete { resource, .. } => Some(format!("{} is gone", resource)),
+                    Action::ExpectGone { resource, .. } => {
+                        Some(format!("{} is gone (expected)", resource))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            operand_phases.push(PlanPhase {
+                name: "Trigger operand cleanup".to_string(),
+                description: "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish".to_string(),
+                actions: phase_actions,
+                barrier: Some(Barrier {
+                    description: "All operands removed (deleted + expected)".to_string(),
+                    conditions: conds,
+                }),
+            });
+        }
     } else {
         // Multiple layers — split operands by owning operator's layer
         for (layer_idx, layer) in layers.iter().enumerate() {
