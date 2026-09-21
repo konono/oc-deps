@@ -708,8 +708,22 @@ pub async fn run_residual_audit(client: &Client, journal: &RunJournal) -> Result
                     });
                 }
                 Action::Review {
-                    resource, reason, ..
+                    resource,
+                    reason,
+                    metadata,
+                    ..
                 } => {
+                    // RelatedLabelOnly items are probed in Phase A2 and
+                    // may appear as unattributed residuals — skip here
+                    let is_related_label_only = metadata.as_ref().is_some_and(|m| {
+                        matches!(
+                            m.discovery_source,
+                            Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly)
+                        )
+                    });
+                    if is_related_label_only {
+                        continue;
+                    }
                     audit.expected_preserved.push(PreservedItem {
                         resource: resource.clone(),
                         reason: reason.clone(),
@@ -718,6 +732,75 @@ pub async fn run_residual_audit(client: &Client, journal: &RunJournal) -> Result
                     });
                 }
                 _ => {}
+            }
+        }
+    }
+
+    // Phase A2: Probe RelatedLabelOnly REVIEW roots — these are non-blocking
+    // but need live state for Residual Cleanup. If present → unattributed residual.
+    // If 404 + LIST OK → gone (no residual entry). If error → AuditIncomplete.
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            if let Action::Review {
+                resource, metadata, ..
+            } = action
+            {
+                let is_related_label_only = metadata.as_ref().is_some_and(|m| {
+                    matches!(
+                        m.discovery_source,
+                        Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly)
+                    )
+                });
+                if !is_related_label_only {
+                    continue;
+                }
+                audit.coverage.requested_probes += 1;
+                match probe_resource(client, resource, &ctx.known_gvrs).await {
+                    ProbeResult::Present { uid } => {
+                        audit.coverage.succeeded_probes += 1;
+                        match uid {
+                            Some(live_uid) => {
+                                let mut live_resource = resource.clone();
+                                live_resource.uid = Some(live_uid);
+                                audit.unattributed.push(AttributedResidual {
+                                    resource: live_resource,
+                                    evidence: ResidualEvidence {
+                                        owner_ref_match: false,
+                                        matching_labels: vec![],
+                                        matching_managers: vec![],
+                                        namespace_affinity: false,
+                                        service_account_match: false,
+                                    },
+                                    confidence: ResidualConfidence::None,
+                                });
+                            }
+                            None => {
+                                audit.scan_errors.push(AuditScanError {
+                                    resource_type: format!("{}/{}", resource.kind, resource.name),
+                                    namespace: resource
+                                        .namespace
+                                        .clone()
+                                        .unwrap_or_else(|| "cluster".to_string()),
+                                    error: "RelatedLabelOnly resource present but has no UID"
+                                        .to_string(),
+                                });
+                            }
+                        }
+                    }
+                    ProbeResult::Gone => {
+                        audit.coverage.succeeded_probes += 1;
+                    }
+                    ProbeResult::Error(err) => {
+                        audit.scan_errors.push(AuditScanError {
+                            resource_type: format!("{}/{}", resource.kind, resource.name),
+                            namespace: resource
+                                .namespace
+                                .clone()
+                                .unwrap_or_else(|| "cluster".to_string()),
+                            error: err,
+                        });
+                    }
+                }
             }
         }
     }

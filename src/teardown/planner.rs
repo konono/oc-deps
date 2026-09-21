@@ -822,6 +822,13 @@ async fn discover_api_service_instances(
     }
 }
 
+/// Returns true if a root CR should be exempt from hard blocker status.
+/// RelatedLabelOnly roots have no confirmed lifecycle connection to the
+/// target operator and are deferred to post-teardown Residual Audit.
+pub fn is_root_blocker_exempt(cr: &CrInstance) -> bool {
+    cr.discovery_source == DiscoverySource::RelatedLabelOnly
+}
+
 fn owned_crd_group_kinds(
     operators: &[&OperatorInstance],
     gk_map: &GroupKindMap,
@@ -2664,11 +2671,17 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // Root REVIEWs that are not approved become hard blockers
+    // Root REVIEWs/KEEPs that are not approved become hard blockers —
+    // EXCEPT RelatedLabelOnly roots which have no confirmed lifecycle
+    // connection to the target operator. These remain REVIEW (non-blocking)
+    // and appear in post-teardown Residual Audit for separate decisions.
     for phase in &operand_phases {
         for action in &phase.actions {
             if let Action::Review {
-                resource, reason, ..
+                resource,
+                reason,
+                metadata,
+                ..
             } = action
             {
                 let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
@@ -2676,6 +2689,14 @@ pub async fn generate_teardown_plan(
                 if !is_root {
                     continue;
                 }
+
+                // RelatedLabelOnly roots: no confirmed lifecycle connection
+                // to target operator → skip blocker, defer to Residual Audit
+                let is_related_label_only = root_cr.is_some_and(|cr| is_root_blocker_exempt(cr));
+                if is_related_label_only {
+                    continue;
+                }
+
                 let is_shared = root_cr.is_some_and(|cr| {
                     resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len() > 1
                 });
@@ -2703,12 +2724,16 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // Preserved root operands also become hard blockers
+    // Preserved root operands also become hard blockers —
+    // EXCEPT RelatedLabelOnly roots (no confirmed lifecycle connection)
     for phase in &operand_phases {
         for action in &phase.actions {
             if let Action::Keep { resource, reason } = action {
-                let is_root = root_crs.iter().any(|cr| cr.id == *resource);
-                if is_root {
+                let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
+                if let Some(cr) = root_cr {
+                    if is_root_blocker_exempt(cr) {
+                        continue;
+                    }
                     blockers.push(Blocker {
                         resource: resource.clone(),
                         reason: format!(
@@ -4259,5 +4284,49 @@ mod tests {
         );
 
         spawned.await.unwrap();
+    }
+
+    #[test]
+    fn related_label_only_root_is_blocker_exempt() {
+        let mut cr = make_cr_instance(
+            "Config",
+            "default",
+            "uid-config",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+        assert!(
+            is_root_blocker_exempt(&cr),
+            "RelatedLabelOnly root must be exempt from hard blocker"
+        );
+    }
+
+    #[test]
+    fn direct_root_is_not_blocker_exempt() {
+        let cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-test",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        // default discovery_source is Direct
+        assert!(
+            !is_root_blocker_exempt(&cr),
+            "Direct-discovery root must NOT be exempt — remains hard blocker"
+        );
+    }
+
+    #[test]
+    fn related_linked_root_is_not_blocker_exempt() {
+        let mut cr = make_cr_instance("Widget", "w1", "uid-w1", vec![], HashMap::new(), vec![]);
+        cr.discovery_source = DiscoverySource::RelatedLinked;
+        assert!(
+            !is_root_blocker_exempt(&cr),
+            "RelatedLinked root has lifecycle connection — must remain hard blocker"
+        );
     }
 }
