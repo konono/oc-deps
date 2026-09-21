@@ -81,9 +81,11 @@ pub struct RuntimeObservation {
     ///   - Set Recreated (confirmed UID change)
     ///   - Change tracked UID
     ///   - Revive a Gone resource (transient 404)
+    ///
     /// Non-authoritative (WATCH) events can only:
     ///   - Update deletionTimestamp / finalizer state for matching UID
     ///   - Set needs_verification flag (hint for barrier to re-GET)
+    #[allow(dead_code)]
     pub authoritative: bool,
 }
 
@@ -102,8 +104,11 @@ pub struct StateSummary {
     pub finalizer_blocked: usize,
     pub stalled: usize,
     pub failed: usize,
+    #[allow(dead_code)]
     pub unknown: usize,
+    #[allow(dead_code)]
     pub recreated: usize,
+    #[allow(dead_code)]
     pub total: usize,
 }
 
@@ -136,12 +141,7 @@ impl RuntimeStateStore {
         )
     }
 
-    pub fn register(
-        &self,
-        resource: &ResourceId,
-        state: ResourceRuntimeState,
-        phase_index: usize,
-    ) {
+    pub fn register(&self, resource: &ResourceId, state: ResourceRuntimeState, phase_index: usize) {
         let key = Self::resource_key(resource);
         let entry = RuntimeEntry {
             resource: resource.clone(),
@@ -156,11 +156,7 @@ impl RuntimeStateStore {
         self.entries.write().unwrap().insert(key, entry);
     }
 
-    pub fn update_from_executor(
-        &self,
-        resource: &ResourceId,
-        state: ResourceRuntimeState,
-    ) {
+    pub fn update_from_executor(&self, resource: &ResourceId, state: ResourceRuntimeState) {
         let key = Self::resource_key(resource);
         let mut entries = self.entries.write().unwrap();
         if let Some(entry) = entries.get_mut(&key) {
@@ -258,17 +254,17 @@ impl RuntimeStateStore {
         }
 
         // Check UID change (for non-Gone states)
-        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, live_uid) {
-            if tracked_uid != new_uid {
-                entry.state = ResourceRuntimeState::Recreated {
-                    old_uid: tracked_uid.clone(),
-                    new_uid: new_uid.clone(),
-                };
-                entry.uid = Some(new_uid.clone());
-                entry.last_meaningful_progress = Instant::now();
-                self.notifier.notify();
-                return;
-            }
+        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, live_uid)
+            && tracked_uid != new_uid
+        {
+            entry.state = ResourceRuntimeState::Recreated {
+                old_uid: tracked_uid.clone(),
+                new_uid: new_uid.clone(),
+            };
+            entry.uid = Some(new_uid.clone());
+            entry.last_meaningful_progress = Instant::now();
+            self.notifier.notify();
+            return;
         }
 
         if entry.uid.is_none() && live_uid.is_some() {
@@ -304,12 +300,12 @@ impl RuntimeStateStore {
 
         // WATCH event for existing resource
         // Check UID mismatch — hint for re-GET, don't change UID
-        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, &obs.uid) {
-            if tracked_uid != new_uid {
-                entry.needs_verification = true;
-                self.notifier.notify();
-                return;
-            }
+        if let (Some(tracked_uid), Some(new_uid)) = (&entry.uid, &obs.uid)
+            && tracked_uid != new_uid
+        {
+            entry.needs_verification = true;
+            self.notifier.notify();
+            return;
         }
 
         // Matching UID — safe to update deletionTimestamp/finalizer state
@@ -374,16 +370,13 @@ impl RuntimeStateStore {
         self.entries.read().unwrap().values().cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, resource: &ResourceId) -> Option<RuntimeEntry> {
         let key = Self::resource_key(resource);
         self.entries.read().unwrap().get(&key).cloned()
     }
 
-    pub fn any_meaningful_progress_since(
-        &self,
-        since: Instant,
-        resources: &[ResourceId],
-    ) -> bool {
+    pub fn any_meaningful_progress_since(&self, since: Instant, resources: &[ResourceId]) -> bool {
         let entries = self.entries.read().unwrap();
         resources.iter().any(|res| {
             let key = Self::resource_key(res);
@@ -399,9 +392,9 @@ impl RuntimeStateStore {
         let entries = self.entries.read().unwrap();
         resources.iter().all(|res| {
             let key = Self::resource_key(res);
-            entries.get(&key).is_some_and(|e| {
-                e.state == ResourceRuntimeState::Gone && !e.needs_verification
-            })
+            entries
+                .get(&key)
+                .is_some_and(|e| e.state == ResourceRuntimeState::Gone && !e.needs_verification)
         })
     }
 
@@ -455,6 +448,7 @@ impl RuntimeStateStore {
 ///   - Transition TO Gone
 ///   - Transition TO Recreated (UID change)
 ///   - Finalizer count DECREASE (not increase)
+///
 /// Finalizer count increase, FinalizerBlocked count changes, and
 /// resourceVersion/status heartbeats are NOT meaningful.
 /// Only specific transitions count as meaningful progress for stall detection:
@@ -480,15 +474,23 @@ fn is_meaningful_transition(
         (s, ResourceRuntimeState::FinalizerBlocked { .. })
             if !matches!(
                 s,
-                ResourceRuntimeState::FinalizerBlocked { .. }
-                    | ResourceRuntimeState::Deleting
+                ResourceRuntimeState::FinalizerBlocked { .. } | ResourceRuntimeState::Deleting
             ) =>
         {
             true
         }
         // Resource gone
         (_, ResourceRuntimeState::Gone) => true,
-        // UID recreation
+        // UID recreation — only meaningful if transitioning INTO Recreated
+        // (not Recreated→Recreated with same UIDs, which is just a re-observe)
+        (
+            ResourceRuntimeState::Recreated {
+                new_uid: prev_new, ..
+            },
+            ResourceRuntimeState::Recreated {
+                new_uid: cur_new, ..
+            },
+        ) => prev_new != cur_new,
         (_, ResourceRuntimeState::Recreated { .. }) => true,
         // Initial delete issued
         (ResourceRuntimeState::Planned, ResourceRuntimeState::DeleteRequested) => true,
@@ -715,7 +717,7 @@ mod tests {
 
         // WATCH hint (not authoritative)
         store.update_from_observation(&res, obs_gone(false), 1);
-        assert!(!store.all_gone_for(&[res.clone()]));
+        assert!(!store.all_gone_for(std::slice::from_ref(&res)));
 
         // Authoritative confirm
         store.update_from_observation(&res, obs_gone(true), 0);
@@ -748,7 +750,10 @@ mod tests {
 
         store.update_from_observation(&res_a, obs_gone(true), 0);
         assert_eq!(store.get(&res_a).unwrap().state, ResourceRuntimeState::Gone);
-        assert_eq!(store.get(&res_b).unwrap().state, ResourceRuntimeState::Planned);
+        assert_eq!(
+            store.get(&res_b).unwrap().state,
+            ResourceRuntimeState::Planned
+        );
     }
 
     // ── API failure ──
@@ -1007,6 +1012,36 @@ mod tests {
     }
 
     #[test]
+    fn test_recreated_to_recreated_same_uid_not_meaningful() {
+        assert!(!is_meaningful_transition(
+            &ResourceRuntimeState::Recreated {
+                old_uid: "a".to_string(),
+                new_uid: "b".to_string(),
+            },
+            &ResourceRuntimeState::Recreated {
+                old_uid: "a".to_string(),
+                new_uid: "b".to_string(),
+            },
+            false
+        ));
+    }
+
+    #[test]
+    fn test_recreated_to_recreated_different_uid_is_meaningful() {
+        assert!(is_meaningful_transition(
+            &ResourceRuntimeState::Recreated {
+                old_uid: "a".to_string(),
+                new_uid: "b".to_string(),
+            },
+            &ResourceRuntimeState::Recreated {
+                old_uid: "b".to_string(),
+                new_uid: "c".to_string(),
+            },
+            false
+        ));
+    }
+
+    #[test]
     fn test_deletion_timestamp_with_finalizers_is_progress() {
         // DeleteRequested → FinalizerBlocked means deletionTimestamp appeared
         // with finalizers present. This IS meaningful progress.
@@ -1043,8 +1078,7 @@ mod tests {
     fn test_barrier_requires_authoritative_gone() {
         // WATCH hint (non-authoritative) should NOT pass barrier
         let (store, _) = make_store();
-        let res =
-            make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+        let res = make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
 
         store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
 
@@ -1063,7 +1097,7 @@ mod tests {
 
         // Barrier should NOT pass — needs_verification is true
         assert!(
-            !store.all_gone_for(&[res.clone()]),
+            !store.all_gone_for(std::slice::from_ref(&res)),
             "WATCH hint should not pass barrier"
         );
 
@@ -1091,8 +1125,7 @@ mod tests {
         // Resource A is deleted, B (new UID) is observed. Late WATCH Deleted
         // for A should not affect B's state.
         let (store, _) = make_store();
-        let res =
-            make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
+        let res = make_resource_with("apps", "Deployment", Some("ns"), "dep", Some("uid-a"));
 
         store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
 
@@ -1110,7 +1143,10 @@ mod tests {
         );
 
         let entry = store.get(&res).unwrap();
-        assert!(matches!(entry.state, ResourceRuntimeState::Recreated { .. }));
+        assert!(matches!(
+            entry.state,
+            ResourceRuntimeState::Recreated { .. }
+        ));
 
         // Old WATCH Deleted arrives (non-authoritative, uid-a era)
         store.update_from_observation(
@@ -1160,7 +1196,7 @@ mod tests {
         );
 
         // Should NOT be Gone
-        assert!(!store.all_gone_for(&[res.clone()]));
+        assert!(!store.all_gone_for(std::slice::from_ref(&res)));
         let entry = store.get(&res).unwrap();
         assert_ne!(entry.state, ResourceRuntimeState::Gone);
     }
@@ -1189,7 +1225,7 @@ mod tests {
 
         // Barrier should NOT pass (needs_verification)
         assert!(
-            !store.all_gone_for(&[res.clone()]),
+            !store.all_gone_for(std::slice::from_ref(&res)),
             "WATCH hint alone must not pass barrier"
         );
 
@@ -1238,9 +1274,23 @@ mod tests {
 
         // Verify: action 0 gets uid-A, action 1 gets uid-B
         // (not reversed by completion order)
-        let a_uid = uids.iter().find(|(_, ai, _)| *ai == 0).map(|(_, _, u)| u.as_str());
-        let b_uid = uids.iter().find(|(_, ai, _)| *ai == 1).map(|(_, _, u)| u.as_str());
-        assert_eq!(a_uid, Some("uid-A"), "action 0 should get uid-A regardless of completion order");
-        assert_eq!(b_uid, Some("uid-B"), "action 1 should get uid-B regardless of completion order");
+        let a_uid = uids
+            .iter()
+            .find(|(_, ai, _)| *ai == 0)
+            .map(|(_, _, u)| u.as_str());
+        let b_uid = uids
+            .iter()
+            .find(|(_, ai, _)| *ai == 1)
+            .map(|(_, _, u)| u.as_str());
+        assert_eq!(
+            a_uid,
+            Some("uid-A"),
+            "action 0 should get uid-A regardless of completion order"
+        );
+        assert_eq!(
+            b_uid,
+            Some("uid-B"),
+            "action 1 should get uid-B regardless of completion order"
+        );
     }
 }

@@ -192,6 +192,24 @@ pub enum TeardownAction {
         /// Preserve a REVIEW resource (keep instead of delete). Kind/name or group/Kind/ns/name (repeatable)
         #[arg(long, value_name = "SPEC")]
         preserve: Vec<String>,
+
+        /// Finalizer recovery is enabled by default. This flag is accepted for
+        /// compatibility but has no effect. Recovery targets EXPECT descendants
+        /// (owned by Gone root) and explicit DELETE targets stuck with finalizers.
+        /// Uses atomic JSON Patch with UID + finalizer array test. Protected kinds
+        /// (Namespace, CRD, etc.) are excluded.
+        #[arg(long, hide = true)]
+        approve_finalizer_recovery: bool,
+
+        /// Headless mode: read JSON commands from script file, output JSON state traces.
+        /// Uses same AppState + executor as interactive mode.
+        #[arg(long, value_name = "PATH")]
+        script: Option<String>,
+
+        /// Enable ratatui TUI mode for interactive Plan Review + Execution + Residual Cleanup.
+        /// Uses the same AppState + core executor as CLI and --script modes.
+        #[arg(long)]
+        tui: bool,
     },
 
     /// Inspect all resources belonging to an operator
@@ -218,6 +236,20 @@ pub enum TeardownAction {
         /// Resource to explain (kind/name format)
         #[arg(long)]
         resource: String,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+    },
+
+    /// Resume a paused or interrupted teardown run
+    Resume {
+        /// Operator CSV name to find latest run
+        operator: Option<String>,
+
+        /// Specific run ID
+        #[arg(long)]
+        run: Option<String>,
 
         /// Skip discovery cache
         #[arg(long)]

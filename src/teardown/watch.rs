@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 
 use futures::stream::StreamExt;
 use kube::Client;
-use kube::api::{Api, ApiResource, DynamicObject, ListParams};
-use kube::core::GroupVersion;
+use kube::api::{Api, DynamicObject, ListParams};
 use tokio::task::JoinHandle;
 
 use crate::kube::discovery::{GroupKindMap, KindMap};
@@ -30,10 +29,17 @@ pub struct WatchManager {
 
 pub enum WatchWaitResult {
     AllGone,
+    Cancelled,
     Stalled {
         remaining: Vec<ResourceId>,
         finalizer_details: Vec<(ResourceId, usize)>,
         reason: String,
+    },
+    /// One or more resources were recreated (new UID observed).
+    /// Executor should handle re-delete authority, not wait for timeout.
+    Recreated {
+        remaining: Vec<ResourceId>,
+        recreated: Vec<(ResourceId, String, String)>,
     },
 }
 
@@ -80,16 +86,12 @@ impl WatchManager {
                     self.store.update_from_observation(&resource, o, 0);
                 }
                 ObserveResult::ApiError(reason) => {
-                    self.store.update_from_executor(
-                        &resource,
-                        ResourceRuntimeState::Unknown { reason },
-                    );
+                    self.store
+                        .update_from_executor(&resource, ResourceRuntimeState::Unknown { reason });
                 }
                 ObserveResult::Unresolvable(reason) => {
-                    self.store.update_from_executor(
-                        &resource,
-                        ResourceRuntimeState::Unknown { reason },
-                    );
+                    self.store
+                        .update_from_executor(&resource, ResourceRuntimeState::Unknown { reason });
                 }
             }
         }
@@ -103,6 +105,7 @@ impl WatchManager {
     /// WATCH events are non-authoritative: Deleted → needs_verification hint,
     /// UID change → needs_verification hint. Only authoritative GETs can
     /// confirm Gone or Recreated.
+    #[allow(dead_code)]
     pub async fn wait_for_gone(
         &self,
         client: &Client,
@@ -112,14 +115,52 @@ impl WatchManager {
         timeout: Duration,
         stall_timeout: Duration,
     ) -> WatchWaitResult {
-        // Initial authoritative reconcile
-        self.reconcile(client, resources, kind_map, gk_map).await;
+        self.wait_for_gone_cancellable(
+            client,
+            resources,
+            kind_map,
+            gk_map,
+            timeout,
+            stall_timeout,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn wait_for_gone_cancellable(
+        &self,
+        client: &Client,
+        resources: &[ResourceId],
+        kind_map: &KindMap,
+        gk_map: &GroupKindMap,
+        timeout: Duration,
+        stall_timeout: Duration,
+        cancel: Option<&crate::teardown::permit::CancelSignal>,
+    ) -> WatchWaitResult {
+        // Helper: run a future cancellably — returns None if cancelled
+        macro_rules! cancellable {
+            ($fut:expr, $cancel:expr) => {
+                if let Some(c) = $cancel {
+                    tokio::select! {
+                        result = $fut => Some(result),
+                        _ = c.cancelled() => None,
+                    }
+                } else {
+                    Some($fut.await)
+                }
+            };
+        }
+
+        // Initial authoritative reconcile — cancellable
+        if cancellable!(self.reconcile(client, resources, kind_map, gk_map), cancel).is_none() {
+            return WatchWaitResult::Cancelled;
+        }
 
         if self.store.all_gone_for(resources) {
             return WatchWaitResult::AllGone;
         }
 
-        // Start background WATCH tasks for low-latency hints
         let watch_handles = self.start_watch_tasks(client, resources, kind_map, gk_map);
 
         let start = Instant::now();
@@ -128,14 +169,25 @@ impl WatchManager {
         const MAX_UNKNOWN_RETRIES: u32 = 3;
 
         let result = loop {
-            // Authoritative reconcile for resources needing verification
-            let needs_verify = self.store.resources_needing_verification(resources);
-            if !needs_verify.is_empty() {
-                self.reconcile(client, &needs_verify, kind_map, gk_map).await;
+            if cancel.is_some_and(|c| c.is_cancelled()) {
+                break WatchWaitResult::Cancelled;
             }
 
-            // Periodic full reconcile (safety fallback)
-            self.reconcile(client, resources, kind_map, gk_map).await;
+            // Authoritative reconcile — cancellable
+            let needs_verify = self.store.resources_needing_verification(resources);
+            if !needs_verify.is_empty()
+                && cancellable!(
+                    self.reconcile(client, &needs_verify, kind_map, gk_map),
+                    cancel
+                )
+                .is_none()
+            {
+                break WatchWaitResult::Cancelled;
+            }
+
+            if cancellable!(self.reconcile(client, resources, kind_map, gk_map), cancel).is_none() {
+                break WatchWaitResult::Cancelled;
+            }
 
             if self.store.all_gone_for(resources) {
                 break WatchWaitResult::AllGone;
@@ -154,7 +206,10 @@ impl WatchManager {
                         ),
                     );
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                // Cancellable sleep
+                if cancellable!(tokio::time::sleep(Duration::from_secs(5)), cancel).is_none() {
+                    break WatchWaitResult::Cancelled;
+                }
                 continue;
             }
             consecutive_unknown_cycles = 0;
@@ -173,10 +228,50 @@ impl WatchManager {
                 );
             }
 
+            // Recreated → return immediately so executor can handle re-delete
+            if summary.recreated > 0 {
+                let entries = self.store.snapshot();
+                let recreated: Vec<(ResourceId, String, String)> = entries
+                    .iter()
+                    .filter(|e| {
+                        resources.contains(&e.resource)
+                            && matches!(
+                                &e.state,
+                                crate::teardown::runtime::ResourceRuntimeState::Recreated { .. }
+                            )
+                    })
+                    .filter_map(|e| {
+                        if let crate::teardown::runtime::ResourceRuntimeState::Recreated {
+                            old_uid,
+                            new_uid,
+                        } = &e.state
+                        {
+                            Some((e.resource.clone(), old_uid.clone(), new_uid.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let remaining = entries
+                    .iter()
+                    .filter(|e| {
+                        resources.contains(&e.resource)
+                            && !matches!(
+                                e.state,
+                                crate::teardown::runtime::ResourceRuntimeState::Gone
+                            )
+                    })
+                    .map(|e| e.resource.clone())
+                    .collect();
+                break WatchWaitResult::Recreated {
+                    remaining,
+                    recreated,
+                };
+            }
+
             if last_progress_check.elapsed() >= stall_timeout {
-                let has_stuck = summary.deleting > 0
-                    || summary.finalizer_blocked > 0
-                    || summary.stalled > 0;
+                let has_stuck =
+                    summary.deleting > 0 || summary.finalizer_blocked > 0 || summary.stalled > 0;
                 if has_stuck {
                     break self.build_stalled_result(
                         resources,
@@ -190,7 +285,7 @@ impl WatchManager {
                 }
             }
 
-            // Wait for WATCH hint or polling interval
+            // Wait for WATCH hint, polling interval, or cancel
             let mut rx = self.store.subscribe();
             tokio::select! {
                 _ = rx.changed() => {
@@ -198,6 +293,15 @@ impl WatchManager {
                 }
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {
                     // Periodic safety reconcile
+                }
+                _ = async {
+                    if let Some(c) = cancel {
+                        c.cancelled().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    break WatchWaitResult::Cancelled;
                 }
             }
         };
@@ -258,11 +362,7 @@ impl WatchManager {
         handles
     }
 
-    fn build_stalled_result(
-        &self,
-        resources: &[ResourceId],
-        reason: String,
-    ) -> WatchWaitResult {
+    fn build_stalled_result(&self, resources: &[ResourceId], reason: String) -> WatchWaitResult {
         let snapshot = self.store.snapshot();
         let remaining: Vec<_> = snapshot
             .iter()
@@ -315,6 +415,7 @@ enum ObserveResult {
 ///   - Matching UID + state change → updates deletionTimestamp/finalizer
 ///
 /// Each reconnection gets a new stream_id to reject old-stream events.
+#[allow(clippy::too_many_arguments)]
 async fn run_watch_loop(
     api: Api<DynamicObject>,
     group: &str,
@@ -325,10 +426,8 @@ async fn run_watch_loop(
     store: Arc<RuntimeStateStore>,
     stream_id_counter: Arc<AtomicU64>,
 ) {
-    let tracked_names: std::collections::HashSet<String> = tracked_resources
-        .iter()
-        .map(|r| r.name.clone())
-        .collect();
+    let tracked_names: std::collections::HashSet<String> =
+        tracked_resources.iter().map(|r| r.name.clone()).collect();
 
     loop {
         // Each reconnection gets a new stream_id
@@ -355,11 +454,7 @@ async fn run_watch_loop(
                         exists: true,
                         uid: obj.metadata.uid.clone(),
                         has_deletion_timestamp: obj.metadata.deletion_timestamp.is_some(),
-                        finalizer_count: obj
-                            .metadata
-                            .finalizers
-                            .as_ref()
-                            .map_or(0, |f| f.len()),
+                        finalizer_count: obj.metadata.finalizers.as_ref().map_or(0, |f| f.len()),
                         authoritative: true,
                     };
                     // Authoritative → stream_id=0 (always accepted)
@@ -405,11 +500,7 @@ async fn run_watch_loop(
                         exists: true,
                         uid: obj.metadata.uid.clone(),
                         has_deletion_timestamp: obj.metadata.deletion_timestamp.is_some(),
-                        finalizer_count: obj
-                            .metadata
-                            .finalizers
-                            .as_ref()
-                            .map_or(0, |f| f.len()),
+                        finalizer_count: obj.metadata.finalizers.as_ref().map_or(0, |f| f.len()),
                         authoritative: false, // WATCH is non-authoritative
                     };
                     store.update_from_observation(&resource, obs, stream_id);
@@ -460,7 +551,9 @@ async fn run_watch_loop(
 /// 404 → verify endpoint via LIST(limit=1):
 ///   - LIST success → resource genuinely absent (exists=false)
 ///   - LIST failure → API endpoint may be gone → ApiError (NOT Gone)
+///
 /// 403/timeout/transport → ApiError (NOT Gone).
+#[allow(clippy::too_many_arguments)]
 async fn observe_resource(
     client: &Client,
     resource: &ResourceId,
@@ -502,5 +595,200 @@ async fn observe_resource(
             }
         }
         Err(e) => ObserveResult::ApiError(format!("GET failed: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kube::resource::ResourceId;
+    use crate::teardown::events::EventNotifier;
+    use crate::teardown::permit::MutationGate;
+    use crate::teardown::runtime::{ResourceRuntimeState, RuntimeStateStore};
+    use std::sync::Arc;
+
+    fn make_resource(kind: &str, name: &str) -> ResourceId {
+        ResourceId {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: kind.to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: Some(format!("uid-{}", name)),
+        }
+    }
+
+    fn test_kind_map() -> KindMap {
+        let mut km = std::collections::HashMap::new();
+        km.insert(
+            "ConfigMap".to_string(),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        km
+    }
+
+    fn test_gk_map() -> GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        gk.insert(
+            (String::new(), "ConfigMap".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+            },
+        );
+        gk
+    }
+
+    #[tokio::test]
+    async fn test_barrier_cancel_returns_quickly_during_stalled_get() {
+        use kube::client::Body;
+        use std::pin::pin;
+
+        // Mock service that never responds to GET — simulates API timeout
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Accept initial GET but never send response — hangs forever
+            let _request = handle.next_request().await;
+            // Hold handle open — don't respond
+            tokio::time::sleep(Duration::from_secs(300)).await;
+        });
+
+        let notifier = Arc::new(EventNotifier::new());
+        let store = Arc::new(RuntimeStateStore::new(notifier, Duration::from_secs(120)));
+        let res = make_resource("ConfigMap", "stuck-cm");
+        store.register(&res, ResourceRuntimeState::DeleteRequested, 0);
+
+        let watch_mgr = WatchManager::new(store.clone());
+        let km = test_kind_map();
+        let gk = test_gk_map();
+
+        let gate = MutationGate::new(4);
+        let cancel = gate.cancel_signal();
+
+        // Close gate after 50ms — should cancel the barrier
+        let gate_closer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            gate.close_and_drain().await;
+        });
+
+        let client = kube::Client::new(mock_service, "test-ns");
+        let start = std::time::Instant::now();
+        let result = watch_mgr
+            .wait_for_gone_cancellable(
+                &client,
+                &[res],
+                &km,
+                &gk,
+                Duration::from_secs(300),
+                Duration::from_secs(120),
+                Some(&cancel),
+            )
+            .await;
+
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(result, WatchWaitResult::Cancelled),
+            "Expected Cancelled, got {:?}",
+            match &result {
+                WatchWaitResult::AllGone => "AllGone",
+                WatchWaitResult::Cancelled => "Cancelled",
+                WatchWaitResult::Stalled { .. } => "Stalled",
+                WatchWaitResult::Recreated { .. } => "Recreated",
+            }
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "Cancel should return quickly (<5s), took {:?}",
+            elapsed
+        );
+
+        gate_closer.await.unwrap();
+        spawned.abort();
+    }
+
+    #[tokio::test]
+    async fn test_barrier_without_cancel_does_not_cancel() {
+        // Verify that without cancel signal, barrier proceeds normally (AllGone path)
+        let notifier = Arc::new(EventNotifier::new());
+        let store = Arc::new(RuntimeStateStore::new(notifier, Duration::from_secs(120)));
+        let res = make_resource("ConfigMap", "gone-cm");
+        // Register as already Gone
+        store.register(&res, ResourceRuntimeState::Gone, 0);
+
+        let watch_mgr = WatchManager::new(store.clone());
+
+        // No client needed — all_gone_for returns true immediately
+        // But wait_for_gone_cancellable does initial reconcile which needs a client.
+        // Use a mock that returns 404 for the initial GET.
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+
+        // Respond: GET 404 + LIST 200 (endpoint exists, resource Gone)
+        let spawned = tokio::spawn(async move {
+            let mut handle = std::pin::pin!(handle);
+            // GET → 404
+            let (_req, send) = handle.next_request().await.expect("GET");
+            let not_found = serde_json::json!({
+                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                "status": "Failure", "reason": "NotFound", "code": 404
+            });
+            send.send_response(
+                http::Response::builder()
+                    .status(404)
+                    .body(kube::client::Body::from(
+                        serde_json::to_vec(&not_found).unwrap(),
+                    ))
+                    .unwrap(),
+            );
+            // LIST → 200 (endpoint verification)
+            let (_req, send) = handle.next_request().await.expect("LIST");
+            let empty_list = serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMapList",
+                "metadata": {"resourceVersion": "1"}, "items": []
+            });
+            send.send_response(
+                http::Response::builder()
+                    .status(200)
+                    .body(kube::client::Body::from(
+                        serde_json::to_vec(&empty_list).unwrap(),
+                    ))
+                    .unwrap(),
+            );
+        });
+
+        let km = test_kind_map();
+        let gk = test_gk_map();
+        let client = kube::Client::new(mock_service, "test-ns");
+        let result = watch_mgr
+            .wait_for_gone_cancellable(
+                &client,
+                &[res],
+                &km,
+                &gk,
+                Duration::from_secs(10),
+                Duration::from_secs(10),
+                None,
+            )
+            .await;
+
+        assert!(
+            matches!(result, WatchWaitResult::AllGone),
+            "Expected AllGone after GET 404 + LIST 200 confirms resource Gone"
+        );
+
+        spawned.abort();
     }
 }

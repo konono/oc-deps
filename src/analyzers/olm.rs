@@ -211,12 +211,11 @@ pub fn csv_package_evidence_is_exclusive(
     if let Some(labels) = &csv.metadata.labels {
         let suffix = format!(".{}", csv_ns);
         for key in labels.keys() {
-            if let Some(rest) = key.strip_prefix("operators.coreos.com/") {
-                if let Some(pkg) = rest.strip_suffix(&suffix) {
-                    if !pkg.is_empty() {
-                        evidence_packages.insert(pkg.to_string());
-                    }
-                }
+            if let Some(rest) = key.strip_prefix("operators.coreos.com/")
+                && let Some(pkg) = rest.strip_suffix(&suffix)
+                && !pkg.is_empty()
+            {
+                evidence_packages.insert(pkg.to_string());
             }
         }
     }
@@ -254,20 +253,19 @@ fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
                 Vec::new()
             };
         for prop in &props {
-            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package") {
-                if let Some(value) = prop.get("value") {
-                    let pkg_value = if let Some(s) = value.as_str() {
-                        serde_json::from_str::<serde_json::Value>(s).ok()
-                    } else {
-                        Some(value.clone())
-                    };
-                    if let Some(pkg_info) = pkg_value {
-                        if let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str()) {
-                            if !packages.contains(&name.to_string()) {
-                                packages.push(name.to_string());
-                            }
-                        }
-                    }
+            if prop.get("type").and_then(|t| t.as_str()) == Some("olm.package")
+                && let Some(value) = prop.get("value")
+            {
+                let pkg_value = if let Some(s) = value.as_str() {
+                    serde_json::from_str::<serde_json::Value>(s).ok()
+                } else {
+                    Some(value.clone())
+                };
+                if let Some(pkg_info) = pkg_value
+                    && let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
+                    && !packages.contains(&name.to_string())
+                {
+                    packages.push(name.to_string());
                 }
             }
         }
@@ -399,12 +397,11 @@ pub async fn discover_operators(
                 if csv.metadata.namespace.as_deref() != Some(sub_ns) {
                     continue;
                 }
-                if let Some(labels) = &csv.metadata.labels {
-                    if labels.contains_key(&label_key) {
-                        if let Some(csv_name) = &csv.metadata.name {
-                            matched_csvs.push(csv_name.clone());
-                        }
-                    }
+                if let Some(labels) = &csv.metadata.labels
+                    && labels.contains_key(&label_key)
+                    && let Some(csv_name) = &csv.metadata.name
+                {
+                    matched_csvs.push(csv_name.clone());
                 }
             }
 
@@ -422,6 +419,7 @@ pub async fn discover_operators(
     // Key: (subscription_namespace, csv_name) — different Subscriptions = different installations.
     // For each installation, prefer the CSV copy in the Subscription's namespace.
     // (csv_object, subscription_resource_id, package_name, csv_phase)
+    #[allow(clippy::type_complexity)]
     let mut best_csv: HashMap<
         (String, String),
         (&DynamicObject, Option<ResourceId>, Option<String>, String),
@@ -514,12 +512,18 @@ pub async fn discover_operators(
 
         let same_pkg_unaccounted_subs = if let Some(pkg) = pkg_name {
             // Count Subs in this namespace with same spec.name
-            let same_pkg_count = sub_items.iter().filter(|sub| {
-                sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
-                    && sub.data.get("spec")
-                        .and_then(|s| s.get("name"))
-                        .and_then(|n| n.as_str()) == Some(pkg.as_str())
-            }).count();
+            let same_pkg_count = sub_items
+                .iter()
+                .filter(|sub| {
+                    sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
+                        && sub
+                            .data
+                            .get("spec")
+                            .and_then(|s| s.get("name"))
+                            .and_then(|n| n.as_str())
+                            == Some(pkg.as_str())
+                })
+                .count();
             // If more than 1 Sub has the same package name, we can't prove all are in Phase 0
             same_pkg_count > 1
         } else {
@@ -529,9 +533,9 @@ pub async fn discover_operators(
         let has_unlinked = multiple_subs_for_csv
             || same_pkg_unaccounted_subs
             || (subscription.is_none()
-                && sub_items.iter().any(|sub| {
-                    sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())
-                }));
+                && sub_items
+                    .iter()
+                    .any(|sub| sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())));
 
         operators.push(OperatorInstance {
             subscription: subscription.clone(),
@@ -772,7 +776,7 @@ pub async fn find_crd_origin(
             && let Some(labels) = &crd_obj.metadata.labels
         {
             for (k, v) in labels {
-                if k.contains("part-of") || k.contains("managed-by") || k.contains("opendatahub") {
+                if k.contains("part-of") || k.contains("managed-by") {
                     crd_labels.push((k.clone(), v.clone()));
                 }
             }

@@ -21,7 +21,7 @@ use crate::kube::resource::{ResourceId, resolve_api};
 
 // ── UID binding result ──
 
-enum BindResult {
+pub(crate) enum BindResult {
     Bound(String),
     Absent,
     Failed(String),
@@ -41,10 +41,9 @@ pub(crate) async fn probe_uid(
         Err(kube::Error::Api(ref err)) if err.code == 404 => {
             match api.list(&kube::api::ListParams::default().limit(1)).await {
                 Ok(_) => BindResult::Absent,
-                Err(e) => BindResult::Failed(format!(
-                    "GET 404 but endpoint verification failed: {}",
-                    e
-                )),
+                Err(e) => {
+                    BindResult::Failed(format!("GET 404 but endpoint verification failed: {}", e))
+                }
             }
         }
         Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
@@ -435,6 +434,8 @@ pub struct CrInstance {
     pub managed_field_managers: Vec<String>,
     pub provenance: Provenance,
     pub discovery_source: DiscoverySource,
+    pub decisive_label_pairs: Vec<(String, String)>,
+    pub ownerref_to_owned_api_kind: Option<String>,
 }
 
 pub fn resolve_operator_targets(
@@ -637,6 +638,8 @@ async fn discover_one_crd(
                 managed_field_managers,
                 provenance: Provenance::Unknown,
                 discovery_source: DiscoverySource::Direct,
+                decisive_label_pairs: vec![],
+                ownerref_to_owned_api_kind: None,
             })
         })
         .collect::<Vec<_>>();
@@ -772,6 +775,8 @@ async fn discover_api_service_instances(
                                 managed_field_managers,
                                 provenance: Provenance::Unknown,
                                 discovery_source: DiscoverySource::Direct,
+                                decisive_label_pairs: vec![],
+                                ownerref_to_owned_api_kind: None,
                             })
                         })
                         .collect();
@@ -817,20 +822,76 @@ async fn discover_api_service_instances(
     }
 }
 
-fn classify_provenance(cr: &mut CrInstance, operators: &[&OperatorInstance]) {
-    // ownerRef pointing to operator's CSV or Deployment → Managed
-    for (ref_kind, ref_name, _) in &cr.owner_refs {
+/// Returns true if a root CR should be exempt from hard blocker status.
+/// RelatedLabelOnly roots have no confirmed lifecycle connection to the
+/// target operator and are deferred to post-teardown Residual Audit.
+pub fn is_root_blocker_exempt(cr: &CrInstance) -> bool {
+    cr.discovery_source == DiscoverySource::RelatedLabelOnly
+}
+
+fn owned_crd_group_kinds(
+    operators: &[&OperatorInstance],
+    gk_map: &GroupKindMap,
+) -> HashSet<(String, String)> {
+    let mut group_kinds = HashSet::new();
+    for op in operators {
+        for crd_name in &op.owned_crds {
+            let (plural, group) = match crd_name.split_once('.') {
+                Some((p, g)) => (p, g),
+                None => continue,
+            };
+            for ((g, k), info) in gk_map {
+                if g == group && info.plural == plural {
+                    group_kinds.insert((g.clone(), k.clone()));
+                }
+            }
+        }
+    }
+    group_kinds
+}
+
+fn classify_provenance(
+    cr: &mut CrInstance,
+    operators: &[&OperatorInstance],
+    owned_group_kinds: &HashSet<(String, String)>,
+) {
+    // ownerRef pointing to operator's CSV → Managed ONLY if UID matches
+    // (name-only match would accept stale generation's CSV)
+    for (ref_kind, ref_name, ref_uid) in &cr.owner_refs {
         for op in operators {
             if ref_kind == "ClusterServiceVersion" && ref_name == &op.csv.name {
-                cr.provenance = Provenance::Managed;
-                return;
-            }
-            for deploy in &op.deployments {
-                if ref_kind == "Deployment" && ref_name == deploy {
+                let csv_uid = op.csv.uid.as_deref().unwrap_or("");
+                if !csv_uid.is_empty() && !ref_uid.is_empty() && ref_uid == csv_uid {
                     cr.provenance = Provenance::Managed;
                     return;
                 }
+                // Same name but UID mismatch or missing → LikelyManaged (not Managed)
+                cr.provenance = Provenance::LikelyManaged;
+                return;
             }
+            // Deployment ownerRef: name match only (no UID snapshot in OperatorInstance)
+            // → LikelyManaged, not Managed (cannot verify identity)
+            for deploy in &op.deployments {
+                if ref_kind == "Deployment" && ref_name == deploy {
+                    cr.provenance = Provenance::LikelyManaged;
+                    return;
+                }
+            }
+        }
+    }
+
+    // ownerRef kind matches an owned CRD kind (via authoritative gk_map).
+    // Attribution hint only — does NOT change provenance or grant DELETE authority.
+    // ownerRef lacks apiVersion, so kind match alone is a weak hint
+    // (different API groups could share the same Kind name).
+    for (ref_kind, ref_name, ref_uid) in &cr.owner_refs {
+        let kind_matches = owned_group_kinds.iter().any(|(_, k)| k == ref_kind);
+        if kind_matches {
+            cr.ownerref_to_owned_api_kind = Some(format!(
+                "{}/{} (uid: {}, kind-only match — ownerRef group unverified)",
+                ref_kind, ref_name, ref_uid
+            ));
+            return;
         }
     }
 
@@ -968,9 +1029,7 @@ async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> 
 
 /// Check Subscription linkage safety for a single operator.
 /// has_unlinked_subscriptions is evaluated FIRST regardless of subscription Some/None.
-pub fn check_subscription_safety(
-    op: &OperatorInstance,
-) -> (bool, PreflightSeverity, String) {
+pub fn check_subscription_safety(op: &OperatorInstance) -> (bool, PreflightSeverity, String) {
     if op.has_unlinked_subscriptions {
         (
             false,
@@ -1187,16 +1246,14 @@ const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca
 /// Strategy:
 /// 1. Direct seed: part-of labels on target-owned CRDs themselves
 /// 2. Group seed: part-of labels on CRDs sharing a full API group
-///    with target-owned CRDs (e.g. both under `components.platform.opendatahub.io`)
+///    with target-owned CRDs (e.g. both under the same API group)
 ///
 /// No domain suffix guessing — avoids public suffix ambiguity.
 pub async fn compute_part_of_seeds(
     target_crds: &[String],
     kind_map: &KindMap,
     client: &Client,
-) -> (HashSet<String>, Vec<(String, String)>) {
-    let label_key = "platform.opendatahub.io/part-of";
-
+) -> (HashSet<(String, String)>, Vec<(String, String)>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
     }
@@ -1235,20 +1292,34 @@ pub async fn compute_part_of_seeds(
         }
     };
 
+    // Discover part-of label key/value pairs from target-owned CRDs.
+    // Checks standard app.kubernetes.io/part-of and any */part-of key present on
+    // target CRDs or CRDs sharing the exact same API group.
+    let part_of_suffixes = ["/part-of", "/managed-by"];
+    let standard_keys = [
+        "app.kubernetes.io/part-of",
+        "app.kubernetes.io/managed-by",
+        "app.kubernetes.io/instance",
+    ];
+
     let mut values = HashSet::new();
     for crd in &crd_list.items {
         let crd_name = crd.metadata.name.as_deref().unwrap_or("");
         let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
 
-        // Seed from: target-owned CRDs or CRDs sharing exact API group
         let is_target = target_crd_set.contains(crd_name);
         let shares_group = target_groups.contains(crd_group);
 
         if (is_target || shares_group)
             && let Some(labels) = &crd.metadata.labels
-            && let Some(v) = labels.get(label_key)
         {
-            values.insert(v.clone());
+            for (k, v) in labels {
+                let is_part_of = part_of_suffixes.iter().any(|s| k.ends_with(s))
+                    || standard_keys.contains(&k.as_str());
+                if is_part_of {
+                    values.insert((k.clone(), v.clone()));
+                }
+            }
         }
     }
 
@@ -1266,7 +1337,7 @@ pub struct RelatedCrdReport {
 pub async fn discover_related_crd_instances(
     client: &Client,
     target_crds: &HashSet<&str>,
-    target_part_of_values: &HashSet<String>,
+    target_label_pairs: &HashSet<(String, String)>,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
@@ -1274,7 +1345,7 @@ pub async fn discover_related_crd_instances(
     let mut actions = Vec::new();
 
     // If target operator has no part-of labels, skip related discovery entirely
-    if target_part_of_values.is_empty() {
+    if target_label_pairs.is_empty() {
         return RelatedCrdReport {
             actions,
             instances: vec![],
@@ -1305,7 +1376,6 @@ pub async fn discover_related_crd_instances(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let label_key = "platform.opendatahub.io/part-of";
     let all_crds = match crd_api.list(&ListParams::default()).await {
         Ok(list) => list.items,
         Err(e) => {
@@ -1322,8 +1392,9 @@ pub async fn discover_related_crd_instances(
         }
     };
 
-    // Scope CRD types by label VALUE match (not just key existence)
-    let mut related_crd_names: Vec<String> = Vec::new();
+    // Scope CRD types by label pair match — record which pairs matched per CRD
+    let mut related_crd_pairs: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
     for crd in &all_crds {
         let crd_name = match &crd.metadata.name {
             Some(n) => n,
@@ -1332,18 +1403,19 @@ pub async fn discover_related_crd_instances(
         if target_crds.contains(crd_name.as_str()) {
             continue;
         }
-        let matches_value = crd
-            .metadata
-            .labels
-            .as_ref()
-            .and_then(|l| l.get(label_key))
-            .is_some_and(|v| target_part_of_values.contains(v));
-        if matches_value {
-            related_crd_names.push(crd_name.clone());
+        if let Some(labels) = &crd.metadata.labels {
+            let intersection: Vec<(String, String)> = labels
+                .iter()
+                .filter(|(k, v)| target_label_pairs.contains(&((*k).clone(), (*v).clone())))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if !intersection.is_empty() {
+                related_crd_pairs.insert(crd_name.clone(), intersection);
+            }
         }
     }
 
-    if related_crd_names.is_empty() {
+    if related_crd_pairs.is_empty() {
         return RelatedCrdReport {
             actions,
             instances: vec![],
@@ -1353,12 +1425,20 @@ pub async fn discover_related_crd_instances(
         };
     }
 
+    let related_crd_names: Vec<String> = related_crd_pairs.keys().cloned().collect();
     let related_report = discover_cr_instances(client, &related_crd_names, gvr_map, gk_map).await;
 
     let crd_count = related_crd_names.len();
     let instance_count = related_report.instances.len();
 
-    for cr in &related_report.instances {
+    let mut instances = related_report.instances;
+    for cr in &mut instances {
+        let decisive = related_crd_pairs
+            .get(&cr.api_owner_key)
+            .cloned()
+            .unwrap_or_default();
+        cr.decisive_label_pairs = decisive.clone();
+
         actions.push(Action::Review {
             resource: cr.id.clone(),
             reason: "related CRD instance (not CSV-owned, discovered via label)".to_string(),
@@ -1367,17 +1447,20 @@ pub async fn discover_related_crd_instances(
                 approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
                 provenance: match &cr.provenance {
                     Provenance::Managed => Some(crate::teardown::plan::ProvenanceSer::Managed),
-                    Provenance::LikelyManaged => Some(crate::teardown::plan::ProvenanceSer::LikelyManaged),
+                    Provenance::LikelyManaged => {
+                        Some(crate::teardown::plan::ProvenanceSer::LikelyManaged)
+                    }
                     Provenance::Unknown => Some(crate::teardown::plan::ProvenanceSer::Unknown),
                 },
                 discovery_source: Some(crate::teardown::plan::DiscoverySourceSer::RelatedLabelOnly),
+                decisive_label_pairs: decisive,
             }),
         });
     }
 
     RelatedCrdReport {
         actions,
-        instances: related_report.instances,
+        instances,
         unavailable_crds: related_report.unavailable_crds,
         crd_count,
         instance_count,
@@ -1442,9 +1525,11 @@ async fn discover_namespace_resources(
                         reason: "other operators remain in namespace".to_string(),
                     });
                 } else {
-                    actions.push(Action::Delete {
+                    actions.push(Action::Review {
                         resource: og_id,
-                        reason: "no other operators in namespace".to_string(),
+                        reason: "no other operators in namespace — verify before deleting"
+                            .to_string(),
+                        metadata: None,
                     });
                 }
             }
@@ -1470,14 +1555,10 @@ async fn discover_namespace_resources(
                     .iter()
                     .any(|dep| holder.contains(dep));
 
-                let name_matches = csv_prefix.iter().any(|prefix| {
-                    lease_name.contains(prefix)
-                        || lease_name.contains("opendatahub")
-                        || lease_name.contains("odh")
-                });
+                let name_matches = csv_prefix.iter().any(|prefix| lease_name.contains(prefix));
 
                 if holder_matches || name_matches {
-                    actions.push(Action::Delete {
+                    actions.push(Action::Review {
                         resource: ResourceId {
                             group: "coordination.k8s.io".to_string(),
                             version: "v1".to_string(),
@@ -1492,6 +1573,7 @@ async fn discover_namespace_resources(
                         } else {
                             "leader election lease (name matches operator)".to_string()
                         },
+                        metadata: None,
                     });
                 }
             }
@@ -1527,9 +1609,12 @@ async fn discover_namespace_resources(
                                 .to_string(),
                             metadata: Some(crate::teardown::plan::ReviewMetadata {
                                 category: Some(crate::teardown::plan::ReviewCategorySer::Ancillary),
-                                approval_class: Some(crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly),
+                                approval_class: Some(
+                                    crate::teardown::plan::DeleteApprovalClassSer::ExplicitOnly,
+                                ),
                                 provenance: None,
                                 discovery_source: None,
+                                decisive_label_pairs: vec![],
                             }),
                         });
                     }
@@ -1754,14 +1839,14 @@ pub async fn generate_teardown_plan(
 
     // Related CRD discovery — scoped by label VALUE match
     eprint!("🔍 Discovering related CRD instances...");
-    let (target_part_of_values, seed_unavailable) =
+    let (target_label_pairs, seed_unavailable) =
         compute_part_of_seeds(&target_crds, kind_map, client).await;
     all_unavailable.extend(seed_unavailable);
 
     let related_report = discover_related_crd_instances(
         client,
         &target_crd_set,
-        &target_part_of_values,
+        &target_label_pairs,
         kind_map,
         gvr_map,
         gk_map,
@@ -1840,6 +1925,7 @@ pub async fn generate_teardown_plan(
                 unlinked_count += 1;
                 let mut cr = cr;
                 cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+                // decisive_label_pairs already set per-CRD by discover_related_crd_instances
                 cr_instances.push(cr);
             }
         }
@@ -1884,8 +1970,9 @@ pub async fn generate_teardown_plan(
     }
 
     // Classify provenance (applies to both direct and related CRs)
+    let owned_group_kinds = owned_crd_group_kinds(target_operators, gk_map);
     for cr in &mut cr_instances {
-        classify_provenance(cr, target_operators);
+        classify_provenance(cr, target_operators, &owned_group_kinds);
     }
 
     let review_provenance_count = cr_instances
@@ -2215,6 +2302,7 @@ pub async fn generate_teardown_plan(
             approval_class: approval_ser,
             provenance,
             discovery_source: discovery,
+            decisive_label_pairs: cr.decisive_label_pairs.clone(),
         })
     }
 
@@ -2254,9 +2342,17 @@ pub async fn generate_teardown_plan(
                 }
             }
             (GraphPosition::Root, _) if approval == DeleteApprovalClass::ExplicitOnly => {
+                let reason = if let Some(ref evidence) = cr.ownerref_to_owned_api_kind {
+                    format!(
+                        "ownerRef points to operator-owned API kind: {} (parent not in current graph, kind-only hint — explicit approval required)",
+                        evidence
+                    )
+                } else {
+                    "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string()
+                };
                 Action::Review {
                     resource: cr.id.clone(),
-                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    reason,
                     metadata: build_review_metadata(cr, position, approval),
                 }
             }
@@ -2276,9 +2372,17 @@ pub async fn generate_teardown_plan(
                 reason: "managed descendant; controller expected to remove".to_string(),
             },
             (GraphPosition::Independent, _) if approval == DeleteApprovalClass::ExplicitOnly => {
+                let reason = if let Some(ref evidence) = cr.ownerref_to_owned_api_kind {
+                    format!(
+                        "ownerRef points to operator-owned API kind: {} (parent not in current graph, kind-only hint — explicit approval required)",
+                        evidence
+                    )
+                } else {
+                    "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string()
+                };
                 Action::Review {
                     resource: cr.id.clone(),
-                    reason: "label-related only — discovered via platform label, no ownerRef chain to target operator".to_string(),
+                    reason,
                     metadata: build_review_metadata(cr, position, approval),
                 }
             }
@@ -2445,7 +2549,6 @@ pub async fn generate_teardown_plan(
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
 
     if layers.len() <= 1 {
-        // Single layer — all operands in one phase (original behavior)
         let mut phase_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
@@ -2587,15 +2690,29 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // Root REVIEWs that are not approved become hard blockers
+    // Root REVIEWs/KEEPs that are not approved become hard blockers —
+    // EXCEPT RelatedLabelOnly roots which have no confirmed lifecycle
+    // connection to the target operator. These remain REVIEW (non-blocking)
+    // and appear in post-teardown Residual Audit for separate decisions.
     for phase in &operand_phases {
         for action in &phase.actions {
-            if let Action::Review { resource, reason, .. } = action {
+            if let Action::Review {
+                resource, reason, ..
+            } = action
+            {
                 let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
                 let is_root = root_cr.is_some();
                 if !is_root {
                     continue;
                 }
+
+                // RelatedLabelOnly roots: no confirmed lifecycle connection
+                // to target operator → skip blocker, defer to Residual Audit
+                let is_related_label_only = root_cr.is_some_and(|cr| is_root_blocker_exempt(cr));
+                if is_related_label_only {
+                    continue;
+                }
+
                 let is_shared = root_cr.is_some_and(|cr| {
                     resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len() > 1
                 });
@@ -2623,12 +2740,16 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    // Preserved root operands also become hard blockers
+    // Preserved root operands also become hard blockers —
+    // EXCEPT RelatedLabelOnly roots (no confirmed lifecycle connection)
     for phase in &operand_phases {
         for action in &phase.actions {
             if let Action::Keep { resource, reason } = action {
-                let is_root = root_crs.iter().any(|cr| cr.id == *resource);
-                if is_root {
+                let root_cr = root_crs.iter().find(|cr| cr.id == *resource);
+                if let Some(cr) = root_cr {
+                    if is_root_blocker_exempt(cr) {
+                        continue;
+                    }
                     blockers.push(Blocker {
                         resource: resource.clone(),
                         reason: format!(
@@ -2705,7 +2826,11 @@ pub async fn generate_teardown_plan(
     let ns_cleanup_actions: Vec<Action> = ns_cleanup_actions
         .into_iter()
         .map(|action| {
-            if let Action::Review { resource, reason, metadata } = &action
+            if let Action::Review {
+                resource,
+                reason,
+                metadata,
+            } = &action
                 && let Some(decision) = resolved_decisions.get(resource)
             {
                 return match decision {
@@ -2765,10 +2890,8 @@ pub async fn generate_teardown_plan(
         if !prune_candidates.is_empty() {
             let crd_gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
                 .with_kind("CustomResourceDefinition");
-            let crd_ar = kube::api::ApiResource::from_gvk_with_plural(
-                &crd_gvk,
-                "customresourcedefinitions",
-            );
+            let crd_ar =
+                kube::api::ApiResource::from_gvk_with_plural(&crd_gvk, "customresourcedefinitions");
             let crd_api: kube::api::Api<kube::api::DynamicObject> =
                 kube::api::Api::all_with(client.clone(), &crd_ar);
 
@@ -2836,8 +2959,7 @@ pub async fn generate_teardown_plan(
                     // CRD already gone (GET 404 + endpoint verified) — skip DELETE
                     phase4_actions.push(Action::Keep {
                         resource: crd_id,
-                        reason: "already absent (confirmed via endpoint verification)"
-                            .to_string(),
+                        reason: "already absent (confirmed via endpoint verification)".to_string(),
                     });
                 }
                 Some(BindResult::Failed(reason)) => {
@@ -2888,12 +3010,10 @@ pub async fn generate_teardown_plan(
         Vec::new()
     };
 
-    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty()
-    {
-        let apisvc_gvk = kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1")
-            .with_kind("APIService");
-        let apisvc_ar =
-            kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
+    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty() {
+        let apisvc_gvk =
+            kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1").with_kind("APIService");
+        let apisvc_ar = kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
         let apisvc_api: kube::api::Api<kube::api::DynamicObject> =
             kube::api::Api::all_with(client.clone(), &apisvc_ar);
 
@@ -2955,8 +3075,7 @@ pub async fn generate_teardown_plan(
                 Some(BindResult::Absent) => {
                     phase4_actions.push(Action::Keep {
                         resource: api_svc_id,
-                        reason: "already absent (confirmed via endpoint verification)"
-                            .to_string(),
+                        reason: "already absent (confirmed via endpoint verification)".to_string(),
                     });
                 }
                 Some(BindResult::Failed(reason)) => {
@@ -3103,24 +3222,19 @@ pub async fn generate_teardown_plan(
                         Some((api, _)) => match api.get(&res.name).await {
                             Ok(obj) => match obj.metadata.uid {
                                 Some(uid) => BindResult::Bound(uid),
-                                None => BindResult::Failed(
-                                    "live resource has no UID".to_string(),
-                                ),
+                                None => BindResult::Failed("live resource has no UID".to_string()),
                             },
                             Err(kube::Error::Api(err)) if err.code == 404 => {
                                 match api.list(&ListParams::default().limit(1)).await {
                                     Ok(_) => BindResult::Absent,
                                     Err(_) => BindResult::Failed(
-                                        "GET 404 but endpoint verification failed"
-                                            .to_string(),
+                                        "GET 404 but endpoint verification failed".to_string(),
                                     ),
                                 }
                             }
                             Err(e) => BindResult::Failed(format!("GET failed: {}", e)),
                         },
-                        None => BindResult::Failed(
-                            "cannot resolve API for resource".to_string(),
-                        ),
+                        None => BindResult::Failed("cannot resolve API for resource".to_string()),
                     };
                     (pi, ai, res, result)
                 }
@@ -3300,7 +3414,9 @@ fn print_plan_tree(plan: &TeardownPlan) {
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
                 }
-                Action::Review { resource, reason, .. } => {
+                Action::Review {
+                    resource, reason, ..
+                } => {
                     println!(
                         "  \x1b[35mREVIEW\x1b[0m {}/{}{}",
                         resource.kind,
@@ -3367,6 +3483,8 @@ fn print_plan_tree(plan: &TeardownPlan) {
         plan.blockers.len(),
         plan.warnings.len()
     );
+    // Blocker reasons are shown individually above — no additional summary needed.
+    // Each blocker's reason text includes the exact --approve-delete command.
 }
 
 fn print_plan_json(plan: &TeardownPlan) {
@@ -3393,7 +3511,7 @@ mod tests {
                 kind: "ClusterServiceVersion".to_string(),
                 namespace: Some("test-ns".to_string()),
                 name: csv_name.to_string(),
-                uid: None,
+                uid: Some("csv-uid-current".to_string()),
             },
             csv_phase: "Succeeded".to_string(),
             owned_crds: vec![],
@@ -3431,6 +3549,8 @@ mod tests {
             managed_field_managers: managers,
             provenance: Provenance::Unknown,
             discovery_source: DiscoverySource::Direct,
+            decisive_label_pairs: vec![],
+            ownerref_to_owned_api_kind: None,
         }
     }
 
@@ -3522,17 +3642,41 @@ mod tests {
             vec![(
                 "ClusterServiceVersion".to_string(),
                 "rhods-operator.3.5.0".to_string(),
-                "csv-uid".to_string(),
+                "csv-uid-current".to_string(), // matches operator CSV UID
             )],
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::Managed));
     }
 
     #[test]
-    fn provenance_ownerref_to_deployment_is_managed() {
+    fn provenance_ownerref_to_csv_stale_uid_not_managed() {
+        let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
+        let ops: Vec<&OperatorInstance> = vec![&op];
+        let mut cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-1",
+            vec![(
+                "ClusterServiceVersion".to_string(),
+                "rhods-operator.3.5.0".to_string(),
+                "stale-csv-uid".to_string(), // does NOT match current CSV UID
+            )],
+            HashMap::new(),
+            vec![],
+        );
+        classify_provenance(&mut cr, &ops, &HashSet::new());
+        assert!(
+            matches!(cr.provenance, Provenance::LikelyManaged),
+            "stale CSV UID ownerRef must NOT grant Managed: got {:?}",
+            cr.provenance
+        );
+    }
+
+    #[test]
+    fn provenance_ownerref_to_deployment_is_likely_managed() {
         let op = make_test_operator("rhods-operator.3.5.0", "rhods-operator");
         let ops: Vec<&OperatorInstance> = vec![&op];
         let mut cr = make_cr_instance(
@@ -3547,8 +3691,11 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
-        assert!(matches!(cr.provenance, Provenance::Managed));
+        classify_provenance(&mut cr, &ops, &HashSet::new());
+        assert!(
+            matches!(cr.provenance, Provenance::LikelyManaged),
+            "Deployment ownerRef (no UID snapshot) must be LikelyManaged, not Managed"
+        );
     }
 
     #[test]
@@ -3561,7 +3708,7 @@ mod tests {
             "true".to_string(),
         );
         let mut cr = make_cr_instance("MyResource", "test", "uid-1", vec![], labels, vec![]);
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::LikelyManaged));
     }
 
@@ -3575,7 +3722,7 @@ mod tests {
             "something".to_string(),
         );
         let mut cr = make_cr_instance("MyResource", "test", "uid-1", vec![], labels, vec![]);
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::Unknown));
     }
 
@@ -3591,7 +3738,7 @@ mod tests {
             HashMap::new(),
             vec!["test-controller".to_string()],
         );
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::LikelyManaged));
     }
 
@@ -3684,7 +3831,7 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr, &ops);
+        classify_provenance(&mut cr, &ops, &HashSet::new());
         assert!(matches!(cr.provenance, Provenance::Unknown));
     }
 
@@ -3802,12 +3949,12 @@ mod tests {
             vec![(
                 "ClusterServiceVersion".to_string(),
                 "test-op.v1".to_string(),
-                "csv-uid".to_string(),
+                "csv-uid-current".to_string(), // matches operator CSV UID
             )],
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr_managed, &ops);
+        classify_provenance(&mut cr_managed, &ops, &HashSet::new());
         assert!(matches!(cr_managed.provenance, Provenance::Managed));
         assert!(!is_exact_delete_approvable(
             &cr_managed,
@@ -3828,7 +3975,7 @@ mod tests {
             HashMap::new(),
             vec![],
         );
-        classify_provenance(&mut cr_unknown, &ops);
+        classify_provenance(&mut cr_unknown, &ops, &HashSet::new());
         assert!(matches!(cr_unknown.provenance, Provenance::Unknown));
         assert!(is_exact_delete_approvable(
             &cr_unknown,
@@ -4024,8 +4171,8 @@ mod tests {
 
     // ── probe_uid mock API tests ──
 
-    use std::pin::pin;
     use kube::client::Body;
+    use std::pin::pin;
 
     fn json_response(json: serde_json::Value) -> http::Response<Body> {
         http::Response::builder()
@@ -4056,19 +4203,14 @@ mod tests {
         let client = Client::new(mock_service, "default");
         let gvk = kube::core::GroupVersion::gv("apiextensions.k8s.io", "v1")
             .with_kind("CustomResourceDefinition");
-        let ar = kube::api::ApiResource::from_gvk_with_plural(
-            &gvk,
-            "customresourcedefinitions",
-        );
+        let ar = kube::api::ApiResource::from_gvk_with_plural(&gvk, "customresourcedefinitions");
         kube::api::Api::all_with(client, &ar)
     }
 
     #[tokio::test]
     async fn test_probe_uid_get404_list200_is_absent() {
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let api = make_mock_api(mock_service);
 
@@ -4101,10 +4243,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_uid_get404_list403_is_failed() {
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let api = make_mock_api(mock_service);
 
@@ -4132,10 +4272,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_uid_get200_returns_bound_uid() {
-        let (mock_service, handle) = tower_test::mock::pair::<
-            http::Request<Body>,
-            http::Response<Body>,
-        >();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
 
         let api = make_mock_api(mock_service);
 
@@ -4162,5 +4300,126 @@ mod tests {
         );
 
         spawned.await.unwrap();
+    }
+
+    #[test]
+    fn related_label_only_root_is_blocker_exempt() {
+        let mut cr = make_cr_instance(
+            "Config",
+            "default",
+            "uid-config",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+        assert!(
+            is_root_blocker_exempt(&cr),
+            "RelatedLabelOnly root must be exempt from hard blocker"
+        );
+    }
+
+    #[test]
+    fn direct_root_is_not_blocker_exempt() {
+        let cr = make_cr_instance(
+            "MyResource",
+            "test",
+            "uid-test",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        // default discovery_source is Direct
+        assert!(
+            !is_root_blocker_exempt(&cr),
+            "Direct-discovery root must NOT be exempt — remains hard blocker"
+        );
+    }
+
+    #[test]
+    fn related_linked_root_is_not_blocker_exempt() {
+        let mut cr = make_cr_instance("Widget", "w1", "uid-w1", vec![], HashMap::new(), vec![]);
+        cr.discovery_source = DiscoverySource::RelatedLinked;
+        assert!(
+            !is_root_blocker_exempt(&cr),
+            "RelatedLinked root has lifecycle connection — must remain hard blocker"
+        );
+    }
+
+    #[test]
+    fn phase_failed_prevents_subsequent_phases() {
+        let result = crate::teardown::executor::ExecutionResult {
+            phases_completed: 1,
+            phases_total: 5,
+            deleted: vec![make_res("Subscription", "test-operator", "uid-sub")],
+            already_gone: vec![],
+            failed: vec![(
+                make_res("ResourceA", "res-a", "uid-a"),
+                "blocked by webhook".to_string(),
+            )],
+            barrier_timeout: None,
+            kept: vec![],
+            reviewed: vec![],
+        };
+        assert!(
+            !result.failed.is_empty(),
+            "failed actions must trigger phase hard stop"
+        );
+        assert!(
+            result.phases_completed < result.phases_total,
+            "phases_completed must not reach total when failed actions exist"
+        );
+    }
+
+    #[test]
+    fn api_owner_key_used_not_kind_plural_guess() {
+        // Irregular plural: Kind="Ingress" → plural="ingresses", NOT "ingresss"
+        // CrInstance.api_owner_key must hold the CRD name from discovery,
+        // not a Kind.to_lowercase()+"s" guess.
+        let cr = CrInstance {
+            id: ResourceId {
+                group: "networking.k8s.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Ingress".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "my-ingress".to_string(),
+                uid: Some("uid-1".to_string()),
+            },
+            api_owner_key: "ingresses.networking.k8s.io".to_string(),
+            labels: std::collections::HashMap::new(),
+            owner_refs: vec![],
+            managed_field_managers: vec![],
+            provenance: Provenance::Unknown,
+            discovery_source: DiscoverySource::RelatedLabelOnly,
+            decisive_label_pairs: vec![],
+            ownerref_to_owned_api_kind: None,
+        };
+
+        // Incorrect guess would be "ingresss.networking.k8s.io" — must not match
+        let wrong_guess = format!("{}s.{}", cr.id.kind.to_lowercase(), cr.id.group);
+        assert_ne!(
+            wrong_guess, cr.api_owner_key,
+            "Kind.to_lowercase()+s gives wrong plural for irregular kinds"
+        );
+        assert_eq!(cr.api_owner_key, "ingresses.networking.k8s.io");
+
+        // Lookup with api_owner_key works; lookup with wrong guess does not
+        let mut crd_pairs = std::collections::HashMap::new();
+        crd_pairs.insert(
+            "ingresses.networking.k8s.io".to_string(),
+            vec![("k8s.io/part-of".to_string(), "platform".to_string())],
+        );
+
+        let decisive = crd_pairs
+            .get(&cr.api_owner_key)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(decisive.len(), 1, "api_owner_key lookup must succeed");
+
+        let wrong_decisive = crd_pairs.get(&wrong_guess).cloned().unwrap_or_default();
+        assert!(
+            wrong_decisive.is_empty(),
+            "wrong plural guess must not match"
+        );
     }
 }

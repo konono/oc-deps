@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 4;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -46,6 +46,202 @@ pub struct RunJournal {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_residual_audit: Option<crate::teardown::audit::ResidualAudit>,
+
+    /// Durable record of manual residual cleanup decisions + results.
+    #[serde(default)]
+    pub cleanup_decisions: Vec<CleanupDecision>,
+
+    /// Explicit opt-in for finalizer recovery on stalled EXPECT/DELETE descendants.
+    /// Authority-critical: v9 required, no serde default.
+    pub finalizer_recovery_approved: bool,
+
+    /// Durable record of finalizer recovery actions.
+    /// Authority-critical: v9 required, no serde default.
+    pub finalizer_recoveries: Vec<FinalizerRecoveryRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizerRecoveryRecord {
+    pub resource: ResourceId,
+    pub live_uid: String,
+    /// Exact finalizer set at approval time. Resume compares against live state.
+    pub finalizer_values: Vec<String>,
+    /// Owner references snapshot at approval time. Resume compares against live state.
+    pub owner_references_snapshot: Vec<OwnerRefSnapshot>,
+    pub root_uid: String,
+    pub root_kind: String,
+    pub result: FinalizerRecoveryResult,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OwnerRefSnapshot {
+    pub api_version: String,
+    pub kind: String,
+    pub name: String,
+    pub uid: String,
+    #[serde(default)]
+    pub controller: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum FinalizerRecoveryResult {
+    PatchRequested,
+    Stripped,
+    Gone,
+    Failed(String),
+}
+
+/// A single residual cleanup decision with its outcome.
+///
+/// v5 journals stored this as a plain string ("deleted", "gone", etc.).
+/// v6 uses a proper enum. The custom deserializer handles both formats.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub enum CleanupResult {
+    DeleteRequested,
+    Gone,
+    AlreadyGone,
+    Failed(String),
+    /// Mutation outcome unknown (5xx/transport). Pending reconciliation on resume.
+    /// is_pending=true, is_hard_failed=false — resume will fresh GET to resolve.
+    UnknownOutcome(String),
+}
+
+impl<'de> serde::Deserialize<'de> for CleanupResult {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct CleanupResultVisitor;
+
+        impl<'de> de::Visitor<'de> for CleanupResultVisitor {
+            type Value = CleanupResult;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a CleanupResult enum variant or v5-compat string")
+            }
+
+            // v6 unit variants AND v5 plain strings
+            fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
+                match v {
+                    // v6 unit variant names (serde externally tagged)
+                    "DeleteRequested" => Ok(CleanupResult::DeleteRequested),
+                    "Gone" => Ok(CleanupResult::Gone),
+                    "AlreadyGone" => Ok(CleanupResult::AlreadyGone),
+                    // v5 plain strings
+                    "deleted" => Ok(CleanupResult::DeleteRequested),
+                    "gone" => Ok(CleanupResult::Gone),
+                    "already_gone" | "already gone" => Ok(CleanupResult::AlreadyGone),
+                    s if s.starts_with("failed:") => Ok(CleanupResult::Failed(
+                        s.trim_start_matches("failed:").trim().to_string(),
+                    )),
+                    other => Err(de::Error::unknown_variant(
+                        other,
+                        &[
+                            "DeleteRequested",
+                            "Gone",
+                            "AlreadyGone",
+                            "deleted",
+                            "gone",
+                            "already_gone",
+                            "failed:*",
+                        ],
+                    )),
+                }
+            }
+
+            // v6 format: tagged enum {"DeleteRequested": null} or {"Failed": "reason"}
+            fn visit_map<A: de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let key: String = map
+                    .next_key()?
+                    .ok_or_else(|| de::Error::custom("expected enum variant key"))?;
+                match key.as_str() {
+                    "DeleteRequested" => {
+                        let _: Option<()> = map.next_value()?;
+                        Ok(CleanupResult::DeleteRequested)
+                    }
+                    "Gone" => {
+                        let _: Option<()> = map.next_value()?;
+                        Ok(CleanupResult::Gone)
+                    }
+                    "AlreadyGone" => {
+                        let _: Option<()> = map.next_value()?;
+                        Ok(CleanupResult::AlreadyGone)
+                    }
+                    "Failed" => {
+                        let reason: String = map.next_value()?;
+                        Ok(CleanupResult::Failed(reason))
+                    }
+                    "UnknownOutcome" => {
+                        let reason: String = map.next_value()?;
+                        Ok(CleanupResult::UnknownOutcome(reason))
+                    }
+                    other => Err(de::Error::unknown_variant(
+                        other,
+                        &[
+                            "DeleteRequested",
+                            "Gone",
+                            "AlreadyGone",
+                            "Failed",
+                            "UnknownOutcome",
+                        ],
+                    )),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(CleanupResultVisitor)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupDecision {
+    pub resource: ResourceId,
+    pub bound_uid: Option<String>,
+    pub action: String,
+    pub result: Option<CleanupResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_spec_name: Option<String>,
+}
+
+impl CleanupDecision {
+    /// Pending: needs resume action (not yet executed, DELETE sent but Gone not confirmed,
+    /// or outcome unknown from previous run).
+    pub fn is_pending(&self) -> bool {
+        self.result.is_none()
+            || matches!(
+                self.result,
+                Some(CleanupResult::DeleteRequested) | Some(CleanupResult::UnknownOutcome(_))
+            )
+    }
+
+    /// Hard failure: DELETE definitively rejected (not retryable without new authority).
+    /// UnknownOutcome is NOT hard failure — it needs reconciliation on resume.
+    pub fn is_hard_failed(&self) -> bool {
+        matches!(self.result, Some(CleanupResult::Failed(_)))
+    }
+
+    /// Failed or unconfirmed: includes hard failures, unconfirmed DELETEs, and unknown outcomes.
+    pub fn is_failed(&self) -> bool {
+        matches!(
+            self.result,
+            Some(CleanupResult::DeleteRequested)
+                | Some(CleanupResult::Failed(_))
+                | Some(CleanupResult::UnknownOutcome(_))
+        )
+    }
+
+    /// Terminal success: resource confirmed Gone
+    pub fn is_complete(&self) -> bool {
+        matches!(
+            self.result,
+            Some(CleanupResult::Gone) | Some(CleanupResult::AlreadyGone)
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,13 +265,19 @@ pub enum ResidualStatus {
     SupersededByNewGeneration,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct AuditContext {
+    #[serde(default)]
     pub footprint_namespaces: HashSet<String>,
+    #[serde(default)]
     pub csv_names: HashSet<String>,
+    #[serde(default)]
     pub controller_deployment_names: HashSet<String>,
+    #[serde(default)]
     pub service_account_names: HashSet<String>,
+    #[serde(default)]
     pub known_labels: Vec<(String, String)>,
+    #[serde(default)]
     pub managed_field_managers: HashSet<String>,
     /// Discovery-derived GVR metadata for plan resources.
     /// None = GVR info not captured (old journal or discovery failure) → AuditIncomplete.
@@ -127,25 +329,7 @@ pub enum GvrScope {
     Cluster,
 }
 
-impl Default for AuditContext {
-    fn default() -> Self {
-        Self {
-            footprint_namespaces: HashSet::new(),
-            csv_names: HashSet::new(),
-            controller_deployment_names: HashSet::new(),
-            service_account_names: HashSet::new(),
-            known_labels: Vec::new(),
-            managed_field_managers: HashSet::new(),
-            known_gvrs: None,
-            unresolved_crds: None,
-            unresolved_gvks: None,
-            owned_cr_gvrs: None,
-            csv_baseline: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ExecutionRecord {
     pub phases_completed: usize,
     pub phases_total: usize,
@@ -154,6 +338,55 @@ pub struct ExecutionRecord {
     pub failed: Vec<(ResourceId, String)>,
     pub kept: Vec<PreservedRecord>,
     pub reviewed: Vec<PreservedRecord>,
+    /// Barrier/guard timeout that stopped execution. Persisted for resume diagnosis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub barrier_timeout: Option<BarrierTimeoutRecord>,
+    /// Durable re-delete authority for resources recreated after explicit DELETE.
+    /// Authority-critical: v9+ required. No serde(default) — v8 journals
+    /// cannot deserialize into RunJournal and are handled via raw JSON inspection.
+    pub re_delete_records: Vec<ReDeleteRecord>,
+}
+
+/// Durable record of re-delete authority for a recreated resource.
+///
+/// Authority chain: explicit plan DELETE on `original_uid` was accepted and
+/// authoritatively confirmed Gone → live GET found `new_uid` (different UID)
+/// with no deletionTimestamp → Authorized persisted → UID-preconditioned DELETE
+/// on `new_uid`.
+///
+/// `resource_identity` has NO uid field (stable identity: group/version/kind/ns/name).
+/// UIDs are tracked separately to prevent confusion.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReDeleteRecord {
+    /// Stable identity (group, version, kind, namespace, name). uid=None.
+    pub resource_identity: ResourceId,
+    /// UID of the original explicit DELETE that was accepted + confirmed Gone.
+    pub original_uid: String,
+    /// UID observed on live GET after original was Gone (the recreated instance).
+    pub new_uid: String,
+    pub result: ReDeleteResult,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum ReDeleteResult {
+    /// Authoritative GET confirmed new UID with no deletionTimestamp.
+    /// Re-DELETE intent persisted, not yet attempted.
+    Authorized,
+    /// Re-DELETE accepted by API server (UID-preconditioned on new_uid).
+    Accepted,
+    /// Re-DELETE confirmed resource Gone.
+    Gone,
+    /// Re-DELETE failed (UID changed again, 403, etc.)
+    Failed(String),
+    /// Re-DELETE outcome unknown (5xx/transport). Resumable via fresh GET.
+    UnknownOutcome(String),
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BarrierTimeoutRecord {
+    pub phase: String,
+    pub remaining: Vec<ResourceId>,
+    pub finalizer_details: Vec<(ResourceId, Vec<String>)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -173,20 +406,6 @@ impl From<&PlannedPreserved> for PreservedRecord {
     }
 }
 
-impl Default for ExecutionRecord {
-    fn default() -> Self {
-        Self {
-            phases_completed: 0,
-            phases_total: 0,
-            deleted: Vec::new(),
-            already_gone: Vec::new(),
-            failed: Vec::new(),
-            kept: Vec::new(),
-            reviewed: Vec::new(),
-        }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────
 //  JournalStore — single-writer, revision-based CAS
 // ──────────────────────────────────────────────────────────────
@@ -194,21 +413,100 @@ impl Default for ExecutionRecord {
 pub struct JournalStore {
     path: PathBuf,
     inner: Arc<Mutex<RunJournal>>,
+    #[allow(dead_code)]
+    lock_file: Option<std::fs::File>,
 }
 
 impl JournalStore {
+    /// Create a JournalStore WITHOUT a process lock (for read-only or
+    /// backward-compat use). Callers must ensure single-writer semantics.
+    #[allow(dead_code)]
     pub fn new(journal: RunJournal, path: PathBuf) -> Self {
         Self {
             path,
             inner: Arc::new(Mutex::new(journal)),
+            lock_file: None,
         }
     }
 
+    /// Create a JournalStore WITH an exclusive process-level lock.
+    /// Fails if another process holds the lock (active executor).
+    /// The lock is held for the lifetime of this JournalStore.
+    pub fn new_with_lock(_journal: RunJournal, path: PathBuf) -> Result<Self> {
+        let lock_path = path.with_extension("lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open lock file: {}", lock_path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if ret != 0 {
+                bail!(
+                    "Another process is already executing this run (lock: {}). \
+                     Wait for it to complete or remove stale lock.",
+                    lock_path.display()
+                );
+            }
+        }
+
+        // Re-load from disk AFTER acquiring lock to get the latest state.
+        // Another process may have written between our initial read and lock acquisition.
+        // Never fall back to the caller's stale copy — if the file is gone, bail.
+        let latest = if path.exists() {
+            load_journal(&path).with_context(|| {
+                format!(
+                    "Failed to re-load journal after lock acquisition: {}",
+                    path.display()
+                )
+            })?
+        } else {
+            bail!(
+                "Journal file {} no longer exists after lock acquisition. \
+                 Cannot proceed without authoritative journal state.",
+                path.display()
+            );
+        };
+
+        Ok(Self {
+            path,
+            inner: Arc::new(Mutex::new(latest)),
+            lock_file: Some(lock_file),
+        })
+    }
+
+    /// Check whether a process lock is held on a journal path without acquiring it.
+    #[allow(dead_code)]
+    pub fn is_locked(journal_path: &Path) -> bool {
+        let lock_path = journal_path.with_extension("lock");
+        let lock_file = match std::fs::OpenOptions::new()
+            .create(false)
+            .read(true)
+            .open(&lock_path)
+        {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if ret != 0 {
+                return true; // lock is held by another process
+            }
+            // We got the lock — release it immediately
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
+        }
+        false
+    }
+
     /// Update the journal via single-writer CAS.
-    ///
-    /// SAFETY: This uses in-process Mutex only. Only one JournalStore instance
-    /// per journal file should exist in a process. Cross-process writes are NOT
-    /// safe with this design — defer to PR3's full exclusive lock.
+    /// Uses in-process Mutex + optional process-level flock.
     pub async fn update<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(&mut RunJournal),
@@ -240,13 +538,16 @@ impl JournalStore {
 
 fn state_dir() -> Result<PathBuf> {
     let base = dirs::state_dir()
-        .or_else(|| dirs::data_local_dir())
+        .or_else(dirs::data_local_dir)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     Ok(base.join("oc-deps"))
 }
 
 pub fn runs_dir(cluster_id: &ClusterIdentity) -> Result<PathBuf> {
-    let dir = state_dir()?.join("clusters").join(&cluster_id.kube_system_uid).join("runs");
+    let dir = state_dir()?
+        .join("clusters")
+        .join(&cluster_id.kube_system_uid)
+        .join("runs");
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create runs directory: {}", dir.display()))?;
     set_dir_permissions(&dir);
@@ -281,43 +582,27 @@ pub fn list_runs(cluster_id: &ClusterIdentity) -> Result<Vec<RunJournal>> {
 pub fn load_journal(path: &Path) -> Result<RunJournal> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read journal: {}", path.display()))?;
-    let mut journal: RunJournal = serde_json::from_str(&data)
-        .with_context(|| format!("Failed to parse journal: {}", path.display()))?;
 
-    if journal.schema_version > RUN_JOURNAL_SCHEMA_VERSION {
+    // Pre-check schema version from raw JSON before deserializing.
+    // v8 and below lack re_delete_records and cannot deserialize into RunJournal.
+    let raw: serde_json::Value = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse journal JSON: {}", path.display()))?;
+    let raw_version = raw
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    if raw_version != RUN_JOURNAL_SCHEMA_VERSION {
         bail!(
-            "Journal schema version {} is newer than supported version {}. \
-             Update oc-deps to read this journal.",
-            journal.schema_version,
+            "Unsupported journal schema version {} (expected {}). \
+             Remove old local run state and create a fresh teardown plan.",
+            raw_version,
             RUN_JOURNAL_SCHEMA_VERSION
         );
     }
 
-    // Schema migration chain:
-    // v1 → v2: discard audit (lacks UID tracking / recreation state)
-    // v2 → v3: discard audit if unresolved_crds is None with owned CRDs
-    // v3 → v4: discard audit if unresolved_gvks/csv_baseline is None
-    //          (v3 lacks GVK resolution and CSV baseline tracking → false complete)
-    if journal.schema_version < RUN_JOURNAL_SCHEMA_VERSION {
-        let needs_audit_reset = journal.schema_version < 2
-            || (journal.schema_version < 3
-                && journal.audit_context.unresolved_crds.is_none()
-                && !journal.operator.owned_crds.is_empty())
-            || (journal.schema_version < 4
-                && (journal.audit_context.unresolved_gvks.is_none()
-                    || journal.audit_context.csv_baseline.is_none()));
-
-        if needs_audit_reset && journal.last_residual_audit.is_some() {
-            eprintln!(
-                "  ℹ Migrating journal {} from schema v{} → v{}: \
-                 discarding old residual audit (lacks required safety metadata)",
-                journal.run_id, journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION
-            );
-            journal.last_residual_audit = None;
-            journal.residual_status = ResidualStatus::NotAudited;
-        }
-        journal.schema_version = RUN_JOURNAL_SCHEMA_VERSION;
-    }
+    let journal: RunJournal = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse journal: {}", path.display()))?;
 
     Ok(journal)
 }
@@ -363,8 +648,13 @@ fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
     }
 
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path.display()))?;
+    fs::rename(&tmp_path, path).with_context(|| {
+        format!(
+            "Failed to rename {} -> {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
 
     // fsync parent directory for crash consistency
     if let Ok(dir) = fs::File::open(parent) {
@@ -415,11 +705,13 @@ pub fn generate_run_id() -> String {
 }
 
 pub async fn fetch_cluster_identity(client: &kube::Client) -> Result<ClusterIdentity> {
-    use kube::api::Api;
     use k8s_openapi::api::core::v1::Namespace;
+    use kube::api::Api;
 
     let ns_api: Api<Namespace> = Api::all(client.clone());
-    let kube_system = ns_api.get("kube-system").await
+    let kube_system = ns_api
+        .get("kube-system")
+        .await
         .context("Failed to get kube-system namespace for cluster identity")?;
 
     let uid = kube_system
@@ -447,7 +739,8 @@ pub fn build_audit_context(
 
     for op in operators {
         ctx.csv_names.insert(op.csv.name.clone());
-        ctx.footprint_namespaces.insert(op.install_namespace.clone());
+        ctx.footprint_namespaces
+            .insert(op.install_namespace.clone());
         for dep in &op.deployments {
             ctx.controller_deployment_names.insert(dep.clone());
         }
@@ -490,7 +783,11 @@ pub fn build_audit_context(
                         },
                     });
                 } else {
-                    unresolved_gvks.push((rid.group.clone(), rid.version.clone(), rid.kind.clone()));
+                    unresolved_gvks.push((
+                        rid.group.clone(),
+                        rid.version.clone(),
+                        rid.kind.clone(),
+                    ));
                 }
             }
         }
@@ -499,7 +796,7 @@ pub fn build_audit_context(
     // Also resolve owned CRDs — residual CR instances may exist outside the plan.
     // These go into owned_cr_gvrs (separate from known_gvrs) so Phase D only scans
     // owned CR APIs, not Namespace/CRD/APIService etc. from plan KEEP actions.
-    // CRD name format: "pluralname.group" (e.g. "datascienceclusters.datasciencecluster.opendatahub.io")
+    // CRD name format: "pluralname.group" (e.g. "widgets.example.io")
     let mut unresolved_crds: Vec<String> = Vec::new();
     let mut owned_cr_gvrs: Vec<KnownGvr> = Vec::new();
     for op in operators {
@@ -572,186 +869,258 @@ pub fn build_audit_context(
 mod tests {
     use super::*;
 
+    // Deleted: test_load_journal_v2_migration_discards_audit (old schema migration test)
+    // Deleted: test_load_journal_v2_no_owned_crds_discards_audit_for_v4 (old schema migration test)
+
     #[test]
-    fn test_load_journal_v2_migration_discards_audit() {
-        // A v2 journal with last_residual_audit containing ResidualEvidence
-        // WITHOUT owner_ref_match. load_journal must:
-        // 1. Deserialize successfully (serde(default) on owner_ref_match)
-        // 2. Migrate to v3
-        // 3. Discard old audit (set to None)
-        // 4. Reset residual_status to NotAudited
-        let v2_journal = r#"{
-            "run_id": "run-test-v2",
-            "schema_version": 2,
-            "oc_deps_version": "0.1.0",
-            "journal_revision": 5,
-            "cluster_identity": {
-                "api_server": "https://api.test:6443",
-                "kube_system_uid": "test-uid"
+    fn test_cleanup_result_deserializes_v5_string() {
+        // v5 format: plain string
+        let v5_deleted: CleanupResult = serde_json::from_str(r#""deleted""#).unwrap();
+        assert_eq!(v5_deleted, CleanupResult::DeleteRequested);
+
+        let v5_gone: CleanupResult = serde_json::from_str(r#""gone""#).unwrap();
+        assert_eq!(v5_gone, CleanupResult::Gone);
+
+        let v5_already: CleanupResult = serde_json::from_str(r#""already_gone""#).unwrap();
+        assert_eq!(v5_already, CleanupResult::AlreadyGone);
+
+        let v5_already_space: CleanupResult = serde_json::from_str(r#""already gone""#).unwrap();
+        assert_eq!(v5_already_space, CleanupResult::AlreadyGone);
+
+        let v5_failed: CleanupResult =
+            serde_json::from_str(r#""failed: connection refused""#).unwrap();
+        assert!(matches!(v5_failed, CleanupResult::Failed(r) if r == "connection refused"));
+
+        // Unknown strings must be rejected (not silently converted to Failed)
+        let v5_unknown: Result<CleanupResult, _> = serde_json::from_str(r#""something_else""#);
+        assert!(
+            v5_unknown.is_err(),
+            "unknown v5 string must fail deserialization"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_result_deserializes_v6_enum() {
+        // v6 format: tagged enum
+        let v6_gone: CleanupResult = serde_json::from_str(r#""Gone""#).unwrap();
+        assert_eq!(v6_gone, CleanupResult::Gone);
+
+        let v6_failed: CleanupResult = serde_json::from_str(r#"{"Failed":"reason"}"#).unwrap();
+        assert_eq!(v6_failed, CleanupResult::Failed("reason".to_string()));
+
+        let v6_requested: CleanupResult = serde_json::from_str(r#""DeleteRequested""#).unwrap();
+        assert_eq!(v6_requested, CleanupResult::DeleteRequested);
+
+        let v6_already: CleanupResult = serde_json::from_str(r#""AlreadyGone""#).unwrap();
+        assert_eq!(v6_already, CleanupResult::AlreadyGone);
+    }
+
+    #[test]
+    fn test_unknown_outcome_roundtrip() {
+        let uo: CleanupResult =
+            serde_json::from_str(r#"{"UnknownOutcome":"500 timeout"}"#).unwrap();
+        assert_eq!(uo, CleanupResult::UnknownOutcome("500 timeout".to_string()));
+
+        let serialized = serde_json::to_string(&uo).unwrap();
+        let rt: CleanupResult = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(rt, uo);
+    }
+
+    #[test]
+    fn test_unknown_variant_rejected_not_silent() {
+        let result: Result<CleanupResult, _> = serde_json::from_str(r#"{"FutureVariant":"data"}"#);
+        assert!(
+            result.is_err(),
+            "unrecognized variant must fail, not silently convert"
+        );
+    }
+
+    #[test]
+    fn test_unknown_outcome_is_pending_not_hard_failed() {
+        let decision = CleanupDecision {
+            resource: crate::kube::resource::ResourceId {
+                group: "test.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Thing".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "a".to_string(),
+                uid: Some("uid-a".to_string()),
             },
-            "operator": {
-                "generation_identity": { "Unverifiable": { "reason": "test" } },
-                "operator_id": { "namespace": "ns", "csv_name": "test.1.0" },
-                "csv_name": "test.1.0",
-                "csv": { "resource": { "group": "operators.coreos.com", "version": "v1alpha1", "kind": "ClusterServiceVersion", "namespace": "ns", "name": "test.1.0", "uid": "csv-uid" }, "uid": "csv-uid" },
-                "subscriptions": [],
-                "controller_deployments": [],
-                "service_accounts": [],
-                "owned_crds": ["foos.example.com"],
-                "required_crds": []
+            bound_uid: Some("uid-a".to_string()),
+            action: "delete".to_string(),
+            result: Some(CleanupResult::UnknownOutcome("500".to_string())),
+            approved_spec_name: None,
+        };
+        assert!(
+            decision.is_pending(),
+            "UnknownOutcome must be pending (resumable)"
+        );
+        assert!(
+            !decision.is_hard_failed(),
+            "UnknownOutcome must NOT be hard_failed"
+        );
+        assert!(
+            decision.is_failed(),
+            "UnknownOutcome must be is_failed (needs attention)"
+        );
+    }
+
+    // Deleted: test_v5_journal_cleanup_decisions_preserved (old schema migration test)
+    // Deleted: test_v5_journal_no_mutation_authority (old schema migration test)
+
+    /// Create a valid v9 journal JSON for field-removal tests.
+    fn make_v9_journal_json() -> serde_json::Value {
+        use crate::kube::resource::ResourceId;
+        let csv_rid = ResourceId {
+            group: "operators.coreos.com".to_string(),
+            version: "v1alpha1".to_string(),
+            kind: "ClusterServiceVersion".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: "test.v1".to_string(),
+            uid: Some("uid-csv".to_string()),
+        };
+        let j = RunJournal {
+            run_id: "test-v9".to_string(),
+            schema_version: 9,
+            oc_deps_version: "0.1.0".to_string(),
+            journal_revision: 1,
+            cluster_identity: crate::teardown::plan::ClusterIdentity {
+                api_server: "https://test:6443".to_string(),
+                kube_system_uid: "test-uid".to_string(),
             },
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T01:00:00Z",
-            "state": "ApplyCompleted",
-            "residual_status": { "ResidualsObserved": { "count": 3 } },
-            "audit_revision": 2,
-            "audit_context": {
-                "footprint_namespaces": ["ns"],
-                "csv_names": ["test.1.0"],
-                "controller_deployment_names": [],
-                "service_account_names": [],
-                "known_labels": [],
-                "managed_field_managers": []
-            },
-            "plan_snapshot": {
-                "targets": [],
-                "preflight": { "checks": [] },
-                "phases": [],
-                "blockers": [],
-                "warnings": [],
-                "snapshot_taken_at": "2026-01-01"
-            },
-            "execution": {
-                "phases_completed": 7,
-                "phases_total": 7,
-                "deleted": [],
-                "already_gone": [],
-                "failed": [],
-                "kept": [],
-                "reviewed": []
-            },
-            "last_residual_audit": {
-                "planned_delete_still_present": [],
-                "planned_expect_still_present": [],
-                "expected_preserved": [],
-                "likely_operator_residual": [{
-                    "resource": {
-                        "group": "apps", "version": "v1", "kind": "Deployment",
-                        "namespace": "ns", "name": "old-dep", "uid": "uid-old"
+            operator: crate::teardown::plan::OperatorIdentitySnapshot {
+                generation_identity:
+                    crate::teardown::plan::OperatorGenerationIdentity::OlmPackage {
+                        package_name: "test".to_string(),
+                        install_namespace: "test-ns".to_string(),
                     },
-                    "evidence": {
-                        "matching_labels": [],
-                        "matching_managers": ["test-mgr"],
-                        "namespace_affinity": true,
-                        "service_account_match": false
-                    },
-                    "confidence": "Low"
-                }],
-                "unattributed": [],
-                "coverage": { "requested_probes": 5, "succeeded_probes": 5 },
-                "scan_errors": []
-            }
-        }"#;
+                operator_id: crate::analyzers::olm::OperatorId {
+                    csv_name: "test.v1".to_string(),
+                    namespace: "test-ns".to_string(),
+                },
+                csv_name: "test.v1".to_string(),
+                csv: crate::teardown::plan::ObservedResourceIdentity {
+                    resource: csv_rid,
+                    uid: "uid-csv".to_string(),
+                },
+                subscriptions: vec![],
+                controller_deployments: vec![],
+                service_accounts: vec![],
+                owned_crds: vec![],
+                required_crds: vec![],
+            },
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            state: RunState::Applying,
+            residual_status: ResidualStatus::NotAudited,
+            audit_revision: 0,
+            audit_context: AuditContext::default(),
+            plan_snapshot: crate::teardown::planner::TeardownPlan {
+                targets: vec![],
+                preflight: crate::teardown::planner::Preflight { checks: vec![] },
+                phases: vec![],
+                blockers: vec![],
+                warnings: vec![],
+                snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+            execution: ExecutionRecord::default(),
+            last_residual_audit: None,
+            cleanup_decisions: vec![],
+            finalizer_recovery_approved: false,
+            finalizer_recoveries: vec![],
+        };
+        serde_json::to_value(&j).unwrap()
+    }
 
-        let dir = std::env::temp_dir().join("oc-deps-test-v2-migration");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("v2-test.json");
-        std::fs::write(&path, v2_journal).unwrap();
+    fn write_json_to_file(json: &serde_json::Value, path: &std::path::Path) {
+        std::fs::write(path, serde_json::to_string_pretty(json).unwrap()).unwrap();
+    }
 
-        let journal = load_journal(&path).unwrap();
+    #[test]
+    fn v9_missing_re_delete_records_rejected() {
+        let dir = std::env::temp_dir().join(format!("v9-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("journal.json");
 
-        // Schema migrated to v3
-        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
-        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
+        let mut json = make_v9_journal_json();
+        json.pointer_mut("/execution")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("re_delete_records");
+        write_json_to_file(&json, &path);
 
-        // Old audit discarded (operator has owned CRDs but no unresolved_crds metadata)
-        assert!(journal.last_residual_audit.is_none());
-        assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
+        let result = load_journal(&path);
+        assert!(
+            result.is_err(),
+            "v9 journal without re_delete_records must fail parse"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
-        // Other fields preserved
-        assert_eq!(journal.run_id, "run-test-v2");
-        assert_eq!(journal.execution.phases_completed, 7);
+    #[test]
+    fn v9_missing_finalizer_fields_rejected() {
+        let dir = std::env::temp_dir().join(format!("v9-fin-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("journal.json");
+
+        let mut json = make_v9_journal_json();
+        json.as_object_mut()
+            .unwrap()
+            .remove("finalizer_recovery_approved");
+        write_json_to_file(&json, &path);
+        assert!(
+            load_journal(&path).is_err(),
+            "v9 without finalizer_recovery_approved must fail"
+        );
+
+        let mut json2 = make_v9_journal_json();
+        json2
+            .as_object_mut()
+            .unwrap()
+            .remove("finalizer_recoveries");
+        write_json_to_file(&json2, &path);
+        assert!(
+            load_journal(&path).is_err(),
+            "v9 without finalizer_recoveries must fail"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_load_journal_v2_no_owned_crds_discards_audit_for_v4() {
-        // A v2 journal with NO owned CRDs — still discards audit because
-        // csv_baseline and unresolved_gvks are missing (v4 safety requirement)
-        let v2_journal = r#"{
-            "run_id": "run-test-no-crds",
-            "schema_version": 2,
-            "oc_deps_version": "0.1.0",
-            "journal_revision": 3,
-            "cluster_identity": {
-                "api_server": "https://api.test:6443",
-                "kube_system_uid": "test-uid-2"
-            },
-            "operator": {
-                "generation_identity": { "Unverifiable": { "reason": "test" } },
-                "operator_id": { "namespace": "ns", "csv_name": "simple.1.0" },
-                "csv_name": "simple.1.0",
-                "csv": { "resource": { "group": "operators.coreos.com", "version": "v1alpha1", "kind": "ClusterServiceVersion", "namespace": "ns", "name": "simple.1.0", "uid": "csv-uid-2" }, "uid": "csv-uid-2" },
-                "subscriptions": [],
-                "controller_deployments": [],
-                "service_accounts": [],
-                "owned_crds": [],
-                "required_crds": []
-            },
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T01:00:00Z",
-            "state": "ApplyCompleted",
-            "residual_status": "NoneObservedInScope",
-            "audit_revision": 1,
-            "audit_context": {
-                "footprint_namespaces": ["ns"],
-                "csv_names": ["simple.1.0"],
-                "controller_deployment_names": [],
-                "service_account_names": [],
-                "known_labels": [],
-                "managed_field_managers": []
-            },
-            "plan_snapshot": {
-                "targets": [],
-                "preflight": { "checks": [] },
-                "phases": [],
-                "blockers": [],
-                "warnings": [],
-                "snapshot_taken_at": "2026-01-01"
-            },
-            "execution": {
-                "phases_completed": 3,
-                "phases_total": 3,
-                "deleted": [],
-                "already_gone": [],
-                "failed": [],
-                "kept": [],
-                "reviewed": []
-            },
-            "last_residual_audit": {
-                "planned_delete_still_present": [],
-                "planned_expect_still_present": [],
-                "expected_preserved": [],
-                "likely_operator_residual": [],
-                "unattributed": [],
-                "coverage": { "requested_probes": 3, "succeeded_probes": 3 },
-                "scan_errors": []
-            }
-        }"#;
+    fn old_schema_version_rejected() {
+        let dir = std::env::temp_dir().join(format!("old-schema-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("journal.json");
 
-        let dir = std::env::temp_dir().join("oc-deps-test-v2-no-crds");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("v2-no-crds.json");
-        std::fs::write(&path, v2_journal).unwrap();
+        let mut json = make_v9_journal_json();
+        json["schema_version"] = serde_json::json!(8);
+        write_json_to_file(&json, &path);
 
-        let journal = load_journal(&path).unwrap();
+        let result = load_journal(&path);
+        assert!(result.is_err(), "v8 journal must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Unsupported journal schema version"),
+            "Error must mention unsupported: {}",
+            err
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
-        assert_eq!(journal.schema_version, RUN_JOURNAL_SCHEMA_VERSION);
-        // v4 migration discards audit — unresolved_gvks and csv_baseline are None
-        assert!(journal.last_residual_audit.is_none());
-        assert!(matches!(journal.residual_status, ResidualStatus::NotAudited));
+    #[test]
+    fn v9_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("v9-rt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("journal.json");
 
+        let json = make_v9_journal_json();
+        write_json_to_file(&json, &path);
+        let j = load_journal(&path).unwrap();
+        assert_eq!(j.schema_version, 9);
+        assert!(j.execution.re_delete_records.is_empty());
+        assert!(!j.finalizer_recovery_approved);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
