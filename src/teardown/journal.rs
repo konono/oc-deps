@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 7;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -50,6 +50,34 @@ pub struct RunJournal {
     /// Durable record of manual residual cleanup decisions + results.
     #[serde(default)]
     pub cleanup_decisions: Vec<CleanupDecision>,
+
+    /// Explicit opt-in for finalizer recovery on stalled EXPECT descendants.
+    /// Authority-critical: must be set before first mutation, persisted in journal.
+    /// Deserialization default=false for v7 compat; v7 journals stay read-only (schema < 8).
+    #[serde(default)]
+    pub finalizer_recovery_approved: bool,
+
+    /// Durable record of finalizer recovery actions (stalled EXPECT descendants).
+    /// Deserialization default=[] for v7 compat; v7 journals stay read-only (schema < 8).
+    #[serde(default)]
+    pub finalizer_recoveries: Vec<FinalizerRecoveryRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinalizerRecoveryRecord {
+    pub resource: ResourceId,
+    pub live_uid: String,
+    pub finalizer_value: String,
+    pub root_uid: String,
+    pub root_kind: String,
+    pub result: FinalizerRecoveryResult,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum FinalizerRecoveryResult {
+    Stripped,
+    Gone,
+    Failed(String),
 }
 
 /// A single residual cleanup decision with its outcome.
@@ -508,8 +536,9 @@ pub fn load_journal(path: &Path) -> Result<RunJournal> {
         // v5 journals: keep at schema_version 5 (read-only for inspection).
         // v6 journals: keep at schema_version 6 (read-only for inspection).
         // v7 adds approved_spec_name to CleanupDecision (authority-critical).
-        // v5/v6 journals cannot gain new cleanup mutation authority.
-        // execute_residual_cleanup requires schema_version == 7 (current).
+        // v8 adds finalizer_recovery_approved + finalizer_recoveries.
+        // v5/v6/v7 journals cannot gain new mutation authority.
+        // execute_residual_cleanup requires schema_version == current (8).
     }
 
     Ok(journal)
@@ -1103,9 +1132,13 @@ mod tests {
             6u32, RUN_JOURNAL_SCHEMA_VERSION,
             "v6 != current schema — core cleanup gate blocks mutations on v6 journals"
         );
-        assert_eq!(
+        assert_ne!(
             7u32, RUN_JOURNAL_SCHEMA_VERSION,
-            "current schema must be v7 for approved_spec_name support"
+            "v7 != current schema — core cleanup gate blocks mutations on v7 journals"
+        );
+        assert_eq!(
+            8u32, RUN_JOURNAL_SCHEMA_VERSION,
+            "current schema must be v8 for finalizer recovery support"
         );
 
         // v5 cleanup_decisions are still readable for inspection

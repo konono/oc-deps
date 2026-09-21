@@ -193,6 +193,13 @@ pub enum TeardownAction {
         #[arg(long, value_name = "SPEC")]
         preserve: Vec<String>,
 
+        /// Approve conditional finalizer recovery on stalled EXPECT descendants.
+        /// When barrier times out, strips finalizers on descendants whose approved root
+        /// is authoritatively Gone, with UID+finalizer atomic test. Without this flag,
+        /// stalled barriers stop execution (default behavior).
+        #[arg(long)]
+        approve_finalizer_recovery: bool,
+
         /// Headless mode: read JSON commands from script file, output JSON state traces.
         /// Uses same AppState + executor as interactive mode.
         #[arg(long, value_name = "PATH")]

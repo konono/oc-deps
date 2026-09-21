@@ -179,6 +179,7 @@ async fn main() -> Result<()> {
                         force,
                         approve_delete,
                         preserve,
+                        approve_finalizer_recovery,
                         script,
                         tui: use_tui,
                     } => {
@@ -219,9 +220,14 @@ async fn main() -> Result<()> {
                         // TUI mode: ratatui interactive Plan Review → Execution → Residual Cleanup
                         if use_tui && !dry_run {
                             let journal_store = {
-                                let store =
-                                    create_run_journal(&client, &plan, &target_operators, &gk_map)
-                                        .await?;
+                                let store = create_run_journal(
+                                    &client,
+                                    &plan,
+                                    &target_operators,
+                                    &gk_map,
+                                    approve_finalizer_recovery,
+                                )
+                                .await?;
                                 eprintln!("📓 Run journal: {}", store.path().display());
 
                                 let current_id = journal::fetch_cluster_identity(&client).await?;
@@ -501,6 +507,7 @@ async fn main() -> Result<()> {
                                             &plan,
                                             &target_operators,
                                             &gk_map,
+                                            approve_finalizer_recovery,
                                         )
                                         .await?;
                                         Some(std::sync::Arc::new(store))
@@ -1009,9 +1016,14 @@ async fn main() -> Result<()> {
                         // Create RunJournal before first mutation (fail-closed)
                         // Use process lock to prevent dual-writer from resume
                         let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
-                            let store =
-                                create_run_journal(&client, &plan, &target_operators, &gk_map)
-                                    .await?;
+                            let store = create_run_journal(
+                                &client,
+                                &plan,
+                                &target_operators,
+                                &gk_map,
+                                approve_finalizer_recovery,
+                            )
+                            .await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
 
                             // Re-verify cluster identity before first mutation
@@ -3107,6 +3119,7 @@ async fn create_run_journal(
     plan: &crate::teardown::planner::TeardownPlan,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
+    finalizer_recovery_approved: bool,
 ) -> Result<JournalStore> {
     if target_operators.len() > 1 {
         bail!(
@@ -3183,6 +3196,8 @@ async fn create_run_journal(
         },
         last_residual_audit: None,
         cleanup_decisions: Vec::new(),
+        finalizer_recovery_approved,
+        finalizer_recoveries: Vec::new(),
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;
@@ -4192,6 +4207,8 @@ mod basis_drift_tests {
                 None
             },
             cleanup_decisions: decisions,
+            finalizer_recovery_approved: false,
+            finalizer_recoveries: Vec::new(),
         }
     }
 

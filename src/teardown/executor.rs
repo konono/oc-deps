@@ -911,6 +911,55 @@ pub async fn execute_plan_with_store(
                             remaining.len(),
                             reason
                         );
+
+                        // Attempt finalizer recovery if approved
+                        let recovery_approved = if let Some(j) = journal {
+                            j.read().await.finalizer_recovery_approved
+                        } else {
+                            false
+                        };
+
+                        if recovery_approved && !dry_run {
+                            let recovered = attempt_finalizer_recovery(
+                                client,
+                                &remaining,
+                                &result.deleted,
+                                phase,
+                                kind_map,
+                                gk_map,
+                                journal,
+                                gate,
+                            )
+                            .await;
+                            if recovered > 0 {
+                                eprintln!(
+                                    "  🔧 Recovered {} stalled resource(s) via finalizer strip",
+                                    recovered
+                                );
+                                // Re-run barrier wait with shorter timeout
+                                let re_wait = watch_mgr
+                                    .wait_for_gone_cancellable(
+                                        client,
+                                        &remaining,
+                                        kind_map,
+                                        gk_map,
+                                        Duration::from_secs(30),
+                                        Duration::from_secs(30),
+                                        cancel.as_ref(),
+                                    )
+                                    .await;
+                                if matches!(re_wait, WatchWaitResult::AllGone) {
+                                    eprintln!("  \x1b[32m✅ Barrier passed after recovery\x1b[0m");
+                                    // Continue to next phase instead of break
+                                    continue;
+                                }
+                            }
+                        } else if !recovery_approved && !remaining.is_empty() {
+                            eprintln!(
+                                "  ℹ Use --approve-finalizer-recovery to enable stalled descendant recovery"
+                            );
+                        }
+
                         let finalizers: Vec<(ResourceId, Vec<String>)> = finalizer_details
                             .iter()
                             .map(|(r, count)| (r.clone(), vec![format!("{} finalizer(s)", count)]))
@@ -1417,6 +1466,310 @@ pub fn create_runtime_store() -> (Arc<RuntimeStateStore>, Arc<EventNotifier>) {
         Duration::from_secs(120),
     ));
     (store, notifier)
+}
+
+const PROTECTED_KINDS: &[&str] = &[
+    "CustomResourceDefinition",
+    "Namespace",
+    "PersistentVolume",
+    "PersistentVolumeClaim",
+    "Node",
+    "Subscription",
+    "ClusterServiceVersion",
+    "APIService",
+    "OperatorGroup",
+];
+
+#[allow(clippy::too_many_arguments)]
+async fn attempt_finalizer_recovery(
+    client: &Client,
+    remaining: &[ResourceId],
+    deleted_roots: &[ResourceId],
+    phase: &crate::teardown::planner::PlanPhase,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    journal: Option<&JournalStore>,
+    gate: Option<&MutationGate>,
+) -> usize {
+    use crate::teardown::journal::FinalizerRecoveryRecord;
+    use crate::teardown::journal::FinalizerRecoveryResult;
+
+    let deleted_uids: std::collections::HashSet<String> =
+        deleted_roots.iter().filter_map(|r| r.uid.clone()).collect();
+
+    if deleted_uids.is_empty() {
+        return 0;
+    }
+
+    // Only EXPECT actions are recovery candidates
+    let expect_resources: std::collections::HashSet<ResourceId> = phase
+        .actions
+        .iter()
+        .filter_map(|a| match a {
+            crate::teardown::planner::Action::ExpectGone { resource, .. } => Some(resource.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let mut recovered = 0;
+
+    for res in remaining {
+        // Must be an EXPECT action in this phase
+        if !expect_resources.contains(res) {
+            continue;
+        }
+
+        // Protected kind check
+        if PROTECTED_KINDS.contains(&res.kind.as_str()) {
+            eprintln!(
+                "    ⚠ {}/{}: protected kind — skip recovery",
+                res.kind, res.name
+            );
+            continue;
+        }
+
+        // Plan snapshot must have UID for this resource
+        let plan_uid = match &res.uid {
+            Some(uid) if !uid.is_empty() => uid.clone(),
+            _ => {
+                eprintln!(
+                    "    ⚠ {}/{}: no plan UID — skip recovery",
+                    res.kind, res.name
+                );
+                continue;
+            }
+        };
+
+        // Fresh GET to verify current state
+        let (api, _) = match resolve_api(client, res, kind_map, gk_map) {
+            Some(r) => r,
+            None => {
+                eprintln!(
+                    "    ⚠ {}/{}: cannot resolve API — skip recovery",
+                    res.kind, res.name
+                );
+                continue;
+            }
+        };
+
+        let obj = match api.get(&res.name).await {
+            Ok(obj) => obj,
+            Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                // Already gone — no recovery needed
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "    ⚠ {}/{}: GET failed ({}) — skip recovery",
+                    res.kind, res.name, e
+                );
+                continue;
+            }
+        };
+
+        // Verify live UID matches plan UID (no recreation)
+        let live_uid = match obj.metadata.uid.as_deref() {
+            Some(uid) if uid == plan_uid => uid.to_string(),
+            Some(uid) => {
+                eprintln!(
+                    "    ⚠ {}/{}: UID changed ({} → {}) — skip recovery",
+                    res.kind, res.name, plan_uid, uid
+                );
+                continue;
+            }
+            None => {
+                eprintln!(
+                    "    ⚠ {}/{}: no live UID — skip recovery",
+                    res.kind, res.name
+                );
+                continue;
+            }
+        };
+
+        // Must have deletionTimestamp
+        if obj.metadata.deletion_timestamp.is_none() {
+            eprintln!(
+                "    ⚠ {}/{}: no deletionTimestamp — skip recovery",
+                res.kind, res.name
+            );
+            continue;
+        }
+
+        // Must have exactly 1 ownerRef, controller=true, UID matching a deleted root
+        let owner_refs = obj.metadata.owner_references.as_deref().unwrap_or(&[]);
+        if owner_refs.len() != 1 {
+            eprintln!(
+                "    ⚠ {}/{}: {} ownerRefs (need exactly 1) — skip recovery",
+                res.kind,
+                res.name,
+                owner_refs.len()
+            );
+            continue;
+        }
+        let oref = &owner_refs[0];
+        if !oref.controller.unwrap_or(false) {
+            eprintln!(
+                "    ⚠ {}/{}: ownerRef is not controller — skip recovery",
+                res.kind, res.name
+            );
+            continue;
+        }
+        if !deleted_uids.contains(&oref.uid) {
+            eprintln!(
+                "    ⚠ {}/{}: ownerRef UID {} not in deleted roots — skip recovery",
+                res.kind, res.name, oref.uid
+            );
+            continue;
+        }
+
+        // Verify root is authoritatively Gone (GET 404 + endpoint LIST)
+        let root = deleted_roots
+            .iter()
+            .find(|r| r.uid.as_deref() == Some(&oref.uid));
+        if let Some(root_res) = root
+            && let Some((root_api, _)) = resolve_api(client, root_res, kind_map, gk_map)
+        {
+            match root_api.get(&root_res.name).await {
+                Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                    // Verify endpoint
+                    match root_api.list(&ListParams::default().limit(1)).await {
+                        Ok(_) => {} // Endpoint exists, root genuinely gone
+                        Err(_) => {
+                            eprintln!(
+                                "    ⚠ {}/{}: root endpoint verification failed — skip",
+                                res.kind, res.name
+                            );
+                            continue;
+                        }
+                    }
+                }
+                Ok(_) => {
+                    eprintln!(
+                        "    ⚠ {}/{}: root {}/{} still exists — skip recovery",
+                        res.kind, res.name, root_res.kind, root_res.name
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "    ⚠ {}/{}: root GET error ({}) — skip recovery",
+                        res.kind, res.name, e
+                    );
+                    continue;
+                }
+            }
+        }
+        // Get finalizers
+        let finalizers = obj.metadata.finalizers.as_deref().unwrap_or(&[]);
+        if finalizers.is_empty() {
+            continue; // No finalizers to strip
+        }
+
+        // Acquire gate permit
+        let _permit = if let Some(g) = gate {
+            match g.acquire().await {
+                Ok(p) => Some(p),
+                Err(_) => {
+                    eprintln!("    ⏸ Gate closed — stopping recovery");
+                    break;
+                }
+            }
+        } else {
+            None
+        };
+
+        // Record candidate to journal BEFORE mutation
+        let finalizer_value = finalizers[0].clone();
+        if let Some(j) = journal {
+            let record = FinalizerRecoveryRecord {
+                resource: res.clone(),
+                live_uid: live_uid.clone(),
+                finalizer_value: finalizer_value.clone(),
+                root_uid: oref.uid.clone(),
+                root_kind: oref.kind.clone(),
+                result: FinalizerRecoveryResult::Stripped,
+            };
+            if let Err(e) = j
+                .update(|jrnl| {
+                    jrnl.finalizer_recoveries.push(record);
+                    jrnl.audit_revision += 1;
+                })
+                .await
+            {
+                eprintln!(
+                    "    ✗ {}/{}: journal checkpoint failed ({}) — stopping recovery",
+                    res.kind, res.name, e
+                );
+                break;
+            }
+        }
+
+        // JSON Patch: atomic UID + finalizer value test → remove
+        let patch = serde_json::json!([
+            {"op": "test", "path": "/metadata/uid", "value": live_uid},
+            {"op": "test", "path": "/metadata/finalizers/0", "value": finalizer_value},
+            {"op": "remove", "path": "/metadata/finalizers/0"}
+        ]);
+        match api
+            .patch(
+                &res.name,
+                &kube::api::PatchParams::default(),
+                &kube::api::Patch::Json::<serde_json::Value>(
+                    serde_json::from_value(patch).unwrap(),
+                ),
+            )
+            .await
+        {
+            Ok(_) => {
+                eprintln!(
+                    "    🔧 {}/{}: finalizer stripped ({})",
+                    res.kind, res.name, finalizer_value
+                );
+                // Update journal result to Stripped
+                if let Some(j) = journal {
+                    let res_clone = res.clone();
+                    let _ = j
+                        .update(|jrnl| {
+                            if let Some(rec) = jrnl
+                                .finalizer_recoveries
+                                .iter_mut()
+                                .rev()
+                                .find(|r| r.resource == res_clone && r.live_uid == live_uid)
+                            {
+                                rec.result = FinalizerRecoveryResult::Stripped;
+                            }
+                        })
+                        .await;
+                }
+                recovered += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "    ✗ {}/{}: patch failed ({}) — UID/finalizer may have changed",
+                    res.kind, res.name, e
+                );
+                // Update journal result to Failed
+                if let Some(j) = journal {
+                    let res_clone = res.clone();
+                    let err_msg = e.to_string();
+                    let _ = j
+                        .update(|jrnl| {
+                            if let Some(rec) = jrnl
+                                .finalizer_recoveries
+                                .iter_mut()
+                                .rev()
+                                .find(|r| r.resource == res_clone && r.live_uid == live_uid)
+                            {
+                                rec.result = FinalizerRecoveryResult::Failed(err_msg);
+                            }
+                        })
+                        .await;
+                }
+            }
+        }
+    }
+
+    recovered
 }
 
 pub fn print_execution_result(result: &ExecutionResult) {
@@ -2530,8 +2883,8 @@ mod tests {
     fn residual_cleanup_schema_gate_rejects_old_schema() {
         let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
         assert_eq!(
-            current, 7,
-            "Schema version must be 7 for cleanup gate to work correctly"
+            current, 8,
+            "Schema version must be 8 for cleanup gate to work correctly"
         );
     }
 
