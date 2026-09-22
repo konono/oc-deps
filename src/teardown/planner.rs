@@ -57,6 +57,8 @@ pub enum BulkScope {
     Root,
     Independent,
     All,
+    /// RelatedLabelOnly + LikelyManaged only. Excludes user root CR, PVC/PV, ExplicitUnattributed.
+    LabelOnly,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,7 @@ impl DecisionPolicy {
                 "root" => DeleteApproval::Bulk(BulkScope::Root),
                 "independent" => DeleteApproval::Bulk(BulkScope::Independent),
                 "all" => DeleteApproval::Bulk(BulkScope::All),
+                "label-only" => DeleteApproval::Bulk(BulkScope::LabelOnly),
                 _ => DeleteApproval::Exact(s.clone()),
             })
             .collect();
@@ -274,6 +277,10 @@ pub fn resolve_decisions<'a>(
             DeleteApproval::Bulk(BulkScope::Independent) | DeleteApproval::Bulk(BulkScope::All)
         )
     });
+    let has_bulk_label_only = policy
+        .approvals
+        .iter()
+        .any(|a| matches!(a, DeleteApproval::Bulk(BulkScope::LabelOnly)));
 
     for rc in candidates {
         if resolved.contains_key(rc.resource) {
@@ -290,7 +297,7 @@ pub fn resolve_decisions<'a>(
             ReviewCategory::Operand(GraphPosition::Root) => has_bulk_root,
             ReviewCategory::Operand(GraphPosition::Independent) => has_bulk_independent,
             _ => false,
-        };
+        } || (has_bulk_label_only && rc.is_label_only_eligible);
         if bulk_matches {
             let reason = match rc.category {
                 ReviewCategory::Operand(GraphPosition::Root) => {
@@ -331,6 +338,39 @@ pub struct TeardownPlan {
     pub blockers: Vec<Blocker>,
     pub warnings: Vec<Warning>,
     pub snapshot_taken_at: String,
+    /// Operator dependency edges discovered from CSV required/owned CRDs.
+    #[serde(default)]
+    pub dependency_edges: Vec<DependencyEdge>,
+    /// Operator inventory at plan time — all operators in the cluster.
+    #[serde(default)]
+    pub operator_inventory: Vec<OperatorInventoryEntry>,
+    /// Explicit user decisions resolved from policy — only REVIEW items that were
+    /// explicitly approved or preserved. Populated by generate_teardown_plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub explicit_decisions: Vec<crate::teardown::plan::SavedDecision>,
+}
+
+/// A typed dependency edge between operators.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DependencyEdge {
+    pub from_operator: String,
+    pub to_operator: String,
+    pub edge_type: DependencyEdgeType,
+    pub evidence: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum DependencyEdgeType {
+    RequiresApi,
+}
+
+/// Minimal operator inventory entry for plan-time snapshot.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OperatorInventoryEntry {
+    pub csv_name: String,
+    pub namespace: String,
+    pub owned_crds: Vec<String>,
+    pub required_crds: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1684,6 +1724,7 @@ pub struct ReviewCandidate<'a> {
     pub category: ReviewCategory,
     pub approval_class: DeleteApprovalClass,
     pub exact_approvable: bool,
+    pub is_label_only_eligible: bool,
 }
 
 /// Phase-ordered EXPECT→DELETE invariant enforcement.
@@ -2233,11 +2274,22 @@ pub async fn generate_teardown_plan(
         .map(|(cr, position)| {
             let owner_count = resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len();
             let category = ReviewCategory::Operand(position);
+            let is_label_eligible = matches!(cr.provenance, Provenance::LikelyManaged)
+                && matches!(cr.discovery_source, DiscoverySource::RelatedLabelOnly)
+                && compute_approval_class(cr, position) == DeleteApprovalClass::Standard
+                && !matches!(
+                    cr.id.kind.as_str(),
+                    "Namespace"
+                        | "PersistentVolumeClaim"
+                        | "PersistentVolume"
+                        | "CustomResourceDefinition"
+                );
             ReviewCandidate {
                 resource: &cr.id,
                 category,
                 approval_class: compute_approval_class(cr, position),
                 exact_approvable: is_exact_delete_approvable(cr, position, owner_count),
+                is_label_only_eligible: is_label_eligible,
             }
         })
         .collect();
@@ -2263,6 +2315,7 @@ pub async fn generate_teardown_plan(
             category: ReviewCategory::Ancillary,
             approval_class: DeleteApprovalClass::ExplicitOnly,
             exact_approvable: true,
+            is_label_only_eligible: false,
         });
     }
 
@@ -2861,7 +2914,7 @@ pub async fn generate_teardown_plan(
             description:
                 "Remove operator namespace resources (OperatorGroup, Leases, operator ConfigMaps)"
                     .to_string(),
-            actions: ns_cleanup_actions,
+            actions: ns_cleanup_actions.clone(),
             barrier: None,
         })
     };
@@ -3277,13 +3330,44 @@ pub async fn generate_teardown_plan(
         }
     }
 
-    let plan = TeardownPlan {
+    // Build operator inventory and dependency edges
+    let operator_inventory: Vec<OperatorInventoryEntry> = all_operators
+        .iter()
+        .map(|op| OperatorInventoryEntry {
+            csv_name: op.csv.name.clone(),
+            namespace: op.install_namespace.clone(),
+            owned_crds: op.owned_crds.clone(),
+            required_crds: op.required_crds.clone(),
+        })
+        .collect();
+
+    let mut dependency_edges = Vec::new();
+    for target_op in target_operators {
+        for req_crd in &target_op.required_crds {
+            if let Some(provider) = all_operators
+                .iter()
+                .find(|op| op.csv.name != target_op.csv.name && op.owned_crds.contains(req_crd))
+            {
+                dependency_edges.push(DependencyEdge {
+                    from_operator: target_op.csv.name.clone(),
+                    to_operator: provider.csv.name.clone(),
+                    edge_type: DependencyEdgeType::RequiresApi,
+                    evidence: req_crd.clone(),
+                });
+            }
+        }
+    }
+
+    let mut plan = TeardownPlan {
         targets,
         preflight,
         phases,
         blockers,
         warnings,
         snapshot_taken_at: chrono::Utc::now().to_rfc3339(),
+        dependency_edges,
+        operator_inventory,
+        explicit_decisions: vec![],
     };
 
     // Invariant: every REVIEW action must have a corresponding ReviewCandidate.
@@ -3303,6 +3387,92 @@ pub async fn generate_teardown_plan(
         },
         "REVIEW action exists without corresponding ReviewCandidate — provenance/discovery invariant broken"
     );
+
+    // Build explicit_decisions from resolved_decisions.
+    // Metadata is sourced from CrInstance data (pre-action-conversion) via cr_instances,
+    // and from ancillary ns_cleanup_actions for ancillary resources.
+    // This avoids the bug where resolved REVIEW→Delete actions are no longer Action::Review.
+    let pre_resolution_metadata: HashMap<&ResourceId, crate::teardown::plan::ReviewMetadata> = {
+        let mut map = HashMap::new();
+        // CrInstance-backed candidates (root + independent)
+        for cr in cr_instances.iter() {
+            let position = if root_crs.iter().any(|r| std::ptr::eq(*r, cr)) {
+                GraphPosition::Root
+            } else if independent_crs.iter().any(|r| std::ptr::eq(*r, cr)) {
+                GraphPosition::Independent
+            } else {
+                continue; // descendant — not a review candidate
+            };
+            if matches!(cr.provenance, Provenance::Managed) {
+                continue;
+            }
+            let approval = compute_approval_class(cr, position);
+            if let Some(meta) = build_review_metadata(cr, position, approval) {
+                map.insert(&cr.id, meta);
+            }
+        }
+        // Ancillary ns_cleanup candidates (ConfigMap etc.) — use their Action::Review metadata
+        for action in &ns_cleanup_actions {
+            if let Action::Review {
+                resource,
+                metadata: Some(meta),
+                ..
+            } = action
+            {
+                map.insert(resource, meta.clone());
+            }
+        }
+        // Related CRD REVIEW actions
+        for action in &related_report.actions {
+            if let Action::Review {
+                resource,
+                metadata: Some(meta),
+                ..
+            } = action
+            {
+                map.insert(resource, meta.clone());
+            }
+        }
+        map
+    };
+
+    let mut explicit_decisions = Vec::new();
+    for (resource, decision) in &resolved_decisions {
+        let saved_action = match decision {
+            ResolvedDecision::Delete { .. } => crate::teardown::plan::SavedAction::Delete,
+            ResolvedDecision::Keep { .. } => crate::teardown::plan::SavedAction::Keep,
+            ResolvedDecision::Review => continue,
+        };
+        let (basis, approval_kind) = if let Some(meta) = pre_resolution_metadata.get(resource) {
+            let basis = build_decision_basis(meta);
+            // If provenance is Unknown and no decisive evidence → ExplicitUnattributed
+            let has_evidence = !basis.decisive_evidence.is_empty()
+                || basis.provenance.as_deref().is_some_and(|p| p != "Unknown");
+            let kind = if has_evidence {
+                crate::teardown::plan::ApprovalKind::Explicit
+            } else {
+                crate::teardown::plan::ApprovalKind::ExplicitUnattributed
+            };
+            (basis, kind)
+        } else {
+            (
+                crate::teardown::plan::DecisionBasis {
+                    provenance: None,
+                    review_category: None,
+                    discovery_source: None,
+                    decisive_evidence: vec![],
+                },
+                crate::teardown::plan::ApprovalKind::ExplicitUnattributed,
+            )
+        };
+        explicit_decisions.push(crate::teardown::plan::SavedDecision {
+            match_spec: crate::teardown::plan::ResourceMatch::from_resource_id(resource),
+            action: saved_action,
+            approval: approval_kind,
+            basis,
+        });
+    }
+    plan.explicit_decisions = explicit_decisions;
 
     Ok(plan)
 }
@@ -3327,6 +3497,328 @@ pub fn load_plan_from_file(path: &str) -> Result<TeardownPlan> {
     let data = std::fs::read_to_string(path)?;
     let plan: TeardownPlan = serde_json::from_str(&data)?;
     Ok(plan)
+}
+
+/// Save explicit user decisions as a SavedTeardownPlan.
+/// Reads pre-built explicit_decisions from the plan (populated by generate_teardown_plan).
+pub fn save_as_saved_plan(
+    plan: &TeardownPlan,
+    target: &crate::teardown::plan::SavedOperatorTarget,
+    path: Option<&str>,
+) -> Result<String> {
+    use crate::teardown::plan::*;
+
+    let saved = SavedTeardownPlan {
+        schema_version: SAVED_PLAN_SCHEMA_VERSION,
+        target: target.clone(),
+        teardown_decisions: plan.explicit_decisions.clone(),
+        residual_decisions: vec![],
+    };
+
+    let dest = if let Some(p) = path {
+        std::path::PathBuf::from(p)
+    } else {
+        let dir = std::path::PathBuf::from("/tmp/oc-deps-saved-plans");
+        std::fs::create_dir_all(&dir)?;
+        dir.join(format!(
+            "saved-plan-{}.json",
+            chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")
+        ))
+    };
+    std::fs::write(&dest, serde_json::to_string_pretty(&saved)?)?;
+    Ok(dest.display().to_string())
+}
+
+fn build_decision_basis(
+    meta: &crate::teardown::plan::ReviewMetadata,
+) -> crate::teardown::plan::DecisionBasis {
+    use crate::teardown::plan::*;
+
+    let provenance = meta.provenance.as_ref().map(|p| match p {
+        ProvenanceSer::Managed => "Managed".to_string(),
+        ProvenanceSer::LikelyManaged => "LikelyManaged".to_string(),
+        ProvenanceSer::Unknown => "Unknown".to_string(),
+    });
+
+    let review_category = meta.category.as_ref().map(|c| match c {
+        ReviewCategorySer::OperandRoot => "OperandRoot".to_string(),
+        ReviewCategorySer::OperandDescendant => "OperandDescendant".to_string(),
+        ReviewCategorySer::OperandIndependent => "OperandIndependent".to_string(),
+        ReviewCategorySer::Ancillary => "Ancillary".to_string(),
+    });
+
+    let discovery_source = meta.discovery_source.as_ref().map(|d| match d {
+        DiscoverySourceSer::Direct => "Direct".to_string(),
+        DiscoverySourceSer::RelatedLinked => "RelatedLinked".to_string(),
+        DiscoverySourceSer::RelatedLabelOnly => "RelatedLabelOnly".to_string(),
+    });
+
+    let decisive_evidence: Vec<SavedEvidenceSignature> = meta
+        .decisive_label_pairs
+        .iter()
+        .map(|(k, v)| SavedEvidenceSignature::Label {
+            key: k.clone(),
+            value: v.clone(),
+        })
+        .collect();
+
+    DecisionBasis {
+        provenance,
+        review_category,
+        discovery_source,
+        decisive_evidence,
+    }
+}
+
+/// Load a SavedTeardownPlan from file with schema validation.
+pub fn load_saved_plan(path: &str) -> Result<crate::teardown::plan::SavedTeardownPlan> {
+    let data = std::fs::read_to_string(path)?;
+    let saved: crate::teardown::plan::SavedTeardownPlan = serde_json::from_str(&data)?;
+    if saved.schema_version != crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION {
+        bail!(
+            "Saved plan schema version {} is not supported (expected {})",
+            saved.schema_version,
+            crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION
+        );
+    }
+    Ok(saved)
+}
+
+/// Validate saved teardown decisions against a fresh plan.
+/// Compares saved provenance/category/discovery_source/labels against fresh ReviewMetadata.
+/// Returns exact approval specs for DecisionPolicy on success,
+/// or list of errors if any decision cannot be safely replayed.
+pub fn validate_saved_decisions(
+    plan: &TeardownPlan,
+    saved: &crate::teardown::plan::SavedTeardownPlan,
+) -> Result<(Vec<String>, Vec<String>), Vec<String>> {
+    use crate::teardown::plan::ApprovalKind;
+
+    let mut approve_specs = Vec::new();
+    let mut preserve_specs = Vec::new();
+    let mut errors = Vec::new();
+
+    for decision in &saved.teardown_decisions {
+        if let Err(e) = decision.match_spec.validate() {
+            errors.push(format!(
+                "{}/{}: invalid match spec — {}",
+                decision.match_spec.kind, decision.match_spec.name, e
+            ));
+            continue;
+        }
+        if decision.approval == ApprovalKind::ExplicitUnattributed {
+            errors.push(format!(
+                "{}/{}: ExplicitUnattributed cannot be auto-applied",
+                decision.match_spec.kind, decision.match_spec.name
+            ));
+            continue;
+        }
+
+        let fresh_match = plan
+            .phases
+            .iter()
+            .flat_map(|p| &p.actions)
+            .find(|a| match a {
+                Action::Review { resource, .. }
+                | Action::Delete { resource, .. }
+                | Action::ExpectGone { resource, .. }
+                | Action::Keep { resource, .. } => decision.match_spec.matches(resource),
+                _ => false,
+            });
+
+        match fresh_match {
+            None => {
+                errors.push(format!(
+                    "{}/{}: not found in fresh plan",
+                    decision.match_spec.kind, decision.match_spec.name
+                ));
+            }
+            Some(Action::Delete { .. }) | Some(Action::ExpectGone { .. }) => {
+                if matches!(decision.action, crate::teardown::plan::SavedAction::Keep) {
+                    errors.push(format!(
+                        "{}/{}: saved KEEP conflicts with fresh deterministic DELETE — cannot preserve",
+                        decision.match_spec.kind, decision.match_spec.name
+                    ));
+                }
+            }
+            Some(Action::Review {
+                resource, metadata, ..
+            }) => {
+                let spec = canonical_key(resource);
+
+                if matches!(decision.action, crate::teardown::plan::SavedAction::Delete) {
+                    // Fresh metadata is required for DELETE replay
+                    let Some(fresh_meta) = metadata else {
+                        errors.push(format!(
+                            "{}/{}: fresh REVIEW has no metadata — cannot validate basis",
+                            decision.match_spec.kind, decision.match_spec.name
+                        ));
+                        continue;
+                    };
+
+                    if let Some(err) =
+                        check_basis_drift(&decision.basis, fresh_meta, &decision.match_spec)
+                    {
+                        errors.push(err);
+                        continue;
+                    }
+
+                    approve_specs.push(spec);
+                } else {
+                    preserve_specs.push(spec);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if errors.is_empty() {
+        Ok((approve_specs, preserve_specs))
+    } else {
+        Err(errors)
+    }
+}
+
+fn check_basis_drift(
+    saved: &crate::teardown::plan::DecisionBasis,
+    fresh: &crate::teardown::plan::ReviewMetadata,
+    spec: &crate::teardown::plan::ResourceMatch,
+) -> Option<String> {
+    use crate::teardown::plan::*;
+
+    // All three basis fields required for DELETE replay
+    let Some(saved_p) = &saved.provenance else {
+        return Some(format!(
+            "{}/{}: saved basis missing provenance — BLOCKED",
+            spec.kind, spec.name
+        ));
+    };
+    let Some(saved_c) = &saved.review_category else {
+        return Some(format!(
+            "{}/{}: saved basis missing review_category — BLOCKED",
+            spec.kind, spec.name
+        ));
+    };
+    let Some(saved_d) = &saved.discovery_source else {
+        return Some(format!(
+            "{}/{}: saved basis missing discovery_source — BLOCKED",
+            spec.kind, spec.name
+        ));
+    };
+
+    // Unknown provenance blocks replay (ExplicitUnattributed should already be caught)
+    if saved_p == "Unknown" && saved.decisive_evidence.is_empty() {
+        return Some(format!(
+            "{}/{}: saved provenance Unknown with no evidence — BLOCKED",
+            spec.kind, spec.name
+        ));
+    }
+
+    // Fresh fields required
+    let Some(fresh_prov) = &fresh.provenance else {
+        return Some(format!(
+            "{}/{}: fresh metadata missing provenance — BLOCKED",
+            spec.kind, spec.name
+        ));
+    };
+    let Some(fresh_cat) = &fresh.category else {
+        return Some(format!(
+            "{}/{}: fresh metadata missing category — BLOCKED",
+            spec.kind, spec.name
+        ));
+    };
+    let Some(fresh_disc) = &fresh.discovery_source else {
+        return Some(format!(
+            "{}/{}: fresh metadata missing discovery_source — BLOCKED",
+            spec.kind, spec.name
+        ));
+    };
+
+    let fresh_p = match fresh_prov {
+        ProvenanceSer::Managed => "Managed",
+        ProvenanceSer::LikelyManaged => "LikelyManaged",
+        ProvenanceSer::Unknown => "Unknown",
+    };
+    let fresh_c = match fresh_cat {
+        ReviewCategorySer::OperandRoot => "OperandRoot",
+        ReviewCategorySer::OperandDescendant => "OperandDescendant",
+        ReviewCategorySer::OperandIndependent => "OperandIndependent",
+        ReviewCategorySer::Ancillary => "Ancillary",
+    };
+    let fresh_d = match fresh_disc {
+        DiscoverySourceSer::Direct => "Direct",
+        DiscoverySourceSer::RelatedLinked => "RelatedLinked",
+        DiscoverySourceSer::RelatedLabelOnly => "RelatedLabelOnly",
+    };
+
+    // Provenance: same or LikelyManaged→Managed (strengthening) only
+    let prov_ok = saved_p == fresh_p || (saved_p == "LikelyManaged" && fresh_p == "Managed");
+    if !prov_ok {
+        return Some(format!(
+            "{}/{}: provenance drift {} → {} — BLOCKED",
+            spec.kind, spec.name, saved_p, fresh_p
+        ));
+    }
+
+    // Category: must be same
+    if saved_c != fresh_c {
+        return Some(format!(
+            "{}/{}: category drift {} → {} — BLOCKED",
+            spec.kind, spec.name, saved_c, fresh_c
+        ));
+    }
+
+    // Discovery source: must be same
+    if saved_d != fresh_d {
+        return Some(format!(
+            "{}/{}: discovery source drift {} → {} — BLOCKED",
+            spec.kind, spec.name, saved_d, fresh_d
+        ));
+    }
+
+    // Validate ALL saved evidence signatures against fresh evidence
+    for sig in &saved.decisive_evidence {
+        match sig {
+            SavedEvidenceSignature::Label { key, value } => {
+                if !fresh
+                    .decisive_label_pairs
+                    .iter()
+                    .any(|(fk, fv)| fk == key && fv == value)
+                {
+                    return Some(format!(
+                        "{}/{}: saved label {}={} not in fresh evidence — BLOCKED",
+                        spec.kind, spec.name, key, value
+                    ));
+                }
+            }
+            SavedEvidenceSignature::OwnerReference { kind, name, .. } => {
+                return Some(format!(
+                    "{}/{}: unsupported saved OwnerReference {}/{} — BLOCKED (not verifiable against fresh metadata)",
+                    spec.kind, spec.name, kind, name
+                ));
+            }
+            SavedEvidenceSignature::ApiOwner { api_owner_key } => {
+                return Some(format!(
+                    "{}/{}: unsupported saved ApiOwner {} — BLOCKED",
+                    spec.kind, spec.name, api_owner_key
+                ));
+            }
+            SavedEvidenceSignature::ManagedFieldManager { manager } => {
+                return Some(format!(
+                    "{}/{}: unsupported saved ManagedFieldManager {} — BLOCKED (not in ReviewMetadata)",
+                    spec.kind, spec.name, manager
+                ));
+            }
+            SavedEvidenceSignature::ServiceAccount { namespace, name } => {
+                return Some(format!(
+                    "{}/{}: unsupported saved ServiceAccount {}/{} — BLOCKED",
+                    spec.kind, spec.name, namespace, name
+                ));
+            }
+        }
+    }
+
+    None
 }
 
 fn scope_suffix(resource: &ResourceId) -> String {
@@ -4421,5 +4913,880 @@ mod tests {
             wrong_decisive.is_empty(),
             "wrong plural guess must not match"
         );
+    }
+
+    // ── PR5: Saved Plan validation ──
+
+    #[test]
+    fn saved_decision_empty_basis_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: None,
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: None,
+                    review_category: None,
+                    discovery_source: None,
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(result.is_err(), "Empty basis must be blocked");
+    }
+
+    #[test]
+    fn saved_decision_with_basis_produces_approvals() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: Some(DeleteApprovalClassSer::Standard),
+                        provenance: Some(ProvenanceSer::Managed),
+                        discovery_source: Some(DiscoverySourceSer::Direct),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("Managed".to_string()),
+                    review_category: Some("OperandRoot".to_string()),
+                    discovery_source: Some("Direct".to_string()),
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(result.is_ok(), "Valid basis must produce approvals");
+        let (approvals, _) = result.unwrap();
+        assert_eq!(approvals.len(), 1);
+    }
+
+    #[test]
+    fn saved_explicit_unattributed_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: None,
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::ExplicitUnattributed,
+                basis: DecisionBasis {
+                    provenance: Some("Unknown".to_string()),
+                    review_category: None,
+                    discovery_source: None,
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(result.is_err(), "ExplicitUnattributed must be blocked");
+    }
+
+    // ── PR7: Bulk label-only ──
+
+    #[test]
+    fn bulk_label_only_excludes_explicit_only() {
+        let candidate = ReviewCandidate {
+            resource: &make_res("Widget", "w1", "uid-1"),
+            category: ReviewCategory::Ancillary,
+            approval_class: DeleteApprovalClass::ExplicitOnly,
+            exact_approvable: true,
+            is_label_only_eligible: false,
+        };
+        assert!(
+            !candidate.is_label_only_eligible,
+            "ExplicitOnly must not be label-only eligible"
+        );
+    }
+
+    // ── PR6: RequiresApi no delete authority ──
+
+    #[test]
+    fn requires_api_edge_is_informational() {
+        let edge = DependencyEdge {
+            from_operator: "consumer.v1".to_string(),
+            to_operator: "provider.v1".to_string(),
+            edge_type: DependencyEdgeType::RequiresApi,
+            evidence: "widgets.example.com".to_string(),
+        };
+        assert!(matches!(edge.edge_type, DependencyEdgeType::RequiresApi));
+    }
+
+    // ── PR5: Saved Keep conflicts with fresh DELETE → BLOCK ──
+
+    #[test]
+    fn saved_keep_conflicts_with_fresh_delete_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Delete {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "managed".to_string(),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Keep,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("Managed".to_string()),
+                    review_category: None,
+                    discovery_source: None,
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(
+            result.is_err(),
+            "Saved KEEP conflicting with fresh DELETE must block"
+        );
+        let errors = result.unwrap_err();
+        assert!(errors[0].contains("saved KEEP conflicts with fresh deterministic DELETE"));
+    }
+
+    // ── PR5: Saved decision not found in fresh plan → BLOCK ──
+
+    #[test]
+    fn saved_decision_not_in_fresh_plan_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "gone", "uid-x")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("Managed".to_string()),
+                    review_category: None,
+                    discovery_source: None,
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].contains("not found in fresh plan"));
+    }
+
+    // ── PR5: build_decision_basis from ReviewMetadata ──
+
+    #[test]
+    fn build_decision_basis_captures_all_fields() {
+        use crate::teardown::plan::*;
+        let meta = ReviewMetadata {
+            category: Some(ReviewCategorySer::OperandRoot),
+            approval_class: Some(DeleteApprovalClassSer::Standard),
+            provenance: Some(ProvenanceSer::LikelyManaged),
+            discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
+            decisive_label_pairs: vec![(
+                "app.kubernetes.io/part-of".to_string(),
+                "test".to_string(),
+            )],
+        };
+        let basis = build_decision_basis(&meta);
+        assert_eq!(basis.provenance.as_deref(), Some("LikelyManaged"));
+        assert_eq!(basis.review_category.as_deref(), Some("OperandRoot"));
+        assert_eq!(basis.discovery_source.as_deref(), Some("RelatedLabelOnly"));
+        assert_eq!(basis.decisive_evidence.len(), 1);
+        assert!(matches!(
+            &basis.decisive_evidence[0],
+            SavedEvidenceSignature::Label { key, value }
+            if key == "app.kubernetes.io/part-of" && value == "test"
+        ));
+    }
+
+    // ── PR5: validate_saved_decisions provenance drift detection ──
+
+    #[test]
+    fn validate_blocks_provenance_weakening() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: Some(DeleteApprovalClassSer::Standard),
+                        provenance: Some(ProvenanceSer::Unknown),
+                        discovery_source: Some(DiscoverySourceSer::Direct),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".to_string()),
+                    review_category: Some("OperandRoot".to_string()),
+                    discovery_source: Some("Direct".to_string()),
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(result.is_err(), "LikelyManaged→Unknown must be blocked");
+        assert!(result.unwrap_err()[0].contains("provenance drift"));
+    }
+
+    #[test]
+    fn validate_allows_provenance_strengthening() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: Some(DeleteApprovalClassSer::Standard),
+                        provenance: Some(ProvenanceSer::Managed),
+                        discovery_source: Some(DiscoverySourceSer::Direct),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".to_string()),
+                    review_category: Some("OperandRoot".to_string()),
+                    discovery_source: Some("Direct".to_string()),
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(
+            result.is_ok(),
+            "LikelyManaged→Managed strengthening must be allowed"
+        );
+    }
+
+    #[test]
+    fn validate_blocks_missing_saved_label_in_fresh() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: Some(DeleteApprovalClassSer::Standard),
+                        provenance: Some(ProvenanceSer::LikelyManaged),
+                        discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".to_string()),
+                    review_category: Some("OperandRoot".to_string()),
+                    discovery_source: Some("RelatedLabelOnly".to_string()),
+                    decisive_evidence: vec![SavedEvidenceSignature::Label {
+                        key: "app/part-of".to_string(),
+                        value: "gone".to_string(),
+                    }],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(result.is_err(), "Missing label must block");
+        assert!(result.unwrap_err()[0].contains("saved label"));
+    }
+
+    // ── PR7: bulk label-only does not match PVC/PV ──
+
+    #[test]
+    fn bulk_label_only_excludes_pvc() {
+        let cr = CrInstance {
+            id: ResourceId {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                kind: "PersistentVolumeClaim".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "pvc1".to_string(),
+                uid: Some("uid-1".to_string()),
+            },
+            owner_refs: vec![],
+            api_owner_key: "".to_string(),
+            labels: std::collections::HashMap::new(),
+            managed_field_managers: vec![],
+            provenance: Provenance::LikelyManaged,
+            discovery_source: DiscoverySource::RelatedLabelOnly,
+            decisive_label_pairs: vec![],
+            ownerref_to_owned_api_kind: None,
+        };
+        let position = GraphPosition::Independent;
+        let is_label_eligible = matches!(cr.provenance, Provenance::LikelyManaged)
+            && matches!(cr.discovery_source, DiscoverySource::RelatedLabelOnly)
+            && compute_approval_class(&cr, position) == DeleteApprovalClass::Standard
+            && !matches!(
+                cr.id.kind.as_str(),
+                "Namespace"
+                    | "PersistentVolumeClaim"
+                    | "PersistentVolume"
+                    | "CustomResourceDefinition"
+            );
+        assert!(
+            !is_label_eligible,
+            "PVC must be excluded from label-only bulk"
+        );
+    }
+
+    // ── Saved Plan roundtrip: basis non-empty after save_as_saved_plan ──
+
+    #[test]
+    fn saved_plan_roundtrip_basis_nonempty() {
+        use crate::teardown::plan::*;
+        // Simulate: plan with REVIEW item + explicit_decisions from approved REVIEW
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Delete {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "approved".to_string(),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".to_string()),
+                    review_category: Some("OperandRoot".to_string()),
+                    discovery_source: Some("Direct".to_string()),
+                    decisive_evidence: vec![],
+                },
+            }],
+        };
+        let target = SavedOperatorTarget {
+            package_name: "test-op".to_string(),
+            install_namespace: "ns".to_string(),
+            csv_name_pattern: "test.v1".to_string(),
+        };
+        let dir = std::env::temp_dir().join("oc-deps-roundtrip-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("roundtrip.json");
+        let result = save_as_saved_plan(&plan, &target, Some(path.to_str().unwrap()));
+        assert!(result.is_ok());
+        let saved = load_saved_plan(path.to_str().unwrap()).unwrap();
+        assert_eq!(saved.teardown_decisions.len(), 1);
+        let d = &saved.teardown_decisions[0];
+        assert!(
+            d.basis.provenance.is_some(),
+            "Saved basis provenance must not be empty"
+        );
+        assert_eq!(d.basis.provenance.as_deref(), Some("LikelyManaged"));
+        assert_eq!(d.basis.discovery_source.as_deref(), Some("Direct"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Saved Plan drift: discovery source change → BLOCK ──
+
+    #[test]
+    fn validate_blocks_discovery_source_drift() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Review {
+                    resource: make_res("Widget", "w1", "uid-1"),
+                    reason: "test".to_string(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: Some(DeleteApprovalClassSer::Standard),
+                        provenance: Some(ProvenanceSer::LikelyManaged),
+                        discovery_source: Some(DiscoverySourceSer::RelatedLabelOnly),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "test".to_string(),
+                install_namespace: "ns".to_string(),
+                csv_name_pattern: "test.v1".to_string(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("Widget", "w1", "uid-1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".to_string()),
+                    review_category: Some("OperandRoot".to_string()),
+                    discovery_source: Some("Direct".to_string()),
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let result = validate_saved_decisions(&plan, &saved);
+        assert!(
+            result.is_err(),
+            "Discovery source Direct→RelatedLabelOnly must be blocked"
+        );
+        assert!(result.unwrap_err()[0].contains("discovery source drift"));
+    }
+
+    // ── ExplicitUnattributed from Unknown provenance + no evidence ──
+
+    #[test]
+    fn unknown_provenance_no_evidence_becomes_unattributed() {
+        use crate::teardown::plan::*;
+        let meta = ReviewMetadata {
+            category: Some(ReviewCategorySer::OperandIndependent),
+            approval_class: Some(DeleteApprovalClassSer::ExplicitOnly),
+            provenance: Some(ProvenanceSer::Unknown),
+            discovery_source: Some(DiscoverySourceSer::Direct),
+            decisive_label_pairs: vec![],
+        };
+        let basis = build_decision_basis(&meta);
+        let has_evidence = !basis.decisive_evidence.is_empty()
+            || basis.provenance.as_deref().is_some_and(|p| p != "Unknown");
+        assert!(
+            !has_evidence,
+            "Unknown provenance + no labels = no evidence"
+        );
+        // This should produce ExplicitUnattributed in explicit_decisions builder
+    }
+
+    // ── P0: saved basis missing fields → BLOCK ──
+
+    #[test]
+    fn saved_missing_review_category_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "t".into(),
+                description: "".into(),
+                actions: vec![Action::Review {
+                    resource: make_res("W", "w1", "u1"),
+                    reason: "t".into(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: None,
+                        provenance: Some(ProvenanceSer::LikelyManaged),
+                        discovery_source: Some(DiscoverySourceSer::Direct),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "t".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "t".into(),
+                install_namespace: "n".into(),
+                csv_name_pattern: "t.v1".into(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("W", "w1", "u1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".into()),
+                    review_category: None,
+                    discovery_source: Some("Direct".into()),
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let r = validate_saved_decisions(&plan, &saved);
+        assert!(r.is_err(), "Missing review_category must block");
+        assert!(r.unwrap_err()[0].contains("missing review_category"));
+    }
+
+    #[test]
+    fn saved_fresh_metadata_none_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "t".into(),
+                description: "".into(),
+                actions: vec![Action::Review {
+                    resource: make_res("W", "w1", "u1"),
+                    reason: "t".into(),
+                    metadata: None,
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "t".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "t".into(),
+                install_namespace: "n".into(),
+                csv_name_pattern: "t.v1".into(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("W", "w1", "u1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("Managed".into()),
+                    review_category: Some("OperandRoot".into()),
+                    discovery_source: Some("Direct".into()),
+                    decisive_evidence: vec![],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let r = validate_saved_decisions(&plan, &saved);
+        assert!(r.is_err(), "Fresh metadata=None must block DELETE replay");
+        assert!(r.unwrap_err()[0].contains("no metadata"));
+    }
+
+    #[test]
+    fn saved_unsupported_owner_ref_signature_blocked() {
+        use crate::teardown::plan::*;
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: "t".into(),
+                description: "".into(),
+                actions: vec![Action::Review {
+                    resource: make_res("W", "w1", "u1"),
+                    reason: "t".into(),
+                    metadata: Some(ReviewMetadata {
+                        category: Some(ReviewCategorySer::OperandRoot),
+                        approval_class: None,
+                        provenance: Some(ProvenanceSer::LikelyManaged),
+                        discovery_source: Some(DiscoverySourceSer::Direct),
+                        decisive_label_pairs: vec![],
+                    }),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "t".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+        };
+        let saved = SavedTeardownPlan {
+            schema_version: SAVED_PLAN_SCHEMA_VERSION,
+            target: SavedOperatorTarget {
+                package_name: "t".into(),
+                install_namespace: "n".into(),
+                csv_name_pattern: "t.v1".into(),
+            },
+            teardown_decisions: vec![SavedDecision {
+                match_spec: ResourceMatch::from_resource_id(&make_res("W", "w1", "u1")),
+                action: SavedAction::Delete,
+                approval: ApprovalKind::Explicit,
+                basis: DecisionBasis {
+                    provenance: Some("LikelyManaged".into()),
+                    review_category: Some("OperandRoot".into()),
+                    discovery_source: Some("Direct".into()),
+                    decisive_evidence: vec![SavedEvidenceSignature::OwnerReference {
+                        group: "g".into(),
+                        kind: "K".into(),
+                        namespace: None,
+                        name: "n".into(),
+                    }],
+                },
+            }],
+            residual_decisions: vec![],
+        };
+        let r = validate_saved_decisions(&plan, &saved);
+        assert!(r.is_err(), "Unsupported OwnerReference evidence must block");
+    }
+
+    #[test]
+    fn resource_match_group_none_matches_core_only() {
+        use crate::teardown::plan::ResourceMatch;
+        let m = ResourceMatch {
+            group: None,
+            kind: "ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm1".into(),
+        };
+        let core = ResourceId {
+            group: "".into(),
+            version: "v1".into(),
+            kind: "ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm1".into(),
+            uid: None,
+        };
+        let noncore = ResourceId {
+            group: "apps".into(),
+            version: "v1".into(),
+            kind: "ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm1".into(),
+            uid: None,
+        };
+        assert!(m.matches(&core), "None group must match core (empty)");
+        assert!(
+            !m.matches(&noncore),
+            "None group must NOT match non-core group"
+        );
+    }
+
+    #[test]
+    fn resource_match_validate_rejects_wildcards() {
+        use crate::teardown::plan::ResourceMatch;
+        let m1 = ResourceMatch {
+            group: Some("*".into()),
+            kind: "K".into(),
+            namespace: None,
+            name: "n".into(),
+        };
+        assert!(m1.validate().is_err());
+
+        let m2 = ResourceMatch {
+            group: None,
+            kind: "*".into(),
+            namespace: None,
+            name: "n".into(),
+        };
+        assert!(m2.validate().is_err());
+
+        let m3 = ResourceMatch {
+            group: None,
+            kind: "K".into(),
+            namespace: None,
+            name: "".into(),
+        };
+        assert!(m3.validate().is_err());
     }
 }

@@ -145,6 +145,10 @@ pub enum TeardownAction {
         /// Preserve a REVIEW resource (keep instead of delete). Kind/name or group/Kind/ns/name (repeatable)
         #[arg(long, value_name = "SPEC")]
         preserve: Vec<String>,
+
+        /// Save the plan as a SavedTeardownPlan to the specified path
+        #[arg(long = "save-plan", value_name = "PATH")]
+        save_plan_path: Option<String>,
     },
 
     /// Check current status of resources in a teardown plan
@@ -164,9 +168,15 @@ pub enum TeardownAction {
 
     /// Execute a teardown plan
     Apply {
-        /// Operator names (subscription or CSV name, partial match OK)
-        #[arg(required = true)]
+        /// Operator names (subscription or CSV name, partial match OK).
+        /// Not required when --plan is specified.
+        #[arg(required_unless_present = "plan")]
         operators: Vec<String>,
+
+        /// Load a saved plan JSON file. Targets come from the plan, not positional args.
+        /// Cannot be combined with positional operator arguments.
+        #[arg(long, value_name = "PATH")]
+        plan: Option<String>,
 
         /// Skip discovery cache
         #[arg(long)]
@@ -180,7 +190,8 @@ pub enum TeardownAction {
         #[arg(long)]
         prune_apis: bool,
 
-        /// Override advisory REVIEW items and non-critical preflight warnings
+        /// Suppress advisory warning output. REVIEW resources remain preserved
+        /// unless explicitly approved for DELETE.
         #[arg(long)]
         force: bool,
 
@@ -201,6 +212,11 @@ pub enum TeardownAction {
         #[arg(long, hide = true)]
         approve_finalizer_recovery: bool,
 
+        /// Non-interactive mode: unresolved REVIEW, drift, audit incomplete,
+        /// ExplicitUnattributed → nonzero exit before mutation.
+        #[arg(long)]
+        non_interactive: bool,
+
         /// Headless mode: read JSON commands from script file, output JSON state traces.
         /// Uses same AppState + executor as interactive mode.
         #[arg(long, value_name = "PATH")]
@@ -210,6 +226,25 @@ pub enum TeardownAction {
         /// Uses the same AppState + core executor as CLI and --script modes.
         #[arg(long)]
         tui: bool,
+
+        /// Save the final plan (with residual decisions) as a SavedTeardownPlan
+        #[arg(long = "save-plan", value_name = "PATH")]
+        save_plan_path: Option<String>,
+    },
+
+    /// Show plan coverage: COVERED BY PLAN / INTENTIONALLY PRESERVED / NOT COVERED
+    Coverage {
+        /// Operator names (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operators: Vec<String>,
+
+        /// Output format: tree, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
     },
 
     /// Inspect all resources belonging to an operator
@@ -258,6 +293,21 @@ pub enum TeardownAction {
 
     /// List all teardown runs for the current cluster
     Runs,
+
+    /// Execute teardown for multiple operators from a config file (sequential)
+    ApplySet {
+        /// Path to JSON config file listing operators and their flags
+        #[arg(required = true)]
+        config: String,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Dry run — validate config and show plan without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// Show teardown run journal for an operator (with live residual audit)
     Journal {

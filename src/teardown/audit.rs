@@ -2142,6 +2142,9 @@ mod tests {
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "test".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
         };
 
         let mut target_uids: HashSet<String> = HashSet::new();
