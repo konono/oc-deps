@@ -211,6 +211,25 @@ For `teardown apply-set`, `--no-cache` refreshes API discovery for the first ope
 that fresh snapshot for later operators in the same run. Operator, CR, and namespace discovery
 still runs for every operator so each plan observes changes made by earlier teardowns.
 
+### Apply-set deletion approvals
+
+Apply-set config separates bulk REVIEW scopes from exact resource approvals:
+
+```json
+"approve_delete": {
+  "scopes": ["root", "independent", "label-only", "operator-group"],
+  "resources": [
+    "maas.opendatahub.io/Config/-/default",
+    "MLflow/mlflow"
+  ]
+}
+```
+
+Each scope is opt-in. If a scope is omitted, matching REVIEW resources remain preserved. The
+structured form intentionally has no `all` scope; use `root` and `independent` explicitly.
+`resources` contains exact approvals only. The original array form remains accepted for existing
+configs.
+
 ## Build
 
 ```bash

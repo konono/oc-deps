@@ -45,6 +45,84 @@ fn apply_set_child_bypasses_cache(no_cache: bool, entry_index: usize) -> bool {
     no_cache && entry_index == 0
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplySetConfig {
+    #[allow(dead_code)]
+    description: Option<String>,
+    operators: Vec<ApplySetEntry>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplySetEntry {
+    name: String,
+    #[serde(default)]
+    approve_delete: ApplySetDeleteApprovals,
+    #[serde(default)]
+    preserve: Vec<String>,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    non_interactive: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ApplySetDeleteApprovals {
+    Structured(StructuredDeleteApprovals),
+    Legacy(Vec<String>),
+}
+
+impl Default for ApplySetDeleteApprovals {
+    fn default() -> Self {
+        Self::Structured(StructuredDeleteApprovals::default())
+    }
+}
+
+impl ApplySetDeleteApprovals {
+    fn cli_args(&self) -> Vec<String> {
+        match self {
+            Self::Structured(approvals) => approvals
+                .scopes
+                .iter()
+                .map(|scope| scope.cli_arg().to_string())
+                .chain(approvals.resources.iter().cloned())
+                .collect(),
+            Self::Legacy(approvals) => approvals.clone(),
+        }
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StructuredDeleteApprovals {
+    #[serde(default)]
+    scopes: Vec<ApplySetApprovalScope>,
+    #[serde(default)]
+    resources: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ApplySetApprovalScope {
+    Root,
+    Independent,
+    LabelOnly,
+    OperatorGroup,
+}
+
+impl ApplySetApprovalScope {
+    fn cli_arg(&self) -> &'static str {
+        match self {
+            Self::Root => "root",
+            Self::Independent => "independent",
+            Self::LabelOnly => "label-only",
+            Self::OperatorGroup => "operator-group",
+        }
+    }
+}
+
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str) {
     match output {
         OutputFormat::Tree => {
@@ -3151,27 +3229,6 @@ async fn main() -> Result<()> {
                         no_cache,
                         dry_run,
                     } => {
-                        #[derive(serde::Deserialize)]
-                        #[serde(deny_unknown_fields)]
-                        struct ApplySetConfig {
-                            #[allow(dead_code)]
-                            description: Option<String>,
-                            operators: Vec<ApplySetEntry>,
-                        }
-                        #[derive(serde::Deserialize)]
-                        #[serde(deny_unknown_fields)]
-                        struct ApplySetEntry {
-                            name: String,
-                            #[serde(default)]
-                            approve_delete: Vec<String>,
-                            #[serde(default)]
-                            preserve: Vec<String>,
-                            #[serde(default)]
-                            force: bool,
-                            #[serde(default)]
-                            non_interactive: bool,
-                        }
-
                         let config_content = std::fs::read_to_string(&config)
                             .with_context(|| format!("Failed to read config: {}", config))?;
                         let parsed: ApplySetConfig = serde_json::from_str(&config_content)
@@ -3238,7 +3295,7 @@ async fn main() -> Result<()> {
                             if entry.non_interactive {
                                 cmd.arg("--non-interactive");
                             }
-                            for approval in &entry.approve_delete {
+                            for approval in entry.approve_delete.cli_args() {
                                 cmd.arg("--approve-delete").arg(approval);
                             }
                             for p in &entry.preserve {
@@ -4510,6 +4567,64 @@ mod basis_drift_tests {
         assert!(apply_set_child_bypasses_cache(true, 0));
         assert!(!apply_set_child_bypasses_cache(true, 1));
         assert!(!apply_set_child_bypasses_cache(false, 0));
+    }
+
+    #[test]
+    fn structured_apply_set_approvals_separate_scopes_and_resources() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": {
+                        "scopes": ["root", "independent", "label-only", "operator-group"],
+                        "resources": ["example.io/Widget/ns/example"]
+                    }
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.operators[0].approve_delete.cli_args(),
+            vec![
+                "root",
+                "independent",
+                "label-only",
+                "operator-group",
+                "example.io/Widget/ns/example",
+            ]
+        );
+    }
+
+    #[test]
+    fn structured_apply_set_approvals_reject_all_scope() {
+        let result = serde_json::from_str::<ApplySetConfig>(
+            r#"{
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": { "scopes": ["all"] }
+                }]
+            }"#,
+        );
+        assert!(result.is_err(), "structured scopes must be explicit");
+    }
+
+    #[test]
+    fn legacy_apply_set_approval_array_remains_supported() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": ["all", "Widget/example"]
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.operators[0].approve_delete.cli_args(),
+            vec!["all", "Widget/example"]
+        );
     }
 
     fn make_metadata(

@@ -3,139 +3,186 @@
   "operators": [
     {
       "name": "rhods-operator",
-      "approve_delete": [
-        "all",
-        "maas.opendatahub.io/Config/-/default",
-        "MLflow/mlflow",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ],
+        "resources": [
+          "maas.opendatahub.io/Config/-/default",
+          "MLflow/mlflow"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "rhbk-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "leader-worker-set",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "job-set",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "kueue-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "servicemeshoperator3",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "nfd",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "gpu-operator-certified",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "cert-manager-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "rhcl-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "authorino-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "dns-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "limitador-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "cluster-observability-operator",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     },
     {
       "name": "opentelemetry-product",
-      "approve_delete": [
-        "all",
-        "label-only",
-        "operator-group"
-      ],
+      "approve_delete": {
+        "scopes": [
+          "root",
+          "independent",
+          "label-only",
+          "operator-group"
+        ]
+      },
       "non_interactive": false
     }
   ]
