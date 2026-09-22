@@ -1,189 +1,66 @@
 {
   "description": "Full operator teardown — CLAUDE.md Full test order (RHOAI → Keycloak → dependencies)",
+  "defaults": {
+    "approve_delete": {
+      "scopes": [
+        "root",
+        "independent",
+        "label-only",
+        "operator-group"
+      ]
+    }
+  },
   "operators": [
     {
       "name": "rhods-operator",
       "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ],
         "resources": [
           "maas.opendatahub.io/Config/-/default",
           "MLflow/mlflow"
         ]
-      },
-      "non_interactive": false
+      }
     },
     {
-      "name": "rhbk-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "rhbk-operator"
     },
     {
-      "name": "leader-worker-set",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "leader-worker-set"
     },
     {
-      "name": "job-set",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "job-set"
     },
     {
-      "name": "kueue-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "kueue-operator"
     },
     {
-      "name": "servicemeshoperator3",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "servicemeshoperator3"
     },
     {
-      "name": "nfd",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "nfd"
     },
     {
-      "name": "gpu-operator-certified",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "gpu-operator-certified"
     },
     {
-      "name": "cert-manager-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "cert-manager-operator"
     },
     {
-      "name": "rhcl-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "rhcl-operator"
     },
     {
-      "name": "authorino-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "authorino-operator"
     },
     {
-      "name": "dns-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "dns-operator"
     },
     {
-      "name": "limitador-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "limitador-operator"
     },
     {
-      "name": "cluster-observability-operator",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "cluster-observability-operator"
     },
     {
-      "name": "opentelemetry-product",
-      "approve_delete": {
-        "scopes": [
-          "root",
-          "independent",
-          "label-only",
-          "operator-group"
-        ]
-      },
-      "non_interactive": false
+      "name": "opentelemetry-product"
     }
   ]
 }

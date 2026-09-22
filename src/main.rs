@@ -50,7 +50,22 @@ fn apply_set_child_bypasses_cache(no_cache: bool, entry_index: usize) -> bool {
 struct ApplySetConfig {
     #[allow(dead_code)]
     description: Option<String>,
+    #[serde(default)]
+    defaults: ApplySetDefaults,
     operators: Vec<ApplySetEntry>,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplySetDefaults {
+    #[serde(default)]
+    approve_delete: ApplySetDeleteApprovals,
+    #[serde(default)]
+    preserve: Vec<String>,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    non_interactive: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -62,9 +77,37 @@ struct ApplySetEntry {
     #[serde(default)]
     preserve: Vec<String>,
     #[serde(default)]
-    force: bool,
+    force: Option<bool>,
     #[serde(default)]
+    non_interactive: Option<bool>,
+}
+
+struct EffectiveApplySetOptions {
+    approve_delete: Vec<String>,
+    preserve: Vec<String>,
+    force: bool,
     non_interactive: bool,
+}
+
+impl ApplySetEntry {
+    fn effective_options(&self, defaults: &ApplySetDefaults) -> EffectiveApplySetOptions {
+        let mut approve_delete = defaults.approve_delete.cli_args();
+        approve_delete.extend(self.approve_delete.cli_args());
+        let mut seen_approvals = HashSet::new();
+        approve_delete.retain(|value| seen_approvals.insert(value.clone()));
+
+        let mut preserve = defaults.preserve.clone();
+        preserve.extend(self.preserve.iter().cloned());
+        let mut seen_preserves = HashSet::new();
+        preserve.retain(|value| seen_preserves.insert(value.clone()));
+
+        EffectiveApplySetOptions {
+            approve_delete,
+            preserve,
+            force: self.force.unwrap_or(defaults.force),
+            non_interactive: self.non_interactive.unwrap_or(defaults.non_interactive),
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -3233,6 +3276,7 @@ async fn main() -> Result<()> {
                             .with_context(|| format!("Failed to read config: {}", config))?;
                         let parsed: ApplySetConfig = serde_json::from_str(&config_content)
                             .with_context(|| format!("Invalid config: {}", config))?;
+                        let defaults = parsed.defaults;
                         let entries = parsed.operators;
 
                         if entries.is_empty() {
@@ -3267,6 +3311,7 @@ async fn main() -> Result<()> {
                         let entry_count = entries.len();
                         for (i, entry) in entries.iter().enumerate() {
                             let op_name = &entry.name;
+                            let options = entry.effective_options(&defaults);
                             eprintln!(
                                 "\n{}\n  [{}/{}] {} {}\n{}",
                                 "=".repeat(60),
@@ -3289,16 +3334,16 @@ async fn main() -> Result<()> {
                             if dry_run {
                                 cmd.arg("--dry-run");
                             }
-                            if entry.force {
+                            if options.force {
                                 cmd.arg("--force");
                             }
-                            if entry.non_interactive {
+                            if options.non_interactive {
                                 cmd.arg("--non-interactive");
                             }
-                            for approval in entry.approve_delete.cli_args() {
+                            for approval in options.approve_delete {
                                 cmd.arg("--approve-delete").arg(approval);
                             }
-                            for p in &entry.preserve {
+                            for p in options.preserve {
                                 cmd.arg("--preserve").arg(p);
                             }
 
@@ -4594,6 +4639,42 @@ mod basis_drift_tests {
                 "example.io/Widget/ns/example",
             ]
         );
+    }
+
+    #[test]
+    fn apply_set_defaults_are_merged_with_operator_exceptions() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "defaults": {
+                    "approve_delete": {
+                        "scopes": ["root", "independent", "label-only", "operator-group"]
+                    },
+                    "force": true
+                },
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": {
+                        "resources": ["example.io/Widget/ns/example"]
+                    },
+                    "force": false
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let options = config.operators[0].effective_options(&config.defaults);
+        assert_eq!(
+            options.approve_delete,
+            vec![
+                "root",
+                "independent",
+                "label-only",
+                "operator-group",
+                "example.io/Widget/ns/example",
+            ]
+        );
+        assert!(!options.force, "operator value must override the default");
+        assert!(!options.non_interactive);
     }
 
     #[test]

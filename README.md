@@ -213,22 +213,34 @@ still runs for every operator so each plan observes changes made by earlier tear
 
 ### Apply-set deletion approvals
 
-Apply-set config separates bulk REVIEW scopes from exact resource approvals:
+Apply-set config can declare common REVIEW approvals once and keep per-operator entries focused on
+exceptions:
 
 ```json
-"approve_delete": {
-  "scopes": ["root", "independent", "label-only", "operator-group"],
-  "resources": [
-    "maas.opendatahub.io/Config/-/default",
-    "MLflow/mlflow"
-  ]
-}
+"defaults": {
+  "approve_delete": {
+    "scopes": ["root", "independent", "label-only", "operator-group"]
+  }
+},
+"operators": [
+  {
+    "name": "rhods-operator",
+    "approve_delete": {
+      "resources": [
+        "maas.opendatahub.io/Config/-/default",
+        "MLflow/mlflow"
+      ]
+    }
+  },
+  { "name": "rhbk-operator" }
+]
 ```
 
 Each scope is opt-in. If a scope is omitted, matching REVIEW resources remain preserved. The
 structured form intentionally has no `all` scope; use `root` and `independent` explicitly.
-`resources` contains exact approvals only. The original array form remains accepted for existing
-configs.
+Operator-level approvals and preserves are added to the defaults. Operator-level `force` and
+`non_interactive` values override their defaults. `resources` contains exact approvals only. The
+original array form remains accepted for existing configs.
 
 ## Build
 
