@@ -107,7 +107,7 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, Grou
     Ok((kind_map, gvr_map, gk_map, gvk_map))
 }
 
-const CACHE_TTL_SECS: u64 = 300;
+const CACHE_TTL_SECS: u64 = 30 * 60;
 pub(crate) const APPLY_SET_REUSE_CACHE_ENV: &str = "OC_DEPS_APPLY_SET_REUSE_DISCOVERY_CACHE";
 
 fn discovery_cache_age_allowed(age_secs: u64, reuse_for_apply_set: bool) -> bool {
@@ -338,6 +338,12 @@ mod tests {
     fn apply_set_cache_reuse_ignores_normal_ttl() {
         assert!(!discovery_cache_age_allowed(CACHE_TTL_SECS, false));
         assert!(discovery_cache_age_allowed(CACHE_TTL_SECS, true));
+    }
+
+    #[test]
+    fn normal_discovery_cache_expires_after_thirty_minutes() {
+        assert!(discovery_cache_age_allowed(CACHE_TTL_SECS - 1, false));
+        assert!(!discovery_cache_age_allowed(CACHE_TTL_SECS, false));
     }
 
     #[test]
