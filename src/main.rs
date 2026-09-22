@@ -20,7 +20,9 @@ use crate::analyzers::selector::get_service_selected_pods;
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
-use crate::kube::discovery::{build_kind_lookup_cached, load_config_and_client, resolve_kind};
+use crate::kube::discovery::{
+    APPLY_SET_REUSE_CACHE_ENV, build_kind_lookup_cached, load_config_and_client, resolve_kind,
+};
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
 use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
@@ -38,6 +40,10 @@ use crate::teardown::planner::{
     resolve_operator_targets, save_as_saved_plan, save_plan_to_file,
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
+
+fn apply_set_child_bypasses_cache(no_cache: bool, entry_index: usize) -> bool {
+    no_cache && entry_index == 0
+}
 
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str) {
     match output {
@@ -3190,6 +3196,11 @@ async fn main() -> Result<()> {
                             eprintln!("  {}: {}", i + 1, entry.name);
                         }
                         eprintln!();
+                        if no_cache {
+                            eprintln!(
+                                "🔄 API discovery: refresh once, then reuse within this apply-set\n"
+                            );
+                        }
 
                         let exe = std::env::current_exe()
                             .context("Cannot determine current executable path")?;
@@ -3212,8 +3223,11 @@ async fn main() -> Result<()> {
                             let mut cmd = std::process::Command::new(&exe);
                             cmd.arg("teardown").arg("apply").arg(op_name);
 
-                            if no_cache {
+                            if apply_set_child_bypasses_cache(no_cache, i) {
                                 cmd.arg("--no-cache");
+                            }
+                            if no_cache {
+                                cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
                             }
                             if dry_run {
                                 cmd.arg("--dry-run");
@@ -4490,6 +4504,13 @@ mod basis_drift_tests {
     use super::*;
     use crate::teardown::plan::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn apply_set_no_cache_only_refreshes_first_entry() {
+        assert!(apply_set_child_bypasses_cache(true, 0));
+        assert!(!apply_set_child_bypasses_cache(true, 1));
+        assert!(!apply_set_child_bypasses_cache(false, 0));
+    }
 
     fn make_metadata(
         provenance: Option<ProvenanceSer>,

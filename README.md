@@ -196,8 +196,14 @@ Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW
 |------|-------------|
 | `--dry-run` | Show what would be done without executing |
 | `--prune-apis` | Include CRD deletion in plan (default: KEEP) |
+| `--approve-delete label-only` | Delete REVIEW CRs discovered only through matching platform labels; excludes Namespace, PV, PVC, and CRD |
+| `--approve-delete operator-group` | Delete an OperatorGroup only when no non-target operator remains in its namespace |
 | `--force` | Suppress advisory warnings. Does not authorize REVIEW deletion or override blockers and safety guards |
 | `--no-cache` | Skip API discovery cache (force fresh discovery) |
+
+For `teardown apply-set`, `--no-cache` refreshes API discovery for the first operator and reuses
+that fresh snapshot for later operators in the same run. Operator, CR, and namespace discovery
+still runs for every operator so each plan observes changes made by earlier teardowns.
 
 ## Build
 

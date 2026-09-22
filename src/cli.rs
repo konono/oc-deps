@@ -137,8 +137,8 @@ pub enum TeardownAction {
         #[arg(long)]
         prune_apis: bool,
 
-        /// Approve deletion of REVIEW resources. Use "root", "independent", "all" for bulk,
-        /// or Kind/name or group/Kind/ns/name for exact resource approval (repeatable)
+        /// Approve deletion of REVIEW resources. Bulk scopes: "root", "independent", "all",
+        /// "label-only", "operator-group"; or use Kind/name or group/Kind/ns/name (repeatable)
         #[arg(long = "approve-delete", value_name = "SPEC")]
         approve_delete: Vec<String>,
 
@@ -195,8 +195,8 @@ pub enum TeardownAction {
         #[arg(long)]
         force: bool,
 
-        /// Approve deletion of REVIEW resources. Use "root", "independent", "all" for bulk,
-        /// or Kind/name or group/Kind/ns/name for exact resource approval (repeatable)
+        /// Approve deletion of REVIEW resources. Bulk scopes: "root", "independent", "all",
+        /// "label-only", "operator-group"; or use Kind/name or group/Kind/ns/name (repeatable)
         #[arg(long = "approve-delete", value_name = "SPEC")]
         approve_delete: Vec<String>,
 
@@ -300,7 +300,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         config: String,
 
-        /// Skip discovery cache
+        /// Refresh API discovery once, then reuse it within this apply-set
         #[arg(long)]
         no_cache: bool,
 

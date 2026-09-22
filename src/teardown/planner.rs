@@ -57,8 +57,10 @@ pub enum BulkScope {
     Root,
     Independent,
     All,
-    /// RelatedLabelOnly + LikelyManaged only. Excludes user root CR, PVC/PV, ExplicitUnattributed.
+    /// Resources discovered only through related labels. Excludes Namespace, PVC/PV, and CRD.
     LabelOnly,
+    /// OperatorGroups in namespaces where no non-target operator remains.
+    OperatorGroup,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +84,7 @@ impl DecisionPolicy {
                 "independent" => DeleteApproval::Bulk(BulkScope::Independent),
                 "all" => DeleteApproval::Bulk(BulkScope::All),
                 "label-only" => DeleteApproval::Bulk(BulkScope::LabelOnly),
+                "operator-group" => DeleteApproval::Bulk(BulkScope::OperatorGroup),
                 _ => DeleteApproval::Exact(s.clone()),
             })
             .collect();
@@ -281,6 +284,10 @@ pub fn resolve_decisions<'a>(
         .approvals
         .iter()
         .any(|a| matches!(a, DeleteApproval::Bulk(BulkScope::LabelOnly)));
+    let has_bulk_operator_group = policy
+        .approvals
+        .iter()
+        .any(|a| matches!(a, DeleteApproval::Bulk(BulkScope::OperatorGroup)));
 
     for rc in candidates {
         if resolved.contains_key(rc.resource) {
@@ -289,24 +296,32 @@ pub fn resolve_decisions<'a>(
         if !rc.exact_approvable {
             continue;
         }
-        // Bulk only applies to Standard approval class
-        if rc.approval_class != DeleteApprovalClass::Standard {
-            continue;
-        }
-        let bulk_matches = match rc.category {
-            ReviewCategory::Operand(GraphPosition::Root) => has_bulk_root,
-            ReviewCategory::Operand(GraphPosition::Independent) => has_bulk_independent,
-            _ => false,
-        } || (has_bulk_label_only && rc.is_label_only_eligible);
+        let standard_bulk_matches = rc.approval_class == DeleteApprovalClass::Standard
+            && match rc.category {
+                ReviewCategory::Operand(GraphPosition::Root) => has_bulk_root,
+                ReviewCategory::Operand(GraphPosition::Independent) => has_bulk_independent,
+                _ => false,
+            };
+        let label_only_matches = has_bulk_label_only && rc.is_label_only_eligible;
+        let operator_group_matches = has_bulk_operator_group
+            && matches!(rc.category, ReviewCategory::Ancillary)
+            && rc.resource.kind == "OperatorGroup";
+        let bulk_matches = standard_bulk_matches || label_only_matches || operator_group_matches;
         if bulk_matches {
-            let reason = match rc.category {
-                ReviewCategory::Operand(GraphPosition::Root) => {
-                    "root CR approved via --approve-delete root/all"
+            let reason = if label_only_matches {
+                "label-related CR approved via --approve-delete label-only"
+            } else if operator_group_matches {
+                "operator group approved via --approve-delete operator-group"
+            } else {
+                match rc.category {
+                    ReviewCategory::Operand(GraphPosition::Root) => {
+                        "root CR approved via --approve-delete root/all"
+                    }
+                    ReviewCategory::Operand(GraphPosition::Independent) => {
+                        "independent CR approved via --approve-delete independent/all"
+                    }
+                    _ => "approved via bulk approval",
                 }
-                ReviewCategory::Operand(GraphPosition::Independent) => {
-                    "independent CR approved via --approve-delete independent/all"
-                }
-                _ => "approved via bulk approval",
             };
             resolved.insert(
                 rc.resource.clone(),
@@ -1705,6 +1720,14 @@ fn compute_approval_class(cr: &CrInstance, position: GraphPosition) -> DeleteApp
     compute_approval_class_from_category(cr, ReviewCategory::Operand(position))
 }
 
+fn is_label_only_bulk_eligible(cr: &CrInstance) -> bool {
+    matches!(cr.discovery_source, DiscoverySource::RelatedLabelOnly)
+        && !matches!(
+            cr.id.kind.as_str(),
+            "Namespace" | "PersistentVolumeClaim" | "PersistentVolume" | "CustomResourceDefinition"
+        )
+}
+
 fn is_exact_delete_approvable(
     cr: &CrInstance,
     position: GraphPosition,
@@ -2274,16 +2297,7 @@ pub async fn generate_teardown_plan(
         .map(|(cr, position)| {
             let owner_count = resolve_api_owner_indices(cr, &api_to_op_indices, &cr_by_uid).len();
             let category = ReviewCategory::Operand(position);
-            let is_label_eligible = matches!(cr.provenance, Provenance::LikelyManaged)
-                && matches!(cr.discovery_source, DiscoverySource::RelatedLabelOnly)
-                && compute_approval_class(cr, position) == DeleteApprovalClass::Standard
-                && !matches!(
-                    cr.id.kind.as_str(),
-                    "Namespace"
-                        | "PersistentVolumeClaim"
-                        | "PersistentVolume"
-                        | "CustomResourceDefinition"
-                );
+            let is_label_eligible = is_label_only_bulk_eligible(cr);
             ReviewCandidate {
                 resource: &cr.id,
                 category,
@@ -5069,18 +5083,71 @@ mod tests {
     // ── PR7: Bulk label-only ──
 
     #[test]
-    fn bulk_label_only_excludes_explicit_only() {
+    fn bulk_label_only_approves_label_related_explicit_only() {
+        let resource = make_res("Widget", "w1", "uid-1");
         let candidate = ReviewCandidate {
-            resource: &make_res("Widget", "w1", "uid-1"),
-            category: ReviewCategory::Ancillary,
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Independent),
             approval_class: DeleteApprovalClass::ExplicitOnly,
             exact_approvable: true,
-            is_label_only_eligible: false,
+            is_label_only_eligible: true,
         };
+        let policy = DecisionPolicy::from_args(&["label-only".to_string()], &[]);
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
         assert!(
-            !candidate.is_label_only_eligible,
-            "ExplicitOnly must not be label-only eligible"
+            matches!(
+                resolved.get(&resource),
+                Some(ResolvedDecision::Delete { .. })
+            ),
+            "label-only is an explicit bulk approval for label-related REVIEW resources"
         );
+    }
+
+    #[test]
+    fn bulk_all_does_not_approve_label_related_explicit_only() {
+        let resource = make_res("Widget", "w1", "uid-1");
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Independent),
+            approval_class: DeleteApprovalClass::ExplicitOnly,
+            exact_approvable: true,
+            is_label_only_eligible: true,
+        };
+        let policy = DecisionPolicy::from_args(&["all".to_string()], &[]);
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        assert!(
+            !resolved.contains_key(&resource),
+            "all must remain conservative for label-related explicit-only resources"
+        );
+    }
+
+    #[test]
+    fn operator_group_bulk_only_approves_operator_group() {
+        let operator_group = make_res("OperatorGroup", "test-operator", "uid-og");
+        let lease = make_res("Lease", "test-operator-lock", "uid-lease");
+        let candidates = [
+            ReviewCandidate {
+                resource: &operator_group,
+                category: ReviewCategory::Ancillary,
+                approval_class: DeleteApprovalClass::ExplicitOnly,
+                exact_approvable: true,
+                is_label_only_eligible: false,
+            },
+            ReviewCandidate {
+                resource: &lease,
+                category: ReviewCategory::Ancillary,
+                approval_class: DeleteApprovalClass::ExplicitOnly,
+                exact_approvable: true,
+                is_label_only_eligible: false,
+            },
+        ];
+        let policy = DecisionPolicy::from_args(&["operator-group".to_string()], &[]);
+        let resolved = resolve_decisions(&policy, &candidates).unwrap();
+        assert!(matches!(
+            resolved.get(&operator_group),
+            Some(ResolvedDecision::Delete { .. })
+        ));
+        assert!(!resolved.contains_key(&lease));
     }
 
     // ── PR6: RequiresApi no delete authority ──
@@ -5413,20 +5480,27 @@ mod tests {
             decisive_label_pairs: vec![],
             ownerref_to_owned_api_kind: None,
         };
-        let position = GraphPosition::Independent;
-        let is_label_eligible = matches!(cr.provenance, Provenance::LikelyManaged)
-            && matches!(cr.discovery_source, DiscoverySource::RelatedLabelOnly)
-            && compute_approval_class(&cr, position) == DeleteApprovalClass::Standard
-            && !matches!(
-                cr.id.kind.as_str(),
-                "Namespace"
-                    | "PersistentVolumeClaim"
-                    | "PersistentVolume"
-                    | "CustomResourceDefinition"
-            );
         assert!(
-            !is_label_eligible,
+            !is_label_only_bulk_eligible(&cr),
             "PVC must be excluded from label-only bulk"
+        );
+    }
+
+    #[test]
+    fn bulk_label_only_includes_unknown_provenance() {
+        let mut cr = make_cr_instance(
+            "Widget",
+            "label-only",
+            "uid-label-only",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        cr.provenance = Provenance::Unknown;
+        cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+        assert!(
+            is_label_only_bulk_eligible(&cr),
+            "explicit label-only approval must include RelatedLabelOnly REVIEW resources"
         );
     }
 
