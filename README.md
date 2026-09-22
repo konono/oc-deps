@@ -201,6 +201,9 @@ Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW
 | `--force` | Suppress advisory warnings. Does not authorize REVIEW deletion or override blockers and safety guards |
 | `--no-cache` | Skip API discovery cache (force fresh discovery) |
 
+`--force` changes warning output only. It does not change the plan, authorize additional
+deletions, bypass confirmation, or relax execution guards.
+
 The API discovery cache is valid for 30 minutes. Use `--no-cache` after changing CRDs or
 APIService registrations when the command must observe those changes immediately.
 
