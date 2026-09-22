@@ -8284,7 +8284,7 @@ mod tests {
         let result = attempt_finalizer_recovery(
             &client,
             std::slice::from_ref(&root),
-            &[root.clone()],
+            std::slice::from_ref(&root),
             &phase,
             &km,
             &gk,
