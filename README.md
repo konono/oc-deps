@@ -155,8 +155,8 @@ Explains why a specific resource is in its phase, showing the evidence chain fro
 
 ```bash
 oc-deps teardown apply rhods-operator --dry-run    # preview only
-oc-deps teardown apply rhods-operator              # interactive confirmation
-oc-deps teardown apply rhods-operator --force       # override REVIEW/warnings
+oc-deps teardown apply rhods-operator              # warnings and interactive confirmation
+oc-deps teardown apply rhods-operator --force       # suppress advisory warnings
 ```
 
 ### Cluster snapshot and evidence graph
@@ -174,8 +174,8 @@ oc-deps graph -n <namespace> -o evidence-graph.json
 |------|-----------|----------|
 | **Blocker** | External operator depends on target CRD | Cannot override |
 | **Critical preflight** | CSV not Succeeded, controller unavailable | Cannot override (`--force` ignored) |
-| **Non-critical preflight** | Uncertain CR provenance | `--force` overrides |
-| **REVIEW items** | Resources with unknown provenance | `--force` overrides |
+| **Non-critical preflight** | Uncertain CR provenance | Warn and continue |
+| **REVIEW items** | Resources with unknown provenance | Preserve unless explicitly approved |
 | **Confirmation** | Interactive y/N prompt | User types `y` |
 | **Barrier** | Resources must vanish before next phase | Times out after 300s or stalls after 120s |
 | **Pre-controller guard** | REVIEW resources with finalizers block CSV deletion | Cannot override |
@@ -188,7 +188,7 @@ CRs are classified by how strongly they can be attributed to the target operator
 - **LikelyManaged**: labels contain the operator's CSV name prefix, or managedFields manager matches a deployment name
 - **Unknown**: no attributable evidence
 
-Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW items — `--force` is required to proceed with them unresolved. With `--force`, REVIEW resources without finalizers may become orphans after controller deletion.
+Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW items and remain preserved unless explicitly approved with `--approve-delete` or in the TUI. Unresolved REVIEW items do not block the interactive CLI; the operator cleanup continues after a final `y` confirmation. Non-interactive execution still requires all REVIEW items to be resolved.
 
 ### Key flags
 
@@ -196,7 +196,7 @@ Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW
 |------|-------------|
 | `--dry-run` | Show what would be done without executing |
 | `--prune-apis` | Include CRD deletion in plan (default: KEEP) |
-| `--force` | Override REVIEW items and non-critical preflight warnings. Cannot override blockers, critical preflight (controller health), or pre-controller finalizer guards |
+| `--force` | Suppress advisory warnings. Does not authorize REVIEW deletion or override blockers and safety guards |
 | `--no-cache` | Skip API discovery cache (force fresh discovery) |
 
 ## Build
