@@ -1888,10 +1888,7 @@ async fn can_defer_to_residual(
     // them, so identity-only matching could accept an unrelated resource.
     let matches_deleted_identity = |r: &ResourceId| -> bool {
         deleted.iter().any(|s| {
-            s.group == r.group
-                && s.kind == r.kind
-                && s.namespace == r.namespace
-                && s.name == r.name
+            s.group == r.group && s.kind == r.kind && s.namespace == r.namespace && s.name == r.name
         })
     };
     if remaining
@@ -8358,9 +8355,6 @@ mod tests {
         )
         .await;
 
-        assert!(
-            !result,
-            "EXPECT with different UID must not be deferred"
-        );
+        assert!(!result, "EXPECT with different UID must not be deferred");
     }
 }
