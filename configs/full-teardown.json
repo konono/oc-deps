@@ -1,0 +1,66 @@
+{
+  "description": "Full operator teardown — CLAUDE.md Full test order (RHOAI → Keycloak → dependencies)",
+  "defaults": {
+    "approve_delete": {
+      "scopes": [
+        "root",
+        "independent",
+        "label-only",
+        "operator-group"
+      ]
+    }
+  },
+  "operators": [
+    {
+      "name": "rhods-operator",
+      "approve_delete": {
+        "resources": [
+          "maas.opendatahub.io/Config/-/default",
+          "MLflow/mlflow"
+        ]
+      }
+    },
+    {
+      "name": "rhbk-operator"
+    },
+    {
+      "name": "leader-worker-set"
+    },
+    {
+      "name": "job-set"
+    },
+    {
+      "name": "kueue-operator"
+    },
+    {
+      "name": "servicemeshoperator3"
+    },
+    {
+      "name": "nfd"
+    },
+    {
+      "name": "gpu-operator-certified"
+    },
+    {
+      "name": "cert-manager-operator"
+    },
+    {
+      "name": "rhcl-operator"
+    },
+    {
+      "name": "authorino-operator"
+    },
+    {
+      "name": "dns-operator"
+    },
+    {
+      "name": "limitador-operator"
+    },
+    {
+      "name": "cluster-observability-operator"
+    },
+    {
+      "name": "opentelemetry-product"
+    }
+  ]
+}

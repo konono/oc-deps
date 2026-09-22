@@ -20,7 +20,9 @@ use crate::analyzers::selector::get_service_selected_pods;
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
-use crate::kube::discovery::{build_kind_lookup_cached, load_config_and_client, resolve_kind};
+use crate::kube::discovery::{
+    APPLY_SET_REUSE_CACHE_ENV, build_kind_lookup_cached, load_config_and_client, resolve_kind,
+};
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
 use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
@@ -35,9 +37,134 @@ use crate::teardown::journal::{
 use crate::teardown::permit::MutationGate;
 use crate::teardown::planner::{
     DecisionPolicy, generate_teardown_plan, load_plan_from_file, print_teardown_plan,
-    resolve_operator_targets, save_plan_to_file,
+    resolve_operator_targets, save_as_saved_plan, save_plan_to_file,
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
+
+fn apply_set_child_bypasses_cache(no_cache: bool, entry_index: usize) -> bool {
+    no_cache && entry_index == 0
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplySetConfig {
+    #[allow(dead_code)]
+    description: Option<String>,
+    #[serde(default)]
+    defaults: ApplySetDefaults,
+    operators: Vec<ApplySetEntry>,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplySetDefaults {
+    #[serde(default)]
+    approve_delete: ApplySetDeleteApprovals,
+    #[serde(default)]
+    preserve: Vec<String>,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    non_interactive: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplySetEntry {
+    name: String,
+    #[serde(default)]
+    approve_delete: ApplySetDeleteApprovals,
+    #[serde(default)]
+    preserve: Vec<String>,
+    #[serde(default)]
+    force: Option<bool>,
+    #[serde(default)]
+    non_interactive: Option<bool>,
+}
+
+struct EffectiveApplySetOptions {
+    approve_delete: Vec<String>,
+    preserve: Vec<String>,
+    force: bool,
+    non_interactive: bool,
+}
+
+impl ApplySetEntry {
+    fn effective_options(&self, defaults: &ApplySetDefaults) -> EffectiveApplySetOptions {
+        let mut approve_delete = defaults.approve_delete.cli_args();
+        approve_delete.extend(self.approve_delete.cli_args());
+        let mut seen_approvals = HashSet::new();
+        approve_delete.retain(|value| seen_approvals.insert(value.clone()));
+
+        let mut preserve = defaults.preserve.clone();
+        preserve.extend(self.preserve.iter().cloned());
+        let mut seen_preserves = HashSet::new();
+        preserve.retain(|value| seen_preserves.insert(value.clone()));
+
+        EffectiveApplySetOptions {
+            approve_delete,
+            preserve,
+            force: self.force.unwrap_or(defaults.force),
+            non_interactive: self.non_interactive.unwrap_or(defaults.non_interactive),
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ApplySetDeleteApprovals {
+    Structured(StructuredDeleteApprovals),
+    Legacy(Vec<String>),
+}
+
+impl Default for ApplySetDeleteApprovals {
+    fn default() -> Self {
+        Self::Structured(StructuredDeleteApprovals::default())
+    }
+}
+
+impl ApplySetDeleteApprovals {
+    fn cli_args(&self) -> Vec<String> {
+        match self {
+            Self::Structured(approvals) => approvals
+                .scopes
+                .iter()
+                .map(|scope| scope.cli_arg().to_string())
+                .chain(approvals.resources.iter().cloned())
+                .collect(),
+            Self::Legacy(approvals) => approvals.clone(),
+        }
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StructuredDeleteApprovals {
+    #[serde(default)]
+    scopes: Vec<ApplySetApprovalScope>,
+    #[serde(default)]
+    resources: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ApplySetApprovalScope {
+    Root,
+    Independent,
+    LabelOnly,
+    OperatorGroup,
+}
+
+impl ApplySetApprovalScope {
+    fn cli_arg(&self) -> &'static str {
+        match self {
+            Self::Root => "root",
+            Self::Independent => "independent",
+            Self::LabelOnly => "label-only",
+            Self::OperatorGroup => "operator-group",
+        }
+    }
+}
 
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str) {
     match output {
@@ -127,6 +254,7 @@ async fn main() -> Result<()> {
                         prune_apis,
                         approve_delete,
                         preserve,
+                        save_plan_path,
                     } => {
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
@@ -163,6 +291,42 @@ async fn main() -> Result<()> {
 
                         print_teardown_plan(&plan, &output);
 
+                        // Save as runtime plan (debug)
+                        match save_plan_to_file(&plan) {
+                            Ok(path) => eprintln!("📄 Plan saved to {}", path),
+                            Err(e) => eprintln!("⚠ Could not save plan: {}", e),
+                        }
+
+                        // Save as SavedTeardownPlan (for --plan replay)
+                        if !target_operators.is_empty() {
+                            let pkg_name = match &target_operators[0].package_name {
+                                Some(n) => n.clone(),
+                                None => {
+                                    if save_plan_path.is_some() {
+                                        bail!(
+                                            "Cannot save plan: operator has no package_name (Subscription required)"
+                                        );
+                                    }
+                                    eprintln!("⚠ Cannot save replay plan: no package_name");
+                                    String::new()
+                                }
+                            };
+                            if !pkg_name.is_empty() {
+                                let target = crate::teardown::plan::SavedOperatorTarget {
+                                    package_name: pkg_name.to_string(),
+                                    install_namespace: target_operators[0]
+                                        .install_namespace
+                                        .clone(),
+                                    csv_name_pattern: target_operators[0].csv.name.clone(),
+                                };
+                                match save_as_saved_plan(&plan, &target, save_plan_path.as_deref())
+                                {
+                                    Ok(path) => eprintln!("📄 Saved plan for replay: {}", path),
+                                    Err(e) => eprintln!("⚠ Could not save replay plan: {}", e),
+                                }
+                            }
+                        }
+
                         eprintln!(
                             "\n⏱ Discovery: {:.1}s, OLM: {:.1}s, Plan: {:.1}s, Total: {:.1}s",
                             t_discovery.as_secs_f64(),
@@ -173,6 +337,7 @@ async fn main() -> Result<()> {
                     }
                     TeardownAction::Apply {
                         operators: operator_queries,
+                        plan: plan_file,
                         no_cache,
                         dry_run,
                         prune_apis,
@@ -180,9 +345,19 @@ async fn main() -> Result<()> {
                         approve_delete,
                         preserve,
                         approve_finalizer_recovery,
+                        non_interactive,
                         script,
                         tui: use_tui,
+                        save_plan_path,
                     } => {
+                        // Validate: --plan and positional operators are mutually exclusive
+                        if plan_file.is_some() && !operator_queries.is_empty() {
+                            bail!(
+                                "--plan and positional operator arguments cannot be combined. \
+                                 Use --plan alone to replay a saved plan."
+                            );
+                        }
+
                         let t0 = Instant::now();
                         eprintln!("🔍 Discovering API resources...");
                         let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -193,13 +368,50 @@ async fn main() -> Result<()> {
                         let all_operators = discover_operators(&client, &kind_map).await?;
                         eprintln!(" found {} operators", all_operators.len());
 
-                        let target_indices =
-                            resolve_operator_targets(&operator_queries, &all_operators)?;
+                        // Resolve targets: from --plan or from positional args
+                        let (target_indices, _saved_plan) = if let Some(ref pf) = plan_file {
+                            let saved = crate::teardown::planner::load_saved_plan(pf)?;
+                            eprintln!("📄 Loaded saved plan from {}", pf);
+                            // Resolve via package_name + install_namespace (both required)
+                            let target_query = saved.target.package_name.clone();
+                            let indices =
+                                resolve_operator_targets(&[target_query], &all_operators)?;
+                            // Filter by install_namespace
+                            let ns_filtered: Vec<usize> = indices
+                                .iter()
+                                .copied()
+                                .filter(|&i| {
+                                    all_operators[i].install_namespace
+                                        == saved.target.install_namespace
+                                })
+                                .collect();
+                            if ns_filtered.is_empty() {
+                                bail!(
+                                    "Saved plan target {}/{} not found in current cluster",
+                                    saved.target.package_name,
+                                    saved.target.install_namespace
+                                );
+                            }
+                            if ns_filtered.len() > 1 {
+                                bail!(
+                                    "Saved plan target {}/{} matches {} operators — ambiguous",
+                                    saved.target.package_name,
+                                    saved.target.install_namespace,
+                                    ns_filtered.len()
+                                );
+                            }
+                            (ns_filtered, Some(saved))
+                        } else {
+                            let indices =
+                                resolve_operator_targets(&operator_queries, &all_operators)?;
+                            (indices, None)
+                        };
+
                         let target_operators: Vec<&_> =
                             target_indices.iter().map(|&i| &all_operators[i]).collect();
 
                         let policy = DecisionPolicy::from_args(&approve_delete, &preserve);
-                        let plan = generate_teardown_plan(
+                        let mut plan = generate_teardown_plan(
                             &client,
                             &target_operators,
                             &all_operators,
@@ -211,6 +423,68 @@ async fn main() -> Result<()> {
                             &policy,
                         )
                         .await?;
+
+                        // Apply saved plan decisions via DecisionPolicy
+                        if let Some(ref saved) = _saved_plan {
+                            use crate::teardown::planner::validate_saved_decisions;
+                            match validate_saved_decisions(&plan, saved) {
+                                Ok((extra_approvals, extra_preserves)) => {
+                                    if !extra_approvals.is_empty() || !extra_preserves.is_empty() {
+                                        let mut all_approvals = approve_delete.clone();
+                                        all_approvals.extend(extra_approvals);
+                                        let mut all_preserves = preserve.clone();
+                                        all_preserves.extend(extra_preserves);
+                                        let saved_policy = DecisionPolicy::from_args(
+                                            &all_approvals,
+                                            &all_preserves,
+                                        );
+                                        plan = generate_teardown_plan(
+                                            &client,
+                                            &target_operators,
+                                            &all_operators,
+                                            &kind_map,
+                                            &gvr_map,
+                                            &gk_map,
+                                            &gvk_map,
+                                            prune_apis,
+                                            &saved_policy,
+                                        )
+                                        .await?;
+                                        eprintln!(
+                                            "📄 Saved plan replayed with {} approval(s)",
+                                            all_approvals.len()
+                                        );
+                                    }
+                                }
+                                Err(errors) => {
+                                    for err in &errors {
+                                        eprintln!("  ⚠ Saved plan drift: {}", err);
+                                    }
+                                    bail!(
+                                        "Saved plan has {} validation error(s) — cannot replay",
+                                        errors.len()
+                                    );
+                                }
+                            }
+                        }
+
+                        // Non-interactive: bail if unresolved REVIEW items remain
+                        if non_interactive {
+                            let review_count = plan
+                                .phases
+                                .iter()
+                                .flat_map(|p| &p.actions)
+                                .filter(|a| {
+                                    matches!(a, crate::teardown::planner::Action::Review { .. })
+                                })
+                                .count();
+                            if review_count > 0 {
+                                bail!(
+                                    "{} unresolved REVIEW item(s) — cannot proceed in non-interactive mode",
+                                    review_count
+                                );
+                            }
+                        }
 
                         match save_plan_to_file(&plan) {
                             Ok(path) => eprintln!("📄 Plan saved to {}", path),
@@ -649,10 +923,34 @@ async fn main() -> Result<()> {
                                                                 }));
                                                             } else {
                                                                 // Compute auto candidates BEFORE audit_result is moved
-                                                                let auto_candidates = crate::teardown::executor::auto_cleanup_candidates(
+                                                                let mut auto_candidates = crate::teardown::executor::auto_cleanup_candidates(
                                                                     &audit_result,
                                                                     &j.execution.deleted,
                                                                 );
+
+                                                                // Apply saved residual decisions via validated function
+                                                                if let Some(ref saved) = _saved_plan
+                                                                    && !saved.residual_decisions.is_empty()
+                                                                {
+                                                                        match crate::teardown::executor::validate_saved_residual_decisions(
+                                                                            &saved.residual_decisions,
+                                                                            &audit_result,
+                                                                        ) {
+                                                                            Ok(extra) => {
+                                                                                auto_candidates.extend(extra);
+                                                                            }
+                                                                            Err(errors) => {
+                                                                                for e in &errors {
+                                                                                    eprintln!("  ⚠ Residual decision error: {}", e);
+                                                                                }
+                                                                                // Block residual mutation
+                                                                                auto_candidates.clear();
+                                                                                events.push(serde_json::json!({"auto_cleanup_error": "residual decision validation failed", "blocked": true}));
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                let residual_validation_failed = auto_candidates.is_empty()
+                                                                    && events.iter().any(|e| e.get("auto_cleanup_error").is_some());
                                                                 drop(j);
 
                                                                 store.update(|j| {
@@ -663,7 +961,7 @@ async fn main() -> Result<()> {
                                                                 .context("Failed to persist residual audit for screen transition")?;
 
                                                                 // Auto cleanup planned DELETE/EXPECT still present
-                                                                let mut cleanup_ok = true;
+                                                                let mut cleanup_ok = !residual_validation_failed;
                                                                 if !auto_candidates.is_empty() {
                                                                     events.push(serde_json::json!({
                                                                         "auto_selected_residuals": auto_candidates.len(),
@@ -832,233 +1130,11 @@ async fn main() -> Result<()> {
                             return Ok(());
                         }
 
-                        // Interactive Plan Review (if TTY and not dry-run/script)
+                        // CLI uses the approved plan directly. REVIEW actions stay
+                        // preserved; users can approve exact resources with
+                        // --approve-delete or choose them in the TUI.
                         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
-                        let mut plan = plan; // shadow with mutable for draft overrides
-                        let mut effective_finalizer_recovery = approve_finalizer_recovery;
-                        if is_tty && !dry_run && script.is_none() {
-                            use crate::kube::resource::ResourceId;
-                            use crate::teardown::app::{
-                                AppCommand, AppState, DraftAction, apply_command,
-                            };
-                            use crate::teardown::planner::Action;
-                            let mut app = AppState::new(approve_finalizer_recovery);
-
-                            // Collect REVIEW items
-                            let review_items: Vec<(usize, usize, ResourceId)> = plan
-                                .phases
-                                .iter()
-                                .enumerate()
-                                .flat_map(|(pi, phase)| {
-                                    phase.actions.iter().enumerate().filter_map(move |(ai, a)| {
-                                        if let Action::Review { resource, .. } = a {
-                                            Some((pi, ai, resource.clone()))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                })
-                                .collect();
-
-                            if !review_items.is_empty() && !force {
-                                eprintln!(
-                                    "\n\x1b[1m📋 Plan Review\x1b[0m: {} REVIEW item(s)\n",
-                                    review_items.len()
-                                );
-                                for (i, (_, _, res)) in review_items.iter().enumerate() {
-                                    eprintln!(
-                                        "  [{}] {}/{}{}",
-                                        i + 1,
-                                        res.kind,
-                                        res.name,
-                                        res.namespace
-                                            .as_ref()
-                                            .map(|ns| format!(" ({})", ns))
-                                            .unwrap_or_default()
-                                    );
-                                }
-                                eprintln!();
-                                eprintln!(
-                                    "  Enter item numbers to approve for DELETE (comma-separated),"
-                                );
-                                eprintln!("  or press Enter to keep all as REVIEW:");
-                                eprint!("  > ");
-                                std::io::Write::flush(&mut std::io::stderr()).ok();
-
-                                let mut input = String::new();
-                                if std::io::stdin().read_line(&mut input).is_ok() {
-                                    let input = input.trim();
-                                    if !input.is_empty() {
-                                        for token in input.split(',') {
-                                            if let Ok(idx) = token.trim().parse::<usize>()
-                                                && idx >= 1
-                                                && idx <= review_items.len()
-                                            {
-                                                let (_, _, ref res) = review_items[idx - 1];
-                                                let _ = apply_command(
-                                                    &mut app,
-                                                    &AppCommand::ApproveReview {
-                                                        resource: res.clone(),
-                                                    },
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Apply draft overrides with fresh evidence revalidation.
-                                // Each REVIEW→DELETE conversion requires a live GET to
-                                // verify the resource still exists with a bindable UID.
-                                if !app.draft_overrides.is_empty() {
-                                    let mut mutated_plan = plan.clone();
-                                    let mut approved_count = 0usize;
-                                    let ovr_total = app.draft_overrides.len();
-
-                                    for (ovr_idx, over) in app.draft_overrides.iter().enumerate() {
-                                        eprintln!(
-                                            "  [{}/{}] Validating {}/{}...",
-                                            ovr_idx + 1,
-                                            ovr_total,
-                                            over.resource.kind,
-                                            over.resource.name
-                                        );
-                                        for phase in &mut mutated_plan.phases {
-                                            for action in &mut phase.actions {
-                                                if let Action::Review {
-                                                    resource,
-                                                    reason,
-                                                    metadata,
-                                                } = action
-                                                    && resource.group == over.resource.group
-                                                    && resource.version == over.resource.version
-                                                    && resource.kind == over.resource.kind
-                                                    && resource.name == over.resource.name
-                                                    && resource.namespace == over.resource.namespace
-                                                {
-                                                    match over.new_action {
-                                                        DraftAction::Delete => {
-                                                            // P0: Three-way UID check — all must be non-empty and match
-                                                            let ovr_uid = over
-                                                                .resource
-                                                                .uid
-                                                                .as_deref()
-                                                                .unwrap_or("");
-                                                            let plan_uid = resource
-                                                                .uid
-                                                                .as_deref()
-                                                                .unwrap_or("");
-                                                            if ovr_uid.is_empty() {
-                                                                bail!(
-                                                                    "Cannot approve DELETE for {}/{} without UID in approval",
-                                                                    resource.kind,
-                                                                    resource.name
-                                                                );
-                                                            }
-                                                            if plan_uid.is_empty() {
-                                                                bail!(
-                                                                    "Cannot approve DELETE for {}/{}: plan resource has no UID",
-                                                                    resource.kind,
-                                                                    resource.name
-                                                                );
-                                                            }
-                                                            if ovr_uid != plan_uid {
-                                                                bail!(
-                                                                    "Override UID {} does not match plan UID {} for {}/{}",
-                                                                    ovr_uid,
-                                                                    plan_uid,
-                                                                    resource.kind,
-                                                                    resource.name
-                                                                );
-                                                            }
-                                                            // Fresh GET to verify identity + bind UID + basis drift check
-                                                            let verified = match crate::kube::resource::resolve_api(
-                                                                    &client, resource, &kind_map, &gk_map,
-                                                                ) {
-                                                                    Some((api, _)) => {
-                                                                        match api.get(&resource.name).await {
-                                                                            Ok(obj) => {
-                                                                                let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
-                                                                                if live_uid.is_empty() {
-                                                                                    bail!("Cannot apply override for {}/{}: live resource has no UID", resource.kind, resource.name);
-                                                                                }
-                                                                                if !plan_uid.is_empty() && live_uid != plan_uid {
-                                                                                    bail!(
-                                                                                        "Cannot apply override for {}/{}: UID changed from {} to {}",
-                                                                                        resource.kind, resource.name, plan_uid, live_uid
-                                                                                    );
-                                                                                }
-                                                                                // Basis drift: verify provenance hasn't degraded
-                                                                                // Use journal's operator snapshot (has full controller deployment UIDs)
-                                                                                {
-                                                                                    let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
-                                                                                    let action_metadata = metadata.clone();
-                                                                                    let snap = build_operator_identity_snapshot(&client, &target_operators).await
-                                                                                        .context("Cannot build identity snapshot for basis drift check")?;
-                                                                                    if let Err(reason) = revalidate_review_basis(&client, &obj, resource, &action_metadata, &ctx, &snap).await {
-                                                                                        bail!(
-                                                                                            "BLOCKED: {}/{} — basis drift: {}. Re-run 'teardown plan'.",
-                                                                                            resource.kind, resource.name, reason
-                                                                                        );
-                                                                                    }
-                                                                                }
-                                                                                let mut bound = resource.clone();
-                                                                                bound.uid = Some(live_uid.to_string());
-                                                                                *action = Action::Delete {
-                                                                                    resource: bound,
-                                                                                    reason: format!("{} (approved in Plan Review)", reason),
-                                                                                };
-                                                                                approved_count += 1;
-                                                                                true
-                                                                            }
-                                                                            Err(::kube::Error::Api(ref err)) if err.code == 404 => {
-                                                                                eprintln!("  ⚠ {}/{} no longer present — override skipped", resource.kind, resource.name);
-                                                                                false
-                                                                            }
-                                                                            Err(e) => {
-                                                                                bail!(
-                                                                                    "Cannot verify {}/{} for draft override: {}",
-                                                                                    resource.kind, resource.name, e
-                                                                                );
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    None => {
-                                                                        bail!(
-                                                                            "Cannot resolve API for {}/{} — refusing to skip approved DELETE override",
-                                                                            resource.kind, resource.name
-                                                                        );
-                                                                    }
-                                                                };
-                                                            let _ = verified;
-                                                        }
-                                                        DraftAction::Keep => {
-                                                            *action = Action::Keep {
-                                                                resource: resource.clone(),
-                                                                reason: format!(
-                                                                    "{} (kept in Plan Review)",
-                                                                    reason
-                                                                ),
-                                                            };
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if approved_count > 0 {
-                                        eprintln!(
-                                            "  {} REVIEW item(s) approved for DELETE (UID + evidence verified)",
-                                            approved_count
-                                        );
-                                    }
-                                    plan = mutated_plan;
-                                }
-                            }
-
-                            // Transition to Executing — BoundPlan is frozen
-                            let _ = apply_command(&mut app, &AppCommand::StartExecution);
-                            effective_finalizer_recovery = app.finalizer_recovery_approved;
-                        }
+                        let effective_finalizer_recovery = approve_finalizer_recovery;
 
                         // Create RunJournal before first mutation (fail-closed)
                         // Use process lock to prevent dual-writer from resume
@@ -1158,6 +1234,7 @@ async fn main() -> Result<()> {
                                 }
 
                                 print_execution_result(&result);
+                                let mut cleanup_failure: Option<String> = None;
 
                                 // Run post-apply residual audit (only if apply succeeded and operator is Absent)
                                 if let Some(store) = &journal_store
@@ -1181,6 +1258,36 @@ async fn main() -> Result<()> {
                                                         &audit_result,
                                                     );
                                                     audit::print_residual_audit(&audit_result, &j);
+                                                    let mut auto_candidates =
+                                                        crate::teardown::executor::auto_cleanup_candidates(
+                                                            &audit_result,
+                                                            &j.execution.deleted,
+                                                        );
+                                                    if let Some(ref saved) = _saved_plan {
+                                                        match crate::teardown::executor::validate_saved_residual_decisions(
+                                                            &saved.residual_decisions,
+                                                            &audit_result,
+                                                        ) {
+                                                            Ok(extra) => auto_candidates.extend(extra),
+                                                            Err(errors) => {
+                                                                cleanup_failure = Some(format!(
+                                                                    "Saved residual decisions require review: {}",
+                                                                    errors.join("; ")
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                    let mut seen = std::collections::HashSet::new();
+                                                    auto_candidates.retain(|r| {
+                                                        seen.insert((
+                                                            r.group.clone(),
+                                                            r.version.clone(),
+                                                            r.kind.clone(),
+                                                            r.namespace.clone(),
+                                                            r.name.clone(),
+                                                            r.uid.clone(),
+                                                        ))
+                                                    });
                                                     // Re-verify generation before saving
                                                     let gen_recheck =
                                                         audit::check_operator_generation(
@@ -1193,16 +1300,16 @@ async fn main() -> Result<()> {
                                                         gen_recheck,
                                                         OperatorGenerationState::Absent
                                                     ) {
-                                                        match store
+                                                        let audit_persisted = match store
                                                             .update(|j| {
                                                                 j.residual_status = status;
                                                                 j.audit_revision += 1;
                                                                 j.last_residual_audit =
-                                                                    Some(audit_result);
+                                                                    Some(audit_result.clone());
                                                             })
                                                             .await
                                                         {
-                                                            Ok(()) => {}
+                                                            Ok(()) => true,
                                                             Err(e) => {
                                                                 eprintln!(
                                                                     "⚠ Failed to persist audit results: {}",
@@ -1214,11 +1321,88 @@ async fn main() -> Result<()> {
                                                                 eprintln!(
                                                                     "  Do not use this audit for cleanup authority."
                                                                 );
+                                                                cleanup_failure = Some(format!(
+                                                                    "Residual audit persistence failed: {}",
+                                                                    e
+                                                                ));
+                                                                false
+                                                            }
+                                                        };
+                                                        if audit_persisted {
+                                                            if matches!(
+                                                                audit::residual_status_from_audit(&audit_result),
+                                                                journal::ResidualStatus::AuditIncomplete
+                                                            ) {
+                                                                cleanup_failure = Some(
+                                                                    "Residual audit incomplete".to_string(),
+                                                                );
+                                                            } else if cleanup_failure.is_none() {
+                                                                if !auto_candidates.is_empty() {
+                                                                    eprintln!(
+                                                                        "\n🧹 Cleaning {} planned/saved residual(s)...",
+                                                                        auto_candidates.len()
+                                                                    );
+                                                                    match crate::teardown::executor::execute_residual_cleanup(
+                                                                        &client,
+                                                                        &auto_candidates,
+                                                                        store.as_ref(),
+                                                                        gate.as_ref(),
+                                                                        &kind_map,
+                                                                        &gk_map,
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(cleanup) => {
+                                                                            eprintln!(
+                                                                                "  {} Gone, {} skipped, {} failed",
+                                                                                cleanup.deleted.len(),
+                                                                                cleanup.skipped.len(),
+                                                                                cleanup.failed.len()
+                                                                            );
+                                                                            if !cleanup.skipped.is_empty()
+                                                                                || !cleanup.failed.is_empty()
+                                                                            {
+                                                                                cleanup_failure = Some(
+                                                                                    "Residual cleanup incomplete".to_string(),
+                                                                                );
+                                                                            }
+                                                                            if let Some(post) = cleanup.post_audit
+                                                                                && (!post.planned_delete_still_present.is_empty()
+                                                                                    || !post.planned_expect_still_present.is_empty())
+                                                                            {
+                                                                                cleanup_failure = Some(format!(
+                                                                                    "{} planned DELETE/EXPECT resources remain after cleanup",
+                                                                                    post.planned_delete_still_present.len()
+                                                                                        + post.planned_expect_still_present.len()
+                                                                                ));
+                                                                            }
+                                                                        }
+                                                                        Err(e) => {
+                                                                            cleanup_failure = Some(format!(
+                                                                                "Residual cleanup failed: {:#}", e
+                                                                            ));
+                                                                        }
+                                                                    }
+                                                                } else if !audit_result
+                                                                    .planned_delete_still_present
+                                                                    .is_empty()
+                                                                    || !audit_result
+                                                                        .planned_expect_still_present
+                                                                        .is_empty()
+                                                                {
+                                                                    cleanup_failure = Some(
+                                                                        "Planned residuals require review before cleanup"
+                                                                            .to_string(),
+                                                                    );
+                                                                }
                                                             }
                                                         }
                                                     } else {
                                                         eprintln!(
                                                             "⚠ Operator generation changed during audit; discarding results"
+                                                        );
+                                                        cleanup_failure = Some(
+                                                            "Operator generation changed during audit".to_string(),
                                                         );
                                                     }
                                                 }
@@ -1227,6 +1411,10 @@ async fn main() -> Result<()> {
                                                         "⚠ Post-apply residual audit failed: {}",
                                                         e
                                                     );
+                                                    cleanup_failure = Some(format!(
+                                                        "Post-apply residual audit failed: {}",
+                                                        e
+                                                    ));
                                                 }
                                             }
                                         }
@@ -1234,6 +1422,8 @@ async fn main() -> Result<()> {
                                             eprintln!(
                                                 "\nSkipping post-apply residual audit: operator generation not absent"
                                             );
+                                            cleanup_failure =
+                                                Some("Operator generation not absent".to_string());
                                         }
                                     }
                                 }
@@ -1390,10 +1580,101 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
+                                // Save plan with residual decisions if --save-plan provided
+                                if let Some(ref save_path) = save_plan_path
+                                    && final_state == RunState::ApplyCompleted
+                                    && !target_operators.is_empty()
+                                    && let Some(store) = &journal_store
+                                {
+                                    let j = store.read().await;
+                                    let mut residual_decisions = Vec::new();
+                                    // Build from cleanup_decisions + last_residual_audit
+                                    let mut seen_residual = std::collections::HashSet::new();
+                                    for cd in &j.cleanup_decisions {
+                                        let dedup_key = (
+                                            cd.resource.group.clone(),
+                                            cd.resource.kind.clone(),
+                                            cd.resource.namespace.clone(),
+                                            cd.resource.name.clone(),
+                                        );
+                                        if !seen_residual.insert(dedup_key) {
+                                            continue;
+                                        }
+                                        let evidence = build_residual_evidence(
+                                            &cd.resource,
+                                            &j.last_residual_audit,
+                                        );
+                                        let approval = if evidence.is_empty() {
+                                            crate::teardown::plan::ApprovalKind::ExplicitUnattributed
+                                        } else {
+                                            crate::teardown::plan::ApprovalKind::Explicit
+                                        };
+                                        residual_decisions.push(crate::teardown::plan::SavedDecision {
+                                                match_spec: crate::teardown::plan::ResourceMatch::from_resource_id(&cd.resource),
+                                                action: crate::teardown::plan::SavedAction::Delete,
+                                                approval,
+                                                basis: crate::teardown::plan::DecisionBasis {
+                                                    provenance: None,
+                                                    review_category: None,
+                                                    discovery_source: None,
+                                                    decisive_evidence: evidence,
+                                                },
+                                            });
+                                    }
+                                    drop(j);
+
+                                    let pkg_name =
+                                        target_operators[0].package_name.as_deref().unwrap_or("");
+                                    if !pkg_name.is_empty() {
+                                        let target = crate::teardown::plan::SavedOperatorTarget {
+                                            package_name: pkg_name.to_string(),
+                                            install_namespace: target_operators[0]
+                                                .install_namespace
+                                                .clone(),
+                                            csv_name_pattern: target_operators[0].csv.name.clone(),
+                                        };
+                                        let saved_plan = plan.clone();
+                                        // Merge residual decisions from cleanup into saved plan
+                                        match save_as_saved_plan(
+                                            &saved_plan,
+                                            &target,
+                                            Some(save_path),
+                                        ) {
+                                            Ok(path) => {
+                                                if !residual_decisions.is_empty()
+                                                    && let Ok(data) = std::fs::read_to_string(&path)
+                                                    && let Ok(mut sp) = serde_json::from_str::<
+                                                        crate::teardown::plan::SavedTeardownPlan,
+                                                    >(
+                                                        &data
+                                                    )
+                                                {
+                                                    sp.residual_decisions = residual_decisions;
+                                                    let _ = std::fs::write(
+                                                        &path,
+                                                        serde_json::to_string_pretty(&sp)
+                                                            .unwrap_or_default(),
+                                                    );
+                                                }
+                                                eprintln!(
+                                                    "📄 Saved plan with residual decisions: {}",
+                                                    path
+                                                );
+                                            }
+                                            Err(e) => eprintln!("⚠ Could not save plan: {}", e),
+                                        }
+                                    }
+                                }
+
                                 // Non-zero exit for non-ApplyCompleted states
                                 match final_state {
                                     RunState::ApplyCompleted => {
-                                        // Success — exit 0
+                                        if let Some(reason) = cleanup_failure {
+                                            bail!(
+                                                "Main teardown completed, but cleanup is incomplete: {}",
+                                                reason
+                                            );
+                                        }
                                     }
                                     RunState::Paused => {
                                         bail!(
@@ -1485,6 +1766,102 @@ async fn main() -> Result<()> {
                         eprintln!(" done");
 
                         print_plan_status(&plan, &statuses);
+                    }
+                    TeardownAction::Coverage {
+                        operators: operator_queries,
+                        output,
+                        no_cache,
+                    } => {
+                        let (kind_map, gvr_map, gk_map, gvk_map) =
+                            build_kind_lookup_cached(&client, &config, no_cache).await?;
+                        let all_operators = discover_operators(&client, &kind_map).await?;
+                        let target_indices =
+                            resolve_operator_targets(&operator_queries, &all_operators)?;
+                        let target_operators: Vec<&_> =
+                            target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+                        let policy = DecisionPolicy::from_args(&[], &[]);
+                        let plan = generate_teardown_plan(
+                            &client,
+                            &target_operators,
+                            &all_operators,
+                            &kind_map,
+                            &gvr_map,
+                            &gk_map,
+                            &gvk_map,
+                            false,
+                            &policy,
+                        )
+                        .await?;
+
+                        // Categorize plan actions
+                        let mut covered = Vec::new();
+                        let mut preserved = Vec::new();
+                        let mut not_covered = Vec::new();
+
+                        for phase in &plan.phases {
+                            for action in &phase.actions {
+                                match action {
+                                    crate::teardown::planner::Action::Delete {
+                                        resource, ..
+                                    }
+                                    | crate::teardown::planner::Action::ExpectGone {
+                                        resource,
+                                        ..
+                                    } => {
+                                        covered.push(resource.clone());
+                                    }
+                                    crate::teardown::planner::Action::Keep { resource, .. } => {
+                                        preserved.push(resource.clone());
+                                    }
+                                    crate::teardown::planner::Action::Review {
+                                        resource, ..
+                                    } => {
+                                        not_covered.push(resource.clone());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+
+                        match output {
+                            OutputFormat::Json => {
+                                let json = serde_json::json!({
+                                    "coverage_scope": "plan-known-footprint",
+                                    "complete": false,
+                                    "note": "Coverage is limited to resources discovered by the plan. Resources outside operator-owned APIs, related CRDs, and namespace discovery are not included.",
+                                    "covered_by_plan": covered.len(),
+                                    "intentionally_preserved": preserved.len(),
+                                    "not_covered": not_covered.len(),
+                                    "covered": covered,
+                                    "preserved": preserved,
+                                    "not_covered_resources": not_covered,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&json)?);
+                            }
+                            _ => {
+                                eprintln!(
+                                    "\n\x1b[1mCoverage\x1b[0m: {} covered, {} preserved, {} not covered",
+                                    covered.len(),
+                                    preserved.len(),
+                                    not_covered.len()
+                                );
+                                if !not_covered.is_empty() {
+                                    eprintln!("\n\x1b[33mNOT COVERED (REVIEW):\x1b[0m");
+                                    for r in &not_covered {
+                                        eprintln!(
+                                            "  {}/{}{}",
+                                            r.kind,
+                                            r.name,
+                                            r.namespace
+                                                .as_ref()
+                                                .map(|ns| format!(" ({})", ns))
+                                                .unwrap_or_default()
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     TeardownAction::Inspect {
                         operator: operator_query,
@@ -1634,12 +2011,10 @@ async fn main() -> Result<()> {
                             RunState::Paused
                             | RunState::Applying
                             | RunState::InteractiveCleanup => {}
-                            RunState::ApplyCompleted => {
-                                if j.last_residual_audit.is_some() {
-                                    bail!("Run completed by another process — nothing to resume");
-                                }
-                                // ApplyCompleted + no audit = crash recovery allowed
-                            }
+                            // A completed main apply can re-enter residual cleanup.
+                            // The process lock, not the presence of a prior audit,
+                            // prevents concurrent resume writers.
+                            RunState::ApplyCompleted => {}
                             RunState::Finished => {
                                 bail!("Run finished — nothing to resume");
                             }
@@ -1828,6 +2203,80 @@ async fn main() -> Result<()> {
                             start_phase,
                             j.plan_snapshot.phases.len()
                         );
+
+                        // An accepted re-delete may have become Gone after the
+                        // last checkpoint. Reconcile it before classifying a
+                        // completed main run for residual re-entry. An intent
+                        // without an accepted DELETE never gains authority here.
+                        if j.state == RunState::ApplyCompleted
+                            && start_phase == j.plan_snapshot.phases.len()
+                        {
+                            for record in
+                                j.execution.re_delete_records.iter().filter(|r| {
+                                    matches!(r.result, journal::ReDeleteResult::Accepted)
+                                })
+                            {
+                                let (api, _) = crate::kube::resource::resolve_api(
+                                    &client,
+                                    &record.resource_identity,
+                                    &kind_map,
+                                    &gk_map,
+                                )
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "Cannot resolve API for accepted re-delete {}/{}",
+                                        record.resource_identity.kind,
+                                        record.resource_identity.name
+                                    )
+                                })?;
+                                match api.get(&record.resource_identity.name).await {
+                                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                                        api.list(&::kube::api::ListParams::default().limit(1))
+                                            .await
+                                            .with_context(|| {
+                                                format!(
+                                                    "Cannot verify endpoint for re-delete {}/{}",
+                                                    record.resource_identity.kind,
+                                                    record.resource_identity.name
+                                                )
+                                            })?;
+                                        let identity = record.resource_identity.clone();
+                                        let original_uid = record.original_uid.clone();
+                                        let new_uid = record.new_uid.clone();
+                                        store
+                                            .update(|latest| {
+                                                if let Some(entry) = latest
+                                                    .execution
+                                                    .re_delete_records
+                                                    .iter_mut()
+                                                    .find(|r| {
+                                                        r.resource_identity == identity
+                                                            && r.original_uid == original_uid
+                                                            && r.new_uid == new_uid
+                                                            && matches!(
+                                                                r.result,
+                                                                journal::ReDeleteResult::Accepted
+                                                            )
+                                                    })
+                                                {
+                                                    entry.result = journal::ReDeleteResult::Gone;
+                                                }
+                                            })
+                                            .await?;
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        bail!(
+                                            "Cannot reconcile accepted re-delete {}/{}: {}",
+                                            record.resource_identity.kind,
+                                            record.resource_identity.name,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        let j = store.read().await;
 
                         let gate = std::sync::Arc::new(MutationGate::new(16));
 
@@ -2818,6 +3267,142 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
+                    TeardownAction::ApplySet {
+                        config,
+                        no_cache,
+                        dry_run,
+                    } => {
+                        let config_content = std::fs::read_to_string(&config)
+                            .with_context(|| format!("Failed to read config: {}", config))?;
+                        let parsed: ApplySetConfig = serde_json::from_str(&config_content)
+                            .with_context(|| format!("Invalid config: {}", config))?;
+                        let defaults = parsed.defaults;
+                        let entries = parsed.operators;
+
+                        if entries.is_empty() {
+                            bail!("Config has no operators");
+                        }
+                        for (i, entry) in entries.iter().enumerate() {
+                            if entry.name.is_empty() {
+                                bail!("Operator entry {} has empty name", i);
+                            }
+                        }
+
+                        eprintln!(
+                            "📋 Apply-set: {} operator(s) from {}",
+                            entries.len(),
+                            config
+                        );
+                        for (i, entry) in entries.iter().enumerate() {
+                            eprintln!("  {}: {}", i + 1, entry.name);
+                        }
+                        eprintln!();
+                        if no_cache {
+                            eprintln!(
+                                "🔄 API discovery: refresh once, then reuse within this apply-set\n"
+                            );
+                        }
+
+                        let exe = std::env::current_exe()
+                            .context("Cannot determine current executable path")?;
+
+                        let mut results: Vec<(String, i32)> = Vec::new();
+
+                        let entry_count = entries.len();
+                        for (i, entry) in entries.iter().enumerate() {
+                            let op_name = &entry.name;
+                            let options = entry.effective_options(&defaults);
+                            eprintln!(
+                                "\n{}\n  [{}/{}] {} {}\n{}",
+                                "=".repeat(60),
+                                i + 1,
+                                entry_count,
+                                if dry_run { "DRY-RUN" } else { "TEARDOWN" },
+                                op_name,
+                                "=".repeat(60),
+                            );
+
+                            let mut cmd = std::process::Command::new(&exe);
+                            cmd.arg("teardown").arg("apply").arg(op_name);
+
+                            if apply_set_child_bypasses_cache(no_cache, i) {
+                                cmd.arg("--no-cache");
+                            }
+                            if no_cache {
+                                cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
+                            }
+                            if dry_run {
+                                cmd.arg("--dry-run");
+                            }
+                            if options.force {
+                                cmd.arg("--force");
+                            }
+                            if options.non_interactive {
+                                cmd.arg("--non-interactive");
+                            }
+                            for approval in options.approve_delete {
+                                cmd.arg("--approve-delete").arg(approval);
+                            }
+                            for p in options.preserve {
+                                cmd.arg("--preserve").arg(p);
+                            }
+
+                            // Pipe "y" to stdin for confirmation prompt
+                            cmd.stdin(std::process::Stdio::piped());
+                            cmd.stdout(std::process::Stdio::inherit());
+                            cmd.stderr(std::process::Stdio::inherit());
+
+                            // Forward KUBECONFIG
+                            if let Ok(kc) = std::env::var("KUBECONFIG") {
+                                cmd.env("KUBECONFIG", kc);
+                            }
+
+                            let mut child = cmd.spawn().with_context(|| {
+                                format!("Failed to spawn teardown for {}", op_name)
+                            })?;
+
+                            // Write "y\n" to stdin for confirmation
+                            if let Some(mut stdin) = child.stdin.take() {
+                                use std::io::Write;
+                                let _ = stdin.write_all(b"y\n");
+                            }
+
+                            let status = child.wait().with_context(|| {
+                                format!("Failed to wait for teardown of {}", op_name)
+                            })?;
+
+                            let exit_code = status.code().unwrap_or(1);
+                            results.push((op_name.to_string(), exit_code));
+
+                            if exit_code != 0 {
+                                eprintln!(
+                                    "\n⛔ {} failed (exit {}). Stopping apply-set.",
+                                    op_name, exit_code
+                                );
+                                break;
+                            }
+                            eprintln!("  ✅ {} completed", op_name);
+                        }
+
+                        // Summary
+                        eprintln!("\n📊 Apply-set results:");
+                        let mut any_failed = false;
+                        for (name, code) in &results {
+                            let status = if *code == 0 { "✅" } else { "⛔" };
+                            eprintln!("  {} {} (exit {})", status, name, code);
+                            if *code != 0 {
+                                any_failed = true;
+                            }
+                        }
+                        let not_run = entry_count - results.len();
+                        if not_run > 0 {
+                            eprintln!("  ⏭ {} operator(s) not run (stopped on failure)", not_run);
+                        }
+
+                        if any_failed {
+                            std::process::exit(1);
+                        }
+                    }
                     TeardownAction::Runs => {
                         let cluster_id = journal::fetch_cluster_identity(&client).await?;
                         let runs = journal::list_runs(&cluster_id)?;
@@ -3157,6 +3742,51 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn build_residual_evidence(
+    rid: &crate::kube::resource::ResourceId,
+    audit: &Option<crate::teardown::audit::ResidualAudit>,
+) -> Vec<crate::teardown::plan::SavedEvidenceSignature> {
+    let Some(audit) = audit else {
+        return vec![];
+    };
+    let matched = audit
+        .likely_operator_residual
+        .iter()
+        .chain(audit.unattributed.iter())
+        .find(|r| {
+            r.resource.group == rid.group
+                && r.resource.kind == rid.kind
+                && r.resource.name == rid.name
+                && r.resource.namespace == rid.namespace
+        });
+    let Some(res) = matched else {
+        return vec![];
+    };
+    let mut evidence = Vec::new();
+    for (k, v) in &res.evidence.matching_labels {
+        evidence.push(crate::teardown::plan::SavedEvidenceSignature::Label {
+            key: k.clone(),
+            value: v.clone(),
+        });
+    }
+    for mgr in &res.evidence.matching_managers {
+        evidence.push(
+            crate::teardown::plan::SavedEvidenceSignature::ManagedFieldManager {
+                manager: mgr.clone(),
+            },
+        );
+    }
+    if res.evidence.service_account_match {
+        evidence.push(
+            crate::teardown::plan::SavedEvidenceSignature::ServiceAccount {
+                namespace: rid.namespace.clone().unwrap_or_default(),
+                name: String::new(),
+            },
+        );
+    }
+    evidence
+}
+
 fn print_run_journal(j: &RunJournal) {
     eprintln!("Run:      {}", j.run_id);
     eprintln!("Operator: {}", j.operator.csv_name);
@@ -3443,6 +4073,10 @@ async fn build_operator_identity_snapshot(
                             live_spec_name
                         );
                     }
+                }
+                Err(::kube::Error::Api(ref api_err)) if api_err.code == 404 => {
+                    // Subscription already deleted (previous teardown or manual).
+                    // This is safe — operator is frozen.
                 }
                 Err(e) => {
                     bail!("Cannot verify Subscription {} spec.name: {}", sub.name, e);
@@ -3973,6 +4607,107 @@ mod basis_drift_tests {
     use crate::teardown::plan::*;
     use std::collections::HashSet;
 
+    #[test]
+    fn apply_set_no_cache_only_refreshes_first_entry() {
+        assert!(apply_set_child_bypasses_cache(true, 0));
+        assert!(!apply_set_child_bypasses_cache(true, 1));
+        assert!(!apply_set_child_bypasses_cache(false, 0));
+    }
+
+    #[test]
+    fn structured_apply_set_approvals_separate_scopes_and_resources() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": {
+                        "scopes": ["root", "independent", "label-only", "operator-group"],
+                        "resources": ["example.io/Widget/ns/example"]
+                    }
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.operators[0].approve_delete.cli_args(),
+            vec![
+                "root",
+                "independent",
+                "label-only",
+                "operator-group",
+                "example.io/Widget/ns/example",
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_set_defaults_are_merged_with_operator_exceptions() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "defaults": {
+                    "approve_delete": {
+                        "scopes": ["root", "independent", "label-only", "operator-group"]
+                    },
+                    "force": true
+                },
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": {
+                        "resources": ["example.io/Widget/ns/example"]
+                    },
+                    "force": false
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let options = config.operators[0].effective_options(&config.defaults);
+        assert_eq!(
+            options.approve_delete,
+            vec![
+                "root",
+                "independent",
+                "label-only",
+                "operator-group",
+                "example.io/Widget/ns/example",
+            ]
+        );
+        assert!(!options.force, "operator value must override the default");
+        assert!(!options.non_interactive);
+    }
+
+    #[test]
+    fn structured_apply_set_approvals_reject_all_scope() {
+        let result = serde_json::from_str::<ApplySetConfig>(
+            r#"{
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": { "scopes": ["all"] }
+                }]
+            }"#,
+        );
+        assert!(result.is_err(), "structured scopes must be explicit");
+    }
+
+    #[test]
+    fn legacy_apply_set_approval_array_remains_supported() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{
+                    "name": "example-operator",
+                    "approve_delete": ["all", "Widget/example"]
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.operators[0].approve_delete.cli_args(),
+            vec!["all", "Widget/example"]
+        );
+    }
+
     fn make_metadata(
         provenance: Option<ProvenanceSer>,
         discovery_source: Option<DiscoverySourceSer>,
@@ -4273,6 +5008,9 @@ mod basis_drift_tests {
                 blockers: vec![],
                 warnings: vec![],
                 snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+                dependency_edges: vec![],
+                operator_inventory: vec![],
+                explicit_decisions: vec![],
             },
             execution: ExecutionRecord {
                 phases_completed,

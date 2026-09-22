@@ -86,7 +86,8 @@ pub struct SavedTeardownPlan {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct SavedOperatorTarget {
-    pub package_name: Option<String>,
+    pub package_name: String,
+    pub install_namespace: String,
     pub csv_name_pattern: String,
 }
 
@@ -125,12 +126,28 @@ impl ResourceMatch {
 
     #[allow(dead_code)]
     pub fn matches(&self, rid: &ResourceId) -> bool {
-        if let Some(ref g) = self.group
-            && &rid.group != g
-        {
-            return false;
+        // group=None matches core group (empty string) only, not a wildcard
+        let group_ok = match &self.group {
+            Some(g) => &rid.group == g,
+            None => rid.group.is_empty(),
+        };
+        group_ok
+            && self.kind == rid.kind
+            && self.namespace == rid.namespace
+            && self.name == rid.name
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.kind.is_empty() || self.kind == "*" {
+            return Err(format!("invalid kind: {:?}", self.kind));
         }
-        self.kind == rid.kind && self.namespace == rid.namespace && self.name == rid.name
+        if self.name.is_empty() || self.name == "*" {
+            return Err(format!("invalid name: {:?}", self.name));
+        }
+        if self.group.as_deref() == Some("*") {
+            return Err("wildcard group not allowed".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -141,15 +158,11 @@ pub enum SavedAction {
     Keep,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[allow(dead_code)]
 pub enum ApprovalKind {
     Explicit,
     ExplicitUnattributed,
-    BulkRoot,
-    BulkIndependent,
-    BulkAll,
-    BulkLabelOnly,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -157,6 +170,7 @@ pub enum ApprovalKind {
 pub struct DecisionBasis {
     pub provenance: Option<String>,
     pub review_category: Option<String>,
+    pub discovery_source: Option<String>,
     pub decisive_evidence: Vec<SavedEvidenceSignature>,
 }
 

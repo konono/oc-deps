@@ -107,7 +107,12 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, Grou
     Ok((kind_map, gvr_map, gk_map, gvk_map))
 }
 
-const CACHE_TTL_SECS: u64 = 300;
+const CACHE_TTL_SECS: u64 = 30 * 60;
+pub(crate) const APPLY_SET_REUSE_CACHE_ENV: &str = "OC_DEPS_APPLY_SET_REUSE_DISCOVERY_CACHE";
+
+fn discovery_cache_age_allowed(age_secs: u64, reuse_for_apply_set: bool) -> bool {
+    reuse_for_apply_set || age_secs < CACHE_TTL_SECS
+}
 
 fn discovery_cache_path(config: &Config) -> PathBuf {
     let url = config.cluster_url.to_string();
@@ -252,11 +257,17 @@ pub async fn build_kind_lookup_cached(
     no_cache: bool,
 ) -> Result<(KindMap, GvrMap, GroupKindMap, GvkMap)> {
     let path = discovery_cache_path(config);
+    // apply-set refreshes this cache in its first child process, then marks the
+    // remaining children so they can reuse that same snapshot for the whole run.
+    let reuse_for_apply_set = std::env::var_os(APPLY_SET_REUSE_CACHE_ENV).is_some();
 
     if !no_cache
         && let Ok(metadata) = std::fs::metadata(&path)
         && let Ok(modified) = metadata.modified()
-        && modified.elapsed().unwrap_or_default().as_secs() < CACHE_TTL_SECS
+        && discovery_cache_age_allowed(
+            modified.elapsed().unwrap_or_default().as_secs(),
+            reuse_for_apply_set,
+        )
         && let Ok(data) = std::fs::read_to_string(&path)
         && let Some(result) = serde_json::from_str::<serde_json::Value>(&data)
             .ok()
@@ -322,6 +333,18 @@ pub fn resolve_kind(input: &str, kind_map: &KindMap, gvr_map: &GvrMap) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_set_cache_reuse_ignores_normal_ttl() {
+        assert!(!discovery_cache_age_allowed(CACHE_TTL_SECS, false));
+        assert!(discovery_cache_age_allowed(CACHE_TTL_SECS, true));
+    }
+
+    #[test]
+    fn normal_discovery_cache_expires_after_thirty_minutes() {
+        assert!(discovery_cache_age_allowed(CACHE_TTL_SECS - 1, false));
+        assert!(!discovery_cache_age_allowed(CACHE_TTL_SECS, false));
+    }
 
     #[test]
     fn old_cache_version_rejected() {

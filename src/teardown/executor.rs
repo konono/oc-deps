@@ -277,7 +277,7 @@ pub async fn execute_plan_with_store(
         for name in &non_critical_failures {
             eprintln!("  {}", name);
         }
-        bail!("Preflight checks have warnings. Use --force to override.");
+        eprintln!("  REVIEW resources remain preserved unless explicitly approved for DELETE.");
     }
 
     let review_count = plan
@@ -288,20 +288,9 @@ pub async fn execute_plan_with_store(
         .count();
     if review_count > 0 && !dry_run && !force {
         eprintln!(
-            "\x1b[1;33m⚠ Plan has {} REVIEW item(s) — resources with uncertain provenance:\x1b[0m",
+            "\x1b[1;33m⚠ Plan has {} REVIEW item(s) with uncertain provenance; all remain preserved.\x1b[0m",
             review_count
         );
-        for phase in &plan.phases {
-            for action in &phase.actions {
-                if let Action::Review {
-                    resource, reason, ..
-                } = action
-                {
-                    eprintln!("  {}/{}: {}", resource.kind, resource.name, reason);
-                }
-            }
-        }
-        bail!("Cannot execute with unresolved REVIEW items. Use --force to override.");
     }
 
     if dry_run {
@@ -936,14 +925,47 @@ pub async fn execute_plan_with_store(
                                         &remaining,
                                         kind_map,
                                         gk_map,
-                                        WAVE_BARRIER_TIMEOUT,
+                                        POST_RECOVERY_BARRIER_TIMEOUT,
                                         WAVE_STALL_TIMEOUT,
                                         cancel.as_ref(),
                                     )
                                     .await;
-                                if matches!(re_wait, WatchWaitResult::AllGone) {
-                                    eprintln!("  \x1b[32m✅ Barrier passed after recovery\x1b[0m");
-                                    recovery_all_gone = true;
+                                match re_wait {
+                                    WatchWaitResult::AllGone => {
+                                        eprintln!(
+                                            "  \x1b[32m✅ Barrier passed after recovery\x1b[0m"
+                                        );
+                                        recovery_all_gone = true;
+                                    }
+                                    WatchWaitResult::Recreated { .. } => {
+                                        // Resources re-created during recovery — deferred to residual
+                                    }
+                                    WatchWaitResult::Stalled {
+                                        remaining: rem,
+                                        reason,
+                                        ..
+                                    } => {
+                                        eprintln!(
+                                            "  ⚠ Post-recovery re-wait stalled: {} remaining — {}",
+                                            rem.len(),
+                                            reason
+                                        );
+                                        let summary = store.summary_for(&remaining);
+                                        eprintln!(
+                                            "    summary: gone={} deleting={} fb={} expect={} unknown={} stalled={} review={} keep={}",
+                                            summary.gone,
+                                            summary.deleting,
+                                            summary.finalizer_blocked,
+                                            summary.expecting_gone,
+                                            summary.unknown,
+                                            summary.stalled,
+                                            summary.review,
+                                            summary.keep
+                                        );
+                                    }
+                                    WatchWaitResult::Cancelled => {
+                                        eprintln!("  ⏸ Post-recovery re-wait cancelled");
+                                    }
                                 }
                             }
                         } else if !recovery_approved && !remaining.is_empty() {
@@ -952,10 +974,19 @@ pub async fn execute_plan_with_store(
                             );
                         }
 
-                        if recovery_all_gone {
-                            // Recovery succeeded — proceed like normal AllGone
-                            // (checkpoint + REVIEW check happen at end of phase loop)
-                        } else {
+                        let deferred = !recovery_all_gone
+                            && can_defer_to_residual(
+                                client, &remaining, phase, &watch_mgr, &store, journal, kind_map,
+                                gk_map,
+                            )
+                            .await;
+                        if deferred {
+                            eprintln!(
+                                "  ⚠ {} resource(s) still present; deferring to post-controller residual audit",
+                                store.summary_for(&remaining).total
+                                    - store.summary_for(&remaining).gone
+                            );
+                        } else if !recovery_all_gone {
                             // Still stalled — report and break
                             let finalizers: Vec<(ResourceId, Vec<String>)> = finalizer_details
                                 .iter()
@@ -1018,10 +1049,54 @@ pub async fn execute_plan_with_store(
                             redelete_iterations += 1;
                             if redelete_iterations > MAX_REDELETE_ITERATIONS {
                                 eprintln!(
-                                    "  ⛔ Re-delete iteration limit ({}) reached",
-                                    MAX_REDELETE_ITERATIONS
+                                    "  ⚠ Re-delete iteration limit ({}) — deferring {} recreated resource(s) to residual",
+                                    MAX_REDELETE_ITERATIONS,
+                                    current_recreated.len()
                                 );
-                                redelete_stopped = true;
+                                // Remove persistently-recreated resources from barrier targets
+                                for (res, _, _) in &current_recreated {
+                                    phase_wait_targets.retain(|t| {
+                                        !(t.group == res.group
+                                            && t.kind == res.kind
+                                            && t.namespace == res.namespace
+                                            && t.name == res.name)
+                                    });
+                                }
+                                // Re-wait on remaining (without recreated)
+                                if phase_wait_targets.is_empty()
+                                    || store.all_gone_for(&phase_wait_targets)
+                                {
+                                    break 'redelete_loop;
+                                }
+                                let final_wait = watch_mgr
+                                    .wait_for_gone_cancellable(
+                                        client,
+                                        &phase_wait_targets,
+                                        kind_map,
+                                        gk_map,
+                                        POST_RECOVERY_BARRIER_TIMEOUT,
+                                        WAVE_STALL_TIMEOUT,
+                                        cancel.as_ref(),
+                                    )
+                                    .await;
+                                if let WatchWaitResult::Stalled { remaining, .. } = &final_wait {
+                                    if can_defer_to_residual(
+                                        client, remaining, phase, &watch_mgr, &store, journal,
+                                        kind_map, gk_map,
+                                    )
+                                    .await
+                                    {
+                                        eprintln!(
+                                            "  ⚠ {} resource(s) still present; deferring to post-controller residual audit",
+                                            store.summary_for(remaining).total
+                                                - store.summary_for(remaining).gone
+                                        );
+                                    } else {
+                                        redelete_stopped = true;
+                                    }
+                                } else if !matches!(final_wait, WatchWaitResult::AllGone) {
+                                    redelete_stopped = true;
+                                }
                                 break;
                             }
 
@@ -1178,16 +1253,39 @@ pub async fn execute_plan_with_store(
                                                 &remaining,
                                                 kind_map,
                                                 gk_map,
-                                                WAVE_BARRIER_TIMEOUT,
+                                                POST_RECOVERY_BARRIER_TIMEOUT,
                                                 WAVE_STALL_TIMEOUT,
                                                 cancel.as_ref(),
                                             )
                                             .await;
-                                        if matches!(re2, WatchWaitResult::AllGone) {
-                                            recovery_ok = true;
+                                        match re2 {
+                                            WatchWaitResult::AllGone => {
+                                                recovery_ok = true;
+                                            }
+                                            WatchWaitResult::Recreated {
+                                                recreated: re_recreated,
+                                                ..
+                                            } => {
+                                                current_recreated = re_recreated;
+                                                continue 'redelete_loop;
+                                            }
+                                            _ => {}
                                         }
                                     }
                                     if !recovery_ok {
+                                        if can_defer_to_residual(
+                                            client, &remaining, phase, &watch_mgr, &store, journal,
+                                            kind_map, gk_map,
+                                        )
+                                        .await
+                                        {
+                                            eprintln!(
+                                                "  ⚠ {} resource(s) still present; deferring to post-controller residual audit",
+                                                store.summary_for(&remaining).total
+                                                    - store.summary_for(&remaining).gone
+                                            );
+                                            break 'redelete_loop;
+                                        }
                                         let bt = BarrierTimeout {
                                             phase: phase.name.clone(),
                                             remaining,
@@ -1564,7 +1662,7 @@ struct WaveResult {
     redelete_authorities: Vec<(ResourceId, String)>,
 }
 
-const MAX_REDELETE_ITERATIONS: u32 = 128;
+const MAX_REDELETE_ITERATIONS: u32 = 3;
 
 /// Result of a single re-delete attempt on a recreated resource.
 #[derive(Debug)]
@@ -1734,13 +1832,133 @@ async fn attempt_single_redelete(
 const WAVE_BARRIER_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_millis(200)
 } else {
-    Duration::from_secs(300)
+    Duration::from_secs(1200)
 };
 const WAVE_STALL_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_millis(100)
 } else {
     Duration::from_secs(120)
 };
+const POST_RECOVERY_BARRIER_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_millis(200)
+} else {
+    Duration::from_secs(900)
+};
+
+/// The controller can keep recreating its descendants until it is removed.
+/// After a bounded cleanup wait, only EXPECT descendants and roots whose
+/// original UID is gone may be left for the post-controller residual audit.
+/// A recreated explicit root also needs a durably accepted re-delete of its
+/// current UID. API uncertainty or an original root still present blocks the
+/// phase transition.
+#[allow(clippy::too_many_arguments)]
+async fn can_defer_to_residual(
+    client: &Client,
+    remaining: &[ResourceId],
+    phase: &crate::teardown::planner::PlanPhase,
+    watch_mgr: &crate::teardown::watch::WatchManager,
+    store: &Arc<crate::teardown::runtime::RuntimeStateStore>,
+    journal: Option<&JournalStore>,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+) -> bool {
+    if remaining.is_empty() {
+        return true;
+    }
+    let deleted: Vec<&ResourceId> = phase
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Delete { resource, .. } => Some(resource),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<&ResourceId> = phase
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::ExpectGone { resource, .. } => Some(resource),
+            _ => None,
+        })
+        .collect();
+    // DELETE roots: match by identity (group/kind/namespace/name) — UIDs may
+    // differ for recreated resources that were re-deleted with a new UID.
+    // The downstream root check (line ~1912) validates redelete authority.
+    // EXPECT resources: require UID match — no redelete authority exists for
+    // them, so identity-only matching could accept an unrelated resource.
+    let matches_deleted_identity = |r: &ResourceId| -> bool {
+        deleted.iter().any(|s| {
+            s.group == r.group && s.kind == r.kind && s.namespace == r.namespace && s.name == r.name
+        })
+    };
+    if remaining
+        .iter()
+        .any(|r| !matches_deleted_identity(r) && !expected.contains(&r))
+    {
+        return false;
+    }
+
+    watch_mgr
+        .reconcile(client, remaining, kind_map, gk_map)
+        .await;
+    if remaining.iter().any(|r| {
+        store.get(r).is_none_or(|entry| {
+            matches!(
+                entry.state,
+                crate::teardown::runtime::ResourceRuntimeState::Unknown { .. }
+                    | crate::teardown::runtime::ResourceRuntimeState::Failed { .. }
+            )
+        })
+    }) {
+        return false;
+    }
+
+    let redeletes = if let Some(j) = journal {
+        j.read().await.execution.re_delete_records.clone()
+    } else {
+        Vec::new()
+    };
+
+    for root in deleted {
+        let (api, _) = match resolve_api(client, root, kind_map, gk_map) {
+            Some(api) => api,
+            None => return false,
+        };
+        match api.get(&root.name).await {
+            Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                if api.list(&ListParams::default().limit(1)).await.is_err() {
+                    return false;
+                }
+            }
+            Ok(obj) => {
+                let Some(current_uid) = obj.metadata.uid.as_deref() else {
+                    return false;
+                };
+                if root.uid.as_deref() == Some(current_uid) {
+                    return false;
+                }
+                if !redeletes.iter().any(|record| {
+                    record.resource_identity.group == root.group
+                        && record.resource_identity.version == root.version
+                        && record.resource_identity.kind == root.kind
+                        && record.resource_identity.namespace == root.namespace
+                        && record.resource_identity.name == root.name
+                        && record.original_uid == root.uid.as_deref().unwrap_or("")
+                        && record.new_uid == current_uid
+                        && matches!(
+                            record.result,
+                            crate::teardown::journal::ReDeleteResult::Accepted
+                                | crate::teardown::journal::ReDeleteResult::Gone
+                        )
+                }) {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn execute_delete_waves(
@@ -2452,8 +2670,36 @@ async fn attempt_finalizer_recovery(
     use crate::teardown::journal::FinalizerRecoveryResult;
     use crate::teardown::journal::OwnerRefSnapshot;
 
-    let deleted_uids: std::collections::HashSet<String> =
-        deleted_roots.iter().filter_map(|r| r.uid.clone()).collect();
+    // A successful re-delete of a recreated explicit root is also a durable
+    // DELETE authority. The operator may have updated an existing dependent's
+    // ownerRef to that new UID before its finalizer became stuck.
+    let mut effective_deleted_roots = deleted_roots.to_vec();
+    let recorded_redeletes = journal.read().await.execution.re_delete_records.clone();
+    for record in &recorded_redeletes {
+        if !matches!(
+            record.result,
+            crate::teardown::journal::ReDeleteResult::Accepted
+                | crate::teardown::journal::ReDeleteResult::Gone
+        ) {
+            continue;
+        }
+        if let Some(original) = deleted_roots.iter().find(|root| {
+            root.group == record.resource_identity.group
+                && root.version == record.resource_identity.version
+                && root.kind == record.resource_identity.kind
+                && root.namespace == record.resource_identity.namespace
+                && root.name == record.resource_identity.name
+                && root.uid.as_deref() == Some(record.original_uid.as_str())
+        }) {
+            let mut recreated = original.clone();
+            recreated.uid = Some(record.new_uid.clone());
+            effective_deleted_roots.push(recreated);
+        }
+    }
+    let deleted_uids: std::collections::HashSet<String> = effective_deleted_roots
+        .iter()
+        .filter_map(|r| r.uid.clone())
+        .collect();
 
     let expect_resources: std::collections::HashSet<ResourceId> = phase
         .actions
@@ -2529,11 +2775,32 @@ async fn attempt_finalizer_recovery(
         let live_uid = match obj.metadata.uid.as_deref() {
             Some(uid) if uid == plan_uid => uid.to_string(),
             Some(uid) => {
-                eprintln!(
-                    "    ⚠ {}/{}: UID changed ({} → {}) — skip recovery",
-                    res.kind, res.name, plan_uid, uid
-                );
-                continue;
+                // For explicit DELETE targets that were re-deleted, accept
+                // the new UID if we have a redelete record for it.
+                if is_explicit_delete
+                    && recorded_redeletes.iter().any(|rec| {
+                        rec.resource_identity.group == res.group
+                            && rec.resource_identity.version == res.version
+                            && rec.resource_identity.kind == res.kind
+                            && rec.resource_identity.namespace == res.namespace
+                            && rec.resource_identity.name == res.name
+                            && rec.original_uid == plan_uid
+                            && rec.new_uid == uid
+                            && matches!(
+                                rec.result,
+                                crate::teardown::journal::ReDeleteResult::Accepted
+                                    | crate::teardown::journal::ReDeleteResult::Gone
+                            )
+                    })
+                {
+                    uid.to_string()
+                } else {
+                    eprintln!(
+                        "    ⚠ {}/{}: UID changed ({} → {}) — skip recovery",
+                        res.kind, res.name, plan_uid, uid
+                    );
+                    continue;
+                }
             }
             None => {
                 eprintln!(
@@ -2566,13 +2833,8 @@ async fn attempt_finalizer_recovery(
                 continue;
             }
             let oref = &owner_refs[0];
-            if !oref.controller.unwrap_or(false) {
-                eprintln!(
-                    "    ⚠ {}/{}: ownerRef is not controller — skip recovery",
-                    res.kind, res.name
-                );
-                continue;
-            }
+            // A single ownerRef is a GC dependency even when controller=false.
+            // The exact UID must still match a successfully deleted root below.
             if !deleted_uids.contains(&oref.uid) {
                 eprintln!(
                     "    ⚠ {}/{}: ownerRef UID {} not in deleted roots — skip recovery",
@@ -2586,7 +2848,7 @@ async fn attempt_finalizer_recovery(
         // Explicit DELETE: skip root check (resource IS the root)
         if is_expect {
             let oref = &owner_refs[0]; // safe: checked len==1 above
-            let root = deleted_roots
+            let root = effective_deleted_roots
                 .iter()
                 .find(|r| r.uid.as_deref() == Some(&oref.uid));
             let root_res = match root {
@@ -2622,12 +2884,28 @@ async fn attempt_finalizer_recovery(
                         }
                     }
                 }
-                Ok(_) => {
-                    eprintln!(
-                        "    ⚠ {}/{}: root {}/{} still exists — skip recovery",
-                        res.kind, res.name, root_res.kind, root_res.name
-                    );
-                    continue;
+                Ok(current_root) => {
+                    match current_root.metadata.uid.as_deref() {
+                        // The original owner is still present. A DELETE request alone
+                        // does not authorize stripping its dependent's finalizer.
+                        Some(uid) if Some(uid) == root_res.uid.as_deref() => {
+                            eprintln!(
+                                "    ⚠ {}/{}: root {}/{} still has original UID — skip recovery",
+                                res.kind, res.name, root_res.kind, root_res.name
+                            );
+                            continue;
+                        }
+                        // A different immutable UID proves the dependent's owner is
+                        // gone, even when the operator has recreated the same name.
+                        Some(_) => {}
+                        None => {
+                            eprintln!(
+                                "    ⚠ {}/{}: replacement root has no UID — skip recovery",
+                                res.kind, res.name
+                            );
+                            continue;
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!(
@@ -3093,6 +3371,7 @@ pub fn auto_cleanup_candidates(
 
     for item in &audit.planned_expect_still_present {
         if let Some(live_uid) = &item.live_uid
+            && item.resource.uid.as_ref() == Some(live_uid)
             && !PROTECTED_KINDS.contains(&item.resource.kind.as_str())
         {
             let mut rid = item.resource.clone();
@@ -3102,6 +3381,167 @@ pub fn auto_cleanup_candidates(
     }
 
     candidates
+}
+
+/// Validate saved residual decisions against a current residual audit.
+/// Returns ResourceIds with current UIDs for cleanup, or errors.
+/// Compares saved evidence signatures (labels, managers, service accounts) against
+/// current ResidualEvidence. ExplicitUnattributed → error. Basis empty/weakened → error.
+pub fn validate_saved_residual_decisions(
+    saved_decisions: &[crate::teardown::plan::SavedDecision],
+    audit: &crate::teardown::audit::ResidualAudit,
+) -> Result<Vec<ResourceId>, Vec<String>> {
+    use crate::teardown::plan::{ApprovalKind, SavedAction};
+
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut errors = Vec::new();
+
+    for decision in saved_decisions {
+        if !matches!(decision.action, SavedAction::Delete) {
+            continue;
+        }
+        if let Err(e) = decision.match_spec.validate() {
+            errors.push(format!(
+                "{}/{}: invalid match spec — {}",
+                decision.match_spec.kind, decision.match_spec.name, e
+            ));
+            continue;
+        }
+        if decision.approval == ApprovalKind::ExplicitUnattributed {
+            errors.push(format!(
+                "{}/{}: ExplicitUnattributed cannot be auto-applied for residual cleanup",
+                decision.match_spec.kind, decision.match_spec.name
+            ));
+            continue;
+        }
+
+        // Dedup by group+kind+namespace+name
+        let dedup_key = (
+            decision.match_spec.group.clone(),
+            decision.match_spec.kind.clone(),
+            decision.match_spec.namespace.clone(),
+            decision.match_spec.name.clone(),
+        );
+        if !seen.insert(dedup_key) {
+            continue;
+        }
+
+        // Match against current residual — group=None matches core only
+        let matched = audit
+            .likely_operator_residual
+            .iter()
+            .chain(audit.unattributed.iter())
+            .find(|r| decision.match_spec.matches(&r.resource));
+
+        match matched {
+            Some(residual) => {
+                if residual.confidence == crate::teardown::audit::ResidualConfidence::None {
+                    errors.push(format!(
+                        "{}/{}: current confidence is None — cannot cleanup",
+                        decision.match_spec.kind, decision.match_spec.name
+                    ));
+                    continue;
+                }
+
+                // Verify saved evidence signatures exist in current ResidualEvidence
+                if let Some(err) = check_residual_evidence_drift(
+                    &decision.basis,
+                    &residual.evidence,
+                    &decision.match_spec,
+                ) {
+                    errors.push(err);
+                    continue;
+                }
+
+                if let Some(uid) = &residual.resource.uid {
+                    let mut rid = residual.resource.clone();
+                    rid.uid = Some(uid.clone());
+                    candidates.push(rid);
+                } else {
+                    errors.push(format!(
+                        "{}/{}: no UID in current residual — cannot bind",
+                        decision.match_spec.kind, decision.match_spec.name
+                    ));
+                }
+            }
+            None => {
+                let planned_match = audit
+                    .planned_delete_still_present
+                    .iter()
+                    .chain(audit.planned_expect_still_present.iter())
+                    .find(|r| decision.match_spec.matches(&r.resource));
+                if let Some(item) = planned_match {
+                    if let Some(live_uid) = &item.live_uid {
+                        let mut rid = item.resource.clone();
+                        rid.uid = Some(live_uid.clone());
+                        candidates.push(rid);
+                    }
+                } else {
+                    errors.push(format!(
+                        "{}/{}: not found in current residual set",
+                        decision.match_spec.kind, decision.match_spec.name
+                    ));
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(candidates)
+    } else {
+        Err(errors)
+    }
+}
+
+fn check_residual_evidence_drift(
+    saved_basis: &crate::teardown::plan::DecisionBasis,
+    current: &crate::teardown::audit::ResidualEvidence,
+    spec: &crate::teardown::plan::ResourceMatch,
+) -> Option<String> {
+    use crate::teardown::plan::SavedEvidenceSignature;
+
+    // Empty basis is always blocked
+    if saved_basis.decisive_evidence.is_empty() && saved_basis.provenance.is_none() {
+        return Some(format!(
+            "{}/{}: saved residual DELETE has empty basis — cannot replay",
+            spec.kind, spec.name
+        ));
+    }
+
+    // Each saved signature must exist in current evidence
+    for sig in &saved_basis.decisive_evidence {
+        match sig {
+            SavedEvidenceSignature::Label { key, value }
+                if !current
+                    .matching_labels
+                    .iter()
+                    .any(|(k, v)| k == key && v == value) =>
+            {
+                return Some(format!(
+                    "{}/{}: saved label {}={} not in current residual evidence",
+                    spec.kind, spec.name, key, value
+                ));
+            }
+            SavedEvidenceSignature::ManagedFieldManager { manager }
+                if !current.matching_managers.iter().any(|m| m == manager) =>
+            {
+                return Some(format!(
+                    "{}/{}: saved manager {} not in current residual evidence",
+                    spec.kind, spec.name, manager
+                ));
+            }
+            SavedEvidenceSignature::ServiceAccount { .. } if !current.service_account_match => {
+                return Some(format!(
+                    "{}/{}: saved service account match not confirmed in current evidence",
+                    spec.kind, spec.name
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 #[derive(Debug)]
@@ -3275,55 +3715,16 @@ pub async fn execute_residual_cleanup_with_progress(
                 resource: (*res).clone(),
             });
         }
-        // Re-check generation per resource
-        let cur_j = journal_store.read().await;
-        let gen_per_res = audit::check_operator_generation(
-            client,
-            &cur_j.operator,
-            &cur_j.audit_context.csv_baseline,
-        )
-        .await;
-        if !matches!(gen_per_res, audit::OperatorGenerationState::Absent) {
-            result
-                .skipped
-                .push(((*res).clone(), "generation changed".to_string()));
-            break;
-        }
-
-        // Per-resource fresh audit: verify still in residual set
-        let per_res_j = journal_store.read().await;
-        match audit::run_residual_audit(client, &per_res_j).await {
-            Ok(fresh_per_res) => {
-                if !is_in_residual_audit(res, &fresh_per_res) {
-                    result
-                        .skipped
-                        .push(((*res).clone(), "no longer in residual set".to_string()));
-                    continue;
-                }
-                let per_status = audit::residual_status_from_audit(&fresh_per_res);
-                if matches!(per_status, ResidualStatus::AuditIncomplete) {
-                    result
-                        .skipped
-                        .push(((*res).clone(), "per-resource audit incomplete".to_string()));
-                    continue;
-                }
-            }
-            Err(e) => {
-                result
-                    .failed
-                    .push(((*res).clone(), format!("per-resource audit failed: {}", e)));
-                break;
-            }
-        }
-
         // Acquire gate permit FIRST — may block waiting for active permits
         let _permit = match gate.acquire().await {
             Ok(p) => p,
             Err(_) => return Err(GateClosedError.into()),
         };
 
-        // Post-permit safety rechecks: generation + fresh audit + membership
-        // Conditions could have changed during permit wait
+        // The batch started from a complete fresh audit. Under the mutation
+        // permit, recheck generation and this exact UID before recording a
+        // decision. A full cluster audit per resource is expensive and does
+        // not add authority beyond the batch audit plus exact live GET.
         {
             let post_permit_j = journal_store.read().await;
             let post_permit_gen = audit::check_operator_generation(
@@ -3340,52 +3741,40 @@ pub async fn execute_residual_cleanup_with_progress(
                 drop(_permit);
                 break;
             }
-            // Fresh audit to verify current residual membership with permit held
-            match audit::run_residual_audit(client, &post_permit_j).await {
-                Ok(post_permit_audit) => {
-                    let post_permit_status = audit::residual_status_from_audit(&post_permit_audit);
-                    if matches!(post_permit_status, ResidualStatus::AuditIncomplete) {
-                        result
-                            .skipped
-                            .push(((*res).clone(), "post-permit audit incomplete".to_string()));
-                        drop(_permit);
-                        continue;
+            let (api, _) = resolve_api(client, res, kind_map, gk_map).ok_or_else(|| {
+                anyhow::anyhow!("Cannot resolve API for {}/{}", res.kind, res.name)
+            })?;
+            match api.get(&res.name).await {
+                Ok(obj) => {
+                    let expected_uid = res.uid.as_deref().unwrap_or("");
+                    let current_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                    if expected_uid.is_empty() || current_uid.is_empty() {
+                        bail!(
+                            "Missing UID for residual {}/{} — fail-closed",
+                            res.kind,
+                            res.name
+                        );
                     }
-                    if !is_in_residual_audit(res, &post_permit_audit) {
+                    if current_uid != expected_uid {
                         result.skipped.push((
                             (*res).clone(),
-                            "no longer in residual set after permit acquisition".to_string(),
+                            format!("UID changed from {} to {}", expected_uid, current_uid),
                         ));
                         drop(_permit);
                         continue;
                     }
                 }
-                Err(e) => {
+                Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                    api.list(&ListParams::default().limit(1))
+                        .await
+                        .context("Residual GET 404 endpoint verification failed")?;
                     result
-                        .failed
-                        .push(((*res).clone(), format!("post-permit audit failed: {}", e)));
+                        .skipped
+                        .push(((*res).clone(), "already gone".to_string()));
                     drop(_permit);
-                    break;
+                    continue;
                 }
-            }
-        }
-
-        // Final generation recheck after post-permit audit, before durable decision
-        {
-            let pre_dec_j = journal_store.read().await;
-            let pre_dec_gen = audit::check_operator_generation(
-                client,
-                &pre_dec_j.operator,
-                &pre_dec_j.audit_context.csv_baseline,
-            )
-            .await;
-            if !matches!(pre_dec_gen, audit::OperatorGenerationState::Absent) {
-                result.skipped.push((
-                    (*res).clone(),
-                    "generation changed during post-permit audit".to_string(),
-                ));
-                drop(_permit);
-                break;
+                Err(e) => bail!("Cannot GET residual {}/{}: {}", res.kind, res.name, e),
             }
         }
 
@@ -3857,6 +4246,9 @@ mod tests {
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
         }
     }
 
@@ -4645,6 +5037,9 @@ mod tests {
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
         };
 
         let mut gk = std::collections::HashMap::new();
@@ -4903,6 +5298,9 @@ mod tests {
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
         };
 
         let mut gk = std::collections::HashMap::new();
@@ -5064,6 +5462,9 @@ mod tests {
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
         };
         let mut gk = std::collections::HashMap::new();
         gk.insert(
@@ -5184,6 +5585,9 @@ mod tests {
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
         };
         let mut gk = std::collections::HashMap::new();
         gk.insert(
@@ -5302,6 +5706,9 @@ mod tests {
                 blockers: vec![],
                 warnings: vec![],
                 snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+                dependency_edges: vec![],
+                operator_inventory: vec![],
+                explicit_decisions: vec![],
             },
             execution: ExecutionRecord::default(),
             last_residual_audit: None,
@@ -5542,6 +5949,249 @@ mod tests {
         assert_eq!(result.unwrap(), 0, "Root still exists must skip recovery");
         drop(client);
         spawned.abort();
+    }
+
+    #[tokio::test]
+    async fn test_recovery_redeleted_root_allows_single_noncontroller_dependent() {
+        // A dependent can be reparented to UID B after an explicit root A was
+        // deleted. B's accepted re-delete is durable authority; controller=false
+        // does not change Kubernetes GC ownership for a single ownerRef.
+        let child = make_cm_resource("child1", Some("uid-child"));
+        let root = make_cm_resource("root1", Some("uid-root-A"));
+        let phase = make_recovery_phase(&child);
+        let km = test_kind_map();
+        let gk = recovery_gk_map();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {
+                    "name": "child1", "namespace": "test-ns", "uid": "uid-child",
+                    "deletionTimestamp": "2026-01-01T00:00:00Z",
+                    "ownerReferences": [{"apiVersion": "v1", "kind": "ConfigMap",
+                        "name": "root1", "uid": "uid-root-B"}],
+                    "finalizers": ["test/fin"]
+                }
+            })));
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "root1", "namespace": "test-ns", "uid": "uid-root-C"}
+            })));
+            let (req, send) = handle.next_request().await.unwrap();
+            assert_eq!(req.method(), http::Method::PATCH);
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "child1", "namespace": "test-ns",
+                    "uid": "uid-child", "finalizers": []}
+            })));
+        });
+
+        let js = make_test_journal_store();
+        let mut identity = root.clone();
+        identity.uid = None;
+        js.update(|j| {
+            j.execution
+                .re_delete_records
+                .push(crate::teardown::journal::ReDeleteRecord {
+                    resource_identity: identity,
+                    original_uid: "uid-root-A".to_string(),
+                    new_uid: "uid-root-B".to_string(),
+                    result: crate::teardown::journal::ReDeleteResult::Accepted,
+                });
+        })
+        .await
+        .unwrap();
+        let gate = make_test_gate();
+        let client = Client::new(mock_service, "test-ns");
+        let result = attempt_finalizer_recovery(
+            &client,
+            std::slice::from_ref(&child),
+            &[root],
+            &phase,
+            &km,
+            &gk,
+            &js,
+            &gate,
+        )
+        .await;
+        assert_eq!(result.unwrap(), 1);
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_recovery_unaccepted_redelete_never_authorizes_child() {
+        let child = make_cm_resource("child1", Some("uid-child"));
+        let root = make_cm_resource("root1", Some("uid-root-A"));
+        let phase = make_recovery_phase(&child);
+        let km = test_kind_map();
+        let gk = recovery_gk_map();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {
+                    "name": "child1", "namespace": "test-ns", "uid": "uid-child",
+                    "deletionTimestamp": "2026-01-01T00:00:00Z",
+                    "ownerReferences": [{"apiVersion": "v1", "kind": "ConfigMap",
+                        "name": "root1", "uid": "uid-root-B"}],
+                    "finalizers": ["test/fin"]
+                }
+            })));
+            assert!(
+                handle.next_request().await.is_none(),
+                "no root GET or PATCH"
+            );
+        });
+
+        let js = make_test_journal_store();
+        let mut identity = root.clone();
+        identity.uid = None;
+        js.update(|j| {
+            j.execution
+                .re_delete_records
+                .push(crate::teardown::journal::ReDeleteRecord {
+                    resource_identity: identity,
+                    original_uid: "uid-root-A".to_string(),
+                    new_uid: "uid-root-B".to_string(),
+                    result: crate::teardown::journal::ReDeleteResult::Authorized,
+                });
+        })
+        .await
+        .unwrap();
+        let gate = make_test_gate();
+        let client = Client::new(mock_service, "test-ns");
+        let result = attempt_finalizer_recovery(
+            &client,
+            std::slice::from_ref(&child),
+            &[root],
+            &phase,
+            &km,
+            &gk,
+            &js,
+            &gate,
+        )
+        .await;
+        assert_eq!(result.unwrap(), 0);
+        drop(client);
+        spawned.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_defer_requires_accepted_redelete_of_current_root_uid() {
+        let child = make_cm_resource("child1", Some("uid-child"));
+        let root = make_cm_resource("root1", Some("uid-root-A"));
+        let phase = PlanPhase {
+            name: "operand cleanup".to_string(),
+            description: String::new(),
+            actions: vec![
+                Action::Delete {
+                    resource: root.clone(),
+                    reason: String::new(),
+                },
+                Action::ExpectGone {
+                    resource: child.clone(),
+                    reason: String::new(),
+                },
+            ],
+            barrier: None,
+        };
+        let notifier = Arc::new(EventNotifier::new());
+        let store = Arc::new(crate::teardown::runtime::RuntimeStateStore::new(
+            notifier,
+            Duration::from_secs(120),
+        ));
+        store.register(
+            &child,
+            crate::teardown::runtime::ResourceRuntimeState::ExpectingGone,
+            0,
+        );
+        let watch_mgr = crate::teardown::watch::WatchManager::new(store.clone());
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "child1", "namespace": "test-ns", "uid": "uid-child"}
+            })));
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "root1", "namespace": "test-ns", "uid": "uid-root-B"}
+            })));
+        });
+        let js = make_test_journal_store();
+        let mut identity = root.clone();
+        identity.uid = None;
+        js.update(|j| {
+            j.execution
+                .re_delete_records
+                .push(crate::teardown::journal::ReDeleteRecord {
+                    resource_identity: identity,
+                    original_uid: "uid-root-A".to_string(),
+                    new_uid: "uid-root-B".to_string(),
+                    result: crate::teardown::journal::ReDeleteResult::Accepted,
+                });
+        })
+        .await
+        .unwrap();
+        let client = Client::new(mock_service, "test-ns");
+        assert!(
+            can_defer_to_residual(
+                &client,
+                std::slice::from_ref(&child),
+                &phase,
+                &watch_mgr,
+                &store,
+                Some(&js),
+                &test_kind_map(),
+                &recovery_gk_map(),
+            )
+            .await
+        );
+        spawned.await.unwrap();
+
+        // The original root still exists: do not advance to controller removal,
+        // even though an accepted re-delete record for another UID exists.
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "child1", "namespace": "test-ns", "uid": "uid-child"}
+            })));
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "root1", "namespace": "test-ns", "uid": "uid-root-A"}
+            })));
+        });
+        let client = Client::new(mock_service, "test-ns");
+        assert!(
+            !can_defer_to_residual(
+                &client,
+                std::slice::from_ref(&child),
+                &phase,
+                &watch_mgr,
+                &store,
+                Some(&js),
+                &test_kind_map(),
+                &recovery_gk_map(),
+            )
+            .await
+        );
+        spawned.await.unwrap();
     }
 
     #[tokio::test]
@@ -7211,5 +7861,500 @@ mod tests {
 
         drop(client);
         spawned.abort();
+    }
+
+    // ── Saved residual decision validation tests ──
+
+    #[test]
+    fn recreated_expect_does_not_inherit_auto_cleanup_authority() {
+        use crate::teardown::audit::{AuditCoverage, RecreationState, ResidualAudit, ResidualItem};
+
+        let resource = make_cm_resource("child1", Some("uid-A"));
+        let mut audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![ResidualItem {
+                resource: resource.clone(),
+                planned_action: "EXPECT".to_string(),
+                live_uid: Some("uid-B".to_string()),
+                recreation: RecreationState::Recreated,
+            }],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 1,
+                succeeded_probes: 1,
+            },
+            scan_errors: vec![],
+        };
+        assert!(auto_cleanup_candidates(&audit, &[]).is_empty());
+
+        audit.planned_expect_still_present[0].live_uid = resource.uid.clone();
+        audit.planned_expect_still_present[0].recreation = RecreationState::SameResource;
+        assert_eq!(auto_cleanup_candidates(&audit, &[]).len(), 1);
+    }
+
+    #[test]
+    fn residual_explicit_unattributed_blocked() {
+        use crate::teardown::audit::*;
+        use crate::teardown::plan::*;
+
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![AttributedResidual {
+                resource: crate::kube::resource::ResourceId {
+                    group: "test.io".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "w1".to_string(),
+                    uid: Some("uid-w1".to_string()),
+                },
+                evidence: ResidualEvidence {
+                    owner_ref_match: false,
+                    matching_labels: vec![],
+                    matching_managers: vec![],
+                    namespace_affinity: true,
+                    service_account_match: false,
+                },
+                confidence: ResidualConfidence::Medium,
+            }],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 0,
+                succeeded_probes: 0,
+            },
+            scan_errors: vec![],
+        };
+
+        let decisions = vec![SavedDecision {
+            match_spec: ResourceMatch {
+                group: Some("test.io".to_string()),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            action: SavedAction::Delete,
+            approval: ApprovalKind::ExplicitUnattributed,
+            basis: DecisionBasis {
+                provenance: Some("Unknown".to_string()),
+                review_category: None,
+                discovery_source: None,
+                decisive_evidence: vec![],
+            },
+        }];
+
+        let result = validate_saved_residual_decisions(&decisions, &audit);
+        assert!(result.is_err(), "ExplicitUnattributed must be blocked");
+    }
+
+    #[test]
+    fn residual_not_in_current_set_blocked() {
+        use crate::teardown::audit::*;
+        use crate::teardown::plan::*;
+
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 0,
+                succeeded_probes: 0,
+            },
+            scan_errors: vec![],
+        };
+
+        let decisions = vec![SavedDecision {
+            match_spec: ResourceMatch {
+                group: Some("test.io".to_string()),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            action: SavedAction::Delete,
+            approval: ApprovalKind::Explicit,
+            basis: DecisionBasis {
+                provenance: Some("Managed".to_string()),
+                review_category: None,
+                discovery_source: None,
+                decisive_evidence: vec![],
+            },
+        }];
+
+        let result = validate_saved_residual_decisions(&decisions, &audit);
+        assert!(
+            result.is_err(),
+            "Not in current residual set must be blocked"
+        );
+    }
+
+    #[test]
+    fn residual_valid_match_returns_uid() {
+        use crate::teardown::audit::*;
+        use crate::teardown::plan::*;
+
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![AttributedResidual {
+                resource: crate::kube::resource::ResourceId {
+                    group: "test.io".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "w1".to_string(),
+                    uid: Some("uid-current".to_string()),
+                },
+                evidence: ResidualEvidence {
+                    owner_ref_match: true,
+                    matching_labels: vec![],
+                    matching_managers: vec![],
+                    namespace_affinity: true,
+                    service_account_match: false,
+                },
+                confidence: ResidualConfidence::High,
+            }],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 1,
+                succeeded_probes: 1,
+            },
+            scan_errors: vec![],
+        };
+
+        let decisions = vec![SavedDecision {
+            match_spec: ResourceMatch {
+                group: Some("test.io".to_string()),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            action: SavedAction::Delete,
+            approval: ApprovalKind::Explicit,
+            basis: DecisionBasis {
+                provenance: Some("Managed".to_string()),
+                review_category: None,
+                discovery_source: None,
+                decisive_evidence: vec![],
+            },
+        }];
+
+        let result = validate_saved_residual_decisions(&decisions, &audit);
+        assert!(result.is_ok(), "Valid match must succeed");
+        let candidates = result.unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].uid.as_deref(), Some("uid-current"));
+    }
+
+    #[test]
+    fn residual_empty_basis_blocked() {
+        use crate::teardown::audit::*;
+        use crate::teardown::plan::*;
+
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![AttributedResidual {
+                resource: crate::kube::resource::ResourceId {
+                    group: "test.io".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "w1".to_string(),
+                    uid: Some("uid-1".to_string()),
+                },
+                evidence: ResidualEvidence {
+                    owner_ref_match: false,
+                    matching_labels: vec![],
+                    matching_managers: vec![],
+                    namespace_affinity: true,
+                    service_account_match: false,
+                },
+                confidence: ResidualConfidence::Medium,
+            }],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 1,
+                succeeded_probes: 1,
+            },
+            scan_errors: vec![],
+        };
+
+        let decisions = vec![SavedDecision {
+            match_spec: ResourceMatch {
+                group: Some("test.io".to_string()),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            action: SavedAction::Delete,
+            approval: ApprovalKind::Explicit,
+            basis: DecisionBasis {
+                provenance: None,
+                review_category: None,
+                discovery_source: None,
+                decisive_evidence: vec![],
+            },
+        }];
+
+        let result = validate_saved_residual_decisions(&decisions, &audit);
+        assert!(result.is_err(), "Empty basis must block residual cleanup");
+    }
+
+    #[test]
+    fn residual_missing_label_in_evidence_blocked() {
+        use crate::teardown::audit::*;
+        use crate::teardown::plan::*;
+
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![AttributedResidual {
+                resource: crate::kube::resource::ResourceId {
+                    group: "test.io".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "w1".to_string(),
+                    uid: Some("uid-1".to_string()),
+                },
+                evidence: ResidualEvidence {
+                    owner_ref_match: false,
+                    matching_labels: vec![("app".to_string(), "other".to_string())],
+                    matching_managers: vec![],
+                    namespace_affinity: true,
+                    service_account_match: false,
+                },
+                confidence: ResidualConfidence::High,
+            }],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 1,
+                succeeded_probes: 1,
+            },
+            scan_errors: vec![],
+        };
+
+        let decisions = vec![SavedDecision {
+            match_spec: ResourceMatch {
+                group: Some("test.io".to_string()),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            action: SavedAction::Delete,
+            approval: ApprovalKind::Explicit,
+            basis: DecisionBasis {
+                provenance: Some("LikelyManaged".to_string()),
+                review_category: None,
+                discovery_source: None,
+                decisive_evidence: vec![SavedEvidenceSignature::Label {
+                    key: "app".to_string(),
+                    value: "expected".to_string(),
+                }],
+            },
+        }];
+
+        let result = validate_saved_residual_decisions(&decisions, &audit);
+        assert!(
+            result.is_err(),
+            "Missing label in current evidence must block"
+        );
+    }
+
+    #[test]
+    fn residual_dedup_by_group_kind_ns_name() {
+        use crate::teardown::audit::*;
+        use crate::teardown::plan::*;
+
+        let audit = ResidualAudit {
+            planned_delete_still_present: vec![],
+            planned_expect_still_present: vec![],
+            expected_preserved: vec![],
+            likely_operator_residual: vec![AttributedResidual {
+                resource: crate::kube::resource::ResourceId {
+                    group: "test.io".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "w1".to_string(),
+                    uid: Some("uid-1".to_string()),
+                },
+                evidence: ResidualEvidence {
+                    owner_ref_match: true,
+                    matching_labels: vec![],
+                    matching_managers: vec![],
+                    namespace_affinity: true,
+                    service_account_match: false,
+                },
+                confidence: ResidualConfidence::High,
+            }],
+            unattributed: vec![],
+            coverage: AuditCoverage {
+                requested_probes: 1,
+                succeeded_probes: 1,
+            },
+            scan_errors: vec![],
+        };
+
+        let same_decision = SavedDecision {
+            match_spec: ResourceMatch {
+                group: Some("test.io".to_string()),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            action: SavedAction::Delete,
+            approval: ApprovalKind::Explicit,
+            basis: DecisionBasis {
+                provenance: Some("Managed".to_string()),
+                review_category: None,
+                discovery_source: None,
+                decisive_evidence: vec![],
+            },
+        };
+
+        let decisions = vec![same_decision.clone(), same_decision];
+        let result = validate_saved_residual_decisions(&decisions, &audit);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1, "Duplicate must be deduped");
+    }
+
+    #[tokio::test]
+    async fn test_recovery_redelete_wrong_original_uid_rejects() {
+        // A redelete record exists but with a different original_uid than plan_uid.
+        // Recovery must NOT accept it — prevents cross-generation authority leak.
+        let root = make_cm_resource("root1", Some("uid-root-A"));
+        let phase = PlanPhase {
+            name: "operand cleanup".to_string(),
+            description: String::new(),
+            actions: vec![Action::Delete {
+                resource: root.clone(),
+                reason: String::new(),
+            }],
+            barrier: None,
+        };
+        let km = test_kind_map();
+        let gk = recovery_gk_map();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // GET root → live UID is "uid-root-C" (recreated)
+            let (_req, send) = handle.next_request().await.unwrap();
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {
+                    "name": "root1", "namespace": "test-ns",
+                    "uid": "uid-root-C",
+                    "deletionTimestamp": "2026-01-01T00:00:00Z",
+                    "finalizers": ["test/fin"]
+                }
+            })));
+        });
+
+        let js = make_test_journal_store();
+        // Record has original_uid = "uid-root-B" (different generation), not "uid-root-A"
+        let mut identity = root.clone();
+        identity.uid = None;
+        js.update(|j| {
+            j.execution
+                .re_delete_records
+                .push(crate::teardown::journal::ReDeleteRecord {
+                    resource_identity: identity,
+                    original_uid: "uid-root-B".to_string(),
+                    new_uid: "uid-root-C".to_string(),
+                    result: crate::teardown::journal::ReDeleteResult::Accepted,
+                });
+        })
+        .await
+        .unwrap();
+
+        let gate = make_test_gate();
+        let client = Client::new(mock_service, "test-ns");
+        let result = attempt_finalizer_recovery(
+            &client,
+            std::slice::from_ref(&root),
+            std::slice::from_ref(&root),
+            &phase,
+            &km,
+            &gk,
+            &js,
+            &gate,
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "Redelete record with wrong original_uid must not authorize recovery"
+        );
+        drop(client);
+        spawned.abort();
+    }
+
+    #[tokio::test]
+    async fn test_defer_rejects_expect_with_different_uid() {
+        // EXPECT resource with same name but different UID must NOT pass
+        // can_defer_to_residual — only full ResourceId match is accepted.
+        let child_plan = make_cm_resource("child1", Some("uid-child-A"));
+        let child_different_uid = make_cm_resource("child1", Some("uid-child-B"));
+        let root = make_cm_resource("root1", Some("uid-root"));
+        let phase = PlanPhase {
+            name: "operand cleanup".to_string(),
+            description: String::new(),
+            actions: vec![
+                Action::Delete {
+                    resource: root.clone(),
+                    reason: String::new(),
+                },
+                Action::ExpectGone {
+                    resource: child_plan.clone(),
+                    reason: String::new(),
+                },
+            ],
+            barrier: None,
+        };
+
+        let notifier = Arc::new(EventNotifier::new());
+        let store = Arc::new(crate::teardown::runtime::RuntimeStateStore::new(
+            notifier,
+            Duration::from_secs(120),
+        ));
+        store.register(
+            &child_different_uid,
+            crate::teardown::runtime::ResourceRuntimeState::ExpectingGone,
+            0,
+        );
+        let watch_mgr = crate::teardown::watch::WatchManager::new(store.clone());
+
+        // No API calls needed — should reject before reaching root check
+        let (mock_service, _handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let js = make_test_journal_store();
+        let result = can_defer_to_residual(
+            &client,
+            std::slice::from_ref(&child_different_uid),
+            &phase,
+            &watch_mgr,
+            &store,
+            Some(&js),
+            &test_kind_map(),
+            &recovery_gk_map(),
+        )
+        .await;
+
+        assert!(!result, "EXPECT with different UID must not be deferred");
     }
 }

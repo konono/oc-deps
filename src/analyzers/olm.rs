@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use anyhow::Result;
 use comfy_table::Table;
@@ -274,17 +275,45 @@ fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
 }
 
 const LIST_PAGE_SIZE: u32 = 500;
+const LIST_MAX_ATTEMPTS: usize = 3;
+const CANONICAL_CSV_LABEL_SELECTOR: &str = "!olm.copiedFrom";
 
-async fn list_all_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
+fn is_transient_list_error(error: &kube::Error) -> bool {
+    match error {
+        kube::Error::Api(response) => {
+            response.code == 408 || response.code == 429 || response.code >= 500
+        }
+        _ => true,
+    }
+}
+
+async fn list_all_paginated(
+    api: &Api<DynamicObject>,
+    label_selector: Option<&str>,
+) -> Result<Vec<DynamicObject>> {
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
 
     loop {
         let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
+        if let Some(selector) = label_selector {
+            lp = lp.labels(selector);
+        }
         if let Some(token) = &continue_token {
             lp = lp.continue_token(token);
         }
-        let list = api.list(&lp).await?;
+
+        let mut attempt = 1;
+        let list = loop {
+            match api.list(&lp).await {
+                Ok(list) => break list,
+                Err(error) if attempt < LIST_MAX_ATTEMPTS && is_transient_list_error(&error) => {
+                    tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+                    attempt += 1;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
         let metadata = list.metadata;
         all_items.extend(list.items);
 
@@ -315,8 +344,13 @@ pub async fn discover_operators(
     let sub_ar = ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
     let sub_api: Api<DynamicObject> = Api::all_with(client.clone(), &sub_ar);
 
-    let (csv_result, sub_result) =
-        tokio::join!(list_all_paginated(&csv_api), list_all_paginated(&sub_api),);
+    // AllNamespaces operators create copied CSVs in watched namespaces. They carry
+    // olm.copiedFrom and duplicate the canonical CSV's large install strategy.
+    // Exclude them server-side so discovery transfers only real installations.
+    let (csv_result, sub_result) = tokio::join!(
+        list_all_paginated(&csv_api, Some(CANONICAL_CSV_LABEL_SELECTOR)),
+        list_all_paginated(&sub_api, None),
+    );
     let csv_items = csv_result?;
     let sub_items = sub_result?;
 
@@ -988,5 +1022,30 @@ pub fn print_crd_origin(chain: &CrdOriginChain, kind: &str, output: &OutputForma
                 serde_json::to_string_pretty(&output).unwrap_or_default()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn api_error(code: u16) -> kube::Error {
+        kube::Error::Api(
+            kube::core::Status {
+                code,
+                ..Default::default()
+            }
+            .boxed(),
+        )
+    }
+
+    #[test]
+    fn retries_only_transient_api_statuses() {
+        assert!(is_transient_list_error(&api_error(408)));
+        assert!(is_transient_list_error(&api_error(429)));
+        assert!(is_transient_list_error(&api_error(500)));
+        assert!(!is_transient_list_error(&api_error(400)));
+        assert!(!is_transient_list_error(&api_error(403)));
+        assert!(!is_transient_list_error(&api_error(404)));
     }
 }

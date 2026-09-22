@@ -474,7 +474,9 @@ fn is_meaningful_transition(
         (s, ResourceRuntimeState::FinalizerBlocked { .. })
             if !matches!(
                 s,
-                ResourceRuntimeState::FinalizerBlocked { .. } | ResourceRuntimeState::Deleting
+                ResourceRuntimeState::FinalizerBlocked { .. }
+                    | ResourceRuntimeState::Deleting
+                    | ResourceRuntimeState::Stalled
             ) =>
         {
             true
@@ -1291,6 +1293,30 @@ mod tests {
             b_uid,
             Some("uid-B"),
             "action 1 should get uid-B regardless of completion order"
+        );
+    }
+
+    #[test]
+    fn stalled_to_finalizer_blocked_is_not_meaningful() {
+        assert!(
+            !is_meaningful_transition(
+                &ResourceRuntimeState::Stalled,
+                &ResourceRuntimeState::FinalizerBlocked { count: 1 },
+                false,
+            ),
+            "Stalled→FinalizerBlocked must NOT reset progress (prevents flip-flop stall evasion)"
+        );
+    }
+
+    #[test]
+    fn expecting_gone_to_finalizer_blocked_is_meaningful() {
+        assert!(
+            is_meaningful_transition(
+                &ResourceRuntimeState::ExpectingGone,
+                &ResourceRuntimeState::FinalizerBlocked { count: 1 },
+                false,
+            ),
+            "ExpectingGone→FinalizerBlocked IS meaningful (first observation of deletion)"
         );
     }
 }
