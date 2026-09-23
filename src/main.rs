@@ -16,7 +16,9 @@ use crate::analyzers::olm::{
     compute_operator_dependencies, discover_operators, find_crd_origin, print_crd_origin,
     print_operators,
 };
-use crate::analyzers::selector::{find_network_paths, get_service_selected_pods};
+use crate::analyzers::selector::{
+    build_network_inventory, find_network_paths, get_service_selected_pods,
+};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
@@ -213,9 +215,7 @@ async fn main() -> Result<()> {
         bail!("--filter requires --map (without subcommands)");
     }
     if args.network && (args.map || args.up_only || args.command.is_some()) {
-        bail!(
-            "--network requires a single Pod resource (incompatible with --map, --up-only, or subcommands)"
-        );
+        bail!("--network is incompatible with --map, --up-only, and subcommands");
     }
     let map_filters = parse_filters(&args.filter)?;
 
@@ -3728,7 +3728,7 @@ async fn main() -> Result<()> {
 
     let t0 = Instant::now();
     eprintln!("🔍 Discovering API resources...");
-    let (kind_map, gvr_map, _gk_map, _) =
+    let (kind_map, gvr_map, gk_map, _) =
         build_kind_lookup_cached(&client, &config, args.no_cache).await?;
     eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -3872,15 +3872,14 @@ async fn main() -> Result<()> {
                 _ => println!("\n📎 No Pods found under {}/{}", kind, name),
             }
         } else {
+            let inventory = build_network_inventory(&client, &namespace, &kind_map, &gk_map).await;
+
             let mut all_paths = Vec::new();
-            let mut net_warnings = Vec::new();
             for (pod_name, pod_labels) in &pod_labels_list {
-                let net_result =
-                    find_network_paths(&client, pod_labels, &namespace, &kind_map).await;
-                for path in &net_result.paths {
-                    all_paths.push((pod_name.clone(), path.clone()));
+                let paths = find_network_paths(pod_labels, &inventory);
+                for path in paths {
+                    all_paths.push((pod_name.clone(), path));
                 }
-                net_warnings.extend(net_result.warnings);
             }
 
             match args.output {
@@ -3992,9 +3991,9 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            if !net_warnings.is_empty() {
-                format_scan_warnings(&net_warnings, args.verbose);
-                scan_warnings.extend(net_warnings);
+            if !inventory.warnings.is_empty() {
+                format_scan_warnings(&inventory.warnings, args.verbose);
+                scan_warnings.extend(inventory.warnings);
             }
         }
     }

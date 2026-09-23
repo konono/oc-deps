@@ -87,7 +87,7 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
 | `-v, --verbose` | Show detailed scan warnings and diagnostics |
 | `--strict` | Exit with code 2 if any API types were skipped during scan. Results are output/saved before exit |
-| `--network` | Show network paths (Service/Ingress/Route) for Pod resources |
+| `--network` | Show network paths (Service/Ingress/Route) for Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan (skipped by default) |
 | `--no-cache` | Skip API discovery cache |

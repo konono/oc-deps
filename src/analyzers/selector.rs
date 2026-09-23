@@ -6,7 +6,7 @@ use kube::{
     core::GroupVersion,
 };
 
-use crate::kube::discovery::{KindInfo, KindMap};
+use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::ScanWarning;
 
 pub async fn get_service_selected_pods(
@@ -96,7 +96,7 @@ pub struct NetworkService {
 pub struct NetworkIngress {
     pub kind: String,
     pub name: String,
-    pub backend_services: Vec<String>,
+    pub backend_service: String,
     pub host: Option<String>,
     pub path: Option<String>,
     pub tls: Option<String>,
@@ -108,8 +108,9 @@ pub struct NetworkPath {
     pub ingresses: Vec<NetworkIngress>,
 }
 
-pub struct NetworkLookupResult {
-    pub paths: Vec<NetworkPath>,
+pub struct NetworkInventory {
+    pub services: Vec<NetworkService>,
+    pub ingresses: Vec<NetworkIngress>,
     pub warnings: Vec<ScanWarning>,
 }
 
@@ -209,79 +210,131 @@ async fn list_services(
     }
 }
 
-fn extract_ingress_backends(data: &serde_json::Value) -> Vec<String> {
-    let mut backends = Vec::new();
-    if let Some(spec) = data.get("spec") {
-        if let Some(default_backend) = spec
-            .get("defaultBackend")
-            .and_then(|b| b.get("service"))
-            .and_then(|s| s.get("name"))
-            .and_then(|n| n.as_str())
-        {
-            backends.push(default_backend.to_string());
-        }
-        if let Some(rules) = spec.get("rules").and_then(|r| r.as_array()) {
-            for rule in rules {
-                if let Some(paths) = rule
-                    .get("http")
-                    .and_then(|h| h.get("paths"))
-                    .and_then(|p| p.as_array())
-                {
-                    for path in paths {
-                        if let Some(svc_name) = path
-                            .get("backend")
-                            .and_then(|b| b.get("service"))
-                            .and_then(|s| s.get("name"))
-                            .and_then(|n| n.as_str())
-                            && !backends.contains(&svc_name.to_string())
-                        {
-                            backends.push(svc_name.to_string());
-                        }
+fn extract_ingress_refs(ingress_name: &str, data: &serde_json::Value) -> Vec<NetworkIngress> {
+    let mut refs = Vec::new();
+    let Some(spec) = data.get("spec") else {
+        return refs;
+    };
+    let tls_hosts: std::collections::HashSet<String> = spec
+        .get("tls")
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .flat_map(|t| {
+                    t.get("hosts")
+                        .and_then(|h| h.as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|h| h.as_str().map(String::from))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(svc) = spec
+        .get("defaultBackend")
+        .and_then(|b| b.get("service"))
+        .and_then(|s| s.get("name"))
+        .and_then(|n| n.as_str())
+    {
+        refs.push(NetworkIngress {
+            kind: "Ingress".into(),
+            name: ingress_name.into(),
+            backend_service: svc.into(),
+            host: None,
+            path: None,
+            tls: None,
+        });
+    }
+    if let Some(rules) = spec.get("rules").and_then(|r| r.as_array()) {
+        for rule in rules {
+            let host = rule.get("host").and_then(|h| h.as_str()).map(String::from);
+            let tls = host
+                .as_ref()
+                .filter(|h| tls_hosts.contains(h.as_str()))
+                .map(|_| "TLS".to_string());
+            if let Some(paths) = rule
+                .get("http")
+                .and_then(|h| h.get("paths"))
+                .and_then(|p| p.as_array())
+            {
+                for p in paths {
+                    if let Some(svc) = p
+                        .get("backend")
+                        .and_then(|b| b.get("service"))
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str())
+                    {
+                        let path = p.get("path").and_then(|v| v.as_str()).map(String::from);
+                        refs.push(NetworkIngress {
+                            kind: "Ingress".into(),
+                            name: ingress_name.into(),
+                            backend_service: svc.into(),
+                            host: host.clone(),
+                            path,
+                            tls: tls.clone(),
+                        });
                     }
                 }
             }
         }
     }
-    backends
+    refs
 }
 
-fn extract_route_backends(data: &serde_json::Value) -> Vec<String> {
-    let mut backends = Vec::new();
-    if let Some(spec) = data.get("spec") {
-        if let Some(to_name) = spec
-            .get("to")
-            .and_then(|t| t.get("name"))
-            .and_then(|n| n.as_str())
-        {
-            backends.push(to_name.to_string());
-        }
-        if let Some(alts) = spec.get("alternateBackends").and_then(|a| a.as_array()) {
-            for alt in alts {
-                if let Some(name) = alt.get("name").and_then(|n| n.as_str())
-                    && !backends.contains(&name.to_string())
-                {
-                    backends.push(name.to_string());
-                }
+fn extract_route_refs(route_name: &str, data: &serde_json::Value) -> Vec<NetworkIngress> {
+    let mut refs = Vec::new();
+    let Some(spec) = data.get("spec") else {
+        return refs;
+    };
+    let host = spec.get("host").and_then(|h| h.as_str()).map(String::from);
+    let path = spec.get("path").and_then(|p| p.as_str()).map(String::from);
+    let tls = spec
+        .get("tls")
+        .and_then(|t| t.get("termination"))
+        .and_then(|t| t.as_str())
+        .map(String::from);
+
+    if let Some(to_name) = spec
+        .get("to")
+        .and_then(|t| t.get("name"))
+        .and_then(|n| n.as_str())
+    {
+        refs.push(NetworkIngress {
+            kind: "Route".into(),
+            name: route_name.into(),
+            backend_service: to_name.into(),
+            host: host.clone(),
+            path: path.clone(),
+            tls: tls.clone(),
+        });
+    }
+    if let Some(alts) = spec.get("alternateBackends").and_then(|a| a.as_array()) {
+        for alt in alts {
+            if let Some(name) = alt.get("name").and_then(|n| n.as_str()) {
+                refs.push(NetworkIngress {
+                    kind: "Route".into(),
+                    name: route_name.into(),
+                    backend_service: name.into(),
+                    host: host.clone(),
+                    path: path.clone(),
+                    tls: tls.clone(),
+                });
             }
         }
     }
-    backends
+    refs
 }
 
 async fn list_ingresses(
     client: &Client,
     namespace: &str,
-    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
 ) -> (Vec<NetworkIngress>, Vec<ScanWarning>) {
     let mut result = Vec::new();
     let mut warnings = Vec::new();
 
-    let ingress_info: Option<&KindInfo> = kind_map
-        .iter()
-        .find(|(k, info)| *k == "Ingress" && info.group == "networking.k8s.io")
-        .map(|(_, info)| info)
-        .or_else(|| kind_map.get("Ingress"));
-    if let Some(info) = ingress_info {
+    if let Some(info) = gk_map.get(&("networking.k8s.io".to_string(), "Ingress".to_string())) {
         let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("Ingress");
         let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
         let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
@@ -289,30 +342,7 @@ async fn list_ingresses(
             Ok(list) => {
                 for obj in list.items {
                     if let Some(name) = obj.metadata.name {
-                        let backends = extract_ingress_backends(&obj.data);
-                        if !backends.is_empty() {
-                            let spec = obj.data.get("spec");
-                            let host = spec
-                                .and_then(|s| s.get("rules"))
-                                .and_then(|r| r.as_array())
-                                .and_then(|a| a.first())
-                                .and_then(|r| r.get("host"))
-                                .and_then(|h| h.as_str())
-                                .map(String::from);
-                            let tls = spec
-                                .and_then(|s| s.get("tls"))
-                                .and_then(|t| t.as_array())
-                                .filter(|a| !a.is_empty())
-                                .map(|_| "TLS".to_string());
-                            result.push(NetworkIngress {
-                                kind: "Ingress".into(),
-                                name,
-                                backend_services: backends,
-                                host,
-                                path: None,
-                                tls,
-                            });
-                        }
+                        result.extend(extract_ingress_refs(&name, &obj.data));
                     }
                 }
             }
@@ -327,7 +357,7 @@ async fn list_ingresses(
         }
     }
 
-    if let Some(info) = kind_map.get("Route") {
+    if let Some(info) = gk_map.get(&("route.openshift.io".to_string(), "Route".to_string())) {
         let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("Route");
         let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
         let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
@@ -335,31 +365,7 @@ async fn list_ingresses(
             Ok(list) => {
                 for obj in list.items {
                     if let Some(name) = obj.metadata.name {
-                        let backends = extract_route_backends(&obj.data);
-                        if !backends.is_empty() {
-                            let spec = obj.data.get("spec");
-                            let host = spec
-                                .and_then(|s| s.get("host"))
-                                .and_then(|h| h.as_str())
-                                .map(String::from);
-                            let path = spec
-                                .and_then(|s| s.get("path"))
-                                .and_then(|p| p.as_str())
-                                .map(String::from);
-                            let tls = spec
-                                .and_then(|s| s.get("tls"))
-                                .and_then(|t| t.get("termination"))
-                                .and_then(|t| t.as_str())
-                                .map(String::from);
-                            result.push(NetworkIngress {
-                                kind: "Route".into(),
-                                name,
-                                backend_services: backends,
-                                host,
-                                path,
-                                tls,
-                            });
-                        }
+                        result.extend(extract_route_refs(&name, &obj.data));
                     }
                 }
             }
@@ -377,24 +383,39 @@ async fn list_ingresses(
     (result, warnings)
 }
 
-pub async fn find_network_paths(
+pub async fn build_network_inventory(
     client: &Client,
-    pod_labels: &std::collections::HashMap<String, String>,
     namespace: &str,
     kind_map: &KindMap,
-) -> NetworkLookupResult {
-    let mut all_warnings = Vec::new();
+    gk_map: &GroupKindMap,
+) -> NetworkInventory {
+    let mut warnings = Vec::new();
 
     let services = match list_services(client, namespace, kind_map).await {
         Ok(svcs) => svcs,
         Err(w) => {
-            all_warnings.push(w);
+            warnings.push(w);
             vec![]
         }
     };
 
-    let matching_services: Vec<NetworkService> = services
-        .into_iter()
+    let (ingresses, ing_warnings) = list_ingresses(client, namespace, gk_map).await;
+    warnings.extend(ing_warnings);
+
+    NetworkInventory {
+        services,
+        ingresses,
+        warnings,
+    }
+}
+
+pub fn find_network_paths(
+    pod_labels: &std::collections::HashMap<String, String>,
+    inventory: &NetworkInventory,
+) -> Vec<NetworkPath> {
+    let matching_services: Vec<&NetworkService> = inventory
+        .services
+        .iter()
         .filter(|svc| {
             svc.selector
                 .iter()
@@ -402,28 +423,21 @@ pub async fn find_network_paths(
         })
         .collect();
 
-    let (ingresses, ing_warnings) = list_ingresses(client, namespace, kind_map).await;
-    all_warnings.extend(ing_warnings);
-
-    let paths = matching_services
+    matching_services
         .into_iter()
         .map(|svc| {
-            let matching_ingresses: Vec<NetworkIngress> = ingresses
+            let matching_ingresses: Vec<NetworkIngress> = inventory
+                .ingresses
                 .iter()
-                .filter(|ing| ing.backend_services.contains(&svc.name))
+                .filter(|ing| ing.backend_service == svc.name)
                 .cloned()
                 .collect();
             NetworkPath {
-                service: svc,
+                service: svc.clone(),
                 ingresses: matching_ingresses,
             }
         })
-        .collect();
-
-    NetworkLookupResult {
-        paths,
-        warnings: all_warnings,
-    }
+        .collect()
 }
 
 #[cfg(test)]
@@ -431,96 +445,165 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_ingress_backends_rules_and_default() {
+    fn ingress_per_backend_with_host_path_tls() {
         let data = serde_json::json!({
             "spec": {
                 "defaultBackend": {
-                    "service": { "name": "default-svc", "port": { "number": 80 } }
+                    "service": { "name": "svc-default", "port": { "number": 80 } }
                 },
-                "rules": [{
-                    "http": {
-                        "paths": [{
-                            "backend": {
-                                "service": { "name": "path-svc", "port": { "number": 8080 } }
-                            },
-                            "path": "/api"
-                        }]
+                "tls": [{ "hosts": ["second.example.test"] }],
+                "rules": [
+                    {
+                        "host": "first.example.test",
+                        "http": {
+                            "paths": [{
+                                "backend": { "service": { "name": "svc-first" } },
+                                "path": "/first"
+                            }]
+                        }
+                    },
+                    {
+                        "host": "second.example.test",
+                        "http": {
+                            "paths": [{
+                                "backend": { "service": { "name": "svc-second" } },
+                                "path": "/second"
+                            }]
+                        }
                     }
-                }]
+                ]
             }
         });
-        let backends = extract_ingress_backends(&data);
-        assert_eq!(backends, vec!["default-svc", "path-svc"]);
+        let refs = extract_ingress_refs("my-ingress", &data);
+        assert_eq!(refs.len(), 3);
+
+        let default = &refs[0];
+        assert_eq!(default.backend_service, "svc-default");
+        assert!(default.host.is_none());
+        assert!(default.path.is_none());
+        assert!(default.tls.is_none());
+
+        let first = &refs[1];
+        assert_eq!(first.backend_service, "svc-first");
+        assert_eq!(first.host.as_deref(), Some("first.example.test"));
+        assert_eq!(first.path.as_deref(), Some("/first"));
+        assert!(first.tls.is_none(), "first host not in TLS hosts");
+
+        let second = &refs[2];
+        assert_eq!(second.backend_service, "svc-second");
+        assert_eq!(second.host.as_deref(), Some("second.example.test"));
+        assert_eq!(second.path.as_deref(), Some("/second"));
+        assert_eq!(
+            second.tls.as_deref(),
+            Some("TLS"),
+            "second host in TLS hosts"
+        );
     }
 
     #[test]
-    fn extract_ingress_backends_no_default() {
+    fn route_primary_and_alternate() {
         let data = serde_json::json!({
             "spec": {
-                "rules": [{
-                    "http": {
-                        "paths": [{
-                            "backend": {
-                                "service": { "name": "only-svc" }
-                            }
-                        }]
-                    }
-                }]
-            }
-        });
-        let backends = extract_ingress_backends(&data);
-        assert_eq!(backends, vec!["only-svc"]);
-    }
-
-    #[test]
-    fn extract_route_backends_with_alternates() {
-        let data = serde_json::json!({
-            "spec": {
+                "host": "app.example.com",
+                "path": "/api",
                 "to": { "kind": "Service", "name": "main-svc" },
+                "tls": { "termination": "edge" },
                 "alternateBackends": [
                     { "kind": "Service", "name": "canary-svc" }
                 ]
             }
         });
-        let backends = extract_route_backends(&data);
-        assert_eq!(backends, vec!["main-svc", "canary-svc"]);
+        let refs = extract_route_refs("my-route", &data);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].backend_service, "main-svc");
+        assert_eq!(refs[0].host.as_deref(), Some("app.example.com"));
+        assert_eq!(refs[0].path.as_deref(), Some("/api"));
+        assert_eq!(refs[0].tls.as_deref(), Some("edge"));
+        assert_eq!(refs[1].backend_service, "canary-svc");
     }
 
     #[test]
-    fn extract_route_backends_primary_only() {
+    fn ingress_no_default_backend() {
         let data = serde_json::json!({
             "spec": {
-                "to": { "kind": "Service", "name": "primary-svc" }
-            }
-        });
-        let backends = extract_route_backends(&data);
-        assert_eq!(backends, vec!["primary-svc"]);
-    }
-
-    #[test]
-    fn extract_ingress_dedup_backends() {
-        let data = serde_json::json!({
-            "spec": {
-                "defaultBackend": {
-                    "service": { "name": "svc-a" }
-                },
                 "rules": [{
+                    "host": "only.example.test",
                     "http": {
                         "paths": [{
-                            "backend": { "service": { "name": "svc-a" } }
+                            "backend": { "service": { "name": "only-svc" } },
+                            "path": "/"
                         }]
                     }
                 }]
             }
         });
-        let backends = extract_ingress_backends(&data);
-        assert_eq!(backends, vec!["svc-a"]);
+        let refs = extract_ingress_refs("test", &data);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].backend_service, "only-svc");
+        assert_eq!(refs[0].host.as_deref(), Some("only.example.test"));
     }
 
     #[test]
-    fn empty_spec_returns_no_backends() {
+    fn empty_spec_returns_no_refs() {
         let data = serde_json::json!({});
-        assert!(extract_ingress_backends(&data).is_empty());
-        assert!(extract_route_backends(&data).is_empty());
+        assert!(extract_ingress_refs("test", &data).is_empty());
+        assert!(extract_route_refs("test", &data).is_empty());
+    }
+
+    #[test]
+    fn find_paths_matches_service_selector() {
+        let inventory = NetworkInventory {
+            services: vec![
+                NetworkService {
+                    name: "svc-a".into(),
+                    selector: [("app".into(), "x".into())].into_iter().collect(),
+                    cluster_ip: "10.0.0.1".into(),
+                    svc_type: "ClusterIP".into(),
+                    ports: vec![],
+                },
+                NetworkService {
+                    name: "svc-b".into(),
+                    selector: [("app".into(), "y".into())].into_iter().collect(),
+                    cluster_ip: "10.0.0.2".into(),
+                    svc_type: "ClusterIP".into(),
+                    ports: vec![],
+                },
+            ],
+            ingresses: vec![NetworkIngress {
+                kind: "Route".into(),
+                name: "route-a".into(),
+                backend_service: "svc-a".into(),
+                host: Some("a.example.com".into()),
+                path: None,
+                tls: None,
+            }],
+            warnings: vec![],
+        };
+        let labels: std::collections::HashMap<String, String> =
+            [("app".into(), "x".into())].into_iter().collect();
+        let paths = find_network_paths(&labels, &inventory);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].service.name, "svc-a");
+        assert_eq!(paths[0].ingresses.len(), 1);
+        assert_eq!(paths[0].ingresses[0].name, "route-a");
+    }
+
+    #[test]
+    fn find_paths_no_match() {
+        let inventory = NetworkInventory {
+            services: vec![NetworkService {
+                name: "svc-a".into(),
+                selector: [("app".into(), "x".into())].into_iter().collect(),
+                cluster_ip: "10.0.0.1".into(),
+                svc_type: "ClusterIP".into(),
+                ports: vec![],
+            }],
+            ingresses: vec![],
+            warnings: vec![],
+        };
+        let labels: std::collections::HashMap<String, String> =
+            [("app".into(), "z".into())].into_iter().collect();
+        let paths = find_network_paths(&labels, &inventory);
+        assert!(paths.is_empty());
     }
 }

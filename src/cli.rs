@@ -70,7 +70,7 @@ pub struct Args {
     #[arg(long)]
     pub annotations: bool,
 
-    /// Show network paths (Service/Ingress/Route) for Pod resources
+    /// Show network paths (Service/Ingress/Route) for Pod/Deployment/ReplicaSet/StatefulSet/DaemonSet
     #[arg(long)]
     pub network: bool,
 
