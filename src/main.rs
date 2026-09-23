@@ -16,7 +16,9 @@ use crate::analyzers::olm::{
     compute_operator_dependencies, discover_operators, find_crd_origin, print_crd_origin,
     print_operators,
 };
-use crate::analyzers::selector::get_service_selected_pods;
+use crate::analyzers::selector::{
+    build_network_inventory, find_network_paths, get_service_selected_pods,
+};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
@@ -27,7 +29,9 @@ use crate::kube::discovery::{
 };
 use crate::kube::resource::format_scan_warnings;
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
-use crate::kube::snapshot::{build_snapshot, save_snapshot};
+use crate::kube::snapshot::{
+    build_snapshot, diff_snapshots, load_snapshot, print_diff_table, print_diff_tree, save_snapshot,
+};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{TreeDisplayOpts, count_nodes, print_chain_tree, print_tree};
@@ -169,6 +173,29 @@ impl ApplySetApprovalScope {
     }
 }
 
+fn find_descendant_pods(
+    root_uid: &str,
+    index: &crate::kube::resource::NamespaceIndex,
+) -> Vec<(String, std::collections::HashMap<String, String>)> {
+    let mut pods = Vec::new();
+    let mut stack = vec![root_uid.to_string()];
+    let mut visited = std::collections::HashSet::new();
+    while let Some(uid) = stack.pop() {
+        if !visited.insert(uid.clone()) {
+            continue;
+        }
+        if let Some(info) = index.by_uid.get(&uid)
+            && info.kind == "Pod"
+        {
+            pods.push((info.name.clone(), info.labels.clone()));
+        }
+        if let Some(children) = index.children_of.get(&uid) {
+            stack.extend(children.iter().cloned());
+        }
+    }
+    pods
+}
+
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &TreeDisplayOpts) {
     match output {
         OutputFormat::Tree => {
@@ -187,7 +214,32 @@ async fn main() -> Result<()> {
     if !args.filter.is_empty() && (!args.map || args.command.is_some()) {
         bail!("--filter requires --map (without subcommands)");
     }
+    if args.network && (args.map || args.up_only || args.command.is_some()) {
+        bail!("--network is incompatible with --map, --up-only, and subcommands");
+    }
     let map_filters = parse_filters(&args.filter)?;
+
+    if let Some(Command::Diff {
+        before,
+        after,
+        format,
+    }) = &args.command
+    {
+        let before_snap = load_snapshot(before)?;
+        let after_snap = load_snapshot(after)?;
+        let result = diff_snapshots(&before_snap, &after_snap)?;
+        match format {
+            OutputFormat::Tree => print_diff_tree(&result),
+            OutputFormat::Table => print_diff_table(&result),
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_default()
+                );
+            }
+        }
+        return Ok(());
+    }
 
     let (config, client) = load_config_and_client().await?;
 
@@ -3550,6 +3602,7 @@ async fn main() -> Result<()> {
                 print_operators(&operators, &deps, &output);
                 return Ok(());
             }
+            Command::Diff { .. } => unreachable!("handled before client init"),
         }
     }
 
@@ -3675,7 +3728,7 @@ async fn main() -> Result<()> {
 
     let t0 = Instant::now();
     eprintln!("🔍 Discovering API resources...");
-    let (kind_map, gvr_map, _gk_map, _) =
+    let (kind_map, gvr_map, gk_map, _) =
         build_kind_lookup_cached(&client, &config, args.no_cache).await?;
     eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -3690,6 +3743,20 @@ async fn main() -> Result<()> {
     };
 
     let kind = resolve_kind(&kind_input, &kind_map, &gvr_map)?;
+
+    const NETWORK_SUPPORTED_KINDS: &[&str] = &[
+        "Pod",
+        "Deployment",
+        "ReplicaSet",
+        "StatefulSet",
+        "DaemonSet",
+    ];
+    if args.network && !NETWORK_SUPPORTED_KINDS.iter().any(|k| *k == kind) {
+        bail!(
+            "--network requires Pod, Deployment, ReplicaSet, StatefulSet, or DaemonSet, got {}",
+            kind
+        );
+    }
 
     if args.crd_origin {
         eprint!("🔍 Tracing CRD origin...");
@@ -3723,7 +3790,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (mut index, scan_warnings) = scan_namespace(
+    let (mut index, mut scan_warnings) = scan_namespace(
         &client,
         &namespace,
         &kind_map,
@@ -3750,36 +3817,28 @@ async fn main() -> Result<()> {
 
     resolve_missing_parents(&mut index, &target_uid, &client, &namespace, &kind_map).await;
 
-    if args.down_only {
+    let tree = if args.down_only {
         let mut visited = HashSet::new();
-        match build_child_tree(
+        build_child_tree(
             &target_uid,
             &index,
             0,
             args.depth,
             &mut visited,
             &target_uid,
-        ) {
-            Some(tree) => display_tree(&tree, &args.output, &namespace, &tree_opts),
-            None => println!("No resources found."),
-        }
+        )
     } else {
-        match build_full_tree(&target_uid, &index, args.depth) {
-            Some(tree) => display_tree(&tree, &args.output, &namespace, &tree_opts),
-            None => println!("No resources found."),
-        }
-    }
+        build_full_tree(&target_uid, &index, args.depth)
+    };
+
+    let mut extra_json = serde_json::Map::new();
 
     if kind == "Service" {
         let pods = get_service_selected_pods(&client, &name, &namespace, &kind_map).await;
         if !pods.is_empty() {
             match args.output {
                 OutputFormat::Json => {
-                    let output = serde_json::json!({ "selectorPods": pods });
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&output).unwrap_or_default()
-                    );
+                    extra_json.insert("selectorPods".into(), serde_json::json!(pods));
                 }
                 _ => {
                     println!("\n📎 Service selector matches:");
@@ -3789,6 +3848,177 @@ async fn main() -> Result<()> {
                 }
             }
         }
+    }
+
+    if args.network {
+        let pod_labels_list = if kind == "Pod" {
+            vec![(
+                name.clone(),
+                index
+                    .by_uid
+                    .get(&target_uid)
+                    .map(|info| info.labels.clone())
+                    .unwrap_or_default(),
+            )]
+        } else {
+            find_descendant_pods(&target_uid, &index)
+        };
+
+        if pod_labels_list.is_empty() {
+            match args.output {
+                OutputFormat::Json => {
+                    extra_json.insert("networkPaths".into(), serde_json::json!([]));
+                }
+                _ => println!("\n📎 No Pods found under {}/{}", kind, name),
+            }
+        } else {
+            let inventory = build_network_inventory(&client, &namespace, &kind_map, &gk_map).await;
+
+            let mut all_paths = Vec::new();
+            for (pod_name, pod_labels) in &pod_labels_list {
+                let paths = find_network_paths(pod_labels, &inventory);
+                for path in paths {
+                    all_paths.push((pod_name.clone(), path));
+                }
+            }
+
+            match args.output {
+                OutputFormat::Json => {
+                    let json_paths: Vec<_> = all_paths
+                        .iter()
+                        .map(|(pod_name, p)| {
+                            let ports: Vec<_> = p
+                                .service
+                                .ports
+                                .iter()
+                                .map(|sp| {
+                                    serde_json::json!({
+                                        "port": sp.port,
+                                        "targetPort": sp.target_port,
+                                        "protocol": sp.protocol,
+                                    })
+                                })
+                                .collect();
+                            let ingresses: Vec<_> = p
+                                .ingresses
+                                .iter()
+                                .map(|i| {
+                                    let mut obj = serde_json::json!({
+                                        "kind": i.kind,
+                                        "name": i.name,
+                                    });
+                                    if let Some(h) = &i.host {
+                                        obj["host"] = serde_json::json!(h);
+                                    }
+                                    if let Some(pa) = &i.path {
+                                        obj["path"] = serde_json::json!(pa);
+                                    }
+                                    if let Some(t) = &i.tls {
+                                        obj["tls"] = serde_json::json!(t);
+                                    }
+                                    obj
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "pod": pod_name,
+                                "service": p.service.name,
+                                "serviceType": p.service.svc_type,
+                                "clusterIP": p.service.cluster_ip,
+                                "ports": ports,
+                                "selector": p.service.selector,
+                                "ingresses": ingresses,
+                            })
+                        })
+                        .collect();
+                    extra_json.insert("networkPaths".into(), serde_json::json!(json_paths));
+                }
+                _ => {
+                    if all_paths.is_empty() {
+                        println!("\n📎 No Services select Pods under {}/{}", kind, name);
+                    } else {
+                        println!("\n📎 Network paths for {}/{}:\n", kind, name);
+                        let mut seen_svcs = std::collections::HashSet::new();
+                        for (_, path) in &all_paths {
+                            if !seen_svcs.insert(path.service.name.clone()) {
+                                continue;
+                            }
+                            let svc = &path.service;
+                            println!("  \x1b[1mService/{}\x1b[0m", svc.name);
+                            println!("    Type:      {}", svc.svc_type);
+                            println!("    ClusterIP: {}", svc.cluster_ip);
+                            for sp in &svc.ports {
+                                println!(
+                                    "    Port:      {}/{} → {}",
+                                    sp.port, sp.protocol, sp.target_port
+                                );
+                            }
+                            let sel = svc
+                                .selector
+                                .iter()
+                                .map(|(k, v)| format!("{}={}", k, v))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            println!("    Selector:  {}", sel);
+                            let pod_names: Vec<_> = all_paths
+                                .iter()
+                                .filter(|(_, p)| p.service.name == svc.name)
+                                .map(|(pn, _)| format!("Pod/{}", pn))
+                                .collect::<std::collections::LinkedList<_>>()
+                                .into_iter()
+                                .collect::<std::collections::BTreeSet<_>>()
+                                .into_iter()
+                                .collect();
+                            println!("    Pods:      {}", pod_names.join(", "));
+
+                            for ing in &path.ingresses {
+                                println!();
+                                println!(
+                                    "    \x1b[1m{}/{}\x1b[0m → Service/{}",
+                                    ing.kind, ing.name, svc.name
+                                );
+                                if let Some(host) = &ing.host {
+                                    println!("      Host: {}", host);
+                                }
+                                if let Some(p) = &ing.path {
+                                    println!("      Path: {}", p);
+                                }
+                                if let Some(tls) = &ing.tls {
+                                    println!("      TLS:  {}", tls);
+                                }
+                            }
+                            println!();
+                        }
+                    }
+                }
+            }
+            if !inventory.warnings.is_empty() {
+                format_scan_warnings(&inventory.warnings, args.verbose);
+                scan_warnings.extend(inventory.warnings);
+            }
+        }
+    }
+
+    match tree {
+        Some(t) => {
+            if matches!(args.output, OutputFormat::Json) && !extra_json.is_empty() {
+                let target = format!("{}/{}", kind, name);
+                let mut output = serde_json::json!({
+                    "namespace": namespace,
+                    "target": target,
+                    "tree": tree_to_json(&t, args.annotations),
+                });
+                for (k, v) in extra_json {
+                    output[k] = v;
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).unwrap_or_default()
+                );
+            } else {
+                display_tree(&t, &args.output, &namespace, &tree_opts);
+            }
+        }
+        None => println!("No resources found."),
     }
 
     if args.strict && !scan_warnings.is_empty() {

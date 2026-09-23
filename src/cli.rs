@@ -70,6 +70,10 @@ pub struct Args {
     #[arg(long)]
     pub annotations: bool,
 
+    /// Show network paths (Service/Ingress/Route) for Pod/Deployment/ReplicaSet/StatefulSet/DaemonSet
+    #[arg(long)]
+    pub network: bool,
+
     /// Filter --map results by root resource. Applies to root nodes only.
     /// Repeatable (AND). Requires --map.
     /// Examples: --filter kind=Deployment --filter label=app=myapp
@@ -100,6 +104,21 @@ pub enum Command {
         /// Skip discovery cache (force fresh API discovery)
         #[arg(long)]
         no_cache: bool,
+    },
+
+    /// Compare two snapshot files (offline, no cluster connection required)
+    Diff {
+        /// Path to the "before" snapshot JSON
+        #[arg(value_name = "BEFORE")]
+        before: String,
+
+        /// Path to the "after" snapshot JSON
+        #[arg(value_name = "AFTER")]
+        after: String,
+
+        /// Output format: tree (default), json, table
+        #[arg(long, value_enum, default_value = "tree")]
+        format: OutputFormat,
     },
 
     /// Build and export the evidence graph for a namespace

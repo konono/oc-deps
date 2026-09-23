@@ -87,6 +87,7 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
 | `-v, --verbose` | Show detailed scan warnings and diagnostics |
 | `--strict` | Exit with code 2 if any API types were skipped during scan. Results are output/saved before exit |
+| `--network` | Show network paths (Service/Ingress/Route) for Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan (skipped by default) |
 | `--no-cache` | Skip API discovery cache |
@@ -188,6 +189,18 @@ oc-deps teardown apply rhods-operator --force       # suppress advisory warnings
 oc-deps snapshot -n <namespace> -o snapshot.json
 oc-deps graph -n <namespace> -o evidence-graph.json
 ```
+
+### Snapshot diff
+
+Compare two snapshots offline (no cluster connection required):
+
+```bash
+oc-deps diff before.json after.json                 # tree output (default)
+oc-deps diff before.json after.json --format table   # table output
+oc-deps diff before.json after.json --format json    # JSON output
+```
+
+Resources are matched by logical identity (group/kind/namespace/name). UID changes are detected as Recreated. Volatile annotations (`last-applied-configuration`, etc.) are excluded from change detection.
 
 ### Safety tiers
 

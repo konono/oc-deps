@@ -236,6 +236,8 @@ pub struct SpecRefEntry {
     pub field_path: String,
 }
 
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResourceEntry {
     pub id: ResourceId,
@@ -244,10 +246,18 @@ pub struct ResourceEntry {
     pub labels: HashMap<String, String>,
     pub annotations: HashMap<String, String>,
     pub raw_spec: Option<serde_json::Value>,
+    #[serde(default)]
+    pub data_keys: Option<Vec<String>>,
+    #[serde(default)]
+    pub data_hash: Option<String>,
+    #[serde(default)]
+    pub secret_value_hashes: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterSnapshot {
+    #[serde(default)]
+    pub schema_version: Option<u32>,
     pub resources: HashMap<String, ResourceEntry>,
     #[serde(
         default,
@@ -781,6 +791,7 @@ mod tests {
     #[test]
     fn snapshot_serialize_roundtrip() {
         let snap = ClusterSnapshot {
+            schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
             resources: HashMap::new(),
             scan_warnings: vec![
                 ScanWarning::Forbidden {
