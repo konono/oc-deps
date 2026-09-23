@@ -17,7 +17,7 @@ use crate::kube::resource::*;
 
 const MAX_RETRIES: usize = 2;
 
-fn resolve_name_matches(
+pub(crate) fn resolve_name_matches(
     spec_strs: &[(String, String)],
     self_name: &str,
     by_name: &HashMap<String, Vec<String>>,
