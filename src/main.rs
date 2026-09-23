@@ -23,6 +23,7 @@ use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_name
 use crate::kube::discovery::{
     APPLY_SET_REUSE_CACHE_ENV, build_kind_lookup_cached, load_config_and_client, resolve_kind,
 };
+use crate::kube::resource::format_scan_warnings;
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
 use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
@@ -3548,7 +3549,7 @@ async fn main() -> Result<()> {
         let (kind_map, _, _gk_map, _) =
             build_kind_lookup_cached(&client, &config, args.no_cache).await?;
         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
-        let mut index = scan_namespace(
+        let (mut index, scan_warnings) = scan_namespace(
             &client,
             &namespace,
             &kind_map,
@@ -3574,6 +3575,8 @@ async fn main() -> Result<()> {
             }
             eprintln!(" done");
         }
+
+        format_scan_warnings(&scan_warnings, args.verbose);
 
         let trees = build_namespace_map(&index, args.depth);
 
@@ -3617,6 +3620,9 @@ async fn main() -> Result<()> {
                     serde_json::to_string_pretty(&output).unwrap_or_default()
                 );
             }
+        }
+        if args.strict && !scan_warnings.is_empty() {
+            std::process::exit(2);
         }
         return Ok(());
     }
@@ -3680,7 +3686,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut index = scan_namespace(
+    let (mut index, scan_warnings) = scan_namespace(
         &client,
         &namespace,
         &kind_map,
@@ -3688,6 +3694,8 @@ async fn main() -> Result<()> {
         !args.no_refs,
     )
     .await?;
+
+    format_scan_warnings(&scan_warnings, args.verbose);
 
     let target_uid = match index.by_kind_name.get(&(kind.to_lowercase(), name.clone())) {
         Some(uid) => uid.clone(),
@@ -3739,6 +3747,9 @@ async fn main() -> Result<()> {
         }
     }
 
+    if args.strict && !scan_warnings.is_empty() {
+        std::process::exit(2);
+    }
     Ok(())
 }
 

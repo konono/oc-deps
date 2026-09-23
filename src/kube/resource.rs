@@ -1,6 +1,116 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
+
+// ──────────────────────────────────────────────────────────────
+//  Scan warning types
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub enum ScanWarning {
+    Forbidden { gvr: String, status: u16 },
+    Timeout { gvr: String },
+    RateLimited { gvr: String },
+    ServerError { gvr: String, status: u16, message: String },
+    Other { gvr: String, message: String },
+}
+
+impl ScanWarning {
+    pub fn gvr(&self) -> &str {
+        match self {
+            ScanWarning::Forbidden { gvr, .. } => gvr,
+            ScanWarning::Timeout { gvr, .. } => gvr,
+            ScanWarning::RateLimited { gvr, .. } => gvr,
+            ScanWarning::ServerError { gvr, .. } => gvr,
+            ScanWarning::Other { gvr, .. } => gvr,
+        }
+    }
+
+    pub fn from_kube_error(err: &kube::Error, group: &str, version: &str, plural: &str) -> Self {
+        let gvr = if group.is_empty() {
+            format!("{}/{}", version, plural)
+        } else {
+            format!("{}/{}/{}", group, version, plural)
+        };
+        match err {
+            kube::Error::Api(resp) => match resp.code {
+                401 | 403 => ScanWarning::Forbidden { gvr, status: resp.code },
+                408 => ScanWarning::Timeout { gvr },
+                429 => ScanWarning::RateLimited { gvr },
+                500..=599 => ScanWarning::ServerError {
+                    gvr,
+                    status: resp.code,
+                    message: resp.message.clone(),
+                },
+                _ => ScanWarning::Other {
+                    gvr,
+                    message: resp.message.clone(),
+                },
+            },
+            _ => {
+                let msg = err.to_string();
+                if msg.contains("timed out") || msg.contains("timeout") {
+                    ScanWarning::Timeout { gvr }
+                } else {
+                    ScanWarning::Other { gvr, message: msg }
+                }
+            }
+        }
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            ScanWarning::Timeout { .. }
+                | ScanWarning::RateLimited { .. }
+                | ScanWarning::ServerError { .. }
+        )
+    }
+}
+
+impl fmt::Display for ScanWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScanWarning::Forbidden { gvr, status } => {
+                write!(f, "{} ({} Forbidden)", gvr, status)
+            }
+            ScanWarning::Timeout { gvr } => write!(f, "{} (timeout)", gvr),
+            ScanWarning::RateLimited { gvr } => write!(f, "{} (429 Too Many Requests)", gvr),
+            ScanWarning::ServerError { gvr, status, .. } => {
+                write!(f, "{} ({} Server Error)", gvr, status)
+            }
+            ScanWarning::Other { gvr, message } => write!(f, "{} ({})", gvr, message),
+        }
+    }
+}
+
+pub fn format_scan_warnings(warnings: &[ScanWarning], verbose: bool) {
+    if warnings.is_empty() {
+        return;
+    }
+    eprintln!(
+        "\n⚠ {} API type{} skipped during scan:",
+        warnings.len(),
+        if warnings.len() == 1 { "" } else { "s" }
+    );
+    for w in warnings {
+        if verbose {
+            match w {
+                ScanWarning::ServerError { gvr, status, message } => {
+                    eprintln!("  - {} ({}: {})", gvr, status, message);
+                }
+                ScanWarning::Other { gvr, message } => {
+                    eprintln!("  - {} ({})", gvr, message);
+                }
+                _ => eprintln!("  - {}", w),
+            }
+        } else {
+            eprintln!("  - {}", w);
+        }
+    }
+    eprintln!("  Results may be incomplete.");
+}
 
 // ──────────────────────────────────────────────────────────────
 //  Snapshot types — serializable, designed for persistence

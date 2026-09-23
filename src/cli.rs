@@ -54,6 +54,14 @@ pub struct Args {
     #[arg(long)]
     pub no_cache: bool,
 
+    /// Show detailed scan warnings and diagnostics
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+
+    /// Exit with code 2 if any API types were skipped during scan
+    #[arg(long)]
+    pub strict: bool,
+
     /// Target resource: kind/name or name (with -k). --map 使用時は省略可
     #[arg(value_name = "RESOURCE")]
     pub resource: Option<String>,
