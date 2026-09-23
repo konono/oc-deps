@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use futures::stream::StreamExt;
 use kube::{
     Client,
@@ -12,12 +12,72 @@ use kube::{
     core::GroupVersion,
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::analyzers::spec_ref::extract_well_known_refs;
 use crate::kube::discovery::KindMap;
 use crate::kube::resource::*;
 
 const MAX_RETRIES: usize = 2;
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+type DataFields = (
+    Option<Vec<String>>,
+    Option<String>,
+    Option<HashMap<String, String>>,
+);
+
+fn extract_data_fields(kind: &str, data: &serde_json::Value) -> DataFields {
+    match kind {
+        "ConfigMap" => {
+            let mut all_keys = Vec::new();
+            let mut canonical = serde_json::Map::new();
+            if let Some(d) = data.get("data").and_then(|d| d.as_object()) {
+                for (k, v) in d {
+                    all_keys.push(k.clone());
+                    canonical.insert(k.clone(), v.clone());
+                }
+            }
+            if let Some(bd) = data.get("binaryData").and_then(|d| d.as_object()) {
+                for (k, v) in bd {
+                    all_keys.push(k.clone());
+                    canonical.insert(format!("binaryData:{}", k), v.clone());
+                }
+            }
+            all_keys.sort();
+            let hash = if !canonical.is_empty() {
+                let json = serde_json::to_string(&serde_json::Value::Object(canonical))
+                    .unwrap_or_default();
+                Some(sha256_hex(json.as_bytes()))
+            } else {
+                None
+            };
+            (Some(all_keys), hash, None)
+        }
+        "Secret" => {
+            if let Some(d) = data.get("data").and_then(|d| d.as_object()) {
+                let mut keys: Vec<String> = d.keys().cloned().collect();
+                keys.sort();
+                let hashes: HashMap<String, String> = d
+                    .iter()
+                    .map(|(k, v)| {
+                        let val = v.as_str().unwrap_or("");
+                        (k.clone(), sha256_hex(val.as_bytes()))
+                    })
+                    .collect();
+                (Some(keys), None, Some(hashes))
+            } else {
+                (Some(vec![]), None, Some(HashMap::new()))
+            }
+        }
+        _ => (None, None, None),
+    }
+}
 
 pub async fn build_snapshot(
     client: &Client,
@@ -99,13 +159,20 @@ pub async fn build_snapshot(
 
                                 let labels =
                                     metadata.labels.unwrap_or_default().into_iter().collect();
-                                let annotations = metadata
+                                let annotations: HashMap<String, String> = metadata
                                     .annotations
                                     .unwrap_or_default()
                                     .into_iter()
+                                    .filter(|(k, _)| {
+                                        !(kind == "Secret"
+                                            && k == "kubectl.kubernetes.io/last-applied-configuration")
+                                    })
                                     .collect();
 
                                 let raw_spec = data.get("spec").cloned();
+
+                                let (data_keys, data_hash, secret_value_hashes) =
+                                    extract_data_fields(&kind, &data);
 
                                 let entry = ResourceEntry {
                                     id: ResourceId {
@@ -121,6 +188,9 @@ pub async fn build_snapshot(
                                     labels,
                                     annotations,
                                     raw_spec,
+                                    data_keys,
+                                    data_hash,
+                                    secret_value_hashes,
                                 };
 
                                 Some((uid, entry))
@@ -185,6 +255,7 @@ pub async fn build_snapshot(
     };
 
     let snapshot = ClusterSnapshot {
+        schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
         resources,
         scan_warnings: warnings,
         cluster_url: config.cluster_url.to_string(),
@@ -277,6 +348,7 @@ pub struct DiffSummary {
 
 const VOLATILE_ANNOTATION_KEYS: &[&str] = &[
     "kubectl.kubernetes.io/last-applied-configuration",
+    "control-plane.alpha.kubernetes.io/leader",
     "deployment.kubernetes.io/desired-replicas",
     "deployment.kubernetes.io/max-replicas",
 ];
@@ -354,34 +426,107 @@ fn diff_annotations(
     changes
 }
 
+fn owner_ref_key(r: &OwnerRefEntry) -> String {
+    format!(
+        "{}|{}|{}|{}|{}",
+        r.api_version, r.kind, r.name, r.uid, r.controller
+    )
+}
+
 fn diff_owner_refs(before: &[OwnerRefEntry], after: &[OwnerRefEntry]) -> Vec<String> {
-    let b_set: std::collections::HashSet<String> = before
-        .iter()
-        .map(|r| format!("{}/{}", r.kind, r.name))
-        .collect();
-    let a_set: std::collections::HashSet<String> = after
-        .iter()
-        .map(|r| format!("{}/{}", r.kind, r.name))
-        .collect();
+    let b_set: HashSet<String> = before.iter().map(owner_ref_key).collect();
+    let a_set: HashSet<String> = after.iter().map(owner_ref_key).collect();
     if b_set == a_set {
         return vec![];
     }
     vec!["ownerRefs changed".to_string()]
 }
 
-pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> DiffResult {
+fn diff_data_fields(before: &ResourceEntry, after: &ResourceEntry) -> Vec<String> {
+    let mut changes = Vec::new();
+
+    match (&before.data_keys, &after.data_keys) {
+        (Some(bk), Some(ak)) if bk != ak => {
+            changes.push(format!("data keys: {:?} → {:?}", bk, ak));
+        }
+        _ => {}
+    }
+
+    match (&before.data_hash, &after.data_hash) {
+        (Some(bh), Some(ah)) if bh != ah => {
+            changes.push("data content changed".to_string());
+        }
+        _ => {}
+    }
+
+    if let (Some(bh), Some(ah)) = (&before.secret_value_hashes, &after.secret_value_hashes) {
+        for k in ah.keys() {
+            if !bh.contains_key(k) {
+                changes.push(format!("secret key added: {}", k));
+            }
+        }
+        for k in bh.keys() {
+            if !ah.contains_key(k) {
+                changes.push(format!("secret key removed: {}", k));
+            }
+        }
+        for (k, av) in ah {
+            if let Some(bv) = bh.get(k)
+                && bv != av
+            {
+                changes.push(format!("secret key value changed: {}", k));
+            }
+        }
+    }
+
+    changes
+}
+
+pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Result<DiffResult> {
+    let max_known_version = SNAPSHOT_SCHEMA_VERSION;
+    for (label, snap) in [("before", before), ("after", after)] {
+        if let Some(v) = snap.schema_version
+            && v > max_known_version
+        {
+            bail!(
+                "Unsupported snapshot schema version {} in {} snapshot (max supported: {})",
+                v,
+                label,
+                max_known_version
+            );
+        }
+    }
+
     let mut scope_warnings = Vec::new();
+
+    let bv = before.schema_version;
+    let av = after.schema_version;
+    if bv != av {
+        scope_warnings.push(format!(
+            "Schema version mismatch: before={}, after={}. ConfigMap/Secret data comparison may be incomplete",
+            bv.map_or("legacy".into(), |v| v.to_string()),
+            av.map_or("legacy".into(), |v| v.to_string()),
+        ));
+    }
+    let has_old_schema = bv.is_none()
+        || av.is_none()
+        || bv < Some(SNAPSHOT_SCHEMA_VERSION)
+        || av < Some(SNAPSHOT_SCHEMA_VERSION);
+    if has_old_schema {
+        scope_warnings.push(
+            "One or both snapshots use an older schema. ConfigMap/Secret data comparison is unavailable for resources from old-schema snapshots".to_string(),
+        );
+    }
     if before.cluster_url != after.cluster_url {
         scope_warnings.push(format!(
             "Different clusters: {} vs {}",
             before.cluster_url, after.cluster_url
         ));
     }
-    if before.namespaces != after.namespaces {
-        scope_warnings.push(format!(
-            "Different namespaces: {:?} vs {:?}",
-            before.namespaces, after.namespaces
-        ));
+    let b_ns: std::collections::BTreeSet<_> = before.namespaces.iter().cloned().collect();
+    let a_ns: std::collections::BTreeSet<_> = after.namespaces.iter().cloned().collect();
+    if b_ns != a_ns {
+        scope_warnings.push(format!("Different namespaces: {:?} vs {:?}", b_ns, a_ns));
     }
     if !before.scan_warnings.is_empty() {
         scope_warnings.push(format!(
@@ -408,11 +553,11 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Diff
         after_by_key.insert(logical_key(&entry.id), entry);
     }
 
-    let all_namespaces: std::collections::BTreeSet<String> = before
-        .namespaces
-        .iter()
-        .chain(after.namespaces.iter())
-        .cloned()
+    // Collect all namespaces from actual resources (including cluster-scoped as "")
+    let all_namespaces: std::collections::BTreeSet<String> = before_by_key
+        .keys()
+        .chain(after_by_key.keys())
+        .map(|k| k.2.clone().unwrap_or_default())
         .collect();
 
     let mut summary = DiffSummary::default();
@@ -456,6 +601,7 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Diff
                             .extend(diff_annotations(&b_entry.annotations, &a_entry.annotations));
                         entry_changes
                             .extend(diff_owner_refs(&b_entry.owner_refs, &a_entry.owner_refs));
+                        entry_changes.extend(diff_data_fields(b_entry, a_entry));
                         if !entry_changes.is_empty() {
                             changed.push(DiffChange {
                                 kind: a_entry.id.kind.clone(),
@@ -497,8 +643,13 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Diff
 
         if !added.is_empty() || !removed.is_empty() || !recreated.is_empty() || !changed.is_empty()
         {
+            let display_ns = if ns.is_empty() {
+                "(cluster-scoped)".to_string()
+            } else {
+                ns.clone()
+            };
             ns_diffs.push(NamespaceDiff {
-                namespace: ns.clone(),
+                namespace: display_ns,
                 added,
                 removed,
                 recreated,
@@ -507,13 +658,13 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Diff
         }
     }
 
-    DiffResult {
+    Ok(DiffResult {
         before_taken_at: before.taken_at.clone(),
         after_taken_at: after.taken_at.clone(),
         scope_warnings,
         namespaces: ns_diffs,
         summary,
-    }
+    })
 }
 
 pub fn print_diff_tree(result: &DiffResult) {
@@ -585,6 +736,14 @@ pub fn print_diff_tree(result: &DiffResult) {
 }
 
 pub fn print_diff_table(result: &DiffResult) {
+    if !result.scope_warnings.is_empty() {
+        eprintln!("⚠ Snapshot scope:");
+        for w in &result.scope_warnings {
+            eprintln!("  {}", w);
+        }
+        eprintln!();
+    }
+
     let mut table = comfy_table::Table::new();
     table.set_header(vec!["Status", "Kind", "Name", "Namespace", "Details"]);
 
@@ -615,6 +774,14 @@ pub fn print_diff_table(result: &DiffResult) {
         }
     }
     println!("{table}");
+
+    println!(
+        "\nSummary: +{} added, -{} removed, ↻{} recreated, ~{} changed",
+        result.summary.added,
+        result.summary.removed,
+        result.summary.recreated,
+        result.summary.changed,
+    );
 }
 
 #[cfg(test)]
@@ -645,12 +812,16 @@ mod tests {
                 labels: HashMap::new(),
                 annotations: HashMap::new(),
                 raw_spec: None,
+                data_keys: None,
+                data_hash: None,
+                secret_value_hashes: None,
             },
         )
     }
 
     fn make_snapshot(entries: Vec<(String, ResourceEntry)>, ns: &str) -> ClusterSnapshot {
         ClusterSnapshot {
+            schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
             resources: entries.into_iter().collect(),
             scan_warnings: vec![],
             cluster_url: "https://api.test:6443".into(),
@@ -665,7 +836,7 @@ mod tests {
             vec![make_entry("apps", "Deployment", "web", "default", "uid-1")],
             "default",
         );
-        let result = diff_snapshots(&snap, &snap);
+        let result = diff_snapshots(&snap, &snap).unwrap();
         assert!(result.namespaces.is_empty());
         assert_eq!(result.summary.added, 0);
         assert_eq!(result.summary.removed, 0);
@@ -678,7 +849,7 @@ mod tests {
             vec![make_entry("apps", "Deployment", "web", "default", "uid-1")],
             "default",
         );
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(result.summary.added, 1);
         assert_eq!(result.namespaces[0].added[0].name, "web");
     }
@@ -690,7 +861,7 @@ mod tests {
             "default",
         );
         let after = make_snapshot(vec![], "default");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(result.summary.removed, 1);
         assert_eq!(result.namespaces[0].removed[0].name, "web");
     }
@@ -705,7 +876,7 @@ mod tests {
             vec![make_entry("apps", "Deployment", "web", "default", "uid-2")],
             "default",
         );
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(result.summary.recreated, 1);
         assert_eq!(
             result.namespaces[0].recreated[0].uid_before,
@@ -726,7 +897,7 @@ mod tests {
 
         let before = make_snapshot(vec![(uid.clone(), before_entry)], "default");
         let after = make_snapshot(vec![(uid, after_entry)], "default");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(result.summary.changed, 1);
         assert!(
             result.namespaces[0].changed[0]
@@ -745,7 +916,7 @@ mod tests {
 
         let before = make_snapshot(vec![(uid.clone(), before_entry)], "default");
         let after = make_snapshot(vec![(uid, after_entry)], "default");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(result.summary.changed, 1);
         assert!(
             result.namespaces[0].changed[0]
@@ -770,7 +941,7 @@ mod tests {
 
         let before = make_snapshot(vec![(uid.clone(), before_entry)], "default");
         let after = make_snapshot(vec![(uid, after_entry)], "default");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(result.summary.changed, 0);
     }
 
@@ -780,7 +951,7 @@ mod tests {
         before.cluster_url = "https://cluster-a:6443".into();
         let mut after = make_snapshot(vec![], "default");
         after.cluster_url = "https://cluster-b:6443".into();
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert!(
             result
                 .scope_warnings
@@ -793,7 +964,7 @@ mod tests {
     fn scope_warning_different_namespaces() {
         let before = make_snapshot(vec![], "ns-a");
         let after = make_snapshot(vec![], "ns-b");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert!(
             result
                 .scope_warnings
@@ -810,7 +981,7 @@ mod tests {
             status: 403,
         });
         let after = make_snapshot(vec![], "default");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert!(
             result
                 .scope_warnings
@@ -835,7 +1006,7 @@ mod tests {
             )],
             "default",
         );
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         assert_eq!(
             result.summary.added, 1,
             "different group = different resource"
@@ -854,7 +1025,7 @@ mod tests {
             "namespaces": ["default"]
         });
         let snap: ClusterSnapshot = serde_json::from_value(json).unwrap();
-        let result = diff_snapshots(&snap, &snap);
+        let result = diff_snapshots(&snap, &snap).unwrap();
         assert!(result.namespaces.is_empty());
     }
 
@@ -865,9 +1036,191 @@ mod tests {
             "default",
         );
         let after = make_snapshot(vec![], "default");
-        let result = diff_snapshots(&before, &after);
+        let result = diff_snapshots(&before, &after).unwrap();
         let json = serde_json::to_string_pretty(&result).unwrap();
         assert!(json.contains("\"removed\""));
         assert!(json.contains("web"));
+    }
+
+    #[test]
+    fn future_schema_version_rejected() {
+        let mut snap = make_snapshot(vec![], "default");
+        snap.schema_version = Some(999);
+        let snap2 = make_snapshot(vec![], "default");
+        assert!(diff_snapshots(&snap, &snap2).is_err());
+        assert!(diff_snapshots(&snap2, &snap).is_err());
+    }
+
+    #[test]
+    fn old_schema_no_version_accepted() {
+        let mut snap = make_snapshot(vec![], "default");
+        snap.schema_version = None;
+        let result = diff_snapshots(&snap, &snap).unwrap();
+        assert!(result.namespaces.is_empty());
+    }
+
+    #[test]
+    fn cluster_scoped_resource_detected() {
+        let (uid, mut entry) = make_entry(
+            "apiextensions.k8s.io",
+            "CustomResourceDefinition",
+            "widgets.example.io",
+            "",
+            "uid-crd",
+        );
+        entry.id.namespace = None;
+        let before = make_snapshot(vec![], "default");
+        let after = make_snapshot(vec![(uid, entry)], "default");
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert_eq!(result.summary.added, 1);
+        assert!(
+            result
+                .namespaces
+                .iter()
+                .any(|n| n.namespace == "(cluster-scoped)")
+        );
+    }
+
+    #[test]
+    fn configmap_data_change_detected() {
+        let (uid, mut before_entry) = make_entry("", "ConfigMap", "settings", "default", "uid-cm");
+        before_entry.data_keys = Some(vec!["key1".into(), "key2".into()]);
+        before_entry.data_hash = Some("hash-before".into());
+        let mut after_entry = before_entry.clone();
+        after_entry.data_keys = Some(vec!["key1".into(), "key3".into()]);
+        after_entry.data_hash = Some("hash-after".into());
+
+        let before = make_snapshot(vec![(uid.clone(), before_entry)], "default");
+        let after = make_snapshot(vec![(uid, after_entry)], "default");
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert_eq!(result.summary.changed, 1);
+        let changes = &result.namespaces[0].changed[0].changes;
+        assert!(changes.iter().any(|c| c.contains("data keys")));
+        assert!(changes.iter().any(|c| c.contains("data content changed")));
+    }
+
+    #[test]
+    fn secret_key_value_change_detected() {
+        let (uid, mut before_entry) = make_entry("", "Secret", "creds", "default", "uid-secret");
+        before_entry.data_keys = Some(vec!["password".into()]);
+        before_entry.secret_value_hashes = Some(
+            [("password".into(), "hash-old".into())]
+                .into_iter()
+                .collect(),
+        );
+        let mut after_entry = before_entry.clone();
+        after_entry.secret_value_hashes = Some(
+            [("password".into(), "hash-new".into())]
+                .into_iter()
+                .collect(),
+        );
+
+        let before = make_snapshot(vec![(uid.clone(), before_entry)], "default");
+        let after = make_snapshot(vec![(uid, after_entry)], "default");
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert_eq!(result.summary.changed, 1);
+        assert!(
+            result.namespaces[0].changed[0]
+                .changes
+                .iter()
+                .any(|c| c.contains("secret key value changed: password"))
+        );
+    }
+
+    #[test]
+    fn old_schema_vs_current_no_false_changed() {
+        let (uid, entry) = make_entry("", "ConfigMap", "settings", "default", "uid-cm");
+        let mut before = make_snapshot(vec![(uid.clone(), entry.clone())], "default");
+        before.schema_version = None;
+        let after = make_snapshot(vec![(uid, entry)], "default");
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert_eq!(
+            result.summary.changed, 0,
+            "old schema should not produce false Changed"
+        );
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("older schema")),
+            "scope warning about old schema expected"
+        );
+    }
+
+    #[test]
+    fn schema_version_mismatch_warning() {
+        let mut before = make_snapshot(vec![], "default");
+        before.schema_version = Some(1);
+        let after = make_snapshot(vec![], "default");
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Schema version mismatch")),
+            "version mismatch should warn"
+        );
+    }
+
+    #[test]
+    fn secret_snapshot_no_plaintext_in_annotations() {
+        let data = serde_json::json!({
+            "data": {
+                "password": "YWxwaGE=",
+                "token": "Zmlyc3Q="
+            }
+        });
+        let (data_keys, _data_hash, secret_hashes) = extract_data_fields("Secret", &data);
+        assert_eq!(data_keys.unwrap(), vec!["password", "token"]);
+        let hashes = secret_hashes.unwrap();
+        assert!(
+            !hashes["password"].contains("alpha"),
+            "hash must not contain plaintext"
+        );
+        assert!(
+            !hashes["token"].contains("first"),
+            "hash must not contain plaintext"
+        );
+    }
+
+    #[test]
+    fn owner_ref_uid_change_detected() {
+        let (uid, mut before_entry) = make_entry("apps", "Deployment", "web", "default", "uid-1");
+        before_entry.owner_refs.push(OwnerRefEntry {
+            api_version: "apps/v1".into(),
+            kind: "ReplicaSet".into(),
+            name: "web-rs".into(),
+            uid: "owner-uid-old".into(),
+            controller: true,
+        });
+        let mut after_entry = before_entry.clone();
+        after_entry.owner_refs[0].uid = "owner-uid-new".into();
+
+        let before = make_snapshot(vec![(uid.clone(), before_entry)], "default");
+        let after = make_snapshot(vec![(uid, after_entry)], "default");
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert_eq!(result.summary.changed, 1);
+        assert!(
+            result.namespaces[0].changed[0]
+                .changes
+                .iter()
+                .any(|c| c.contains("ownerRefs"))
+        );
+    }
+
+    #[test]
+    fn namespace_set_comparison_ignores_order() {
+        let mut before = make_snapshot(vec![], "ns-a");
+        before.namespaces = vec!["ns-b".into(), "ns-a".into()];
+        let mut after = make_snapshot(vec![], "ns-a");
+        after.namespaces = vec!["ns-a".into(), "ns-b".into()];
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("namespace")),
+            "same namespace set in different order should not warn"
+        );
     }
 }

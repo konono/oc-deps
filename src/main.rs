@@ -191,6 +191,11 @@ async fn main() -> Result<()> {
     if !args.filter.is_empty() && (!args.map || args.command.is_some()) {
         bail!("--filter requires --map (without subcommands)");
     }
+    if args.network && (args.map || args.up_only || args.command.is_some()) {
+        bail!(
+            "--network requires a single Pod resource (incompatible with --map, --up-only, or subcommands)"
+        );
+    }
     let map_filters = parse_filters(&args.filter)?;
 
     if let Some(Command::Diff {
@@ -201,7 +206,7 @@ async fn main() -> Result<()> {
     {
         let before_snap = load_snapshot(before)?;
         let after_snap = load_snapshot(after)?;
-        let result = diff_snapshots(&before_snap, &after_snap);
+        let result = diff_snapshots(&before_snap, &after_snap)?;
         match format {
             OutputFormat::Tree => print_diff_tree(&result),
             OutputFormat::Table => print_diff_table(&result),
@@ -3718,6 +3723,10 @@ async fn main() -> Result<()> {
 
     let kind = resolve_kind(&kind_input, &kind_map, &gvr_map)?;
 
+    if args.network && kind != "Pod" {
+        bail!("--network requires a Pod resource, got {}", kind);
+    }
+
     if args.crd_origin {
         eprint!("🔍 Tracing CRD origin...");
         match find_crd_origin(&client, &kind, &kind_map).await {
@@ -3750,7 +3759,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let (mut index, scan_warnings) = scan_namespace(
+    let (mut index, mut scan_warnings) = scan_namespace(
         &client,
         &namespace,
         &kind_map,
@@ -3777,36 +3786,28 @@ async fn main() -> Result<()> {
 
     resolve_missing_parents(&mut index, &target_uid, &client, &namespace, &kind_map).await;
 
-    if args.down_only {
+    let tree = if args.down_only {
         let mut visited = HashSet::new();
-        match build_child_tree(
+        build_child_tree(
             &target_uid,
             &index,
             0,
             args.depth,
             &mut visited,
             &target_uid,
-        ) {
-            Some(tree) => display_tree(&tree, &args.output, &namespace, &tree_opts),
-            None => println!("No resources found."),
-        }
+        )
     } else {
-        match build_full_tree(&target_uid, &index, args.depth) {
-            Some(tree) => display_tree(&tree, &args.output, &namespace, &tree_opts),
-            None => println!("No resources found."),
-        }
-    }
+        build_full_tree(&target_uid, &index, args.depth)
+    };
+
+    let mut extra_json = serde_json::Map::new();
 
     if kind == "Service" {
         let pods = get_service_selected_pods(&client, &name, &namespace, &kind_map).await;
         if !pods.is_empty() {
             match args.output {
                 OutputFormat::Json => {
-                    let output = serde_json::json!({ "selectorPods": pods });
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&output).unwrap_or_default()
-                    );
+                    extra_json.insert("selectorPods".into(), serde_json::json!(pods));
                 }
                 _ => {
                     println!("\n📎 Service selector matches:");
@@ -3826,9 +3827,6 @@ async fn main() -> Result<()> {
             .cloned()
             .unwrap_or_default();
         let net_result = find_network_paths(&client, &pod_labels, &namespace, &kind_map).await;
-        if !net_result.warnings.is_empty() {
-            format_scan_warnings(&net_result.warnings, args.verbose);
-        }
         match args.output {
             OutputFormat::Json => {
                 let json_paths: Vec<_> = net_result
@@ -3852,14 +3850,37 @@ async fn main() -> Result<()> {
                         })
                     })
                     .collect();
-                let output = serde_json::json!({ "networkPaths": json_paths });
+                extra_json.insert("networkPaths".into(), serde_json::json!(json_paths));
+            }
+            _ => print_network_paths(&net_result, &name),
+        }
+        if !net_result.warnings.is_empty() {
+            format_scan_warnings(&net_result.warnings, args.verbose);
+            scan_warnings.extend(net_result.warnings);
+        }
+    }
+
+    match tree {
+        Some(t) => {
+            if matches!(args.output, OutputFormat::Json) && !extra_json.is_empty() {
+                let target = format!("{}/{}", kind, name);
+                let mut output = serde_json::json!({
+                    "namespace": namespace,
+                    "target": target,
+                    "tree": tree_to_json(&t, args.annotations),
+                });
+                for (k, v) in extra_json {
+                    output[k] = v;
+                }
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&output).unwrap_or_default()
                 );
+            } else {
+                display_tree(&t, &args.output, &namespace, &tree_opts);
             }
-            _ => print_network_paths(&net_result, &name),
         }
+        None => println!("No resources found."),
     }
 
     if args.strict && !scan_warnings.is_empty() {
