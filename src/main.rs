@@ -3888,19 +3888,44 @@ async fn main() -> Result<()> {
                     let json_paths: Vec<_> = all_paths
                         .iter()
                         .map(|(pod_name, p)| {
+                            let ports: Vec<_> = p
+                                .service
+                                .ports
+                                .iter()
+                                .map(|sp| {
+                                    serde_json::json!({
+                                        "port": sp.port,
+                                        "targetPort": sp.target_port,
+                                        "protocol": sp.protocol,
+                                    })
+                                })
+                                .collect();
                             let ingresses: Vec<_> = p
                                 .ingresses
                                 .iter()
                                 .map(|i| {
-                                    serde_json::json!({
+                                    let mut obj = serde_json::json!({
                                         "kind": i.kind,
                                         "name": i.name,
-                                    })
+                                    });
+                                    if let Some(h) = &i.host {
+                                        obj["host"] = serde_json::json!(h);
+                                    }
+                                    if let Some(pa) = &i.path {
+                                        obj["path"] = serde_json::json!(pa);
+                                    }
+                                    if let Some(t) = &i.tls {
+                                        obj["tls"] = serde_json::json!(t);
+                                    }
+                                    obj
                                 })
                                 .collect();
                             serde_json::json!({
                                 "pod": pod_name,
                                 "service": p.service.name,
+                                "serviceType": p.service.svc_type,
+                                "clusterIP": p.service.cluster_ip,
+                                "ports": ports,
                                 "selector": p.service.selector,
                                 "ingresses": ingresses,
                             })
@@ -3912,42 +3937,57 @@ async fn main() -> Result<()> {
                     if all_paths.is_empty() {
                         println!("\n📎 No Services select Pods under {}/{}", kind, name);
                     } else {
-                        println!("\n📎 Network paths for {}/{}:", kind, name);
-                        let mut seen = std::collections::HashSet::new();
-                        for (pod_name, path) in &all_paths {
-                            let selector_str = path
-                                .service
+                        println!("\n📎 Network paths for {}/{}:\n", kind, name);
+                        let mut seen_svcs = std::collections::HashSet::new();
+                        for (_, path) in &all_paths {
+                            if !seen_svcs.insert(path.service.name.clone()) {
+                                continue;
+                            }
+                            let svc = &path.service;
+                            println!("  \x1b[1mService/{}\x1b[0m", svc.name);
+                            println!("    Type:      {}", svc.svc_type);
+                            println!("    ClusterIP: {}", svc.cluster_ip);
+                            for sp in &svc.ports {
+                                println!(
+                                    "    Port:      {}/{} → {}",
+                                    sp.port, sp.protocol, sp.target_port
+                                );
+                            }
+                            let sel = svc
                                 .selector
                                 .iter()
                                 .map(|(k, v)| format!("{}={}", k, v))
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            if path.ingresses.is_empty() {
-                                let key = format!("svc:{}", path.service.name);
-                                if seen.insert(key) {
-                                    println!(
-                                        "   Service/{} (selector: {}) → Pod/{}",
-                                        path.service.name, selector_str, pod_name
-                                    );
+                            println!("    Selector:  {}", sel);
+                            let pod_names: Vec<_> = all_paths
+                                .iter()
+                                .filter(|(_, p)| p.service.name == svc.name)
+                                .map(|(pn, _)| format!("Pod/{}", pn))
+                                .collect::<std::collections::LinkedList<_>>()
+                                .into_iter()
+                                .collect::<std::collections::BTreeSet<_>>()
+                                .into_iter()
+                                .collect();
+                            println!("    Pods:      {}", pod_names.join(", "));
+
+                            for ing in &path.ingresses {
+                                println!();
+                                println!(
+                                    "    \x1b[1m{}/{}\x1b[0m → Service/{}",
+                                    ing.kind, ing.name, svc.name
+                                );
+                                if let Some(host) = &ing.host {
+                                    println!("      Host: {}", host);
                                 }
-                            } else {
-                                for ing in &path.ingresses {
-                                    let key = format!(
-                                        "{}:{}:svc:{}",
-                                        ing.kind, ing.name, path.service.name
-                                    );
-                                    if seen.insert(key) {
-                                        println!(
-                                            "   {}/{} → Service/{} (selector: {}) → Pod/{}",
-                                            ing.kind,
-                                            ing.name,
-                                            path.service.name,
-                                            selector_str,
-                                            pod_name
-                                        );
-                                    }
+                                if let Some(p) = &ing.path {
+                                    println!("      Path: {}", p);
+                                }
+                                if let Some(tls) = &ing.tls {
+                                    println!("      TLS:  {}", tls);
                                 }
                             }
+                            println!();
                         }
                     }
                 }

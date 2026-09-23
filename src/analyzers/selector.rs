@@ -77,9 +77,19 @@ pub async fn get_service_selected_pods(
 // ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
+pub struct ServicePort {
+    pub port: u16,
+    pub target_port: String,
+    pub protocol: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct NetworkService {
     pub name: String,
     pub selector: BTreeMap<String, String>,
+    pub cluster_ip: String,
+    pub svc_type: String,
+    pub ports: Vec<ServicePort>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +97,9 @@ pub struct NetworkIngress {
     pub kind: String,
     pub name: String,
     pub backend_services: Vec<String>,
+    pub host: Option<String>,
+    pub path: Option<String>,
+    pub tls: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,7 +149,53 @@ async fn list_services(
                     if selector.is_empty() {
                         return None;
                     }
-                    Some(NetworkService { name, selector })
+                    let spec = obj.data.get("spec");
+                    let cluster_ip = spec
+                        .and_then(|s| s.get("clusterIP"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("None")
+                        .to_string();
+                    let svc_type = spec
+                        .and_then(|s| s.get("type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ClusterIP")
+                        .to_string();
+                    let ports = spec
+                        .and_then(|s| s.get("ports"))
+                        .and_then(|p| p.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|p| {
+                                    let port = p.get("port")?.as_u64()? as u16;
+                                    let target_port = p
+                                        .get("targetPort")
+                                        .map(|v| match v {
+                                            serde_json::Value::Number(n) => n.to_string(),
+                                            serde_json::Value::String(s) => s.clone(),
+                                            _ => "?".into(),
+                                        })
+                                        .unwrap_or_else(|| port.to_string());
+                                    let protocol = p
+                                        .get("protocol")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("TCP")
+                                        .to_string();
+                                    Some(ServicePort {
+                                        port,
+                                        target_port,
+                                        protocol,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(NetworkService {
+                        name,
+                        selector,
+                        cluster_ip,
+                        svc_type,
+                        ports,
+                    })
                 })
                 .collect();
             Ok(services)
@@ -227,10 +286,26 @@ async fn list_ingresses(
                     if let Some(name) = obj.metadata.name {
                         let backends = extract_ingress_backends(&obj.data);
                         if !backends.is_empty() {
+                            let spec = obj.data.get("spec");
+                            let host = spec
+                                .and_then(|s| s.get("rules"))
+                                .and_then(|r| r.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|r| r.get("host"))
+                                .and_then(|h| h.as_str())
+                                .map(String::from);
+                            let tls = spec
+                                .and_then(|s| s.get("tls"))
+                                .and_then(|t| t.as_array())
+                                .filter(|a| !a.is_empty())
+                                .map(|_| "TLS".to_string());
                             result.push(NetworkIngress {
                                 kind: "Ingress".into(),
                                 name,
                                 backend_services: backends,
+                                host,
+                                path: None,
+                                tls,
                             });
                         }
                     }
@@ -257,10 +332,27 @@ async fn list_ingresses(
                     if let Some(name) = obj.metadata.name {
                         let backends = extract_route_backends(&obj.data);
                         if !backends.is_empty() {
+                            let spec = obj.data.get("spec");
+                            let host = spec
+                                .and_then(|s| s.get("host"))
+                                .and_then(|h| h.as_str())
+                                .map(String::from);
+                            let path = spec
+                                .and_then(|s| s.get("path"))
+                                .and_then(|p| p.as_str())
+                                .map(String::from);
+                            let tls = spec
+                                .and_then(|s| s.get("tls"))
+                                .and_then(|t| t.get("termination"))
+                                .and_then(|t| t.as_str())
+                                .map(String::from);
                             result.push(NetworkIngress {
                                 kind: "Route".into(),
                                 name,
                                 backend_services: backends,
+                                host,
+                                path,
+                                tls,
                             });
                         }
                     }
