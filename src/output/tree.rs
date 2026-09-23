@@ -91,7 +91,6 @@ pub fn print_tree(
     is_root: bool,
     opts: &TreeDisplayOpts,
 ) {
-    let has_refs = !node.spec_refs.is_empty();
     let has_incoming = !node.incoming_refs.is_empty();
     let connector = if is_root {
         ""
@@ -127,18 +126,20 @@ pub fn print_tree(
 
     print_metadata_block(&node.info, &child_prefix, opts);
 
-    for (i, child) in node.children.iter().enumerate() {
-        let child_is_last = i == node.children.len() - 1 && !has_refs && !has_incoming;
-        print_tree(child, &child_prefix, child_is_last, false, opts);
-    }
+    let has_children = !node.children.is_empty();
 
     for (i, sref) in node.spec_refs.iter().enumerate() {
-        let is_last_item = i == node.spec_refs.len() - 1 && !has_incoming;
+        let is_last_item = i == node.spec_refs.len() - 1 && !has_children && !has_incoming;
         let ref_connector = if is_last_item { "└╌ " } else { "├╌ " };
         println!(
             "{}{}\x1b[36m{}/{}\x1b[0m  \x1b[2m(via {})\x1b[0m",
             child_prefix, ref_connector, sref.target_kind, sref.target_name, sref.field_path
         );
+    }
+
+    for (i, child) in node.children.iter().enumerate() {
+        let child_is_last = i == node.children.len() - 1 && !has_incoming;
+        print_tree(child, &child_prefix, child_is_last, false, opts);
     }
 
     for (i, iref) in node.incoming_refs.iter().enumerate() {
