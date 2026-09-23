@@ -54,6 +54,28 @@ pub struct Args {
     #[arg(long)]
     pub no_cache: bool,
 
+    /// Show detailed scan warnings and diagnostics
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+
+    /// Exit with code 2 if any API types were skipped during scan
+    #[arg(long)]
+    pub strict: bool,
+
+    /// Show labels on each resource in tree output
+    #[arg(long)]
+    pub labels: bool,
+
+    /// Show annotations on each resource in tree output
+    #[arg(long)]
+    pub annotations: bool,
+
+    /// Filter --map results by root resource. Applies to root nodes only.
+    /// Repeatable (AND). Requires --map.
+    /// Examples: --filter kind=Deployment --filter label=app=myapp
+    #[arg(long, value_name = "FILTER")]
+    pub filter: Vec<String>,
+
     /// Target resource: kind/name or name (with -k). --map 使用時は省略可
     #[arg(value_name = "RESOURCE")]
     pub resource: Option<String>,

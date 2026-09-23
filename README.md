@@ -52,6 +52,15 @@ oc-deps --down-only deployment/<name> -n <namespace>
 # All dependency trees in a namespace
 oc-deps --map -n <namespace>
 
+# Filter --map by root resource kind
+oc-deps --map --filter kind=Deployment -n <namespace>
+
+# Filter --map by root resource label
+oc-deps --map --filter label=app.kubernetes.io/part-of=myapp -n <namespace>
+
+# Combine filters (AND)
+oc-deps --map --filter kind=Deployment --filter label=app=myapp -n <namespace>
+
 # Trace which Operator installed a CRD
 oc-deps --crd-origin -k MyCustomResource -n <namespace>
 
@@ -72,14 +81,28 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--up-only` | Show only parent chain (fast, no namespace scan) |
 | `--down-only` | Show only child resources |
 | `--map` | Show all dependency trees in the namespace |
+| `--filter` | Filter `--map` results by root node. `kind=X` or `label=key=value`. Repeatable (AND). Requires `--map` |
 | `--crd-origin` | Show which Operator/CSV installed the CRD |
+| `--labels` | Show labels on each resource in tree output |
+| `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
+| `-v, --verbose` | Show detailed scan warnings and diagnostics |
+| `--strict` | Exit with code 2 if any API types were skipped during scan. Results are output/saved before exit |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan (skipped by default) |
 | `--no-cache` | Skip API discovery cache |
 
+**JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
+
+**Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags, so for subcommands they must precede the subcommand name:
+
+```bash
+oc-deps --strict snapshot -n <namespace> -o snapshot.json
+oc-deps --verbose graph -n <namespace> -o evidence-graph.json
+```
+
 ## How it works
 
-1. **API Discovery** — queries the cluster's API server to build a map of all available resource types (cached for 5 minutes in `/tmp/oc-deps-cache/`)
+1. **API Discovery** — queries the cluster's API server to build a map of all available resource types (cached for 30 minutes in `/tmp/oc-deps-cache/`). Only resource types that support the `list` verb are included in scans
 2. **Namespace Scan** — concurrently fetches all namespaced resources in the target namespace (concurrency: 50) and builds a reverse ownerReference index
 3. **Tree Construction** — walks the index to build the full parent-child tree using pure HashMap lookups (no async recursion)
 4. **Cluster-scoped Parents** — individually fetches any cluster-scoped parents (e.g., ClusterRole, Namespace) not covered by the namespace scan

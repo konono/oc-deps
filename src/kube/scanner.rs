@@ -15,7 +15,9 @@ use crate::analyzers::spec_ref::{collect_string_values, extract_well_known_refs}
 use crate::kube::discovery::KindMap;
 use crate::kube::resource::*;
 
-fn resolve_name_matches(
+const MAX_RETRIES: usize = 2;
+
+pub(crate) fn resolve_name_matches(
     spec_strs: &[(String, String)],
     self_name: &str,
     by_name: &HashMap<String, Vec<String>>,
@@ -75,7 +77,7 @@ pub async fn scan_namespace(
     kind_map: &KindMap,
     include_events: bool,
     refs: bool,
-) -> Result<NamespaceIndex> {
+) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
     } else {
@@ -84,7 +86,7 @@ pub async fn scan_namespace(
 
     let scan_targets: Vec<_> = kind_map
         .iter()
-        .filter(|(k, info)| info.namespaced && !skip_kinds.contains(k.as_str()))
+        .filter(|(k, info)| info.namespaced && info.listable && !skip_kinds.contains(k.as_str()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
@@ -101,68 +103,102 @@ pub async fn scan_namespace(
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
             let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
 
-            let result = api.list(&ListParams::default()).await;
-            let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-            eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
-
-            match result {
-                Ok(list) => {
-                    let items: Vec<ScanItem> = list
-                        .items
-                        .into_iter()
-                        .filter_map(|obj| {
-                            let data = obj.data;
-                            let metadata = obj.metadata;
-                            let uid = metadata.uid?;
-                            let name = metadata.name?;
-                            let ns = metadata.namespace;
-                            let owner_refs = metadata
-                                .owner_references
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|r| OwnerRef {
-                                    api_version: r.api_version,
-                                    kind: r.kind,
-                                    name: r.name,
-                                    uid: r.uid,
-                                    controller: r.controller.unwrap_or(false),
-                                })
-                                .collect();
-
-                            let (wk_refs, spec_strs) = if refs {
-                                let wk = extract_well_known_refs(&data);
-                                let mut strs = Vec::new();
-                                if let Some(spec) = data.get("spec") {
-                                    let mut path = vec!["spec".to_string()];
-                                    collect_string_values(spec, &mut path, &mut strs);
-                                }
-                                (wk, strs)
-                            } else {
-                                (vec![], vec![])
-                            };
-
-                            Some((
-                                ResourceInfo {
-                                    kind: kind.clone(),
-                                    name,
-                                    namespace: ns,
-                                    uid,
-                                    owner_refs,
-                                },
-                                wk_refs,
-                                spec_strs,
-                            ))
-                        })
-                        .collect();
-                    Some(items)
+            let mut last_err = None;
+            for attempt in 0..=MAX_RETRIES {
+                let result = api.list(&ListParams::default()).await;
+                if attempt == 0 {
+                    let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
+                    eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
                 }
-                Err(_) => None,
+
+                match result {
+                    Ok(list) => {
+                        let items: Vec<ScanItem> = list
+                            .items
+                            .into_iter()
+                            .filter_map(|obj| {
+                                let data = obj.data;
+                                let metadata = obj.metadata;
+                                let uid = metadata.uid?;
+                                let name = metadata.name?;
+                                let ns = metadata.namespace;
+                                let owner_refs = metadata
+                                    .owner_references
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|r| OwnerRef {
+                                        api_version: r.api_version,
+                                        kind: r.kind,
+                                        name: r.name,
+                                        uid: r.uid,
+                                        controller: r.controller.unwrap_or(false),
+                                    })
+                                    .collect();
+
+                                let (wk_refs, spec_strs) = if refs {
+                                    let wk = extract_well_known_refs(&data);
+                                    let mut strs = Vec::new();
+                                    if let Some(spec) = data.get("spec") {
+                                        let mut path = vec!["spec".to_string()];
+                                        collect_string_values(spec, &mut path, &mut strs);
+                                    }
+                                    (wk, strs)
+                                } else {
+                                    (vec![], vec![])
+                                };
+
+                                let labels =
+                                    metadata.labels.unwrap_or_default().into_iter().collect();
+                                let annotations = metadata
+                                    .annotations
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .collect();
+
+                                Some((
+                                    ResourceInfo {
+                                        kind: kind.clone(),
+                                        name,
+                                        namespace: ns,
+                                        uid,
+                                        owner_refs,
+                                        labels,
+                                        annotations,
+                                    },
+                                    wk_refs,
+                                    spec_strs,
+                                ))
+                            })
+                            .collect();
+                        return Ok(items);
+                    }
+                    Err(e) => {
+                        let mut warning = ScanWarning::from_kube_error(
+                            &e,
+                            &info.group,
+                            &info.version,
+                            &info.plural,
+                        );
+                        if warning.is_retryable() && attempt < MAX_RETRIES {
+                            let delay =
+                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            tokio::time::sleep(delay).await;
+                            last_err = Some(warning);
+                            continue;
+                        }
+                        warning.set_retries(attempt);
+                        return Err(warning);
+                    }
+                }
             }
+            let mut w = last_err.unwrap();
+            w.set_retries(MAX_RETRIES);
+            Err(w)
         }
     });
 
     let scan_start = Instant::now();
-    let results: Vec<_> = futures::stream::iter(futs)
+    let results: Vec<Result<Vec<ScanItem>, ScanWarning>> = futures::stream::iter(futs)
         .buffer_unordered(50)
         .collect()
         .await;
@@ -175,13 +211,21 @@ pub async fn scan_namespace(
 
     let mut index = NamespaceIndex::new();
     let mut ref_data: Vec<RefData> = Vec::new();
+    let mut warnings: Vec<ScanWarning> = Vec::new();
 
-    for items in results.into_iter().flatten() {
-        for (info, wk_refs, spec_strs) in items {
-            if refs {
-                ref_data.push((info.uid.clone(), info.name.clone(), wk_refs, spec_strs));
+    for result in results {
+        match result {
+            Ok(items) => {
+                for (info, wk_refs, spec_strs) in items {
+                    if refs {
+                        ref_data.push((info.uid.clone(), info.name.clone(), wk_refs, spec_strs));
+                    }
+                    index.insert(info);
+                }
             }
-            index.insert(info);
+            Err(warning) => {
+                warnings.push(warning);
+            }
         }
     }
 
@@ -238,7 +282,7 @@ pub async fn scan_namespace(
         }
     }
 
-    Ok(index)
+    Ok((index, warnings))
 }
 
 pub async fn resolve_missing_parents(
@@ -314,6 +358,19 @@ pub async fn resolve_missing_parents(
                     })
                     .collect();
 
+                let labels = obj
+                    .metadata
+                    .labels
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let annotations = obj
+                    .metadata
+                    .annotations
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+
                 let next_uid = uid.clone();
                 index.insert(ResourceInfo {
                     kind: owner.kind,
@@ -321,6 +378,8 @@ pub async fn resolve_missing_parents(
                     namespace: ns,
                     uid,
                     owner_refs,
+                    labels,
+                    annotations,
                 });
                 current = next_uid;
             }
@@ -351,6 +410,8 @@ pub async fn find_parents_only(
                     namespace: None,
                     uid: String::new(),
                     owner_refs: vec![],
+                    labels: HashMap::new(),
+                    annotations: HashMap::new(),
                 });
                 break;
             }
@@ -387,12 +448,27 @@ pub async fn find_parents_only(
 
                 let next = primary_owner(&owner_refs).cloned();
 
+                let labels = obj
+                    .metadata
+                    .labels
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let annotations = obj
+                    .metadata
+                    .annotations
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+
                 chain.push(ResourceInfo {
                     kind: current_kind,
                     name: current_name,
                     namespace: obj.metadata.namespace,
                     uid,
                     owner_refs,
+                    labels,
+                    annotations,
                 });
 
                 match next {
@@ -410,6 +486,8 @@ pub async fn find_parents_only(
                     namespace: None,
                     uid: String::new(),
                     owner_refs: vec![],
+                    labels: HashMap::new(),
+                    annotations: HashMap::new(),
                 });
                 break;
             }

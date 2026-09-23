@@ -4453,6 +4453,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "configmaps".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         km
@@ -4467,6 +4468,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "configmaps".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk
@@ -4677,6 +4679,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "subscriptions".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         km
@@ -4694,6 +4697,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "subscriptions".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk
@@ -5050,6 +5054,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "resourceas".to_string(),
                 namespaced: false,
+                listable: true,
             },
         );
         gk.insert(
@@ -5059,6 +5064,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "reviewtargets".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk.insert(
@@ -5071,6 +5077,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "clusterserviceversions".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
 
@@ -5314,6 +5321,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "llminferenceservices".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk.insert(
@@ -5326,6 +5334,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "clusterserviceversions".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
 
@@ -5474,6 +5483,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "reviewtargets".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk.insert(
@@ -5486,6 +5496,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "clusterserviceversions".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         let csv_request_count = Arc::new(AtomicUsize::new(0));
@@ -5597,6 +5608,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "reviewtargets".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk.insert(
@@ -5609,6 +5621,7 @@ mod tests {
                 version: "v1alpha1".to_string(),
                 plural: "clusterserviceversions".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         let csv_request_count = Arc::new(AtomicUsize::new(0));
@@ -5751,6 +5764,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "configmaps".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk
@@ -6501,6 +6515,7 @@ mod tests {
                     version: "v1".to_string(),
                     plural: format!("{}s", kind.to_lowercase()),
                     namespaced: true,
+                    listable: true,
                 },
             );
         }

@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use kube::{
     Client,
     config::Config,
-    discovery::{Discovery, Scope},
+    discovery::{Discovery, Scope, verbs},
 };
 
 #[derive(Clone)]
@@ -14,6 +14,7 @@ pub struct KindInfo {
     pub version: String,
     pub plural: String,
     pub namespaced: bool,
+    pub listable: bool,
 }
 
 pub type KindMap = HashMap<String, KindInfo>;
@@ -43,12 +44,14 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, Grou
                 let group_name = ar.group.clone();
                 let plural = ar.plural.clone();
                 let namespaced = caps.scope == Scope::Namespaced;
+                let listable = caps.supports_operation(verbs::LIST);
 
                 let info = KindInfo {
                     group: group_name.clone(),
                     version: ar.version.clone(),
                     plural: plural.clone(),
                     namespaced,
+                    listable,
                 };
 
                 let gvr_key = if group_name.is_empty() {
@@ -79,12 +82,14 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, Grou
             let group_name = ar.group.clone();
             let plural = ar.plural.clone();
             let namespaced = caps.scope == Scope::Namespaced;
+            let listable = caps.supports_operation(verbs::LIST);
 
             let info = KindInfo {
                 group: group_name.clone(),
                 version: ar.version.clone(),
                 plural: plural.clone(),
                 namespaced,
+                listable,
             };
 
             kind_map.insert(kind.clone(), info.clone());
@@ -136,7 +141,7 @@ fn serialize_discovery(
         .map(|(k, v)| {
             (
                 k.clone(),
-                serde_json::json!([v.group, v.version, v.plural, v.namespaced]),
+                serde_json::json!([v.group, v.version, v.plural, v.namespaced, v.listable]),
             )
         })
         .collect();
@@ -152,7 +157,7 @@ fn serialize_discovery(
             let key = format!("{}/{}", group, kind);
             (
                 key,
-                serde_json::json!([v.group, v.version, v.plural, v.namespaced]),
+                serde_json::json!([v.group, v.version, v.plural, v.namespaced, v.listable]),
             )
         })
         .collect();
@@ -163,19 +168,19 @@ fn serialize_discovery(
             let key = format!("{}/{}/{}", group, version, kind);
             (
                 key,
-                serde_json::json!([v.group, v.version, v.plural, v.namespaced]),
+                serde_json::json!([v.group, v.version, v.plural, v.namespaced, v.listable]),
             )
         })
         .collect();
 
-    serde_json::json!({ "version": 3, "kind_map": km, "gvr_map": gm, "gk_map": gk, "gvk_map": gvk })
+    serde_json::json!({ "version": 4, "kind_map": km, "gvr_map": gm, "gk_map": gk, "gvk_map": gvk })
 }
 
 fn deserialize_discovery(
     value: &serde_json::Value,
 ) -> Option<(KindMap, GvrMap, GroupKindMap, GvkMap)> {
     let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1);
-    if version < 3 {
+    if version < 4 {
         return None;
     }
     let km_val = value.get("kind_map")?.as_object()?;
@@ -191,6 +196,7 @@ fn deserialize_discovery(
                 version: arr.get(1)?.as_str()?.to_string(),
                 plural: arr.get(2)?.as_str()?.to_string(),
                 namespaced: arr.get(3)?.as_bool()?,
+                listable: arr.get(4).and_then(|v| v.as_bool()).unwrap_or(true),
             },
         );
     }
@@ -217,6 +223,7 @@ fn deserialize_discovery(
                         version: arr[1].as_str().unwrap_or("").to_string(),
                         plural: arr[2].as_str().unwrap_or("").to_string(),
                         namespaced: arr[3].as_bool().unwrap_or(true),
+                        listable: arr.get(4).and_then(|v| v.as_bool()).unwrap_or(true),
                     },
                 );
             }
@@ -243,6 +250,7 @@ fn deserialize_discovery(
                     version: arr[1].as_str().unwrap_or("").to_string(),
                     plural: arr[2].as_str().unwrap_or("").to_string(),
                     namespaced: arr[3].as_bool().unwrap_or(true),
+                    listable: arr.get(4).and_then(|v| v.as_bool()).unwrap_or(true),
                 },
             );
         }
@@ -366,6 +374,18 @@ mod tests {
     }
 
     #[test]
+    fn v3_cache_rejected() {
+        let cache = serde_json::json!({
+            "version": 3,
+            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "gvr_map": { "pods": "Pod" },
+            "gk_map": { "/Pod": ["", "v1", "pods", true] },
+            "gvk_map": { "/v1/Pod": ["", "v1", "pods", true] }
+        });
+        assert!(deserialize_discovery(&cache).is_none());
+    }
+
+    #[test]
     fn v2_cache_rejected() {
         let cache = serde_json::json!({
             "version": 2,
@@ -377,13 +397,13 @@ mod tests {
     }
 
     #[test]
-    fn v3_cache_accepted() {
+    fn v4_cache_accepted() {
         let cache = serde_json::json!({
-            "version": 3,
-            "kind_map": { "Pod": ["", "v1", "pods", true] },
+            "version": 4,
+            "kind_map": { "Pod": ["", "v1", "pods", true, true] },
             "gvr_map": { "pods": "Pod" },
-            "gk_map": { "/Pod": ["", "v1", "pods", true] },
-            "gvk_map": { "/v1/Pod": ["", "v1", "pods", true] }
+            "gk_map": { "/Pod": ["", "v1", "pods", true, true] },
+            "gvk_map": { "/v1/Pod": ["", "v1", "pods", true, true] }
         });
         let result = deserialize_discovery(&cache);
         assert!(result.is_some());
@@ -395,22 +415,22 @@ mod tests {
     }
 
     #[test]
-    fn v3_cache_preserves_multiple_versions() {
+    fn v4_cache_preserves_multiple_versions() {
         let cache = serde_json::json!({
-            "version": 3,
+            "version": 4,
             "kind_map": {
-                "Widget": ["example.io", "v1", "widgets", true]
+                "Widget": ["example.io", "v1", "widgets", true, true]
             },
             "gvr_map": {
                 "widgets.example.io": "Widget"
             },
             "gk_map": {
-                "example.io/Widget": ["example.io", "v1", "widgets", true]
+                "example.io/Widget": ["example.io", "v1", "widgets", true, true]
             },
             "gvk_map": {
-                "example.io/v1alpha1/Widget": ["example.io", "v1alpha1", "widgets", true],
-                "example.io/v1beta1/Widget": ["example.io", "v1beta1", "widgets", true],
-                "example.io/v1/Widget": ["example.io", "v1", "widgets", true]
+                "example.io/v1alpha1/Widget": ["example.io", "v1alpha1", "widgets", true, true],
+                "example.io/v1beta1/Widget": ["example.io", "v1beta1", "widgets", true, true],
+                "example.io/v1/Widget": ["example.io", "v1", "widgets", true, true]
             }
         });
         let result = deserialize_discovery(&cache);
@@ -435,26 +455,26 @@ mod tests {
     }
 
     #[test]
-    fn v3_cache_with_multiple_groups() {
+    fn v4_cache_with_multiple_groups() {
         let cache = serde_json::json!({
-            "version": 3,
+            "version": 4,
             "kind_map": {
-                "Pod": ["", "v1", "pods", true],
-                "Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true]
+                "Pod": ["", "v1", "pods", true, true],
+                "Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true, true]
             },
             "gvr_map": {
                 "pods": "Pod",
                 "subscriptions.operators.coreos.com": "Subscription"
             },
             "gk_map": {
-                "/Pod": ["", "v1", "pods", true],
-                "operators.coreos.com/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true],
-                "messaging.example.com/Subscription": ["messaging.example.com", "v1", "messagingsubs", true]
+                "/Pod": ["", "v1", "pods", true, true],
+                "operators.coreos.com/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true, true],
+                "messaging.example.com/Subscription": ["messaging.example.com", "v1", "messagingsubs", true, true]
             },
             "gvk_map": {
-                "/v1/Pod": ["", "v1", "pods", true],
-                "operators.coreos.com/v1alpha1/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true],
-                "messaging.example.com/v1/Subscription": ["messaging.example.com", "v1", "messagingsubs", true]
+                "/v1/Pod": ["", "v1", "pods", true, true],
+                "operators.coreos.com/v1alpha1/Subscription": ["operators.coreos.com", "v1alpha1", "subscriptions", true, true],
+                "messaging.example.com/v1/Subscription": ["messaging.example.com", "v1", "messagingsubs", true, true]
             }
         });
         let result = deserialize_discovery(&cache);
@@ -489,6 +509,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "pods".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         let mut gvr = GvrMap::new();
@@ -501,6 +522,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "pods".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
 
@@ -512,6 +534,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "pods".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
 
@@ -535,6 +558,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "widgets".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         let gvr = GvrMap::new();
@@ -546,6 +570,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "widgets".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         let mut gvk = GvkMap::new();
@@ -561,6 +586,7 @@ mod tests {
                     version: ver.to_string(),
                     plural: "widgets".to_string(),
                     namespaced: true,
+                    listable: true,
                 },
             );
         }
