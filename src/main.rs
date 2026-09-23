@@ -16,7 +16,9 @@ use crate::analyzers::olm::{
     compute_operator_dependencies, discover_operators, find_crd_origin, print_crd_origin,
     print_operators,
 };
-use crate::analyzers::selector::get_service_selected_pods;
+use crate::analyzers::selector::{
+    find_network_paths, get_service_selected_pods, print_network_paths,
+};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
@@ -27,7 +29,9 @@ use crate::kube::discovery::{
 };
 use crate::kube::resource::format_scan_warnings;
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
-use crate::kube::snapshot::{build_snapshot, save_snapshot};
+use crate::kube::snapshot::{
+    build_snapshot, diff_snapshots, load_snapshot, print_diff_table, print_diff_tree, save_snapshot,
+};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{TreeDisplayOpts, count_nodes, print_chain_tree, print_tree};
@@ -188,6 +192,28 @@ async fn main() -> Result<()> {
         bail!("--filter requires --map (without subcommands)");
     }
     let map_filters = parse_filters(&args.filter)?;
+
+    if let Some(Command::Diff {
+        before,
+        after,
+        format,
+    }) = &args.command
+    {
+        let before_snap = load_snapshot(before)?;
+        let after_snap = load_snapshot(after)?;
+        let result = diff_snapshots(&before_snap, &after_snap);
+        match format {
+            OutputFormat::Tree => print_diff_tree(&result),
+            OutputFormat::Table => print_diff_table(&result),
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or_default()
+                );
+            }
+        }
+        return Ok(());
+    }
 
     let (config, client) = load_config_and_client().await?;
 
@@ -3550,6 +3576,7 @@ async fn main() -> Result<()> {
                 print_operators(&operators, &deps, &output);
                 return Ok(());
             }
+            Command::Diff { .. } => unreachable!("handled before client init"),
         }
     }
 
@@ -3788,6 +3815,50 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+        }
+    }
+
+    if args.network && kind == "Pod" {
+        let pod_labels = index
+            .by_uid
+            .get(&target_uid)
+            .map(|info| &info.labels)
+            .cloned()
+            .unwrap_or_default();
+        let net_result = find_network_paths(&client, &pod_labels, &namespace, &kind_map).await;
+        if !net_result.warnings.is_empty() {
+            format_scan_warnings(&net_result.warnings, args.verbose);
+        }
+        match args.output {
+            OutputFormat::Json => {
+                let json_paths: Vec<_> = net_result
+                    .paths
+                    .iter()
+                    .map(|p| {
+                        let ingresses: Vec<_> = p
+                            .ingresses
+                            .iter()
+                            .map(|i| {
+                                serde_json::json!({
+                                    "kind": i.kind,
+                                    "name": i.name,
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "service": p.service.name,
+                            "selector": p.service.selector,
+                            "ingresses": ingresses,
+                        })
+                    })
+                    .collect();
+                let output = serde_json::json!({ "networkPaths": json_paths });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).unwrap_or_default()
+                );
+            }
+            _ => print_network_paths(&net_result, &name),
         }
     }
 
