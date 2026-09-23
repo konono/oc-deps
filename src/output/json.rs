@@ -1,15 +1,22 @@
 use crate::graph::tree::TreeNode;
-use crate::kube::resource::ResourceInfo;
+use crate::kube::resource::{ResourceInfo, filter_annotations};
 
-pub fn tree_to_json(node: &TreeNode) -> serde_json::Value {
+pub fn tree_to_json(node: &TreeNode, include_annotations: bool) -> serde_json::Value {
     let mut obj = serde_json::json!({
         "kind": node.info.kind,
         "name": node.info.name,
         "namespace": node.info.namespace,
         "uid": node.info.uid,
         "isTarget": node.is_target,
-        "children": node.children.iter().map(tree_to_json).collect::<Vec<_>>(),
+        "children": node.children.iter().map(|c| tree_to_json(c, include_annotations)).collect::<Vec<_>>(),
     });
+    obj["labels"] = serde_json::json!(node.info.labels);
+    if include_annotations && !node.info.annotations.is_empty() {
+        let filtered = filter_annotations(&node.info.annotations);
+        if !filtered.is_empty() {
+            obj["annotations"] = serde_json::json!(filtered);
+        }
+    }
     if !node.spec_refs.is_empty() {
         obj["specRefs"] = serde_json::json!(
             node.spec_refs
@@ -50,12 +57,12 @@ fn find_target_ref(node: &TreeNode) -> String {
     String::new()
 }
 
-pub fn print_json(tree: &TreeNode, namespace: &str) {
+pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool) {
     let target = find_target_ref(tree);
     let output = serde_json::json!({
         "namespace": namespace,
         "target": target,
-        "tree": tree_to_json(tree),
+        "tree": tree_to_json(tree, include_annotations),
     });
     println!(
         "{}",
@@ -63,18 +70,26 @@ pub fn print_json(tree: &TreeNode, namespace: &str) {
     );
 }
 
-pub fn print_chain_json(chain: &[ResourceInfo], namespace: &str) {
+pub fn print_chain_json(chain: &[ResourceInfo], namespace: &str, include_annotations: bool) {
     let items: Vec<_> = chain
         .iter()
         .enumerate()
         .map(|(i, info)| {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "relation": if i == chain.len() - 1 { "self" } else { "parent" },
                 "kind": info.kind,
                 "name": info.name,
                 "namespace": info.namespace,
                 "uid": info.uid,
-            })
+            });
+            obj["labels"] = serde_json::json!(info.labels);
+            if include_annotations && !info.annotations.is_empty() {
+                let filtered = filter_annotations(&info.annotations);
+                if !filtered.is_empty() {
+                    obj["annotations"] = serde_json::json!(filtered);
+                }
+            }
+            obj
         })
         .collect();
     let output = serde_json::json!({

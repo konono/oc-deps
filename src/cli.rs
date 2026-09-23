@@ -62,6 +62,14 @@ pub struct Args {
     #[arg(long)]
     pub strict: bool,
 
+    /// Show labels on each resource in tree output
+    #[arg(long)]
+    pub labels: bool,
+
+    /// Show annotations on each resource in tree output
+    #[arg(long)]
+    pub annotations: bool,
+
     /// Target resource: kind/name or name (with -k). --map 使用時は省略可
     #[arg(value_name = "RESOURCE")]
     pub resource: Option<String>,

@@ -28,7 +28,7 @@ use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_name
 use crate::kube::snapshot::{build_snapshot, save_snapshot};
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
-use crate::output::tree::{count_nodes, print_chain_tree, print_tree};
+use crate::output::tree::{TreeDisplayOpts, count_nodes, print_chain_tree, print_tree};
 use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::inspect::{inspect_operator, print_inspection};
@@ -167,14 +167,14 @@ impl ApplySetApprovalScope {
     }
 }
 
-fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str) {
+fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &TreeDisplayOpts) {
     match output {
         OutputFormat::Tree => {
             eprintln!("\n📦 Namespace: {}\n", namespace);
-            print_tree(tree, "", true, true);
+            print_tree(tree, "", true, true, opts);
         }
         OutputFormat::Table => print_table(tree),
-        OutputFormat::Json => print_json(tree, namespace),
+        OutputFormat::Json => print_json(tree, namespace, opts.show_annotations),
     }
 }
 
@@ -204,13 +204,17 @@ async fn main() -> Result<()> {
                     build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
 
                 let resource_count = snapshot.resources.len();
-                let error_count = snapshot.scan_errors.len();
+                let warning_count = snapshot.scan_warnings.len();
+                format_scan_warnings(&snapshot.scan_warnings, args.verbose);
                 save_snapshot(&snapshot, &output_file)?;
 
                 eprintln!(
-                    "✅ Snapshot saved to {} ({} resources, {} errors)",
-                    output_file, resource_count, error_count
+                    "✅ Snapshot saved to {} ({} resources, {} scan warnings)",
+                    output_file, resource_count, warning_count
                 );
+                if args.strict && warning_count > 0 {
+                    std::process::exit(2);
+                }
                 return Ok(());
             }
             Command::Graph {
@@ -229,6 +233,8 @@ async fn main() -> Result<()> {
                 let snapshot =
                     build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
 
+                format_scan_warnings(&snapshot.scan_warnings, args.verbose);
+
                 eprint!("🔍 Discovering operators...");
                 let operators = discover_operators(&client, &kind_map).await?;
                 eprintln!(" found {} operators", operators.len());
@@ -244,6 +250,9 @@ async fn main() -> Result<()> {
                     output_file,
                     graph.edges.len()
                 );
+                if args.strict && !snapshot.scan_warnings.is_empty() {
+                    std::process::exit(2);
+                }
                 return Ok(());
             }
             Command::Teardown { action } => {
@@ -3543,6 +3552,11 @@ async fn main() -> Result<()> {
         .clone()
         .unwrap_or(config.default_namespace.clone());
 
+    let tree_opts = TreeDisplayOpts {
+        show_labels: args.labels,
+        show_annotations: args.annotations,
+    };
+
     if args.map {
         let t0 = Instant::now();
         eprintln!("🔍 Discovering API resources...");
@@ -3589,7 +3603,7 @@ async fn main() -> Result<()> {
                     index.by_uid.len()
                 );
                 for (i, tree) in trees.iter().enumerate() {
-                    print_tree(tree, "", true, true);
+                    print_tree(tree, "", true, true, &tree_opts);
                     if i < trees.len() - 1 {
                         println!();
                     }
@@ -3613,7 +3627,7 @@ async fn main() -> Result<()> {
                 let output = serde_json::json!({
                     "namespace": namespace,
                     "totalResources": index.by_uid.len(),
-                    "trees": trees.iter().map(tree_to_json).collect::<Vec<_>>(),
+                    "trees": trees.iter().map(|t| tree_to_json(t, args.annotations)).collect::<Vec<_>>(),
                 });
                 println!(
                     "{}",
@@ -3678,10 +3692,10 @@ async fn main() -> Result<()> {
         match args.output {
             OutputFormat::Tree => {
                 eprintln!("\n📦 Namespace: {}\n", namespace);
-                print_chain_tree(&chain);
+                print_chain_tree(&chain, &tree_opts);
             }
             OutputFormat::Table => print_chain_table(&chain),
-            OutputFormat::Json => print_chain_json(&chain, &namespace),
+            OutputFormat::Json => print_chain_json(&chain, &namespace, args.annotations),
         }
         return Ok(());
     }
@@ -3700,6 +3714,13 @@ async fn main() -> Result<()> {
     let target_uid = match index.by_kind_name.get(&(kind.to_lowercase(), name.clone())) {
         Some(uid) => uid.clone(),
         None => {
+            if args.strict && !scan_warnings.is_empty() {
+                eprintln!(
+                    "Error: {}/{} not found in namespace '{}' (scan was incomplete)",
+                    kind, name, namespace
+                );
+                std::process::exit(2);
+            }
             bail!("{}/{} not found in namespace '{}'", kind, name, namespace);
         }
     };
@@ -3716,12 +3737,12 @@ async fn main() -> Result<()> {
             &mut visited,
             &target_uid,
         ) {
-            Some(tree) => display_tree(&tree, &args.output, &namespace),
+            Some(tree) => display_tree(&tree, &args.output, &namespace, &tree_opts),
             None => println!("No resources found."),
         }
     } else {
         match build_full_tree(&target_uid, &index, args.depth) {
-            Some(tree) => display_tree(&tree, &args.output, &namespace),
+            Some(tree) => display_tree(&tree, &args.output, &namespace, &tree_opts),
             None => println!("No resources found."),
         }
     }

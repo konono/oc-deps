@@ -1,7 +1,60 @@
 use crate::graph::tree::TreeNode;
-use crate::kube::resource::ResourceInfo;
+use crate::kube::resource::{EXCLUDED_ANNOTATION_KEYS, ResourceInfo};
 
-pub fn print_tree(node: &TreeNode, prefix: &str, is_last: bool, is_root: bool) {
+#[derive(Default)]
+pub struct TreeDisplayOpts {
+    pub show_labels: bool,
+    pub show_annotations: bool,
+}
+
+fn format_label_suffix(info: &ResourceInfo, opts: &TreeDisplayOpts) -> String {
+    if !opts.show_labels && !opts.show_annotations {
+        return String::new();
+    }
+
+    let mut parts = Vec::new();
+
+    if opts.show_labels && !info.labels.is_empty() {
+        let mut labels: Vec<_> = info
+            .labels
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        labels.sort();
+        parts.push(format!("\x1b[2m [{}]\x1b[0m", labels.join(", ")));
+    }
+
+    if opts.show_annotations && !info.annotations.is_empty() {
+        let mut anns: Vec<_> = info
+            .annotations
+            .iter()
+            .filter(|(k, _)| !EXCLUDED_ANNOTATION_KEYS.contains(&k.as_str()))
+            .map(|(k, v)| {
+                let display_v = if v.chars().count() > 40 {
+                    let truncated: String = v.chars().take(37).collect();
+                    format!("{}...", truncated)
+                } else {
+                    v.clone()
+                };
+                format!("{}={}", k, display_v)
+            })
+            .collect();
+        anns.sort();
+        if !anns.is_empty() {
+            parts.push(format!("\x1b[2;35m [{}]\x1b[0m", anns.join(", ")));
+        }
+    }
+
+    parts.join("")
+}
+
+pub fn print_tree(
+    node: &TreeNode,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    opts: &TreeDisplayOpts,
+) {
     let has_refs = !node.spec_refs.is_empty();
     let has_incoming = !node.incoming_refs.is_empty();
     let has_trailing = has_refs || has_incoming;
@@ -19,14 +72,18 @@ pub fn print_tree(node: &TreeNode, prefix: &str, is_last: bool, is_root: bool) {
         ""
     };
     let resource_ref = format!("{}/{}", node.info.kind, node.info.name);
+    let label_suffix = format_label_suffix(&node.info, opts);
 
     if node.is_target {
         println!(
-            "{}{}\x1b[1;32m{}\x1b[0m{}",
-            prefix, connector, resource_ref, target_marker
+            "{}{}\x1b[1;32m{}\x1b[0m{}{}",
+            prefix, connector, resource_ref, target_marker, label_suffix
         );
     } else {
-        println!("{}{}{}{}", prefix, connector, resource_ref, target_marker);
+        println!(
+            "{}{}{}{}{}",
+            prefix, connector, resource_ref, target_marker, label_suffix
+        );
     }
 
     let child_prefix = if is_root {
@@ -39,7 +96,7 @@ pub fn print_tree(node: &TreeNode, prefix: &str, is_last: bool, is_root: bool) {
 
     for (i, child) in node.children.iter().enumerate() {
         let child_is_last = i == node.children.len() - 1 && !has_trailing;
-        print_tree(child, &child_prefix, child_is_last, false);
+        print_tree(child, &child_prefix, child_is_last, false, opts);
     }
 
     for (i, sref) in node.spec_refs.iter().enumerate() {
@@ -65,7 +122,7 @@ pub fn count_nodes(node: &TreeNode) -> usize {
     1 + node.children.iter().map(count_nodes).sum::<usize>()
 }
 
-pub fn print_chain_tree(chain: &[ResourceInfo]) {
+pub fn print_chain_tree(chain: &[ResourceInfo], opts: &TreeDisplayOpts) {
     for (i, info) in chain.iter().enumerate() {
         let indent = if i == 0 {
             String::new()
@@ -78,10 +135,14 @@ pub fn print_chain_tree(chain: &[ResourceInfo]) {
             ""
         };
         let resource_ref = format!("{}/{}", info.kind, info.name);
+        let label_suffix = format_label_suffix(info, opts);
         if i == chain.len() - 1 {
-            println!("{}\x1b[1;32m{}\x1b[0m{}", indent, resource_ref, marker);
+            println!(
+                "{}\x1b[1;32m{}\x1b[0m{}{}",
+                indent, resource_ref, marker, label_suffix
+            );
         } else {
-            println!("{}{}{}", indent, resource_ref, marker);
+            println!("{}{}{}{}", indent, resource_ref, marker, label_suffix);
         }
     }
 }

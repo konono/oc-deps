@@ -95,6 +95,8 @@ fn find_owner_ref_info(parent_uid: &str, index: &NamespaceIndex) -> Option<Resou
                     namespace: None,
                     uid: parent_uid.to_string(),
                     owner_refs: vec![],
+                    labels: std::collections::HashMap::new(),
+                    annotations: std::collections::HashMap::new(),
                 });
             }
         }

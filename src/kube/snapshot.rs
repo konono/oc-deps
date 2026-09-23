@@ -33,7 +33,7 @@ pub async fn build_snapshot(
 
     let scan_targets: Vec<_> = kind_map
         .iter()
-        .filter(|(k, info)| info.namespaced && !skip_kinds.contains(k.as_str()))
+        .filter(|(k, info)| info.namespaced && info.listable && !skip_kinds.contains(k.as_str()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
@@ -128,7 +128,7 @@ pub async fn build_snapshot(
                         return Some(entries);
                     }
                     Err(e) => {
-                        let warning = ScanWarning::from_kube_error(
+                        let mut warning = ScanWarning::from_kube_error(
                             &e,
                             &info.group,
                             &info.version,
@@ -141,6 +141,7 @@ pub async fn build_snapshot(
                             last_warning = Some(warning);
                             continue;
                         }
+                        warning.set_retries(attempt);
                         if let Ok(mut errors) = scan_errors.lock() {
                             errors.push(warning);
                         }
@@ -148,9 +149,10 @@ pub async fn build_snapshot(
                     }
                 }
             }
-            if let Some(w) = last_warning
+            if let Some(mut w) = last_warning
                 && let Ok(mut errors) = scan_errors.lock()
             {
+                w.set_retries(MAX_RETRIES);
                 errors.push(w);
             }
             None
@@ -180,11 +182,10 @@ pub async fn build_snapshot(
         Ok(mutex) => mutex.into_inner().unwrap_or_default(),
         Err(arc) => arc.lock().unwrap().clone(),
     };
-    let errors: Vec<String> = warnings.iter().map(|w| w.to_string()).collect();
 
     let snapshot = ClusterSnapshot {
         resources,
-        scan_errors: errors,
+        scan_warnings: warnings,
         cluster_url: config.cluster_url.to_string(),
         taken_at: chrono::Utc::now().to_rfc3339(),
         namespaces: vec![namespace.to_string()],

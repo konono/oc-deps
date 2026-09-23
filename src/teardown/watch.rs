@@ -627,6 +627,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "configmaps".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         km
@@ -641,6 +642,7 @@ mod tests {
                 version: "v1".to_string(),
                 plural: "configmaps".to_string(),
                 namespaced: true,
+                listable: true,
             },
         );
         gk

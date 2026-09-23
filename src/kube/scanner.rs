@@ -86,7 +86,7 @@ pub async fn scan_namespace(
 
     let scan_targets: Vec<_> = kind_map
         .iter()
-        .filter(|(k, info)| info.namespaced && !skip_kinds.contains(k.as_str()))
+        .filter(|(k, info)| info.namespaced && info.listable && !skip_kinds.contains(k.as_str()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
@@ -147,6 +147,14 @@ pub async fn scan_namespace(
                                     (vec![], vec![])
                                 };
 
+                                let labels =
+                                    metadata.labels.unwrap_or_default().into_iter().collect();
+                                let annotations = metadata
+                                    .annotations
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .collect();
+
                                 Some((
                                     ResourceInfo {
                                         kind: kind.clone(),
@@ -154,6 +162,8 @@ pub async fn scan_namespace(
                                         namespace: ns,
                                         uid,
                                         owner_refs,
+                                        labels,
+                                        annotations,
                                     },
                                     wk_refs,
                                     spec_strs,
@@ -163,23 +173,27 @@ pub async fn scan_namespace(
                         return Ok(items);
                     }
                     Err(e) => {
-                        let warning = ScanWarning::from_kube_error(
+                        let mut warning = ScanWarning::from_kube_error(
                             &e,
                             &info.group,
                             &info.version,
                             &info.plural,
                         );
                         if warning.is_retryable() && attempt < MAX_RETRIES {
-                            let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            let delay =
+                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
                             tokio::time::sleep(delay).await;
                             last_err = Some(warning);
                             continue;
                         }
+                        warning.set_retries(attempt);
                         return Err(warning);
                     }
                 }
             }
-            Err(last_err.unwrap())
+            let mut w = last_err.unwrap();
+            w.set_retries(MAX_RETRIES);
+            Err(w)
         }
     });
 
@@ -344,6 +358,19 @@ pub async fn resolve_missing_parents(
                     })
                     .collect();
 
+                let labels = obj
+                    .metadata
+                    .labels
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let annotations = obj
+                    .metadata
+                    .annotations
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+
                 let next_uid = uid.clone();
                 index.insert(ResourceInfo {
                     kind: owner.kind,
@@ -351,6 +378,8 @@ pub async fn resolve_missing_parents(
                     namespace: ns,
                     uid,
                     owner_refs,
+                    labels,
+                    annotations,
                 });
                 current = next_uid;
             }
@@ -381,6 +410,8 @@ pub async fn find_parents_only(
                     namespace: None,
                     uid: String::new(),
                     owner_refs: vec![],
+                    labels: HashMap::new(),
+                    annotations: HashMap::new(),
                 });
                 break;
             }
@@ -417,12 +448,27 @@ pub async fn find_parents_only(
 
                 let next = primary_owner(&owner_refs).cloned();
 
+                let labels = obj
+                    .metadata
+                    .labels
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let annotations = obj
+                    .metadata
+                    .annotations
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+
                 chain.push(ResourceInfo {
                     kind: current_kind,
                     name: current_name,
                     namespace: obj.metadata.namespace,
                     uid,
                     owner_refs,
+                    labels,
+                    annotations,
                 });
 
                 match next {
@@ -440,6 +486,8 @@ pub async fn find_parents_only(
                     namespace: None,
                     uid: String::new(),
                     owner_refs: vec![],
+                    labels: HashMap::new(),
+                    annotations: HashMap::new(),
                 });
                 break;
             }
