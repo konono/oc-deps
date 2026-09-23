@@ -6,7 +6,7 @@ use kube::{
     core::GroupVersion,
 };
 
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{KindInfo, KindMap};
 use crate::kube::resource::ScanWarning;
 
 pub async fn get_service_selected_pods(
@@ -276,7 +276,12 @@ async fn list_ingresses(
     let mut result = Vec::new();
     let mut warnings = Vec::new();
 
-    if let Some(info) = kind_map.get("Ingress") {
+    let ingress_info: Option<&KindInfo> = kind_map
+        .iter()
+        .find(|(k, info)| *k == "Ingress" && info.group == "networking.k8s.io")
+        .map(|(_, info)| info)
+        .or_else(|| kind_map.get("Ingress"));
+    if let Some(info) = ingress_info {
         let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("Ingress");
         let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
         let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
