@@ -61,6 +61,11 @@ oc-deps --map --filter label=app.kubernetes.io/part-of=myapp -n <namespace>
 # Combine filters (AND)
 oc-deps --map --filter kind=Deployment --filter label=app=myapp -n <namespace>
 
+# Which Operator manages this resource?
+oc-deps who-manages deployment/<name> -n <namespace>
+oc-deps who-manages pod/<pod-name> -n <namespace>
+oc-deps who-manages -o json deployment/<name> -n <namespace>
+
 # Trace which Operator installed a CRD
 oc-deps --crd-origin -k MyCustomResource -n <namespace>
 

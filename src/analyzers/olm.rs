@@ -11,7 +11,7 @@ use kube::{
 use serde::{Deserialize, Serialize};
 
 use crate::cli::OutputFormat;
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::ResourceId;
 
 // ──────────────────────────────────────────────────────────────
@@ -1025,6 +1025,512 @@ pub fn print_crd_origin(chain: &CrdOriginChain, kind: &str, output: &OutputForma
     }
 }
 
+// ──────────────────────────────────────────────────────────────
+//  who-manages: resource → operator attribution
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct OwnershipStep {
+    pub kind: String,
+    pub name: String,
+    pub namespace: Option<String>,
+    pub group: String,
+    pub relationship: String,
+    pub evidence: String,
+    pub confidence: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct WhoManagesResult {
+    pub chain: Vec<OwnershipStep>,
+    pub operator_name: Option<String>,
+    pub package_name: Option<String>,
+    pub install_namespace: Option<String>,
+    pub confidence: String,
+    pub warnings: Vec<String>,
+}
+
+const LABEL_MANAGED_BY: &str = "app.kubernetes.io/managed-by";
+const LABEL_PART_OF: &str = "app.kubernetes.io/part-of";
+
+fn resolve_owner_group(oref: &crate::kube::resource::OwnerRef) -> String {
+    match oref.api_version.rsplit_once('/') {
+        Some((g, _)) => g.to_string(),
+        None => String::new(),
+    }
+}
+
+fn resolve_owner_kind_info<'a>(
+    oref: &crate::kube::resource::OwnerRef,
+    kind_map: &'a KindMap,
+    gk_map: &'a GroupKindMap,
+) -> Option<&'a crate::kube::discovery::KindInfo> {
+    let owner_group = resolve_owner_group(oref);
+    if !owner_group.is_empty() {
+        return gk_map.get(&(owner_group, oref.kind.clone()));
+    }
+    kind_map.get(&oref.kind)
+}
+
+pub struct WhoManagesInput<'a> {
+    pub client: &'a Client,
+    pub kind: &'a str,
+    pub group: &'a str,
+    pub name: &'a str,
+    pub namespace: &'a str,
+    pub kind_map: &'a KindMap,
+    pub gk_map: &'a GroupKindMap,
+}
+
+pub fn resolve_crd_name_for_root(
+    trusted_root: &Option<(String, String)>,
+    target_group: &str,
+    kind: &str,
+    gk_map: &GroupKindMap,
+) -> Option<String> {
+    let (root_group, root_kind) = trusted_root
+        .clone()
+        .unwrap_or_else(|| (target_group.to_string(), kind.to_string()));
+    if root_group.is_empty() {
+        return None;
+    }
+    let ki = gk_map.get(&(root_group.clone(), root_kind.clone()))?;
+    Some(format!("{}.{}", ki.plural, ki.group))
+}
+
+pub fn infer_operator_from_labels(labels: &HashMap<String, String>) -> Option<(String, String)> {
+    if let Some(v) = labels.get(LABEL_MANAGED_BY) {
+        return Some((LABEL_MANAGED_BY.to_string(), v.clone()));
+    }
+    if let Some(v) = labels.get(LABEL_PART_OF) {
+        return Some((LABEL_PART_OF.to_string(), v.clone()));
+    }
+    None
+}
+
+pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult> {
+    use anyhow::bail;
+    let client = input.client;
+    let kind = input.kind;
+    let target_group = input.group;
+    let name = input.name;
+    let namespace = input.namespace;
+    let kind_map = input.kind_map;
+    let gk_map = input.gk_map;
+
+    let mut steps: Vec<OwnershipStep> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut current_kind = kind.to_string();
+    let mut current_group = target_group.to_string();
+    let mut current_name = name.to_string();
+    let mut current_ns = namespace.to_string();
+    let mut visited = HashSet::new();
+    let mut chain_broken = false;
+    let mut trusted_root: Option<(String, String)> = None; // (group, kind)
+    let mut target_labels: HashMap<String, String> = HashMap::new();
+
+    loop {
+        let info = if !current_group.is_empty() {
+            gk_map.get(&(current_group.clone(), current_kind.clone()))
+        } else {
+            kind_map.get(&current_kind)
+        };
+        let info = match info {
+            Some(i) => i,
+            None => {
+                if steps.is_empty() {
+                    bail!("{}/{} not found (kind not in discovery)", kind, name);
+                }
+                chain_broken = true;
+                break;
+            }
+        };
+
+        let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&current_kind);
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+        let api: Api<DynamicObject> = if info.namespaced {
+            Api::namespaced_with(client.clone(), &current_ns, &ar)
+        } else {
+            Api::all_with(client.clone(), &ar)
+        };
+
+        let obj = match api.get(&current_name).await {
+            Ok(o) => o,
+            Err(e) => {
+                if steps.is_empty() {
+                    bail!(
+                        "{}/{} not found in namespace \'{}\': {}",
+                        kind,
+                        name,
+                        namespace,
+                        e
+                    );
+                }
+                steps.push(OwnershipStep {
+                    kind: current_kind.clone(),
+                    name: current_name.clone(),
+                    namespace: Some(current_ns.clone()),
+                    group: info.group.clone(),
+                    relationship: "ownerRef".into(),
+                    evidence: "parent GET failed".into(),
+                    confidence: "None (unreachable)".into(),
+                });
+                chain_broken = true;
+                break;
+            }
+        };
+
+        let uid = obj.metadata.uid.clone().unwrap_or_default();
+        if !visited.insert(uid.clone()) {
+            chain_broken = true;
+            warnings.push("Cycle detected in ownerRef chain".into());
+            break;
+        }
+
+        let owner_refs: Vec<crate::kube::resource::OwnerRef> = obj
+            .metadata
+            .owner_references
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| crate::kube::resource::OwnerRef {
+                api_version: r.api_version,
+                kind: r.kind,
+                name: r.name,
+                uid: r.uid,
+                controller: r.controller.unwrap_or(false),
+            })
+            .collect();
+
+        let labels: HashMap<String, String> = obj
+            .metadata
+            .labels
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let is_self = steps.is_empty();
+        if is_self {
+            target_labels = labels;
+        }
+
+        steps.push(OwnershipStep {
+            kind: current_kind.clone(),
+            name: current_name.clone(),
+            namespace: obj.metadata.namespace.clone(),
+            group: info.group.clone(),
+            relationship: if is_self { "self" } else { "ownerRef" }.into(),
+            evidence: if is_self {
+                "target resource".into()
+            } else {
+                "ownerReference".into()
+            },
+            confidence: if is_self {
+                "N/A"
+            } else {
+                "High (UID verified)"
+            }
+            .into(),
+        });
+
+        if !is_self {
+            trusted_root = Some((current_group.clone(), current_kind.clone()));
+        }
+
+        let primary = crate::kube::resource::primary_owner(&owner_refs).cloned();
+        match primary {
+            Some(oref) => {
+                let next_info = resolve_owner_kind_info(&oref, kind_map, gk_map);
+                if next_info.is_none() {
+                    chain_broken = true;
+                    break;
+                }
+                let next_info = next_info.unwrap();
+
+                let next_gvk =
+                    GroupVersion::gv(&next_info.group, &next_info.version).with_kind(&oref.kind);
+                let next_ar = ApiResource::from_gvk_with_plural(&next_gvk, &next_info.plural);
+                let next_api: Api<DynamicObject> = if next_info.namespaced {
+                    Api::namespaced_with(client.clone(), &current_ns, &next_ar)
+                } else {
+                    Api::all_with(client.clone(), &next_ar)
+                };
+
+                match next_api.get(&oref.name).await {
+                    Ok(parent_obj) => {
+                        let parent_uid = parent_obj.metadata.uid.clone().unwrap_or_default();
+                        if parent_uid != oref.uid {
+                            steps.push(OwnershipStep {
+                                kind: oref.kind.clone(),
+                                name: oref.name.clone(),
+                                namespace: parent_obj.metadata.namespace.clone(),
+                                group: next_info.group.clone(),
+                                relationship: "ownerRef".into(),
+                                evidence: format!(
+                                    "UID mismatch: ref={}, live={}",
+                                    &oref.uid[..8.min(oref.uid.len())],
+                                    &parent_uid[..8.min(parent_uid.len())]
+                                ),
+                                confidence: "None (stale ownerRef)".into(),
+                            });
+                            chain_broken = true;
+                            break;
+                        }
+                        current_group = resolve_owner_group(&oref);
+                        current_kind = oref.kind;
+                        current_name = oref.name;
+                        current_ns = parent_obj
+                            .metadata
+                            .namespace
+                            .unwrap_or_else(|| current_ns.clone());
+                    }
+                    Err(_) => {
+                        steps.push(OwnershipStep {
+                            kind: oref.kind.clone(),
+                            name: oref.name.clone(),
+                            namespace: None,
+                            group: next_info.group.clone(),
+                            relationship: "ownerRef".into(),
+                            evidence: "parent GET failed".into(),
+                            confidence: "None (unreachable)".into(),
+                        });
+                        chain_broken = true;
+                        break;
+                    }
+                }
+            }
+            None => break,
+        }
+    }
+
+    steps.reverse();
+
+    let mut operator_name = None;
+    let mut package_name = None;
+    let mut install_namespace = None;
+    let mut overall_confidence = "Unattributed".to_string();
+
+    if chain_broken {
+        overall_confidence = "Incomplete (chain broken)".into();
+        warnings.push("Ownership chain is incomplete. Attribution may be inaccurate.".into());
+    }
+
+    if !chain_broken {
+        for step in &steps {
+            if step.kind == "ClusterServiceVersion" {
+                let operators = discover_operators(client, kind_map).await?;
+                let matched_op = operators.iter().find(|op| {
+                    op.csv.name == step.name
+                        && step.namespace.as_deref() == Some(op.install_namespace.as_str())
+                });
+                if let Some(op) = matched_op {
+                    operator_name = Some(op.csv.name.clone());
+                    install_namespace = Some(op.install_namespace.clone());
+                    package_name = op.package_name.clone();
+                    overall_confidence = "Managed (ownerRef chain → CSV)".into();
+                    if let Some(sub) = &op.subscription {
+                        steps.insert(
+                            0,
+                            OwnershipStep {
+                                kind: "Subscription".into(),
+                                name: sub.name.clone(),
+                                namespace: sub.namespace.clone(),
+                                group: "operators.coreos.com".into(),
+                                relationship: "installed-by".into(),
+                                evidence: "status.installedCSV".into(),
+                                confidence: "High".into(),
+                            },
+                        );
+                    }
+                }
+                break;
+            }
+        }
+
+        if operator_name.is_none() {
+            let crd_name_for_lookup: Option<String> = if kind == "CustomResourceDefinition" {
+                // Target IS a CRD object — its metadata.name is the canonical CRD name
+                Some(name.to_string())
+            } else {
+                resolve_crd_name_for_root(&trusted_root, target_group, kind, gk_map)
+            };
+
+            if let Some(crd_name) = crd_name_for_lookup {
+                let operators = discover_operators(client, kind_map).await?;
+                let matched_op = operators
+                    .iter()
+                    .find(|op| op.owned_crds.contains(&crd_name));
+                if let Some(op) = matched_op {
+                    operator_name = Some(op.csv.name.clone());
+                    install_namespace = Some(op.install_namespace.clone());
+                    package_name = op.package_name.clone();
+                    overall_confidence = "Attributed (CRD owned by CSV)".into();
+                    steps.insert(
+                        0,
+                        OwnershipStep {
+                            kind: "ClusterServiceVersion".into(),
+                            name: op.csv.name.clone(),
+                            namespace: Some(op.install_namespace.clone()),
+                            group: "operators.coreos.com".into(),
+                            relationship: "owns-api".into(),
+                            evidence: "CSV spec.customresourcedefinitions.owned".into(),
+                            confidence: "Medium".into(),
+                        },
+                    );
+                    if let Some(sub) = &op.subscription {
+                        steps.insert(
+                            0,
+                            OwnershipStep {
+                                kind: "Subscription".into(),
+                                name: sub.name.clone(),
+                                namespace: sub.namespace.clone(),
+                                group: "operators.coreos.com".into(),
+                                relationship: "installed-by".into(),
+                                evidence: "status.installedCSV".into(),
+                                confidence: "High".into(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        if operator_name.is_none()
+            && let Some((label_key, label_value)) = infer_operator_from_labels(&target_labels)
+        {
+            overall_confidence = format!("Inferred (label {}={})", label_key, label_value);
+            operator_name = Some(label_value);
+        }
+    }
+
+    Ok(WhoManagesResult {
+        chain: steps,
+        operator_name,
+        package_name,
+        install_namespace,
+        confidence: overall_confidence,
+        warnings,
+    })
+}
+
+pub fn print_who_manages(result: &WhoManagesResult, output: &OutputFormat) {
+    match output {
+        OutputFormat::Tree => {
+            if !result.warnings.is_empty() {
+                for w in &result.warnings {
+                    eprintln!("⚠ {}", w);
+                }
+                eprintln!();
+            }
+            println!("Ownership chain:");
+            for (i, step) in result.chain.iter().enumerate() {
+                let indent = "  ".repeat(i + 1);
+                let ns = step
+                    .namespace
+                    .as_deref()
+                    .map(|n| format!(" (ns: {})", n))
+                    .unwrap_or_default();
+                let direction = if step.relationship == "self" {
+                    ""
+                } else {
+                    "← "
+                };
+                println!(
+                    "{}{}[1m{}/{}[0m{}  [2m[{}, {}, {}][0m",
+                    indent,
+                    direction,
+                    step.kind,
+                    step.name,
+                    ns,
+                    step.relationship,
+                    step.evidence,
+                    step.confidence
+                );
+            }
+            println!();
+            if let Some(op) = &result.operator_name {
+                println!("Operator:   {}", op);
+            }
+            if let Some(pkg) = &result.package_name {
+                println!("Package:    {}", pkg);
+            }
+            if let Some(ns) = &result.install_namespace {
+                println!("Namespace:  {}", ns);
+            }
+            println!("Confidence: {}", result.confidence);
+        }
+        OutputFormat::Table => {
+            let mut table = Table::new();
+            table.set_header(vec![
+                "Relationship",
+                "Group",
+                "Kind",
+                "Name",
+                "Namespace",
+                "Evidence",
+                "Confidence",
+            ]);
+            for step in &result.chain {
+                table.add_row(vec![
+                    &step.relationship,
+                    &step.group,
+                    &step.kind,
+                    &step.name,
+                    step.namespace.as_deref().unwrap_or("-"),
+                    &step.evidence,
+                    &step.confidence,
+                ]);
+            }
+            println!("{table}");
+            println!();
+            if !result.warnings.is_empty() {
+                for w in &result.warnings {
+                    eprintln!("⚠ {}", w);
+                }
+            }
+            println!(
+                "Operator:   {}",
+                result.operator_name.as_deref().unwrap_or("(none)")
+            );
+            if let Some(pkg) = &result.package_name {
+                println!("Package:    {}", pkg);
+            }
+            if let Some(ns) = &result.install_namespace {
+                println!("Namespace:  {}", ns);
+            }
+            println!("Confidence: {}", result.confidence);
+        }
+        OutputFormat::Json => {
+            let chain_json: Vec<_> = result
+                .chain
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "relationship": s.relationship,
+                        "group": s.group,
+                        "kind": s.kind,
+                        "name": s.name,
+                        "namespace": s.namespace,
+                        "evidence": s.evidence,
+                        "confidence": s.confidence,
+                    })
+                })
+                .collect();
+            let output = serde_json::json!({
+                "chain": chain_json,
+                "operator": result.operator_name,
+                "package": result.package_name,
+                "installNamespace": result.install_namespace,
+                "confidence": result.confidence,
+                "warnings": result.warnings,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1037,6 +1543,181 @@ mod tests {
             }
             .boxed(),
         )
+    }
+
+    use crate::kube::discovery::KindInfo;
+    use crate::kube::resource::OwnerRef;
+
+    fn make_kind_info(group: &str, plural: &str) -> KindInfo {
+        KindInfo {
+            group: group.into(),
+            version: "v1".into(),
+            plural: plural.into(),
+            namespaced: true,
+            listable: true,
+        }
+    }
+
+    fn make_oref(api_version: &str, kind: &str, name: &str, uid: &str) -> OwnerRef {
+        OwnerRef {
+            api_version: api_version.into(),
+            kind: kind.into(),
+            name: name.into(),
+            uid: uid.into(),
+            controller: true,
+        }
+    }
+
+    #[test]
+    fn resolve_owner_group_from_api_version() {
+        let oref = make_oref("apps/v1", "Deployment", "web", "uid-1");
+        assert_eq!(resolve_owner_group(&oref), "apps");
+
+        let oref_core = make_oref("v1", "Pod", "pod-1", "uid-2");
+        assert_eq!(resolve_owner_group(&oref_core), "");
+
+        let oref_crd = make_oref(
+            "datasciencecluster.opendatahub.io/v1",
+            "DataScienceCluster",
+            "dsc",
+            "uid-3",
+        );
+        assert_eq!(
+            resolve_owner_group(&oref_crd),
+            "datasciencecluster.opendatahub.io"
+        );
+    }
+
+    #[test]
+    fn resolve_owner_kind_info_prefers_gk_map() {
+        let mut km = KindMap::new();
+        km.insert(
+            "Ingress".into(),
+            make_kind_info("config.openshift.io", "ingresses"),
+        );
+        let mut gk = GroupKindMap::new();
+        gk.insert(
+            ("networking.k8s.io".into(), "Ingress".into()),
+            make_kind_info("networking.k8s.io", "ingresses"),
+        );
+        gk.insert(
+            ("config.openshift.io".into(), "Ingress".into()),
+            make_kind_info("config.openshift.io", "ingresses"),
+        );
+
+        let oref = make_oref("networking.k8s.io/v1", "Ingress", "my-ing", "uid-1");
+        let info = resolve_owner_kind_info(&oref, &km, &gk).unwrap();
+        assert_eq!(info.group, "networking.k8s.io");
+    }
+
+    #[test]
+    fn resolve_owner_kind_info_no_fallback_to_wrong_group() {
+        let mut km = KindMap::new();
+        km.insert(
+            "Ingress".into(),
+            make_kind_info("config.openshift.io", "ingresses"),
+        );
+        let gk = GroupKindMap::new();
+
+        let oref = make_oref("networking.k8s.io/v1", "Ingress", "my-ing", "uid-1");
+        let info = resolve_owner_kind_info(&oref, &km, &gk);
+        assert!(
+            info.is_none(),
+            "should not fallback to config.openshift.io when networking.k8s.io is specified"
+        );
+    }
+
+    #[test]
+    fn resolve_owner_kind_info_core_group_uses_kind_map() {
+        let mut km = KindMap::new();
+        km.insert("Pod".into(), make_kind_info("", "pods"));
+        let gk = GroupKindMap::new();
+
+        let oref = make_oref("v1", "Pod", "pod-1", "uid-1");
+        let info = resolve_owner_kind_info(&oref, &km, &gk).unwrap();
+        assert_eq!(info.group, "");
+        assert_eq!(info.plural, "pods");
+    }
+
+    #[test]
+    fn label_inference_managed_by_priority() {
+        let mut labels = HashMap::new();
+        labels.insert(LABEL_MANAGED_BY.into(), "operator-a".into());
+        labels.insert(LABEL_PART_OF.into(), "component-b".into());
+        let result = infer_operator_from_labels(&labels);
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, LABEL_MANAGED_BY);
+        assert_eq!(value, "operator-a");
+    }
+
+    #[test]
+    fn label_inference_part_of_fallback() {
+        let mut labels = HashMap::new();
+        labels.insert(LABEL_PART_OF.into(), "component-b".into());
+        let result = infer_operator_from_labels(&labels);
+        assert!(result.is_some());
+        let (key, value) = result.unwrap();
+        assert_eq!(key, LABEL_PART_OF);
+        assert_eq!(value, "component-b");
+    }
+
+    #[test]
+    fn label_inference_no_match() {
+        let mut labels = HashMap::new();
+        labels.insert("custom.io/managed-by".into(), "bogus".into());
+        let result = infer_operator_from_labels(&labels);
+        assert!(result.is_none(), "non-standard key should not match");
+    }
+
+    #[test]
+    fn label_inference_empty() {
+        let labels = HashMap::new();
+        assert!(infer_operator_from_labels(&labels).is_none());
+    }
+
+    #[test]
+    fn crd_object_uses_metadata_name_directly() {
+        // Two CRDs for the same Kind "Kueue" in different groups
+        let mut km = KindMap::new();
+        km.insert(
+            "Kueue".into(),
+            make_kind_info("kueue.openshift.io", "kueues"),
+        );
+        let mut gk = GroupKindMap::new();
+        gk.insert(
+            ("kueue.openshift.io".into(), "Kueue".into()),
+            make_kind_info("kueue.openshift.io", "kueues"),
+        );
+        gk.insert(
+            ("components.platform.opendatahub.io".into(), "Kueue".into()),
+            make_kind_info("components.platform.opendatahub.io", "kueues"),
+        );
+
+        // When target is CRD, we use metadata.name directly
+        // CRD name = "kueues.kueue.openshift.io" → should match owned_crds directly
+        // No need for resolve_crd_name_for_root — it's just the name itself
+
+        // For non-CRD root, resolve_crd_name_for_root uses trusted_root
+        let root = Some(("kueue.openshift.io".into(), "Kueue".into()));
+        let result = resolve_crd_name_for_root(&root, "", "Kueue", &gk);
+        assert_eq!(result, Some("kueues.kueue.openshift.io".into()));
+
+        let root2 = Some(("components.platform.opendatahub.io".into(), "Kueue".into()));
+        let result2 = resolve_crd_name_for_root(&root2, "", "Kueue", &gk);
+        assert_eq!(
+            result2,
+            Some("kueues.components.platform.opendatahub.io".into())
+        );
+    }
+
+    #[test]
+    fn crd_name_for_built_in_returns_none() {
+        let mut km = KindMap::new();
+        km.insert("Pod".into(), make_kind_info("", "pods"));
+        let gk = GroupKindMap::new();
+        let result = resolve_crd_name_for_root(&None, "", "Pod", &gk);
+        assert!(result.is_none());
     }
 
     #[test]

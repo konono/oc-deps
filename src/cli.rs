@@ -87,6 +87,25 @@ pub struct Args {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Show which Operator manages a resource (ownerRef chain → CSV → Subscription)
+    WhoManages {
+        /// Resource in kind/name format
+        #[arg(value_name = "RESOURCE")]
+        resource: String,
+
+        /// Namespace (default: kubeconfig default)
+        #[arg(short = 'n', long)]
+        namespace: Option<String>,
+
+        /// Output format: tree, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+    },
+
     /// Take a cluster snapshot and save to JSON
     Snapshot {
         /// Namespace to snapshot

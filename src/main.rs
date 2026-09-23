@@ -13,8 +13,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use crate::analyzers::olm::{
-    compute_operator_dependencies, discover_operators, find_crd_origin, print_crd_origin,
-    print_operators,
+    WhoManagesInput, compute_operator_dependencies, discover_operators, find_crd_origin,
+    print_crd_origin, print_operators, print_who_manages, who_manages,
 };
 use crate::analyzers::selector::{
     build_network_inventory, find_network_paths, get_service_selected_pods,
@@ -26,6 +26,7 @@ use crate::graph::tree::{
 };
 use crate::kube::discovery::{
     APPLY_SET_REUSE_CACHE_ENV, build_kind_lookup_cached, load_config_and_client, resolve_kind,
+    resolve_kind_with_group,
 };
 use crate::kube::resource::format_scan_warnings;
 use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
@@ -3600,6 +3601,43 @@ async fn main() -> Result<()> {
                 );
 
                 print_operators(&operators, &deps, &output);
+                return Ok(());
+            }
+            Command::WhoManages {
+                resource,
+                namespace,
+                output,
+                no_cache,
+            } => {
+                let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
+                let t0 = Instant::now();
+                eprintln!("🔍 Discovering API resources...");
+                let (kind_map, gvr_map, gk_map_wm, _) =
+                    build_kind_lookup_cached(&client, &config, no_cache).await?;
+                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                let (kind_input, name) = if let Some((k, n)) = resource.split_once('/') {
+                    (k.to_string(), n.to_string())
+                } else {
+                    bail!("Resource must be in kind/name format (e.g. pod/my-pod)");
+                };
+                let (kind, target_group) =
+                    resolve_kind_with_group(&kind_input, &kind_map, &gvr_map)?;
+
+                eprint!("🔍 Tracing ownership...");
+                let result = who_manages(&WhoManagesInput {
+                    client: &client,
+                    kind: &kind,
+                    group: &target_group,
+                    name: &name,
+                    namespace: &namespace,
+                    kind_map: &kind_map,
+                    gk_map: &gk_map_wm,
+                })
+                .await?;
+                eprintln!(" done\n");
+
+                print_who_manages(&result, &output);
                 return Ok(());
             }
             Command::Diff { .. } => unreachable!("handled before client init"),
