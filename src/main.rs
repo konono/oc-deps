@@ -16,9 +16,7 @@ use crate::analyzers::olm::{
     compute_operator_dependencies, discover_operators, find_crd_origin, print_crd_origin,
     print_operators,
 };
-use crate::analyzers::selector::{
-    find_network_paths, get_service_selected_pods, print_network_paths,
-};
+use crate::analyzers::selector::{find_network_paths, get_service_selected_pods};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
@@ -171,6 +169,29 @@ impl ApplySetApprovalScope {
             Self::OperatorGroup => "operator-group",
         }
     }
+}
+
+fn find_descendant_pods(
+    root_uid: &str,
+    index: &crate::kube::resource::NamespaceIndex,
+) -> Vec<(String, std::collections::HashMap<String, String>)> {
+    let mut pods = Vec::new();
+    let mut stack = vec![root_uid.to_string()];
+    let mut visited = std::collections::HashSet::new();
+    while let Some(uid) = stack.pop() {
+        if !visited.insert(uid.clone()) {
+            continue;
+        }
+        if let Some(info) = index.by_uid.get(&uid)
+            && info.kind == "Pod"
+        {
+            pods.push((info.name.clone(), info.labels.clone()));
+        }
+        if let Some(children) = index.children_of.get(&uid) {
+            stack.extend(children.iter().cloned());
+        }
+    }
+    pods
 }
 
 fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &TreeDisplayOpts) {
@@ -3723,8 +3744,18 @@ async fn main() -> Result<()> {
 
     let kind = resolve_kind(&kind_input, &kind_map, &gvr_map)?;
 
-    if args.network && kind != "Pod" {
-        bail!("--network requires a Pod resource, got {}", kind);
+    const NETWORK_SUPPORTED_KINDS: &[&str] = &[
+        "Pod",
+        "Deployment",
+        "ReplicaSet",
+        "StatefulSet",
+        "DaemonSet",
+    ];
+    if args.network && !NETWORK_SUPPORTED_KINDS.iter().any(|k| *k == kind) {
+        bail!(
+            "--network requires Pod, Deployment, ReplicaSet, StatefulSet, or DaemonSet, got {}",
+            kind
+        );
     }
 
     if args.crd_origin {
@@ -3819,44 +3850,112 @@ async fn main() -> Result<()> {
         }
     }
 
-    if args.network && kind == "Pod" {
-        let pod_labels = index
-            .by_uid
-            .get(&target_uid)
-            .map(|info| &info.labels)
-            .cloned()
-            .unwrap_or_default();
-        let net_result = find_network_paths(&client, &pod_labels, &namespace, &kind_map).await;
-        match args.output {
-            OutputFormat::Json => {
-                let json_paths: Vec<_> = net_result
-                    .paths
-                    .iter()
-                    .map(|p| {
-                        let ingresses: Vec<_> = p
-                            .ingresses
-                            .iter()
-                            .map(|i| {
-                                serde_json::json!({
-                                    "kind": i.kind,
-                                    "name": i.name,
-                                })
-                            })
-                            .collect();
-                        serde_json::json!({
-                            "service": p.service.name,
-                            "selector": p.service.selector,
-                            "ingresses": ingresses,
-                        })
-                    })
-                    .collect();
-                extra_json.insert("networkPaths".into(), serde_json::json!(json_paths));
+    if args.network {
+        let pod_labels_list = if kind == "Pod" {
+            vec![(
+                name.clone(),
+                index
+                    .by_uid
+                    .get(&target_uid)
+                    .map(|info| info.labels.clone())
+                    .unwrap_or_default(),
+            )]
+        } else {
+            find_descendant_pods(&target_uid, &index)
+        };
+
+        if pod_labels_list.is_empty() {
+            match args.output {
+                OutputFormat::Json => {
+                    extra_json.insert("networkPaths".into(), serde_json::json!([]));
+                }
+                _ => println!("\n📎 No Pods found under {}/{}", kind, name),
             }
-            _ => print_network_paths(&net_result, &name),
-        }
-        if !net_result.warnings.is_empty() {
-            format_scan_warnings(&net_result.warnings, args.verbose);
-            scan_warnings.extend(net_result.warnings);
+        } else {
+            let mut all_paths = Vec::new();
+            let mut net_warnings = Vec::new();
+            for (pod_name, pod_labels) in &pod_labels_list {
+                let net_result =
+                    find_network_paths(&client, pod_labels, &namespace, &kind_map).await;
+                for path in &net_result.paths {
+                    all_paths.push((pod_name.clone(), path.clone()));
+                }
+                net_warnings.extend(net_result.warnings);
+            }
+
+            match args.output {
+                OutputFormat::Json => {
+                    let json_paths: Vec<_> = all_paths
+                        .iter()
+                        .map(|(pod_name, p)| {
+                            let ingresses: Vec<_> = p
+                                .ingresses
+                                .iter()
+                                .map(|i| {
+                                    serde_json::json!({
+                                        "kind": i.kind,
+                                        "name": i.name,
+                                    })
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "pod": pod_name,
+                                "service": p.service.name,
+                                "selector": p.service.selector,
+                                "ingresses": ingresses,
+                            })
+                        })
+                        .collect();
+                    extra_json.insert("networkPaths".into(), serde_json::json!(json_paths));
+                }
+                _ => {
+                    if all_paths.is_empty() {
+                        println!("\n📎 No Services select Pods under {}/{}", kind, name);
+                    } else {
+                        println!("\n📎 Network paths for {}/{}:", kind, name);
+                        let mut seen = std::collections::HashSet::new();
+                        for (pod_name, path) in &all_paths {
+                            let selector_str = path
+                                .service
+                                .selector
+                                .iter()
+                                .map(|(k, v)| format!("{}={}", k, v))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            if path.ingresses.is_empty() {
+                                let key = format!("svc:{}", path.service.name);
+                                if seen.insert(key) {
+                                    println!(
+                                        "   Service/{} (selector: {}) → Pod/{}",
+                                        path.service.name, selector_str, pod_name
+                                    );
+                                }
+                            } else {
+                                for ing in &path.ingresses {
+                                    let key = format!(
+                                        "{}:{}:svc:{}",
+                                        ing.kind, ing.name, path.service.name
+                                    );
+                                    if seen.insert(key) {
+                                        println!(
+                                            "   {}/{} → Service/{} (selector: {}) → Pod/{}",
+                                            ing.kind,
+                                            ing.name,
+                                            path.service.name,
+                                            selector_str,
+                                            pod_name
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !net_warnings.is_empty() {
+                format_scan_warnings(&net_warnings, args.verbose);
+                scan_warnings.extend(net_warnings);
+            }
         }
     }
 

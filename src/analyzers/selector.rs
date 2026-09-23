@@ -329,38 +329,6 @@ pub async fn find_network_paths(
     }
 }
 
-pub fn print_network_paths(result: &NetworkLookupResult, pod_name: &str) {
-    if result.paths.is_empty() {
-        println!("\n📎 No Services select this Pod");
-        return;
-    }
-
-    println!("\n📎 Network paths to Pod/{}:", pod_name);
-    for path in &result.paths {
-        let selector_str = path
-            .service
-            .selector
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        if path.ingresses.is_empty() {
-            println!(
-                "   Service/{} (selector: {}) → Pod/{}",
-                path.service.name, selector_str, pod_name
-            );
-        } else {
-            for ing in &path.ingresses {
-                println!(
-                    "   {}/{} → Service/{} (selector: {}) → Pod/{}",
-                    ing.kind, ing.name, path.service.name, selector_str, pod_name
-                );
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
