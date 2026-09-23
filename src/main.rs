@@ -19,7 +19,9 @@ use crate::analyzers::olm::{
 use crate::analyzers::selector::get_service_selected_pods;
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
-use crate::graph::tree::{TreeNode, build_child_tree, build_full_tree, build_namespace_map};
+use crate::graph::tree::{
+    TreeNode, apply_filters, build_child_tree, build_full_tree, build_namespace_map, parse_filters,
+};
 use crate::kube::discovery::{
     APPLY_SET_REUSE_CACHE_ENV, build_kind_lookup_cached, load_config_and_client, resolve_kind,
 };
@@ -181,6 +183,11 @@ fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    if !args.filter.is_empty() && (!args.map || args.command.is_some()) {
+        bail!("--filter requires --map (without subcommands)");
+    }
+    let map_filters = parse_filters(&args.filter)?;
 
     let (config, client) = load_config_and_client().await?;
 
@@ -3592,16 +3599,28 @@ async fn main() -> Result<()> {
 
         format_scan_warnings(&scan_warnings, args.verbose);
 
-        let trees = build_namespace_map(&index, args.depth);
+        let all_trees = build_namespace_map(&index, args.depth);
+        let total_trees = all_trees.len();
+        let trees = apply_filters(all_trees, &map_filters);
 
         match args.output {
             OutputFormat::Tree => {
-                eprintln!(
-                    "\n📦 Namespace: {} ({} trees, {} resources)\n",
-                    namespace,
-                    trees.len(),
-                    index.by_uid.len()
-                );
+                if map_filters.is_empty() {
+                    eprintln!(
+                        "\n📦 Namespace: {} ({} trees, {} resources)\n",
+                        namespace,
+                        trees.len(),
+                        index.by_uid.len()
+                    );
+                } else {
+                    eprintln!(
+                        "\n📦 Namespace: {} ({}/{} trees matched, {} resources scanned)\n",
+                        namespace,
+                        trees.len(),
+                        total_trees,
+                        index.by_uid.len()
+                    );
+                }
                 for (i, tree) in trees.iter().enumerate() {
                     print_tree(tree, "", true, true, &tree_opts);
                     if i < trees.len() - 1 {
@@ -3624,11 +3643,15 @@ async fn main() -> Result<()> {
                 println!("{table}");
             }
             OutputFormat::Json => {
-                let output = serde_json::json!({
+                let mut output = serde_json::json!({
                     "namespace": namespace,
                     "totalResources": index.by_uid.len(),
+                    "matchedTrees": trees.len(),
                     "trees": trees.iter().map(|t| tree_to_json(t, args.annotations)).collect::<Vec<_>>(),
                 });
+                if !map_filters.is_empty() {
+                    output["totalTrees"] = serde_json::json!(total_trees);
+                }
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&output).unwrap_or_default()

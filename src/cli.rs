@@ -70,6 +70,12 @@ pub struct Args {
     #[arg(long)]
     pub annotations: bool,
 
+    /// Filter --map results by root resource. Applies to root nodes only.
+    /// Repeatable (AND). Requires --map.
+    /// Examples: --filter kind=Deployment --filter label=app=myapp
+    #[arg(long, value_name = "FILTER")]
+    pub filter: Vec<String>,
+
     /// Target resource: kind/name or name (with -k). --map 使用時は省略可
     #[arg(value_name = "RESOURCE")]
     pub resource: Option<String>,

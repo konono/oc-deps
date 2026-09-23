@@ -52,6 +52,15 @@ oc-deps --down-only deployment/<name> -n <namespace>
 # All dependency trees in a namespace
 oc-deps --map -n <namespace>
 
+# Filter --map by root resource kind
+oc-deps --map --filter kind=Deployment -n <namespace>
+
+# Filter --map by root resource label
+oc-deps --map --filter label=app.kubernetes.io/part-of=myapp -n <namespace>
+
+# Combine filters (AND)
+oc-deps --map --filter kind=Deployment --filter label=app=myapp -n <namespace>
+
 # Trace which Operator installed a CRD
 oc-deps --crd-origin -k MyCustomResource -n <namespace>
 
@@ -72,6 +81,7 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--up-only` | Show only parent chain (fast, no namespace scan) |
 | `--down-only` | Show only child resources |
 | `--map` | Show all dependency trees in the namespace |
+| `--filter` | Filter `--map` results by root node. `kind=X` or `label=key=value`. Repeatable (AND). Requires `--map` |
 | `--crd-origin` | Show which Operator/CSV installed the CRD |
 | `--labels` | Show labels on each resource in tree output |
 | `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
