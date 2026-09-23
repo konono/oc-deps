@@ -295,6 +295,60 @@ pub async fn build_kind_lookup_cached(
     Ok((kind_map, gvr_map, gk_map, gvk_map))
 }
 
+pub fn resolve_kind_with_group(
+    input: &str,
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+) -> Result<(String, String)> {
+    let lower = input.to_lowercase();
+
+    // 1. plural.group or singular.group — group is explicit in input
+    if lower.contains('.') {
+        let gvr_key = &lower;
+        // Try exact gvr_map match with group preserved from input
+        if let Some(k) = gvr_map.get(gvr_key) {
+            let input_group = lower.split_once('.').map(|(_, g)| g).unwrap_or("");
+            // Find KindInfo that matches both the kind AND the input group
+            let group = kind_map
+                .iter()
+                .find(|(kn, ki)| *kn == k && ki.group.to_lowercase() == input_group.to_lowercase())
+                .map(|(_, ki)| ki.group.clone())
+                .unwrap_or_else(|| input_group.to_string());
+            return Ok((k.clone(), group));
+        }
+        // Try kind_map entries directly
+        for (kind_name, info) in kind_map {
+            let candidate = format!("{}.{}", info.plural, info.group).to_lowercase();
+            if candidate == lower {
+                return Ok((kind_name.clone(), info.group.clone()));
+            }
+            let singular_candidate =
+                format!("{}.{}", kind_name.to_lowercase(), info.group.to_lowercase());
+            if singular_candidate == lower {
+                return Ok((kind_name.clone(), info.group.clone()));
+            }
+        }
+        bail!(
+            "Unsupported kind: {}. No resource matches this group/plural.",
+            input
+        );
+    }
+
+    // 2. Direct Kind match (no group specified)
+    if let Some(k) = kind_map.keys().find(|k| k.to_lowercase() == lower) {
+        let group = kind_map.get(k).map(|i| i.group.clone()).unwrap_or_default();
+        return Ok((k.clone(), group));
+    }
+
+    // 3. Bare plural (no group) via gvr_map
+    if let Some(k) = gvr_map.get(&lower) {
+        let group = kind_map.get(k).map(|i| i.group.clone()).unwrap_or_default();
+        return Ok((k.clone(), group));
+    }
+
+    bail!("Unsupported kind: {}. Try plural.group/name format.", input);
+}
+
 pub fn resolve_kind(input: &str, kind_map: &KindMap, gvr_map: &GvrMap) -> Result<String> {
     let lower = input.to_lowercase();
 
@@ -341,6 +395,79 @@ pub fn resolve_kind(input: &str, kind_map: &KindMap, gvr_map: &GvrMap) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_ki(group: &str, plural: &str) -> KindInfo {
+        KindInfo {
+            group: group.into(),
+            version: "v1".into(),
+            plural: plural.into(),
+            namespaced: true,
+            listable: true,
+        }
+    }
+
+    fn test_maps_with_ingress_collision() -> (KindMap, GvrMap) {
+        let mut km = KindMap::new();
+        // KindMap has config.openshift.io (wrong for networking use)
+        km.insert(
+            "Ingress".into(),
+            make_ki("config.openshift.io", "ingresses"),
+        );
+        km.insert("Pod".into(), make_ki("", "pods"));
+
+        let mut gvr = GvrMap::new();
+        gvr.insert("ingresses.networking.k8s.io".into(), "Ingress".into());
+        gvr.insert("ingresses.config.openshift.io".into(), "Ingress".into());
+        gvr.insert("pods".into(), "Pod".into());
+
+        (km, gvr)
+    }
+
+    #[test]
+    fn resolve_with_group_explicit_gvr_preserves_group() {
+        let (km, gvr) = test_maps_with_ingress_collision();
+        // Even though KindMap.Ingress=config.openshift.io,
+        // explicit networking.k8s.io input should return networking group
+        let result = resolve_kind_with_group("ingresses.networking.k8s.io", &km, &gvr);
+        let (kind, group) = result.unwrap();
+        assert_eq!(kind, "Ingress");
+        assert_eq!(
+            group, "networking.k8s.io",
+            "explicit GVR group must be preserved"
+        );
+    }
+
+    #[test]
+    fn resolve_with_group_config_gvr() {
+        let (km, gvr) = test_maps_with_ingress_collision();
+        let (kind, group) =
+            resolve_kind_with_group("ingresses.config.openshift.io", &km, &gvr).unwrap();
+        assert_eq!(kind, "Ingress");
+        assert_eq!(group, "config.openshift.io");
+    }
+
+    #[test]
+    fn resolve_with_group_bare_kind() {
+        let (km, gvr) = test_maps_with_ingress_collision();
+        let (kind, group) = resolve_kind_with_group("Pod", &km, &gvr).unwrap();
+        assert_eq!(kind, "Pod");
+        assert_eq!(group, "");
+    }
+
+    #[test]
+    fn resolve_with_group_bare_plural() {
+        let (km, gvr) = test_maps_with_ingress_collision();
+        let (kind, group) = resolve_kind_with_group("pods", &km, &gvr).unwrap();
+        assert_eq!(kind, "Pod");
+        assert_eq!(group, "");
+    }
+
+    #[test]
+    fn resolve_with_group_unknown_errors() {
+        let (km, gvr) = test_maps_with_ingress_collision();
+        assert!(resolve_kind_with_group("nonexistent.fake.io", &km, &gvr).is_err());
+        assert!(resolve_kind_with_group("FakeKind", &km, &gvr).is_err());
+    }
 
     #[test]
     fn apply_set_cache_reuse_ignores_normal_ttl() {
