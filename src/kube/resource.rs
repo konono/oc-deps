@@ -458,7 +458,7 @@ pub struct OwnerRef {
     pub controller: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum SpecRefSource {
     Typed,
     Heuristic,
@@ -629,8 +629,28 @@ pub fn primary_owner(refs: &[OwnerRef]) -> Option<&OwnerRef> {
 }
 
 pub fn dedup_spec_refs(refs: &mut Vec<SpecRef>) {
+    for r in refs.iter_mut() {
+        if r.target_kind == "ServiceAccount" && r.field_path.ends_with(".serviceAccount") {
+            r.field_path = r
+                .field_path
+                .replace(".serviceAccount", ".serviceAccountName");
+        }
+    }
     let mut seen = HashSet::new();
-    refs.retain(|r| seen.insert((r.target_kind.clone(), r.target_name.clone())));
+    refs.retain(|r| {
+        seen.insert((
+            r.target_kind.clone(),
+            r.target_name.clone(),
+            r.field_path.clone(),
+            r.source,
+        ))
+    });
+    refs.sort_by(|a, b| {
+        a.target_kind
+            .cmp(&b.target_kind)
+            .then(a.target_name.cmp(&b.target_name))
+            .then(a.field_path.cmp(&b.field_path))
+    });
 }
 
 #[cfg(test)]
@@ -1457,5 +1477,110 @@ mod tests {
         let pt = extract_pod_template("Pod", &data).unwrap();
         assert!(pt.containers.is_empty());
         assert_eq!(pt.init_containers.len(), 1);
+    }
+
+    // ── dedup_spec_refs tests ──
+
+    #[test]
+    fn dedup_preserves_different_field_paths() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "Secret".into(),
+                target_name: "my-secret".into(),
+                field_path: "spec.volumes.[0].secret.secretName".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "Secret".into(),
+                target_name: "my-secret".into(),
+                field_path: "spec.containers.[0].env.[0].valueFrom.secretKeyRef.name".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(
+            refs.len(),
+            2,
+            "different fieldPaths should both be preserved"
+        );
+    }
+
+    #[test]
+    fn dedup_removes_exact_duplicates() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "ConfigMap".into(),
+                target_name: "my-cm".into(),
+                field_path: "spec.volumes.[0].configMap.name".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ConfigMap".into(),
+                target_name: "my-cm".into(),
+                field_path: "spec.volumes.[0].configMap.name".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(refs.len(), 1, "exact duplicates should be deduped to 1");
+    }
+
+    #[test]
+    fn dedup_canonicalizes_service_account() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "my-sa".into(),
+                field_path: "spec.template.spec.serviceAccount".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "my-sa".into(),
+                field_path: "spec.template.spec.serviceAccountName".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(
+            refs.len(),
+            1,
+            "serviceAccount + serviceAccountName should dedup to 1"
+        );
+        assert!(
+            refs[0].field_path.ends_with("serviceAccountName"),
+            "canonical form should be serviceAccountName, got: {}",
+            refs[0].field_path
+        );
+    }
+
+    #[test]
+    fn dedup_stable_sort_by_kind_name_path() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "Secret".into(),
+                target_name: "b-secret".into(),
+                field_path: "spec.volumes.[0]".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ConfigMap".into(),
+                target_name: "a-cm".into(),
+                field_path: "spec.volumes.[1]".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ConfigMap".into(),
+                target_name: "a-cm".into(),
+                field_path: "spec.env.[0]".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(refs[0].target_kind, "ConfigMap");
+        assert_eq!(refs[0].field_path, "spec.env.[0]");
+        assert_eq!(refs[1].target_kind, "ConfigMap");
+        assert_eq!(refs[1].field_path, "spec.volumes.[1]");
+        assert_eq!(refs[2].target_kind, "Secret");
     }
 }

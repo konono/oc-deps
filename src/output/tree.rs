@@ -206,7 +206,7 @@ pub fn print_tree(
         let ref_connector = if is_last_item { "└╌ " } else { "├╌ " };
         let via_label = match sref.source {
             SpecRefSource::Heuristic => format!("heuristic, via {}", sref.field_path),
-            SpecRefSource::Typed => format!("via {}", sref.field_path),
+            SpecRefSource::Typed => format!("typed, via {}", sref.field_path),
         };
         println!(
             "{}{}\x1b[36m{}/{}\x1b[0m  \x1b[2m({})\x1b[0m",
@@ -260,24 +260,21 @@ pub fn print_chain_tree(chain: &[ChainEntry], opts: &TreeDisplayOpts) {
         };
         print_metadata_block(info, &child_prefix, opts);
 
+        let has_next_chain = i < chain.len() - 1;
         for (j, sref) in entry.spec_refs.iter().enumerate() {
-            let is_last = j == entry.spec_refs.len() - 1 && i < chain.len() - 1;
-            let ref_connector = if is_last || i == chain.len() - 1 {
+            let is_last_ref = j == entry.spec_refs.len() - 1;
+            let ref_connector = if is_last_ref && !has_next_chain {
                 "└╌ "
             } else {
                 "├╌ "
             };
             let source_label = match sref.source {
-                SpecRefSource::Heuristic => "  \x1b[2m(heuristic, via {})\x1b[0m",
-                SpecRefSource::Typed => "  \x1b[2m(via {})\x1b[0m",
+                SpecRefSource::Typed => format!("typed, via {}", sref.field_path),
+                SpecRefSource::Heuristic => format!("heuristic, via {}", sref.field_path),
             };
             println!(
-                "{}{}\x1b[36m{}/{}\x1b[0m{}",
-                child_prefix,
-                ref_connector,
-                sref.target_kind,
-                sref.target_name,
-                source_label.replace("{}", &sref.field_path)
+                "{}{}\x1b[36m{}/{}\x1b[0m  \x1b[2m({})\x1b[0m",
+                child_prefix, ref_connector, sref.target_kind, sref.target_name, source_label
             );
         }
     }

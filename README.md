@@ -143,11 +143,18 @@ oc-deps --show-spec --labels deployment/myapp -n mynamespace
 With `--up-only`, oc-deps extracts spec-level references (Secret, ConfigMap, ServiceAccount, PVC) from each parent's GET response — no namespace scan or additional API calls. References are **typed** (from well-known fields like `spec.volumes[].secret.secretName`). Use `--no-refs` to suppress.
 
 ```bash
-# Show parent chain with spec refs
+# Show parent chain with spec refs (typed source + field path shown)
 oc-deps --up-only deployment/myapp -n mynamespace
 # Deployment/myapp  ◀ target
-#    ├╌ ServiceAccount/myapp  (via spec.template.spec.serviceAccountName)
-#    └╌ Secret/tls-cert  (via spec.template.spec.volumes.[0].secret.secretName)
+#    ├╌ ServiceAccount/myapp  (typed, via spec.template.spec.serviceAccountName)
+#    └╌ Secret/tls-cert  (typed, via spec.template.spec.volumes.[0].secret.secretName)
+
+# Table output — Source and Field Path columns added when refs present
+oc-deps --up-only -o table deployment/myapp -n mynamespace
+# | Relation | Kind           | Name  | Source | Field Path                              |
+# | Self     | Deployment     | myapp |        |                                         |
+# | Ref      | ServiceAccount | myapp | typed  | spec.template.spec.serviceAccountName   |
+# | Ref      | Secret         | tls   | typed  | spec.template.spec.volumes.[0]...       |
 
 # JSON output — specRefs array per chain entry with kind/name/fieldPath/source
 oc-deps --up-only -o json deployment/myapp -n mynamespace
@@ -158,6 +165,8 @@ oc-deps --up-only --no-refs deployment/myapp -n mynamespace
 # Combine with --show-spec and --labels
 oc-deps --up-only --show-spec --labels deployment/myapp -n mynamespace
 ```
+
+**Ref dedup:** Same Secret/ConfigMap referenced from multiple field paths (e.g., volume and envFrom) produces distinct entries per field path. Only exact (kind, name, fieldPath, source) duplicates are removed. `serviceAccount` and `serviceAccountName` are canonicalized to `serviceAccountName`. Output is sorted by kind → name → fieldPath for stable ordering.
 
 **JSON `specRefs` format:** Each chain entry may include `specRefs`, an array of `{"kind", "name", "fieldPath", "source"}`. `source` is `"typed"` (from well-known field paths) or `"heuristic"` (from name matching in full scan mode). Omitted when empty. In `--up-only` mode, only typed refs are produced (no heuristic name matching).
 

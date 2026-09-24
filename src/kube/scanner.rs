@@ -855,4 +855,293 @@ mod tests {
         let refs = resolve_name_matches(&spec_strs, "self", &by_name, &already_found);
         assert_eq!(refs.len(), 1);
     }
+
+    use crate::kube::discovery::KindInfo;
+    use kube::client::Body;
+    use std::pin::pin;
+    use std::sync::atomic::AtomicUsize;
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn make_kind_map() -> KindMap {
+        let mut km = KindMap::new();
+        km.insert(
+            "Deployment".to_string(),
+            KindInfo {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                plural: "deployments".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        km.insert(
+            "ReplicaSet".to_string(),
+            KindInfo {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                plural: "replicasets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        km.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        km
+    }
+
+    fn mock_deployment_obj() -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": "myapp",
+                "namespace": "test-ns",
+                "uid": "uid-deploy",
+                "labels": {},
+                "annotations": {}
+            },
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "myapp-sa",
+                        "containers": [{"name": "app"}],
+                        "volumes": [
+                            {"name": "tls", "secret": {"secretName": "tls-cert"}},
+                            {"name": "config", "configMap": {"name": "app-config"}}
+                        ]
+                    }
+                }
+            }
+        })
+    }
+
+    fn mock_rs_obj() -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "apps/v1",
+            "kind": "ReplicaSet",
+            "metadata": {
+                "name": "myapp-abc",
+                "namespace": "test-ns",
+                "uid": "uid-rs",
+                "labels": {},
+                "annotations": {},
+                "ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "myapp", "uid": "uid-deploy", "controller": true}]
+            },
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "myapp-sa",
+                        "containers": [{"name": "app"}]
+                    }
+                }
+            }
+        })
+    }
+
+    fn mock_pod_obj() -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "myapp-abc-xyz",
+                "namespace": "test-ns",
+                "uid": "uid-pod",
+                "labels": {},
+                "annotations": {},
+                "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "myapp-abc", "uid": "uid-rs", "controller": true}]
+            },
+            "spec": {
+                "serviceAccountName": "myapp-sa",
+                "containers": [{"name": "app"}],
+                "imagePullSecrets": [{"name": "registry-cred"}]
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn find_parents_only_refs_true_extracts_typed_refs() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            // GET Pod
+            let (req, send) = handle.next_request().await.expect("expected Pod GET");
+            rc.fetch_add(1, Ordering::Relaxed);
+            assert!(
+                req.uri().path().contains("/pods/"),
+                "first request should be Pod GET: {}",
+                req.uri()
+            );
+            send.send_response(json_response(mock_pod_obj()));
+
+            // GET ReplicaSet (parent)
+            let (req, send) = handle.next_request().await.expect("expected RS GET");
+            rc.fetch_add(1, Ordering::Relaxed);
+            assert!(
+                req.uri().path().contains("/replicasets/"),
+                "second request should be RS GET: {}",
+                req.uri()
+            );
+            send.send_response(json_response(mock_rs_obj()));
+
+            // GET Deployment (grandparent)
+            let (req, send) = handle.next_request().await.expect("expected Deploy GET");
+            rc.fetch_add(1, Ordering::Relaxed);
+            assert!(
+                req.uri().path().contains("/deployments/"),
+                "third request should be Deploy GET: {}",
+                req.uri()
+            );
+            send.send_response(json_response(mock_deployment_obj()));
+        });
+
+        let chain = find_parents_only(
+            &client,
+            "Pod",
+            "myapp-abc-xyz",
+            "test-ns",
+            &kind_map,
+            false,
+            true,
+        )
+        .await
+        .unwrap();
+
+        spawned.await.unwrap();
+
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            3,
+            "exactly 3 GETs (no LIST, no ref-target GET)"
+        );
+        assert_eq!(chain.len(), 3);
+
+        // Chain: Deployment → ReplicaSet → Pod
+        assert_eq!(chain[0].info.kind, "Deployment");
+        assert_eq!(chain[1].info.kind, "ReplicaSet");
+        assert_eq!(chain[2].info.kind, "Pod");
+
+        // Deployment has SA + Secret + ConfigMap refs
+        assert!(
+            !chain[0].spec_refs.is_empty(),
+            "Deployment should have spec refs"
+        );
+        assert!(
+            chain[0]
+                .spec_refs
+                .iter()
+                .any(|r| r.target_kind == "ServiceAccount" && r.target_name == "myapp-sa")
+        );
+        assert!(
+            chain[0]
+                .spec_refs
+                .iter()
+                .any(|r| r.target_kind == "Secret" && r.target_name == "tls-cert")
+        );
+        assert!(
+            chain[0]
+                .spec_refs
+                .iter()
+                .any(|r| r.target_kind == "ConfigMap" && r.target_name == "app-config")
+        );
+        for r in &chain[0].spec_refs {
+            assert_eq!(r.source, SpecRefSource::Typed);
+        }
+
+        // ReplicaSet has SA ref
+        assert!(
+            chain[1]
+                .spec_refs
+                .iter()
+                .any(|r| r.target_kind == "ServiceAccount" && r.target_name == "myapp-sa")
+        );
+
+        // Pod has SA + imagePullSecret
+        assert!(
+            chain[2]
+                .spec_refs
+                .iter()
+                .any(|r| r.target_kind == "ServiceAccount" && r.target_name == "myapp-sa")
+        );
+        assert!(
+            chain[2]
+                .spec_refs
+                .iter()
+                .any(|r| r.target_kind == "Secret" && r.target_name == "registry-cred")
+        );
+    }
+
+    #[tokio::test]
+    async fn find_parents_only_refs_false_no_refs_same_request_count() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+
+            let (_req, send) = handle.next_request().await.expect("expected Pod GET");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(json_response(mock_pod_obj()));
+
+            let (_req, send) = handle.next_request().await.expect("expected RS GET");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(json_response(mock_rs_obj()));
+
+            let (_req, send) = handle.next_request().await.expect("expected Deploy GET");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(json_response(mock_deployment_obj()));
+        });
+
+        let chain = find_parents_only(
+            &client,
+            "Pod",
+            "myapp-abc-xyz",
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        spawned.await.unwrap();
+
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            3,
+            "same 3 GETs as refs=true"
+        );
+        assert_eq!(chain.len(), 3);
+        for entry in &chain {
+            assert!(
+                entry.spec_refs.is_empty(),
+                "{} should have no refs when refs=false",
+                entry.info.kind
+            );
+        }
+    }
 }
