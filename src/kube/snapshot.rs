@@ -251,6 +251,22 @@ async fn build_snapshot_inner(
                         if warning.is_retryable() && attempt < MAX_RETRIES {
                             let delay =
                                 std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            let gvr = if info.group.is_empty() {
+                                format!("{}/{}", info.version, info.plural)
+                            } else {
+                                format!("{}/{}/{}", info.group, info.version, info.plural)
+                            };
+                            if is_tty {
+                                eprintln!(
+                                    "   \x1b[33m⚠ {} — LIST attempt {}/{} failed; retrying in {}ms\x1b[0m",
+                                    gvr, attempt + 1, MAX_RETRIES + 1, delay.as_millis()
+                                );
+                            } else {
+                                eprintln!(
+                                    "   ⚠ {} — LIST attempt {}/{} failed; retrying in {}ms",
+                                    gvr, attempt + 1, MAX_RETRIES + 1, delay.as_millis()
+                                );
+                            }
                             tokio::time::sleep(delay).await;
                             last_warning = Some(warning);
                             continue;
@@ -275,6 +291,22 @@ async fn build_snapshot_inner(
                         if attempt < MAX_RETRIES {
                             let delay =
                                 std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            let gvr_label = if info.group.is_empty() {
+                                format!("{}/{}", info.version, info.plural)
+                            } else {
+                                format!("{}/{}/{}", info.group, info.version, info.plural)
+                            };
+                            if is_tty {
+                                eprintln!(
+                                    "   \x1b[33m⚠ {} — LIST timeout (30s), attempt {}/{} failed; retrying\x1b[0m",
+                                    gvr_label, attempt + 1, MAX_RETRIES + 1
+                                );
+                            } else {
+                                eprintln!(
+                                    "   ⚠ {} — LIST timeout (30s), attempt {}/{} failed; retrying",
+                                    gvr_label, attempt + 1, MAX_RETRIES + 1
+                                );
+                            }
                             tokio::time::sleep(delay).await;
                             last_warning = Some(warning);
                             continue;
@@ -616,18 +648,21 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
     let av = after.schema_version;
     if bv != av {
         scope_warnings.push(format!(
-            "Schema version mismatch: before={}, after={}. ConfigMap/Secret data comparison may be incomplete",
-            bv.map_or("legacy".into(), |v| v.to_string()),
-            av.map_or("legacy".into(), |v| v.to_string()),
+            "Schema version mismatch: before={}, after={}",
+            bv.map_or("legacy".into(), |v: u32| v.to_string()),
+            av.map_or("legacy".into(), |v: u32| v.to_string()),
         ));
     }
-    let has_old_schema = bv.is_none()
-        || av.is_none()
-        || bv < Some(SNAPSHOT_SCHEMA_VERSION)
-        || av < Some(SNAPSHOT_SCHEMA_VERSION);
-    if has_old_schema {
+    let has_pre_data_schema = bv.is_none() || av.is_none() || bv < Some(2) || av < Some(2);
+    if has_pre_data_schema {
         scope_warnings.push(
-            "One or both snapshots use an older schema. ConfigMap/Secret data comparison is unavailable for resources from old-schema snapshots".to_string(),
+            "One or both snapshots predate schema v2. ConfigMap/Secret data comparison is unavailable for resources from old-schema snapshots".to_string(),
+        );
+    }
+    let has_pre_scope_schema = bv < Some(3) || av < Some(3);
+    if has_pre_scope_schema && !has_pre_data_schema {
+        scope_warnings.push(
+            "One or both snapshots predate schema v3. Scope comparison is unavailable".to_string(),
         );
     }
     if before.cluster_url != after.cluster_url {
@@ -689,9 +724,25 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
                     b_comp, a_comp
                 ));
             }
-            if !bs.incomplete_namespaces.is_empty() || !as_.incomplete_namespaces.is_empty() {
-                scope_warnings
-                    .push("One or both snapshots have incomplete namespace scans".to_string());
+            let mut b_inc: Vec<_> = bs
+                .incomplete_namespaces
+                .iter()
+                .map(|i| i.namespace.clone())
+                .collect();
+            let mut a_inc: Vec<_> = as_
+                .incomplete_namespaces
+                .iter()
+                .map(|i| i.namespace.clone())
+                .collect();
+            b_inc.sort();
+            a_inc.sort();
+            if b_inc != a_inc {
+                scope_warnings.push(format!(
+                    "Different incomplete namespaces: {:?} vs {:?}",
+                    b_inc, a_inc
+                ));
+            } else if !b_inc.is_empty() {
+                scope_warnings.push("Both snapshots have incomplete namespace scans".to_string());
             }
         }
         (None, None) => {}
@@ -1324,7 +1375,7 @@ mod tests {
             result
                 .scope_warnings
                 .iter()
-                .any(|w| w.contains("older schema")),
+                .any(|w| w.contains("predate schema") || w.contains("data comparison")),
             "scope warning about old schema expected"
         );
     }
@@ -1632,17 +1683,403 @@ mod tests {
     }
 
     #[test]
-    fn save_snapshot_preserves_existing_on_bad_rename() {
-        let path = format!("/tmp/oc-deps-test-existing-{}.json", std::process::id());
-        std::fs::write(&path, "original").unwrap();
+    fn save_snapshot_rename_fail_preserves_existing() {
+        let dir = format!("/tmp/oc-deps-test-dir-{}", std::process::id());
+        std::fs::create_dir_all(&dir).unwrap();
+        let existing_path = format!("{}/existing.json", dir);
+        std::fs::write(&existing_path, "original content").unwrap();
+
+        let bad_target = format!("{}/nonexistent-subdir/snap.json", dir);
         let snap = make_empty_snapshot();
-        let result = save_snapshot(&snap, &path);
-        assert!(result.is_ok());
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            content.contains("schema_version"),
-            "successful save should overwrite"
+        let result = save_snapshot(&snap, &bad_target);
+        assert!(result.is_err(), "rename to nonexistent dir should fail");
+
+        let existing_content = std::fs::read_to_string(&existing_path).unwrap();
+        assert_eq!(
+            existing_content, "original content",
+            "existing file preserved"
         );
-        let _ = std::fs::remove_file(&path);
+
+        let tmp_pattern = format!(
+            "{}/nonexistent-subdir/snap.json.{}.tmp",
+            dir,
+            std::process::id()
+        );
+        assert!(
+            !std::path::Path::new(&tmp_pattern).exists(),
+            "tmp cleaned up"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diff_incomplete_same_set_no_specific_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![
+                IncompleteNamespace {
+                    namespace: "ns-b".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+                IncompleteNamespace {
+                    namespace: "ns-a".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+            ],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![
+                IncompleteNamespace {
+                    namespace: "ns-a".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+                IncompleteNamespace {
+                    namespace: "ns-b".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+            ],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different incomplete")),
+            "same incomplete set (different order) should not warn about difference"
+        );
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Both snapshots have incomplete")),
+        );
+    }
+
+    #[test]
+    fn diff_incomplete_different_sets_warns_specifically() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![IncompleteNamespace {
+                namespace: "ns-a".into(),
+                warnings: vec![],
+                error: None,
+            }],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![IncompleteNamespace {
+                namespace: "ns-b".into(),
+                warnings: vec![],
+                error: None,
+            }],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different incomplete")),
+            "different incomplete sets should produce specific warning"
+        );
+    }
+
+    #[test]
+    fn diff_v2_v2_no_data_unavailable_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(2);
+        after.schema_version = Some(2);
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("data comparison")),
+            "v2 has data support — no data unavailable warning"
+        );
+    }
+
+    #[test]
+    fn diff_v2_v3_scope_unavailable_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(2);
+        after.schema_version = Some(3);
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Scope comparison is unavailable")),
+            "v2 vs v3 should warn about scope unavailability"
+        );
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("data comparison")),
+            "v2 has data support — no data warning"
+        );
+    }
+
+    #[test]
+    fn diff_v1_v3_data_unavailable_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(1);
+        after.schema_version = Some(3);
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("data comparison")),
+            "v1 should trigger data unavailable warning"
+        );
+    }
+
+    // ── Mock API tests for snapshot LIST retry/timeout ──
+
+    use kube::client::Body;
+    use std::pin::pin;
+
+    fn mock_json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": reason, "reason": reason, "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_empty_list_response() -> http::Response<Body> {
+        mock_json_response(serde_json::json!({
+            "apiVersion": "v1", "kind": "List",
+            "metadata": {"resourceVersion": "1"}, "items": []
+        }))
+    }
+
+    fn make_test_kind_map(n: usize) -> KindMap {
+        let mut km = KindMap::new();
+        for i in 0..n {
+            km.insert(
+                format!("Kind{}", i),
+                crate::kube::discovery::KindInfo {
+                    group: "test".to_string(),
+                    version: "v1".to_string(),
+                    plural: format!("kind{}s", i),
+                    namespaced: true,
+                    listable: true,
+                },
+            );
+        }
+        km
+    }
+
+    fn make_test_config() -> kube::config::Config {
+        kube::config::Config {
+            cluster_url: "https://api.test:6443".parse().unwrap(),
+            default_namespace: "default".into(),
+            root_cert: None,
+            connect_timeout: None,
+            read_timeout: None,
+            write_timeout: None,
+            accept_invalid_certs: true,
+            auth_info: Default::default(),
+            proxy_url: None,
+            tls_server_name: None,
+            disable_compression: false,
+            headers: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_list_403_no_retry() {
+        let kind_map = make_test_kind_map(1);
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected request");
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(403, "Forbidden"));
+        });
+
+        let result = build_snapshot(&client, &config, "test-ns", &kind_map, false).await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "403 = 1 request"
+        );
+        assert_eq!(snap.scan_warnings.len(), 1);
+        assert!(matches!(
+            &snap.scan_warnings[0],
+            ScanWarning::Forbidden { status: 403, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn snapshot_list_500_retries_3_times() {
+        let kind_map = make_test_kind_map(1);
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                send.send_response(mock_status_response(500, "Internal Server Error"));
+            }
+        });
+
+        let result = build_snapshot(&client, &config, "test-ns", &kind_map, false).await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            3,
+            "500 = 3 requests"
+        );
+        assert_eq!(snap.scan_warnings.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_list_500_then_200_succeeds() {
+        let kind_map = make_test_kind_map(1);
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(500, "Internal Server Error"));
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_empty_list_response());
+        });
+
+        let result = build_snapshot(&client, &config, "test-ns", &kind_map, false).await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "500→200 = 2 requests"
+        );
+        assert!(snap.scan_warnings.is_empty(), "transient error recovered");
+    }
+
+    #[tokio::test]
+    async fn snapshot_shared_semaphore_limits_concurrent() {
+        let permits = 2usize;
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(permits));
+        let kind_map = make_test_kind_map(4);
+        let config = make_test_config();
+        let total_requests = 8; // 4 kinds × 2 namespaces
+        let max_concurrent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let current = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let max_c = max_concurrent.clone();
+        let cur_c = current.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let mut tasks = Vec::new();
+            for _ in 0..total_requests {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                let mc = max_c.clone();
+                let cc = cur_c.clone();
+                tasks.push(tokio::spawn(async move {
+                    let c = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    mc.fetch_max(c, std::sync::atomic::Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    cc.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    send.send_response(mock_empty_list_response());
+                }));
+            }
+            for t in tasks {
+                t.await.unwrap();
+            }
+        });
+
+        let s1 = semaphore.clone();
+        let s2 = semaphore.clone();
+        let km1 = kind_map.clone();
+        let km2 = kind_map.clone();
+        let c1 = client.clone();
+        let c2 = client.clone();
+        let cfg1 = config.clone();
+        let cfg2 = config.clone();
+
+        let (r1, r2) = tokio::join!(
+            build_snapshot_with_semaphore(&c1, &cfg1, "ns-a", &km1, false, s1),
+            build_snapshot_with_semaphore(&c2, &cfg2, "ns-b", &km2, false, s2),
+        );
+
+        spawned.await.unwrap();
+        assert!(r1.is_ok());
+        assert!(r2.is_ok());
+
+        let observed = max_concurrent.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            observed <= permits,
+            "max concurrent should be <= {} permits, got {}",
+            permits,
+            observed
+        );
     }
 }

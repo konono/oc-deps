@@ -946,6 +946,7 @@ async fn main() -> Result<()> {
                     requested_ns.sort();
                     scanned_ns_list.sort();
                     complete_namespaces.sort();
+                    incomplete_namespaces.sort_by(|a, b| a.namespace.cmp(&b.namespace));
 
                     let snapshot = ClusterSnapshot {
                         schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
