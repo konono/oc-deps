@@ -684,11 +684,8 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
                 scope_warnings.push(
                     "Scope metadata missing from one v3 snapshot (possible migration or corruption)".to_string(),
                 );
-            } else {
-                scope_warnings.push(
-                    "Scope comparison unavailable (one snapshot is v2 or earlier without scope metadata)".to_string(),
-                );
             }
+            // v2-or-earlier case is already covered by has_pre_scope_schema warning above
         }
         (Some(bs), Some(as_)) => {
             if bs.mode != as_.mode {
@@ -1530,12 +1527,18 @@ mod tests {
             ..Default::default()
         });
         let result = diff_snapshots(&before, &after).unwrap();
-        assert!(
-            result
-                .scope_warnings
-                .iter()
-                .any(|w| w.contains("v2 or earlier")),
-            "should warn about v2 snapshot missing scope"
+        let scope_unavail: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| {
+                w.contains("Scope comparison") || w.contains("scope") && w.contains("unavailable")
+            })
+            .collect();
+        assert_eq!(
+            scope_unavail.len(),
+            1,
+            "exactly 1 scope unavailable warning for v2 vs v3: got {:?}",
+            scope_unavail
         );
     }
 
@@ -1691,31 +1694,26 @@ mod tests {
     }
 
     #[test]
-    fn save_snapshot_rename_fail_preserves_existing() {
-        let dir = format!("/tmp/oc-deps-test-dir-{}", std::process::id());
+    fn save_snapshot_rename_fail_preserves_target() {
+        let dir = format!("/tmp/oc-deps-test-rename-{}", std::process::id());
         std::fs::create_dir_all(&dir).unwrap();
-        let existing_path = format!("{}/existing.json", dir);
-        std::fs::write(&existing_path, "original content").unwrap();
 
-        let bad_target = format!("{}/nonexistent-subdir/snap.json", dir);
+        let target = format!("{}/target", dir);
+        std::fs::create_dir(&target).unwrap();
+
         let snap = make_empty_snapshot();
-        let result = save_snapshot(&snap, &bad_target);
-        assert!(result.is_err(), "rename to nonexistent dir should fail");
+        let result = save_snapshot(&snap, &target);
+        assert!(result.is_err(), "file→directory rename should fail");
 
-        let existing_content = std::fs::read_to_string(&existing_path).unwrap();
-        assert_eq!(
-            existing_content, "original content",
-            "existing file preserved"
-        );
-
-        let tmp_pattern = format!(
-            "{}/nonexistent-subdir/snap.json.{}.tmp",
-            dir,
-            std::process::id()
-        );
         assert!(
-            !std::path::Path::new(&tmp_pattern).exists(),
-            "tmp cleaned up"
+            std::path::Path::new(&target).is_dir(),
+            "target directory must still exist"
+        );
+
+        let tmp_path = format!("{}.{}.tmp", target, std::process::id());
+        assert!(
+            !std::path::Path::new(&tmp_path).exists(),
+            "tmp file must be cleaned up after rename failure"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1835,19 +1833,17 @@ mod tests {
         let scope_unavail: Vec<_> = result
             .scope_warnings
             .iter()
-            .filter(|w| w.contains("v2 or earlier"))
+            .filter(|w| {
+                w.contains("Scope comparison")
+                    || (w.contains("scope") && w.contains("unavailable"))
+                    || w.contains("predate schema v3")
+            })
             .collect();
         assert_eq!(
             scope_unavail.len(),
             1,
-            "exactly 1 scope unavailable warning for v2 vs v3"
-        );
-        assert!(
-            result
-                .scope_warnings
-                .iter()
-                .any(|w| w.contains("Scope comparison") || w.contains("predate schema v3")),
-            "should warn about scope unavailability"
+            "exactly 1 scope unavailable warning for v2 vs v3, got: {:?}",
+            scope_unavail
         );
         assert!(
             !result
@@ -2026,6 +2022,14 @@ mod tests {
             "500 = 3 requests"
         );
         assert_eq!(snap.scan_warnings.len(), 1);
+        assert!(
+            matches!(
+                &snap.scan_warnings[0],
+                ScanWarning::ServerError { status: 500, retries, .. } if *retries == 2
+            ),
+            "warning should be ServerError 500 with retries=2, got: {:?}",
+            snap.scan_warnings[0]
+        );
     }
 
     #[tokio::test]
@@ -2121,6 +2125,11 @@ mod tests {
             observed <= permits,
             "max concurrent should be <= {} permits, got {}",
             permits,
+            observed
+        );
+        assert!(
+            observed >= 2,
+            "should achieve parallelism (>= 2), got {}",
             observed
         );
     }
