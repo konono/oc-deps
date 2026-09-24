@@ -148,25 +148,31 @@ EndpointSlices are the modern replacement for Endpoints. Each slice contains a l
 - EndpointSlice `targetRef` points to the actual backing Pods. `targetRefMatchedPods` lists these
 - For selectorless Services, only `targetRefMatchedPods` is populated (manual Endpoints/EndpointSlices)
 
+**External reachability** is not determined by Service type alone. A LoadBalancer type does not guarantee external access — it depends on cloud provider, MetalLB, or other LB implementation.
+
 **JSON field reference (`-o json --network`):**
 
 Each entry in `networkPaths[]` contains:
-- `service`, `serviceType`, `clusterIP`, `ports[]`, `selector`, `hasSelector`
+- `service: {name, config: {...}, status: {...}}` — config holds spec fields, status holds observed state
+  - Config: `type`, `clusterIP`, `ports[]` (with `nodePort`), `selector`, `hasSelector`, `externalIPs`, `ipFamilies`, `externalTrafficPolicy`, `internalTrafficPolicy`, `ipFamilyPolicy`, `healthCheckNodePort`, `loadBalancerClass`, `allocateLoadBalancerNodePorts`
+  - Status: `loadBalancerIngress[]` (with `ip`, `hostname`, `ipMode`)
 - `endpointSlices[]` with `name`, `addressType`, `ports[]` (including `appProtocol`), `endpoints[]`
-- Each endpoint: `addresses[]`, `ready`, `serving`, `terminating`, `targetRef`, `hints`
+- Each endpoint: `addresses[]`, `hostname`, `nodeName`, `zone`, `ready`, `serving`, `terminating`, `targetRef` (with `apiVersion`), `hints`
 - `endpointSummary`: `ready`, `notReady`, `unknown`, `effectiveReady`, `serving`, `terminating`
 - `selectorMatchedPods[]`, `targetRefMatchedPods[]`
 - `ingresses[]` with `kind`, `name`, `host`, `path`, `tls`
-- Optional: `healthCheckNodePort`, `internalTrafficPolicy`, `ipFamilyPolicy`, `loadBalancerClass`, `allocateLoadBalancerNodePorts`, `externalTrafficPolicy`, `loadBalancerIngress[]`
 - Top-level `warnings[]` (typed ScanWarning array) and `warningCount`
 
 **Example tree output:**
 
 ```
 Service/my-app
-    Type:      ClusterIP
+    Type:      NodePort
     ClusterIP: 10.96.100.42
-    Port:      8080/TCP -> 8080
+    Port:      8080/TCP → 8080 (nodePort: 31234)
+    ExternalIPs: 192.0.2.50
+    IPFamilies: IPv4
+    ExternalTrafficPolicy: Cluster
     Selector:  app=my-app
     SelectorPods:  Pod/my-app-abc123
     Endpoints: 2 ready, 0 not-ready, 0 terminating, 2 serving

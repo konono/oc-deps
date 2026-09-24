@@ -5088,6 +5088,15 @@ async fn main() -> Result<()> {
                                                 "serving": ep.conditions_serving,
                                                 "terminating": ep.conditions_terminating,
                                             });
+                                            if let Some(h) = &ep.hostname {
+                                                obj["hostname"] = serde_json::json!(h);
+                                            }
+                                            if let Some(n) = &ep.node_name {
+                                                obj["nodeName"] = serde_json::json!(n);
+                                            }
+                                            if let Some(z) = &ep.zone {
+                                                obj["zone"] = serde_json::json!(z);
+                                            }
                                             if let Some(tr) = &ep.target_ref {
                                                 let mut tr_obj = serde_json::Map::new();
                                                 if let Some(v) = &tr.api_version {
@@ -5259,7 +5268,12 @@ async fn main() -> Result<()> {
                                 continue;
                             }
                             let svc = &path.service;
-                            println!("  \x1b[1mService/{}\x1b[0m", svc.name);
+                            let stdout_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+                            if stdout_tty {
+                                println!("  \x1b[1mService/{}\x1b[0m", svc.name);
+                            } else {
+                                println!("  Service/{}", svc.name);
+                            }
                             println!("    Type:      {}", svc.svc_type);
                             println!("    ClusterIP: {}", svc.cluster_ip);
                             for sp in &svc.ports {
@@ -5309,8 +5323,18 @@ async fn main() -> Result<()> {
                                 println!("    AllocateLBNodePorts:   {}", v);
                             }
                             for lbi in &svc.lb_ingress {
-                                let addr =
-                                    lbi.ip.as_deref().or(lbi.hostname.as_deref()).unwrap_or("?");
+                                let mut parts = Vec::new();
+                                if let Some(ip) = &lbi.ip {
+                                    parts.push(ip.clone());
+                                }
+                                if let Some(h) = &lbi.hostname {
+                                    parts.push(h.clone());
+                                }
+                                let addr = if parts.is_empty() {
+                                    "?".to_string()
+                                } else {
+                                    parts.join(" / ")
+                                };
                                 let mode = lbi
                                     .ip_mode
                                     .as_deref()
@@ -5350,10 +5374,17 @@ async fn main() -> Result<()> {
                             // EndpointSlice details
                             for es_info in &path.endpoint_slices {
                                 println!();
-                                println!(
-                                    "    \x1b[1mEndpointSlice/{}\x1b[0m ({})",
-                                    es_info.name, es_info.address_type
-                                );
+                                if stdout_tty {
+                                    println!(
+                                        "    \x1b[1mEndpointSlice/{}\x1b[0m ({})",
+                                        es_info.name, es_info.address_type
+                                    );
+                                } else {
+                                    println!(
+                                        "    EndpointSlice/{} ({})",
+                                        es_info.name, es_info.address_type
+                                    );
+                                }
                                 for ep_port in &es_info.ports {
                                     let port_str =
                                         ep_port.port.map(|p| p.to_string()).unwrap_or("?".into());
@@ -5420,10 +5451,17 @@ async fn main() -> Result<()> {
 
                             for ing in &path.ingresses {
                                 println!();
-                                println!(
-                                    "    \x1b[1m{}/{}\x1b[0m \u{2192} Service/{}",
-                                    ing.kind, ing.name, svc.name
-                                );
+                                if stdout_tty {
+                                    println!(
+                                        "    \x1b[1m{}/{}\x1b[0m \u{2192} Service/{}",
+                                        ing.kind, ing.name, svc.name
+                                    );
+                                } else {
+                                    println!(
+                                        "    {}/{} \u{2192} Service/{}",
+                                        ing.kind, ing.name, svc.name
+                                    );
+                                }
                                 if let Some(host) = &ing.host {
                                     println!("      Host: {}", host);
                                 }

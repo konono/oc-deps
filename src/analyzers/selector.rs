@@ -13,7 +13,7 @@ use crate::kube::resource::ScanWarning;
 //  Shared retry+timeout helper for all LIST calls
 // ──────────────────────────────────────────────────────────────
 
-async fn list_with_retry_and_timeout(
+pub(crate) async fn list_with_retry_and_timeout(
     api: &Api<DynamicObject>,
     group: &str,
     version: &str,
@@ -225,6 +225,9 @@ pub struct EndpointPort {
 #[derive(Clone, Debug)]
 pub struct EndpointInfo {
     pub addresses: Vec<String>,
+    pub hostname: Option<String>,
+    pub node_name: Option<String>,
+    pub zone: Option<String>,
     pub conditions_ready: Option<bool>,
     pub conditions_serving: Option<bool>,
     pub conditions_terminating: Option<bool>,
@@ -705,8 +708,21 @@ async fn list_endpoint_slices(
                                             })
                                             .collect()
                                     });
+                                let hostname = ep
+                                    .get("hostname")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let node_name = ep
+                                    .get("nodeName")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let zone =
+                                    ep.get("zone").and_then(|v| v.as_str()).map(String::from);
                                 EndpointInfo {
                                     addresses,
+                                    hostname,
+                                    node_name,
+                                    zone,
                                     conditions_ready,
                                     conditions_serving,
                                     conditions_terminating,
@@ -1109,6 +1125,9 @@ mod tests {
             endpoints: vec![
                 EndpointInfo {
                     addresses: vec!["10.0.0.1".into()],
+                    hostname: None,
+                    node_name: None,
+                    zone: None,
                     conditions_ready: Some(true),
                     conditions_serving: Some(true),
                     conditions_terminating: Some(false),
@@ -1117,6 +1136,9 @@ mod tests {
                 },
                 EndpointInfo {
                     addresses: vec!["10.0.0.2".into()],
+                    hostname: None,
+                    node_name: None,
+                    zone: None,
                     conditions_ready: None, // unknown
                     conditions_serving: None,
                     conditions_terminating: None,
@@ -1125,6 +1147,9 @@ mod tests {
                 },
                 EndpointInfo {
                     addresses: vec!["10.0.0.3".into()],
+                    hostname: None,
+                    node_name: None,
+                    zone: None,
                     conditions_ready: Some(false),
                     conditions_serving: Some(false),
                     conditions_terminating: Some(true),
@@ -1154,6 +1179,9 @@ mod tests {
                 endpoints: vec![
                     EndpointInfo {
                         addresses: vec!["10.0.0.5".into()],
+                        hostname: None,
+                        node_name: None,
+                        zone: None,
                         conditions_ready: Some(true),
                         conditions_serving: None,
                         conditions_terminating: None,
@@ -1162,6 +1190,9 @@ mod tests {
                     },
                     EndpointInfo {
                         addresses: vec!["10.0.0.1".into()],
+                        hostname: None,
+                        node_name: None,
+                        zone: None,
                         conditions_ready: Some(true),
                         conditions_serving: None,
                         conditions_terminating: None,
@@ -1206,6 +1237,9 @@ mod tests {
                 endpoints: vec![
                     EndpointInfo {
                         addresses: vec!["10.0.0.1".into()],
+                        hostname: None,
+                        node_name: None,
+                        zone: None,
                         conditions_ready: Some(true),
                         conditions_serving: Some(true),
                         conditions_terminating: None,
@@ -1220,6 +1254,9 @@ mod tests {
                     },
                     EndpointInfo {
                         addresses: vec!["10.0.0.2".into()],
+                        hostname: None,
+                        node_name: None,
+                        zone: None,
                         conditions_ready: Some(true),
                         conditions_serving: Some(true),
                         conditions_terminating: None,
@@ -1235,6 +1272,9 @@ mod tests {
                     // Non-Pod targetRef should be excluded
                     EndpointInfo {
                         addresses: vec!["10.0.0.3".into()],
+                        hostname: None,
+                        node_name: None,
+                        zone: None,
                         conditions_ready: Some(true),
                         conditions_serving: Some(true),
                         conditions_terminating: None,
@@ -1269,5 +1309,286 @@ mod tests {
             paths[0].target_ref_matched_pods,
             vec!["Pod/pod-1", "Pod/pod-2"]
         );
+    }
+
+    // ── Mock retry tests ──
+
+    use kube::client::Body;
+    use std::pin::pin;
+
+    fn mock_json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": reason, "reason": reason, "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_empty_list() -> http::Response<Body> {
+        mock_json_response(serde_json::json!({
+            "apiVersion": "v1", "kind": "List",
+            "metadata": {"resourceVersion": "1"}, "items": []
+        }))
+    }
+
+    #[tokio::test]
+    async fn retry_403_no_retry() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gvk = kube::core::GroupVersion::gv("", "v1").with_kind("Service");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, "services");
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(403, "Forbidden"));
+        });
+
+        let result = list_with_retry_and_timeout(&api, "", "v1", "services").await;
+        spawned.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(matches!(
+            result.unwrap_err(),
+            ScanWarning::Forbidden { status: 403, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn retry_500_persistent_3_requests() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gvk = kube::core::GroupVersion::gv("", "v1").with_kind("Service");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, "services");
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.unwrap();
+                rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                send.send_response(mock_status_response(500, "Internal Server Error"));
+            }
+        });
+
+        let result = list_with_retry_and_timeout(&api, "", "v1", "services").await;
+        spawned.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 3);
+        assert!(matches!(
+            result.unwrap_err(),
+            ScanWarning::ServerError { retries: 2, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn retry_500_then_200_recovery() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gvk = kube::core::GroupVersion::gv("", "v1").with_kind("Service");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, "services");
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(500, "Internal Server Error"));
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_empty_list());
+        });
+
+        let result = list_with_retry_and_timeout(&api, "", "v1", "services").await;
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    // ── Parse service field matrix test ──
+
+    #[test]
+    fn parse_service_full_field_matrix() {
+        let data = serde_json::json!({
+            "spec": {
+                "type": "LoadBalancer",
+                "clusterIP": "10.0.0.1",
+                "selector": {"app": "test"},
+                "ports": [{
+                    "port": 443,
+                    "targetPort": 8443,
+                    "protocol": "TCP",
+                    "nodePort": 31443
+                }],
+                "externalIPs": ["192.168.1.1", "192.168.1.2"],
+                "ipFamilies": ["IPv4", "IPv6"],
+                "externalTrafficPolicy": "Local",
+                "internalTrafficPolicy": "Cluster",
+                "ipFamilyPolicy": "PreferDualStack",
+                "healthCheckNodePort": 30000,
+                "loadBalancerClass": "metallb",
+                "allocateLoadBalancerNodePorts": true
+            },
+            "status": {
+                "loadBalancer": {
+                    "ingress": [
+                        {"ip": "203.0.113.1", "hostname": "lb.example.com", "ipMode": "VIP"},
+                        {"hostname": "lb2.example.com"}
+                    ]
+                }
+            }
+        });
+
+        let spec = data.get("spec");
+        let status = data.get("status");
+        let selector: BTreeMap<String, String> =
+            [("app".into(), "test".into())].into_iter().collect();
+
+        let svc_type = spec
+            .and_then(|s| s.get("type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("ClusterIP")
+            .to_string();
+        let cluster_ip = spec
+            .and_then(|s| s.get("clusterIP"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("None")
+            .to_string();
+
+        assert_eq!(svc_type, "LoadBalancer");
+        assert_eq!(cluster_ip, "10.0.0.1");
+        assert!(!selector.is_empty());
+
+        // Verify nodePort extraction
+        let ports: Vec<_> = spec
+            .and_then(|s| s.get("ports"))
+            .and_then(|p| p.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|p| {
+                        let port = p.get("port")?.as_u64()? as u16;
+                        let np = p.get("nodePort").and_then(|v| v.as_u64()).map(|v| v as u16);
+                        Some((port, np))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(ports, vec![(443, Some(31443))]);
+
+        // Verify externalIPs
+        let external_ips: Vec<String> = spec
+            .and_then(|s| s.get("externalIPs"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(external_ips, vec!["192.168.1.1", "192.168.1.2"]);
+
+        // Verify ipFamilies
+        let ip_families: Vec<String> = spec
+            .and_then(|s| s.get("ipFamilies"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(ip_families, vec!["IPv4", "IPv6"]);
+
+        // Verify LB ingress with ip+hostname+ipMode
+        let lb_ingress: Vec<_> = status
+            .and_then(|s| s.get("loadBalancer"))
+            .and_then(|lb| lb.get("ingress"))
+            .and_then(|i| i.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|entry| {
+                        let ip = entry.get("ip").and_then(|v| v.as_str()).map(String::from);
+                        let hostname = entry
+                            .get("hostname")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        let ip_mode = entry
+                            .get("ipMode")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        (ip, hostname, ip_mode)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(lb_ingress.len(), 2);
+        assert_eq!(lb_ingress[0].0, Some("203.0.113.1".into()));
+        assert_eq!(lb_ingress[0].1, Some("lb.example.com".into()));
+        assert_eq!(lb_ingress[0].2, Some("VIP".into()));
+        assert_eq!(lb_ingress[1].0, None);
+        assert_eq!(lb_ingress[1].1, Some("lb2.example.com".into()));
+
+        // Verify traffic policies
+        assert_eq!(
+            spec.and_then(|s| s.get("externalTrafficPolicy"))
+                .and_then(|v| v.as_str()),
+            Some("Local")
+        );
+        assert_eq!(
+            spec.and_then(|s| s.get("healthCheckNodePort"))
+                .and_then(|v| v.as_u64()),
+            Some(30000)
+        );
+        assert_eq!(
+            spec.and_then(|s| s.get("ipFamilyPolicy"))
+                .and_then(|v| v.as_str()),
+            Some("PreferDualStack")
+        );
+        assert_eq!(
+            spec.and_then(|s| s.get("loadBalancerClass"))
+                .and_then(|v| v.as_str()),
+            Some("metallb")
+        );
+    }
+
+    #[test]
+    fn headless_classification() {
+        let cluster_ip = "None";
+        let svc_type = "ClusterIP";
+        let classified = if cluster_ip == "None" && svc_type == "ClusterIP" {
+            "Headless"
+        } else {
+            svc_type
+        };
+        assert_eq!(classified, "Headless");
+
+        let cluster_ip2 = "10.0.0.1";
+        let classified2 = if cluster_ip2 == "None" && svc_type == "ClusterIP" {
+            "Headless"
+        } else {
+            svc_type
+        };
+        assert_eq!(classified2, "ClusterIP");
     }
 }
