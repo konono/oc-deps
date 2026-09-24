@@ -5,7 +5,7 @@ Kubernetes resource dependency inspector. Given any resource, walks both up (own
 Works with **any** resource type — built-in kinds, CRDs, and Operator-managed resources.
 
 ```
-$ oc-deps pod/my-app-6f8b9c4d7-x2k4p -n demo
+$ oc-deps tree pod/my-app-6f8b9c4d7-x2k4p -n demo
 
 📦 Namespace: demo
 
@@ -32,91 +32,87 @@ Requires Rust toolchain and an active kubeconfig (`~/.kube/config`, `KUBECONFIG`
 
 ## Usage
 
+A subcommand is always required. Resource arguments use `kind/name` format.
+
 ```bash
-# Basic: kind/name format
-oc-deps pod/<pod-name> -n <namespace>
-oc-deps deployment/<name> -n <namespace>
-
-# Specify kind separately
-oc-deps -k Deployment <name> -n <namespace>
-
-# GVR notation (useful for CRDs)
-oc-deps -k deployments.apps <name> -n <namespace>
+# Show dependency tree around a resource
+oc-deps tree pod/<pod-name> -n <namespace>
+oc-deps tree deployment/<name> -n <namespace>
 
 # Fast parent chain only (no namespace scan)
-oc-deps --up-only pod/<pod-name> -n <namespace>
+oc-deps tree pod/<pod-name> -n <namespace> --direction parents
 
 # Children only
-oc-deps --down-only deployment/<name> -n <namespace>
+oc-deps tree deployment/<name> -n <namespace> --direction children
 
 # All dependency trees in a namespace
-oc-deps --map -n <namespace>
+oc-deps map -n <namespace>
 
-# Filter --map by root resource kind
-oc-deps --map --filter kind=Deployment -n <namespace>
+# Filter map by root resource kind or label
+oc-deps map -n <namespace> --root-kind Deployment
+oc-deps map -n <namespace> --root-kind Deployment --root-label app=myapp
 
-# Filter --map by root resource label
-oc-deps --map --filter label=app.kubernetes.io/part-of=myapp -n <namespace>
-
-# Combine filters (AND)
-oc-deps --map --filter kind=Deployment --filter label=app=myapp -n <namespace>
+# Network diagnostics (Service, EndpointSlice, NetworkPolicy)
+oc-deps network deployment/<name> -n <namespace>
+oc-deps network pod/<pod-name> -n <namespace> -o json
 
 # Which Operator manages this resource?
 oc-deps who-manages deployment/<name> -n <namespace>
-oc-deps who-manages pod/<pod-name> -n <namespace>
-oc-deps who-manages -o json deployment/<name> -n <namespace>
 
 # Inspect all resources managed by an operator
 oc-deps inspect rhods-operator
-oc-deps inspect rhods-operator -o json
-oc-deps inspect rhods-operator --cross-namespace   # discover across namespaces
+oc-deps inspect rhods-operator --cross-namespace
 
 # Trace impact radius from a root CR
 oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications
-oc-deps trace deployment/<name> -n <namespace> -o json
 oc-deps trace deployment/<name> -n <namespace> --cross-namespace
 
-# Trace which Operator installed a CRD
-oc-deps --crd-origin -k MyCustomResource -n <namespace>
+# Output formats (available on tree, map, network, trace)
+oc-deps tree deployment/<name> -n <namespace> -o tree    # default
+oc-deps tree deployment/<name> -n <namespace> -o table
+oc-deps tree deployment/<name> -n <namespace> -o json
 
-# Output formats
-oc-deps -o tree  deployment/<name> -n <namespace>   # default
-oc-deps -o table deployment/<name> -n <namespace>
-oc-deps -o json  deployment/<name> -n <namespace>
+# Show labels, annotations, or pod resources
+oc-deps tree deployment/<name> -n <namespace> --show labels --show annotations
+oc-deps tree deployment/<name> -n <namespace> --show pod-resources
 ```
 
-### Options
+### Common options (tree, map, network, trace)
 
 | Flag | Description |
 |------|-------------|
 | `-n, --namespace` | Target namespace (default: kubeconfig default) |
-| `-k, --kind` | Resource kind when not using `kind/name` format |
 | `-o, --output` | Output format: `tree` (default), `table`, `json` |
-| `-d, --depth` | Max traversal depth (default: 20) |
-| `--up-only` | Show only parent chain (fast, no namespace scan) |
-| `--down-only` | Show only child resources |
-| `--map` | Show all dependency trees in the namespace (or cluster-wide with -A) |
-| `-A, --all-namespaces` | Scan all namespaces (requires `--map`) |
-| `--namespace-selector` | Select namespaces by label `key=value` (repeatable, AND). Requires `-A` |
-| `--exclude-namespace` | Exclude namespaces matching pattern: `prefix*`, `*suffix`, or exact (repeatable). Requires `-A` |
-| `--exclude-system-namespaces` | Exclude `openshift-*`, `kube-*`, `default`. Requires `-A` |
-| `--filter` | Filter `--map` results by root node. `kind=X` or `label=key=value`. Repeatable (AND). Requires `--map` |
-| `--crd-origin` | Show which Operator/CSV installed the CRD |
-| `--labels` | Show labels on each resource in tree output |
-| `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
+| `--refresh-discovery` | Refresh API discovery cache |
 | `-v, --verbose` | Show all scan/discovery warnings (default: first 5) |
-| `--strict` | Exit with code 2 if discovery/scan is incomplete. Partial results are output before exit. AllNamespaces scope messages alone do not trigger exit 2 |
-| `--show-spec` | Show container resource requests/limits for Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, DeploymentConfig |
-| `--network` | Show network paths (Service/Ingress/Route) for Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet |
+| `--strict` | Exit with code 2 if discovery/scan is incomplete |
+| `--show` | Show additional fields: `labels`, `annotations`, `pod-resources` (repeatable) |
+| `-d, --depth` | Max traversal depth (default: 20) |
 | `--no-refs` | Disable spec-level reference detection |
-| `--include-events` | Include Event resources in scan (skipped by default) |
-| `--no-cache` | Skip API discovery cache |
+| `--include-events` | Include Event resources in scan |
 
-**JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
+### tree-specific options
 
-### Network Paths (`--network`)
+| Flag | Description |
+|------|-------------|
+| `--direction` | Traversal direction: `both` (default), `parents` (fast, no scan), `children` |
 
-Shows the full network reachability chain for workloads: Pod labels -> Service selector -> Ingress/Route backends, plus EndpointSlice health.
+### map-specific options
+
+| Flag | Description |
+|------|-------------|
+| `-A, --all-namespaces` | Scan all namespaces (mutually exclusive with `-n`) |
+| `--namespace-selector` | Select namespaces by label `key=value` (repeatable, AND). Requires `-A` |
+| `--exclude-namespace` | Exclude namespaces matching pattern (repeatable). Requires `-A` |
+| `--exclude-system-namespaces` | Exclude `openshift-*`, `kube-*`, `default`. Requires `-A` |
+| `--root-kind` | Filter by root resource kind (repeatable) |
+| `--root-label` | Filter by root resource label `key=value` (repeatable, AND) |
+
+**JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--show annotations`.
+
+### Network Paths (`network`)
+
+The `network` subcommand shows the full network reachability chain for workloads: Pod labels → Service selector → Ingress/Route backends, plus EndpointSlice health and NetworkPolicy posture.
 
 **Service fields displayed:**
 
@@ -150,7 +146,7 @@ EndpointSlices are the modern replacement for Endpoints. Each slice contains a l
 
 **External reachability** is not determined by Service type alone. A LoadBalancer type does not guarantee external access — it depends on cloud provider, MetalLB, or other LB implementation.
 
-**JSON field reference (`-o json --network`):**
+**JSON field reference (`network -o json`):**
 
 Each entry in `networkPaths[]` contains:
 - `service: {name, config: {...}, status: {...}}` — config holds spec fields, status holds observed state
@@ -189,7 +185,7 @@ Service/my-app
 
 #### Network Policy Posture
 
-When `--network` is used, oc-deps also evaluates the NetworkPolicy posture of each Pod in the dependency tree. For every Pod, it determines:
+The `network` subcommand also evaluates the NetworkPolicy posture of each Pod in the dependency tree. For every Pod, it determines:
 
 - **Ingress isolation**: "isolated" if any applicable NetworkPolicy includes "Ingress" in its policyTypes; "non-isolated" otherwise.
 - **Egress isolation**: "isolated" if any applicable NetworkPolicy includes "Egress" in its policyTypes; "non-isolated" otherwise.
@@ -221,25 +217,25 @@ Each entry: `podName`, `podUid`, `ingressIsolation`, `egressIsolation`, `applica
 
 **API failure**: If NetworkPolicy LIST fails (403/500/timeout), isolation is shown as "unknown" and partial Service/EndpointSlice results are preserved. `--strict` exits 2 after output. Warnings are typed ScanWarning objects in JSON.
 
-### Cluster-Wide Map (`--map -A`)
+### Cluster-Wide Map (`map -A`)
 
 Scan all namespaces (or a filtered subset) and display dependency trees grouped by namespace. Discovery cache is shared across all namespaces. Namespace scan concurrency is bounded (max 5 parallel) to prevent connection exhaustion.
 
 ```bash
 # All namespaces
-oc-deps --map -A
+oc-deps map -A
 
 # Filter by namespace label (AND)
-oc-deps --map -A --namespace-selector env=prod --namespace-selector team=platform
+oc-deps map -A --namespace-selector env=prod --namespace-selector team=platform
 
 # Exclude patterns and system namespaces
-oc-deps --map -A --exclude-system-namespaces --exclude-namespace "temp-*"
+oc-deps map -A --exclude-system-namespaces --exclude-namespace "temp-*"
 
 # JSON output with scope metadata
-oc-deps --map -A -o json --exclude-system-namespaces
+oc-deps map -A -o json --exclude-system-namespaces
 
 # Partial failures: 403/timeout namespaces shown as incomplete
-oc-deps --map -A --strict  # outputs results, then exit 2 if any namespace failed
+oc-deps map -A --strict  # outputs results, then exit 2 if any namespace failed
 ```
 
 **Identity:** Resources use `group/kind/namespace/name` — no cross-namespace name-match edges. Each namespace is scanned independently.
@@ -248,79 +244,56 @@ oc-deps --map -A --strict  # outputs results, then exit 2 if any namespace faile
 
 **Progress:** Per-namespace progress on stderr (`[current/total] namespace — resources, elapsed`). Non-TTY output uses plain line-per-namespace format.
 
-### `--show-spec` — Container Resource Display
+### `--show pod-resources` — Container Resource Display
 
 Shows container names, resource requests, and limits for workload resources. Supports all resource keys including `cpu`, `memory`, `nvidia.com/gpu`, `ephemeral-storage`, `hugepages-*`, and any extended resources. Format: `name: key=request/limit` (dash `-` for unset values). initContainers are prefixed with `init:`. Resources without requests/limits show `<no resources>`.
 
 ```bash
 # Tree output
-oc-deps --show-spec deployment/myapp -n mynamespace
-# Deployment/myapp  ◀ target
-#    containers (2)
-#      app: cpu=500m/1, memory=512Mi/1Gi, nvidia.com/gpu=1/1
-#      init:setup: cpu=10m/100m, memory=16Mi/64Mi
+oc-deps tree deployment/myapp -n mynamespace --show pod-resources
 
 # Table output — adds a Containers column
-oc-deps --show-spec -o table deployment/myapp -n mynamespace
+oc-deps tree deployment/myapp -n mynamespace --show pod-resources -o table
 
 # JSON output — adds podTemplate field with full requests/limits
-oc-deps --show-spec -o json deployment/myapp -n mynamespace
+oc-deps tree deployment/myapp -n mynamespace --show pod-resources -o json
 
-# Up-only (fast, no namespace scan)
-oc-deps --up-only --show-spec pod/myapp-abc123 -n mynamespace
+# Parent chain only (fast, no namespace scan)
+oc-deps tree pod/myapp-abc123 -n mynamespace --direction parents --show pod-resources
 
 # Map mode with spec
-oc-deps --map --show-spec -o table -n mynamespace
+oc-deps map -n mynamespace --show pod-resources -o table
 
-# Combine with --labels
-oc-deps --show-spec --labels deployment/myapp -n mynamespace
+# Combine with labels
+oc-deps tree deployment/myapp -n mynamespace --show pod-resources --show labels
 ```
 
-### `--up-only` Spec-Level References
+### `tree --direction parents` Spec-Level References
 
-With `--up-only`, oc-deps extracts spec-level references (Secret, ConfigMap, ServiceAccount, PVC) from each parent's GET response — no namespace scan or additional API calls. References are **typed** (from well-known fields like `spec.volumes[].secret.secretName`). Use `--no-refs` to suppress.
+With `--direction parents`, oc-deps extracts spec-level references (Secret, ConfigMap, ServiceAccount, PVC) from each parent's GET response — no namespace scan or additional API calls. References are **typed** (from well-known fields like `spec.volumes[].secret.secretName`). Use `--no-refs` to suppress.
 
 ```bash
 # Show parent chain with spec refs (typed source + field path shown)
-oc-deps --up-only deployment/myapp -n mynamespace
-# Deployment/myapp  ◀ target
-#    ├╌ ServiceAccount/myapp  (typed, via spec.template.spec.serviceAccountName)
-#    └╌ Secret/tls-cert  (typed, via spec.template.spec.volumes.[0].secret.secretName)
+oc-deps tree deployment/myapp -n mynamespace --direction parents
 
 # Table output — Source and Field Path columns added when refs present
-oc-deps --up-only -o table deployment/myapp -n mynamespace
-# | Relation | Kind           | Name  | Source | Field Path                              |
-# | Self     | Deployment     | myapp |        |                                         |
-# | Ref      | ServiceAccount | myapp | typed  | spec.template.spec.serviceAccountName   |
-# | Ref      | Secret         | tls   | typed  | spec.template.spec.volumes.[0]...       |
+oc-deps tree deployment/myapp -n mynamespace --direction parents -o table
 
 # JSON output — specRefs array per chain entry with kind/name/fieldPath/source
-oc-deps --up-only -o json deployment/myapp -n mynamespace
+oc-deps tree deployment/myapp -n mynamespace --direction parents -o json
 
 # Suppress refs
-oc-deps --up-only --no-refs deployment/myapp -n mynamespace
+oc-deps tree deployment/myapp -n mynamespace --direction parents --no-refs
 
-# Combine with --show-spec and --labels
-oc-deps --up-only --show-spec --labels deployment/myapp -n mynamespace
+# Combine with show options
+oc-deps tree deployment/myapp -n mynamespace --direction parents --show pod-resources --show labels
 ```
 
 **Ref dedup:** Same Secret/ConfigMap referenced from multiple field paths (e.g., volume and envFrom) produces distinct entries per field path. Only exact (kind, name, fieldPath, source) duplicates are removed. `serviceAccount` and `serviceAccountName` are canonicalized to `serviceAccountName`. Output is sorted by kind → name → fieldPath for stable ordering.
 
 **JSON `specRefs` format:** Each chain entry may include `specRefs`, an array of `{"kind", "name", "fieldPath", "source"}`. `source` is `"typed"` (from well-known field paths) or `"heuristic"` (from name matching in full scan mode). Omitted when empty. In `--up-only` mode, only typed refs are produced (no heuristic name matching).
 
-**Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name. `--show-spec` is a root-level flag for the default resource/map mode only (not used by subcommands):
-
-```bash
-oc-deps --strict snapshot -n <namespace> -o snapshot.json
-oc-deps --verbose graph -n <namespace> -o evidence-graph.json
-```
-
-**`inspect` and `trace`** have their own `--verbose` and `--strict` flags, so both positions work:
-
-```bash
-oc-deps inspect rhods-operator --strict --verbose
-oc-deps --strict inspect rhods-operator    # also works (merged with subcommand flags)
-```
+Each subcommand defines its own options — no root-level flags exist. Options are always placed after the subcommand name.
 
 ## How it works
 
@@ -347,9 +320,9 @@ The `--up-only` mode skips step 2 entirely and uses targeted API calls to walk t
 ### List operators
 
 ```bash
-oc-deps operators              # tree view
-oc-deps operators -o table     # table view
-oc-deps operators -o json      # JSON output
+oc-deps operators             # tree view
+oc-deps operators -o table    # table view
+oc-deps operators -o json     # JSON output
 ```
 
 ### Inspect an operator
@@ -518,8 +491,9 @@ Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW
 `--force` changes warning output only. It does not change the plan, authorize additional
 deletions, bypass confirmation, or relax execution guards.
 
-The API discovery cache is valid for 30 minutes. Use `--no-cache` after changing CRDs or
-APIService registrations when the command must observe those changes immediately.
+The API discovery cache is valid for 30 minutes. Use `--refresh-discovery` (or `--no-cache` on
+teardown/snapshot/graph subcommands) after changing CRDs or APIService registrations when the
+command must observe those changes immediately.
 
 For `teardown apply-set`, `--no-cache` refreshes API discovery for the first operator and reuses
 that fresh snapshot for later operators in the same run. Operator, CR, and namespace discovery

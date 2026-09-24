@@ -200,6 +200,7 @@ impl MapFilter {
     }
 }
 
+#[allow(dead_code)]
 pub fn parse_filters(raw: &[String]) -> Result<Vec<MapFilter>> {
     let mut filters = Vec::new();
     for s in raw {

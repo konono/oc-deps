@@ -8,105 +8,151 @@ use clap::{Parser, Subcommand, ValueEnum};
 )]
 pub struct Args {
     #[command(subcommand)]
-    pub command: Option<Command>,
+    pub command: Command,
+}
 
-    /// Namespace (default: kubeconfig の default namespace)
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Direction {
+    Both,
+    Parents,
+    Children,
+}
+
+#[derive(Clone, Debug, PartialEq, ValueEnum)]
+pub enum ShowField {
+    Labels,
+    Annotations,
+    PodResources,
+}
+
+/// Common options for subcommands that connect to a cluster.
+#[derive(clap::Args, Clone, Debug)]
+pub struct OnlineOpts {
+    /// Namespace (default: kubeconfig default)
     #[arg(short = 'n', long)]
     pub namespace: Option<String>,
 
-    /// Resource kind (e.g. Pod, Deployment). RESOURCE が kind/name なら不要
-    #[arg(short = 'k', long)]
-    pub kind: Option<String>,
-
-    /// Output format: tree, table, json
+    /// Output format
     #[arg(short = 'o', long, value_enum, default_value = "tree")]
     pub output: OutputFormat,
 
-    /// Max traversal depth
-    #[arg(short = 'd', long, default_value_t = 20)]
-    pub depth: usize,
-
-    /// Show only parent chain (namespace scan をスキップして高速)
+    /// Refresh API discovery cache
     #[arg(long)]
-    pub up_only: bool,
+    pub refresh_discovery: bool,
 
-    /// Show only child resources
-    #[arg(long)]
-    pub down_only: bool,
-
-    /// Show ALL dependency trees in the namespace (or cluster-wide with -A)
-    #[arg(long)]
-    pub map: bool,
-
-    /// Scan all namespaces (requires --map)
-    #[arg(short = 'A', long = "all-namespaces")]
-    pub all_namespaces: bool,
-
-    /// Select namespaces by label (repeatable, AND). Requires -A
-    #[arg(long, value_name = "KEY=VALUE")]
-    pub namespace_selector: Vec<String>,
-
-    /// Exclude namespaces matching glob pattern (repeatable). Requires -A
-    #[arg(long, value_name = "PATTERN")]
-    pub exclude_namespace: Vec<String>,
-
-    /// Exclude system namespaces (openshift-*, kube-*, default). Requires -A
-    #[arg(long)]
-    pub exclude_system_namespaces: bool,
-
-    /// Show which Operator/CSV installed the CRD for this Kind
-    #[arg(long)]
-    pub crd_origin: bool,
-
-    /// Disable spec-level references (Secret, ConfigMap, CRD cross-references)
-    #[arg(long)]
-    pub no_refs: bool,
-
-    /// Include Event resources in scan (default: skip)
-    #[arg(long)]
-    pub include_events: bool,
-
-    /// Skip discovery cache (force fresh API discovery)
-    #[arg(long)]
-    pub no_cache: bool,
-
-    /// Show detailed scan warnings and diagnostics
+    /// Show detailed scan warnings
     #[arg(short = 'v', long)]
     pub verbose: bool,
 
-    /// Exit with code 2 if any API types were skipped during scan
+    /// Exit with code 2 if scan is incomplete
     #[arg(long)]
     pub strict: bool,
-
-    /// Show labels on each resource in tree output
-    #[arg(long)]
-    pub labels: bool,
-
-    /// Show annotations on each resource in tree output
-    #[arg(long)]
-    pub annotations: bool,
-
-    /// Show container resource requests/limits for Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, DeploymentConfig
-    #[arg(long)]
-    pub show_spec: bool,
-
-    /// Show network paths (Service/Ingress/Route) for Pod/Deployment/ReplicaSet/StatefulSet/DaemonSet
-    #[arg(long)]
-    pub network: bool,
-
-    /// Filter --map results by root resource. Applies to root nodes only.
-    /// Repeatable (AND). Requires --map.
-    /// Examples: --filter kind=Deployment --filter label=app=myapp
-    #[arg(long, value_name = "FILTER")]
-    pub filter: Vec<String>,
-
-    /// Target resource: kind/name or name (with -k). --map 使用時は省略可
-    #[arg(value_name = "RESOURCE")]
-    pub resource: Option<String>,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Show dependency tree around a resource
+    Tree {
+        /// Resource in kind/name format
+        #[arg(value_name = "RESOURCE")]
+        resource: String,
+
+        #[command(flatten)]
+        online: OnlineOpts,
+
+        /// Direction to traverse
+        #[arg(long, value_enum, default_value = "both")]
+        direction: Direction,
+
+        /// Max traversal depth
+        #[arg(short = 'd', long, default_value_t = 20)]
+        depth: usize,
+
+        /// Disable spec-level references (Secret, ConfigMap, CRD cross-references)
+        #[arg(long)]
+        no_refs: bool,
+
+        /// Include Event resources in scan (default: skip)
+        #[arg(long)]
+        include_events: bool,
+
+        /// Show additional fields
+        #[arg(long, value_enum)]
+        show: Vec<ShowField>,
+    },
+
+    /// Show dependency trees for a namespace or cluster
+    Map {
+        #[command(flatten)]
+        online: OnlineOpts,
+
+        /// Scan all namespaces
+        #[arg(short = 'A', long = "all-namespaces", conflicts_with = "namespace")]
+        all_namespaces: bool,
+
+        /// Select namespaces by label (repeatable, AND). Requires -A
+        #[arg(long, value_name = "KEY=VALUE")]
+        namespace_selector: Vec<String>,
+
+        /// Exclude namespaces matching glob pattern (repeatable). Requires -A
+        #[arg(long, value_name = "PATTERN")]
+        exclude_namespace: Vec<String>,
+
+        /// Exclude system namespaces (openshift-*, kube-*, default). Requires -A
+        #[arg(long)]
+        exclude_system_namespaces: bool,
+
+        /// Disable spec-level references
+        #[arg(long)]
+        no_refs: bool,
+
+        /// Include Event resources in scan (default: skip)
+        #[arg(long)]
+        include_events: bool,
+
+        /// Show additional fields
+        #[arg(long, value_enum)]
+        show: Vec<ShowField>,
+
+        /// Max traversal depth
+        #[arg(short = 'd', long, default_value_t = 20)]
+        depth: usize,
+
+        /// Filter by root resource kind (repeatable)
+        #[arg(long, value_name = "KIND")]
+        root_kind: Vec<String>,
+
+        /// Filter by root resource label (repeatable, key=value format)
+        #[arg(long, value_name = "KEY=VALUE")]
+        root_label: Vec<String>,
+    },
+
+    /// Diagnose how a workload is exposed and network-restricted
+    Network {
+        /// Resource in kind/name format (Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet)
+        #[arg(value_name = "RESOURCE")]
+        resource: String,
+
+        #[command(flatten)]
+        online: OnlineOpts,
+
+        /// Disable spec-level references
+        #[arg(long)]
+        no_refs: bool,
+
+        /// Include Event resources in scan (default: skip)
+        #[arg(long)]
+        include_events: bool,
+
+        /// Show additional fields
+        #[arg(long, value_enum)]
+        show: Vec<ShowField>,
+
+        /// Max traversal depth
+        #[arg(short = 'd', long, default_value_t = 20)]
+        depth: usize,
+    },
+
     /// Show which Operator manages a resource (ownerRef chain → CSV → Subscription)
     WhoManages {
         /// Resource in kind/name format
@@ -238,29 +284,12 @@ pub enum Command {
         #[arg(value_name = "RESOURCE")]
         resource: String,
 
-        /// Namespace (default: kubeconfig default)
-        #[arg(short = 'n', long)]
-        namespace: Option<String>,
-
-        /// Output format: tree, table, json
-        #[arg(short = 'o', long, value_enum, default_value = "tree")]
-        output: OutputFormat,
-
-        /// Skip discovery cache
-        #[arg(long)]
-        no_cache: bool,
+        #[command(flatten)]
+        online: OnlineOpts,
 
         /// Max traversal depth
         #[arg(short = 'd', long, default_value_t = 20)]
         depth: usize,
-
-        /// Show all scan/discovery warnings (default: first 5)
-        #[arg(short = 'v', long)]
-        verbose: bool,
-
-        /// Exit with code 2 if discovery/scan is incomplete (partial results are still output)
-        #[arg(long)]
-        strict: bool,
 
         /// Discover resources across namespaces via OperatorGroup, owned CRD instances, and label evidence
         #[arg(long)]
@@ -499,14 +528,246 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn test_tree_subcommand_basic() {
+        let args = Args::parse_from(["oc-deps", "tree", "deployment/nginx", "-n", "default"]);
+        match args.command {
+            Command::Tree {
+                resource,
+                online,
+                direction,
+                depth,
+                ..
+            } => {
+                assert_eq!(resource, "deployment/nginx");
+                assert_eq!(online.namespace, Some("default".to_string()));
+                assert!(matches!(direction, Direction::Both));
+                assert_eq!(depth, 20);
+            }
+            _ => panic!("Expected Command::Tree"),
+        }
+    }
+
+    #[test]
+    fn test_tree_direction_parents() {
+        let args = Args::parse_from(["oc-deps", "tree", "pod/foo", "--direction", "parents"]);
+        match args.command {
+            Command::Tree { direction, .. } => {
+                assert!(matches!(direction, Direction::Parents));
+            }
+            _ => panic!("Expected Command::Tree"),
+        }
+    }
+
+    #[test]
+    fn test_tree_direction_children() {
+        let args = Args::parse_from(["oc-deps", "tree", "pod/foo", "--direction", "children"]);
+        match args.command {
+            Command::Tree { direction, .. } => {
+                assert!(matches!(direction, Direction::Children));
+            }
+            _ => panic!("Expected Command::Tree"),
+        }
+    }
+
+    #[test]
+    fn test_tree_show_fields() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "tree",
+            "deployment/nginx",
+            "--show",
+            "labels",
+            "--show",
+            "annotations",
+            "--show",
+            "pod-resources",
+        ]);
+        match args.command {
+            Command::Tree { show, .. } => {
+                assert!(show.contains(&ShowField::Labels));
+                assert!(show.contains(&ShowField::Annotations));
+                assert!(show.contains(&ShowField::PodResources));
+            }
+            _ => panic!("Expected Command::Tree"),
+        }
+    }
+
+    #[test]
+    fn test_tree_online_opts() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "tree",
+            "pod/foo",
+            "-n",
+            "myns",
+            "-o",
+            "json",
+            "--refresh-discovery",
+            "-v",
+            "--strict",
+        ]);
+        match args.command {
+            Command::Tree { online, .. } => {
+                assert_eq!(online.namespace, Some("myns".to_string()));
+                assert!(matches!(online.output, OutputFormat::Json));
+                assert!(online.refresh_discovery);
+                assert!(online.verbose);
+                assert!(online.strict);
+            }
+            _ => panic!("Expected Command::Tree"),
+        }
+    }
+
+    #[test]
+    fn test_map_subcommand_basic() {
+        let args = Args::parse_from(["oc-deps", "map", "-n", "myns"]);
+        match args.command {
+            Command::Map {
+                online,
+                all_namespaces,
+                ..
+            } => {
+                assert_eq!(online.namespace, Some("myns".to_string()));
+                assert!(!all_namespaces);
+            }
+            _ => panic!("Expected Command::Map"),
+        }
+    }
+
+    #[test]
+    fn test_map_all_namespaces() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "map",
+            "-A",
+            "--namespace-selector",
+            "env=prod",
+            "--exclude-namespace",
+            "temp-*",
+            "--exclude-system-namespaces",
+        ]);
+        match args.command {
+            Command::Map {
+                all_namespaces,
+                namespace_selector,
+                exclude_namespace,
+                exclude_system_namespaces,
+                online,
+                ..
+            } => {
+                assert!(all_namespaces);
+                assert_eq!(namespace_selector, vec!["env=prod"]);
+                assert_eq!(exclude_namespace, vec!["temp-*"]);
+                assert!(exclude_system_namespaces);
+                assert!(online.namespace.is_none());
+            }
+            _ => panic!("Expected Command::Map"),
+        }
+    }
+
+    #[test]
+    fn test_map_n_and_a_conflict() {
+        let result = Args::try_parse_from(["oc-deps", "map", "-n", "ns", "-A"]);
+        assert!(result.is_err(), "Expected conflict error for -n and -A");
+    }
+
+    #[test]
+    fn test_map_root_filters() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "map",
+            "-n",
+            "default",
+            "--root-kind",
+            "Deployment",
+            "--root-label",
+            "app=nginx",
+        ]);
+        match args.command {
+            Command::Map {
+                root_kind,
+                root_label,
+                ..
+            } => {
+                assert_eq!(root_kind, vec!["Deployment"]);
+                assert_eq!(root_label, vec!["app=nginx"]);
+            }
+            _ => panic!("Expected Command::Map"),
+        }
+    }
+
+    #[test]
+    fn test_network_subcommand() {
+        let args = Args::parse_from(["oc-deps", "network", "deployment/nginx", "-n", "default"]);
+        match args.command {
+            Command::Network {
+                resource, online, ..
+            } => {
+                assert_eq!(resource, "deployment/nginx");
+                assert_eq!(online.namespace, Some("default".to_string()));
+            }
+            _ => panic!("Expected Command::Network"),
+        }
+    }
+
+    #[test]
+    fn test_trace_subcommand_with_online_opts() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "trace",
+            "datasciencecluster/default",
+            "-n",
+            "test-ns",
+            "--cross-namespace",
+            "--strict",
+        ]);
+        match args.command {
+            Command::Trace {
+                resource,
+                online,
+                cross_namespace,
+                depth,
+                ..
+            } => {
+                assert_eq!(resource, "datasciencecluster/default");
+                assert_eq!(online.namespace, Some("test-ns".to_string()));
+                assert!(cross_namespace);
+                assert!(online.strict);
+                assert_eq!(depth, 20);
+            }
+            _ => panic!("Expected Command::Trace"),
+        }
+    }
+
+    #[test]
+    fn test_trace_custom_depth_and_output() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "trace",
+            "deployment/foo",
+            "-d",
+            "5",
+            "-o",
+            "json",
+        ]);
+        match args.command {
+            Command::Trace { depth, online, .. } => {
+                assert_eq!(depth, 5);
+                assert!(matches!(online.output, OutputFormat::Json));
+            }
+            _ => panic!("Expected Command::Trace"),
+        }
+    }
+
+    #[test]
     fn test_inspect_subcommand_parse() {
         let args = Args::parse_from(["oc-deps", "inspect", "rhods-operator"]);
         match args.command {
-            Some(Command::Inspect {
+            Command::Inspect {
                 operator,
                 cross_namespace,
                 ..
-            }) => {
+            } => {
                 assert_eq!(operator, "rhods-operator");
                 assert!(!cross_namespace);
             }
@@ -518,98 +779,10 @@ mod tests {
     fn test_inspect_cross_namespace() {
         let args = Args::parse_from(["oc-deps", "inspect", "rhods-operator", "--cross-namespace"]);
         match args.command {
-            Some(Command::Inspect {
+            Command::Inspect {
                 cross_namespace, ..
-            }) => {
+            } => {
                 assert!(cross_namespace);
-            }
-            _ => panic!("Expected Command::Inspect"),
-        }
-    }
-
-    #[test]
-    fn test_trace_subcommand_parse() {
-        let args = Args::parse_from([
-            "oc-deps",
-            "trace",
-            "datasciencecluster/default",
-            "-n",
-            "test-ns",
-        ]);
-        match args.command {
-            Some(Command::Trace {
-                resource,
-                namespace,
-                depth,
-                ..
-            }) => {
-                assert_eq!(resource, "datasciencecluster/default");
-                assert_eq!(namespace, Some("test-ns".to_string()));
-                assert_eq!(depth, 20);
-            }
-            _ => panic!("Expected Command::Trace"),
-        }
-    }
-
-    #[test]
-    fn test_trace_custom_depth() {
-        let args = Args::parse_from([
-            "oc-deps",
-            "trace",
-            "deployment/foo",
-            "-d",
-            "5",
-            "-o",
-            "json",
-        ]);
-        match args.command {
-            Some(Command::Trace { depth, output, .. }) => {
-                assert_eq!(depth, 5);
-                assert!(matches!(output, OutputFormat::Json));
-            }
-            _ => panic!("Expected Command::Trace"),
-        }
-    }
-
-    #[test]
-    fn test_trace_cross_namespace() {
-        let args = Args::parse_from([
-            "oc-deps",
-            "trace",
-            "deployment/foo",
-            "-n",
-            "test-ns",
-            "--cross-namespace",
-            "--strict",
-        ]);
-        match args.command {
-            Some(Command::Trace {
-                cross_namespace,
-                strict,
-                ..
-            }) => {
-                assert!(cross_namespace);
-                assert!(strict);
-            }
-            _ => panic!("Expected Command::Trace"),
-        }
-    }
-
-    #[test]
-    fn test_inspect_verbose_strict() {
-        let args = Args::parse_from([
-            "oc-deps",
-            "inspect",
-            "rhods-operator",
-            "--verbose",
-            "--strict",
-        ]);
-        match args.command {
-            Some(Command::Inspect {
-                verbose, strict, ..
-            }) => {
-                assert!(verbose);
-                assert!(strict);
             }
             _ => panic!("Expected Command::Inspect"),
         }
@@ -619,12 +792,12 @@ mod tests {
     fn test_snapshot_all_namespaces_parse() {
         let args = Args::parse_from(["oc-deps", "snapshot", "-A", "-o", "out.json"]);
         match args.command {
-            Some(Command::Snapshot {
+            Command::Snapshot {
                 all_namespaces,
                 output_file,
                 namespace,
                 ..
-            }) => {
+            } => {
                 assert!(all_namespaces);
                 assert_eq!(output_file, "out.json");
                 assert!(namespace.is_none());
@@ -634,52 +807,53 @@ mod tests {
     }
 
     #[test]
-    fn test_snapshot_with_filters() {
-        let args = Args::parse_from([
-            "oc-deps",
-            "snapshot",
-            "-A",
-            "--namespace-selector",
-            "env=prod",
-            "--exclude-namespace",
-            "temp-*",
-            "--exclude-system-namespaces",
-            "--strict",
-        ]);
+    fn test_operators_subcommand() {
+        let args = Args::parse_from(["oc-deps", "operators", "-o", "json"]);
         match args.command {
-            Some(Command::Snapshot {
-                all_namespaces,
-                namespace_selector,
-                exclude_namespace,
-                exclude_system_namespaces,
-                strict,
-                ..
-            }) => {
-                assert!(all_namespaces);
-                assert_eq!(namespace_selector, vec!["env=prod"]);
-                assert_eq!(exclude_namespace, vec!["temp-*"]);
-                assert!(exclude_system_namespaces);
-                assert!(strict);
+            Command::Operators { output, .. } => {
+                assert!(matches!(output, OutputFormat::Json));
             }
-            _ => panic!("Expected Command::Snapshot"),
+            _ => panic!("Expected Command::Operators"),
         }
     }
 
     #[test]
-    fn test_snapshot_n_and_a_exclusive() {
-        // clap won't reject this at parse time since they're separate fields,
-        // but validation in main.rs will. Here we just test parsing works.
-        let args = Args::parse_from(["oc-deps", "snapshot", "-n", "ns", "-A"]);
+    fn test_who_manages_subcommand() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "who-manages",
+            "deployment/nginx",
+            "-n",
+            "default",
+        ]);
         match args.command {
-            Some(Command::Snapshot {
+            Command::WhoManages {
+                resource,
                 namespace,
-                all_namespaces,
                 ..
-            }) => {
-                assert!(namespace.is_some());
-                assert!(all_namespaces);
+            } => {
+                assert_eq!(resource, "deployment/nginx");
+                assert_eq!(namespace, Some("default".to_string()));
             }
-            _ => panic!("Expected Command::Snapshot"),
+            _ => panic!("Expected Command::WhoManages"),
         }
+    }
+
+    #[test]
+    fn test_diff_subcommand() {
+        let args = Args::parse_from(["oc-deps", "diff", "before.json", "after.json"]);
+        match args.command {
+            Command::Diff { before, after, .. } => {
+                assert_eq!(before, "before.json");
+                assert_eq!(after, "after.json");
+            }
+            _ => panic!("Expected Command::Diff"),
+        }
+    }
+
+    #[test]
+    fn test_subcommand_required() {
+        let result = Args::try_parse_from(["oc-deps"]);
+        assert!(result.is_err(), "Expected error when no subcommand given");
     }
 }
