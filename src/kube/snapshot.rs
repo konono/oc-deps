@@ -660,7 +660,7 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
         );
     }
     let has_pre_scope_schema = bv < Some(3) || av < Some(3);
-    if has_pre_scope_schema && !has_pre_data_schema {
+    if has_pre_scope_schema {
         scope_warnings.push(
             "One or both snapshots predate schema v3. Scope comparison is unavailable".to_string(),
         );
@@ -1879,18 +1879,56 @@ mod tests {
     }
 
     #[test]
-    fn diff_v1_v3_data_unavailable_warning() {
+    fn diff_v1_v3_data_and_scope_unavailable() {
         let mut before = make_empty_snapshot();
         let mut after = make_empty_snapshot();
         before.schema_version = Some(1);
         after.schema_version = Some(3);
         let result = diff_snapshots(&before, &after).unwrap();
-        assert!(
-            result
-                .scope_warnings
-                .iter()
-                .any(|w| w.contains("data comparison")),
-            "v1 should trigger data unavailable warning"
+        let data_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("data comparison"))
+            .collect();
+        assert_eq!(data_warnings.len(), 1, "v1→v3: exactly 1 data unavailable");
+        let scope_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("predate schema v3") || w.contains("Scope comparison"))
+            .collect();
+        assert_eq!(
+            scope_warnings.len(),
+            1,
+            "v1→v3: exactly 1 scope unavailable"
+        );
+    }
+
+    #[test]
+    fn diff_legacy_v3_data_and_scope_unavailable() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = None; // legacy
+        after.schema_version = Some(3);
+        let result = diff_snapshots(&before, &after).unwrap();
+        let data_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("data comparison"))
+            .collect();
+        assert_eq!(
+            data_warnings.len(),
+            1,
+            "legacy→v3: exactly 1 data unavailable"
+        );
+        let scope_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("predate schema v3") || w.contains("Scope comparison"))
+            .collect();
+        assert_eq!(
+            scope_warnings.len(),
+            1,
+            "legacy→v3: exactly 1 scope unavailable"
         );
     }
 
