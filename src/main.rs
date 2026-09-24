@@ -21,7 +21,8 @@ use crate::analyzers::olm::{
     print_crd_origin, print_operators, print_who_manages, who_manages,
 };
 use crate::analyzers::selector::{
-    build_network_inventory, find_network_paths, get_service_selected_pods,
+    build_network_inventory, evaluate_network_postures, find_network_paths,
+    get_service_selected_pods,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
@@ -5031,6 +5032,16 @@ async fn main() -> Result<()> {
                 all_paths.push((pod_name, path));
             }
 
+            let np_api_available = !inventory.warnings.iter().any(|w| {
+                matches!(w, crate::kube::resource::ScanWarning::Forbidden { .. })
+                    && format!("{}", w).contains("networkpolicies")
+            });
+            let postures = evaluate_network_postures(
+                &pod_labels_list,
+                &inventory.network_policies,
+                np_api_available,
+            );
+
             match args.output {
                 OutputFormat::Json => {
                     let json_paths: Vec<_> = all_paths
@@ -5242,6 +5253,106 @@ async fn main() -> Result<()> {
                         })
                         .collect();
                     extra_json.insert("networkPaths".into(), serde_json::json!(json_paths));
+
+                    // NetworkPolicy postures
+                    let json_postures: Vec<_> = postures
+                        .iter()
+                        .map(|p| {
+                            let policies: Vec<_> = p
+                                .applicable_policies
+                                .iter()
+                                .map(|ap| {
+                                    let ingress: Vec<_> = ap
+                                        .ingress_rules
+                                        .iter()
+                                        .map(|r| {
+                                            serde_json::json!({
+                                                "peers": r.peers.iter().map(|peer| {
+                                                    let mut obj = serde_json::Map::new();
+                                                    if let Some(ps) = &peer.pod_selector {
+                                                        obj.insert("podSelector".into(), serde_json::json!({"matchLabels": ps.match_labels}));
+                                                    }
+                                                    if let Some(ns) = &peer.namespace_selector {
+                                                        obj.insert("namespaceSelector".into(), serde_json::json!({"matchLabels": ns.match_labels}));
+                                                    }
+                                                    if let Some(ib) = &peer.ip_block {
+                                                        obj.insert("ipBlock".into(), serde_json::json!({"cidr": ib.cidr, "except": ib.except}));
+                                                    }
+                                                    serde_json::Value::Object(obj)
+                                                }).collect::<Vec<_>>(),
+                                                "ports": r.ports.iter().map(|port| {
+                                                    let mut obj = serde_json::Map::new();
+                                                    if let Some(proto) = &port.protocol {
+                                                        obj.insert("protocol".into(), serde_json::json!(proto));
+                                                    }
+                                                    if let Some(p) = &port.port {
+                                                        obj.insert("port".into(), serde_json::json!(p));
+                                                    }
+                                                    if let Some(ep) = port.end_port {
+                                                        obj.insert("endPort".into(), serde_json::json!(ep));
+                                                    }
+                                                    serde_json::Value::Object(obj)
+                                                }).collect::<Vec<_>>(),
+                                            })
+                                        })
+                                        .collect();
+                                    let egress: Vec<_> = ap
+                                        .egress_rules
+                                        .iter()
+                                        .map(|r| {
+                                            serde_json::json!({
+                                                "peers": r.peers.iter().map(|peer| {
+                                                    let mut obj = serde_json::Map::new();
+                                                    if let Some(ps) = &peer.pod_selector {
+                                                        obj.insert("podSelector".into(), serde_json::json!({"matchLabels": ps.match_labels}));
+                                                    }
+                                                    if let Some(ns) = &peer.namespace_selector {
+                                                        obj.insert("namespaceSelector".into(), serde_json::json!({"matchLabels": ns.match_labels}));
+                                                    }
+                                                    if let Some(ib) = &peer.ip_block {
+                                                        obj.insert("ipBlock".into(), serde_json::json!({"cidr": ib.cidr, "except": ib.except}));
+                                                    }
+                                                    serde_json::Value::Object(obj)
+                                                }).collect::<Vec<_>>(),
+                                                "ports": r.ports.iter().map(|port| {
+                                                    let mut obj = serde_json::Map::new();
+                                                    if let Some(proto) = &port.protocol {
+                                                        obj.insert("protocol".into(), serde_json::json!(proto));
+                                                    }
+                                                    if let Some(p) = &port.port {
+                                                        obj.insert("port".into(), serde_json::json!(p));
+                                                    }
+                                                    if let Some(ep) = port.end_port {
+                                                        obj.insert("endPort".into(), serde_json::json!(ep));
+                                                    }
+                                                    serde_json::Value::Object(obj)
+                                                }).collect::<Vec<_>>(),
+                                            })
+                                        })
+                                        .collect();
+                                    serde_json::json!({
+                                        "name": ap.name,
+                                        "policyTypes": ap.policy_types,
+                                        "isolatesIngress": ap.isolates_ingress,
+                                        "isolatesEgress": ap.isolates_egress,
+                                        "ingressRules": ingress,
+                                        "egressRules": egress,
+                                    })
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "podName": p.pod_name,
+                                "podUid": p.pod_uid,
+                                "ingressIsolation": p.ingress_isolation,
+                                "egressIsolation": p.egress_isolation,
+                                "applicablePolicies": policies,
+                            })
+                        })
+                        .collect();
+                    extra_json.insert(
+                        "networkPolicyPostures".into(),
+                        serde_json::json!(json_postures),
+                    );
 
                     let mut all_warnings = scan_warnings.clone();
                     all_warnings.extend(inventory.warnings.iter().cloned());
@@ -5496,6 +5607,80 @@ async fn main() -> Result<()> {
                             println!();
                         }
                     }
+                    // Network Policy posture tree output
+                    if !postures.is_empty() {
+                        let stdout_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+                        println!(
+                            "\n\u{1f6e1}\u{fe0f}  Network Policy posture for {}/{}:\n",
+                            kind, name
+                        );
+                        for posture in &postures {
+                            if stdout_tty {
+                                println!("  \x1b[1mPod/{}\x1b[0m", posture.pod_name);
+                            } else {
+                                println!("  Pod/{}", posture.pod_name);
+                            }
+                            println!("    Ingress: {}", posture.ingress_isolation);
+                            println!("    Egress:  {}", posture.egress_isolation);
+                            for ap in &posture.applicable_policies {
+                                if stdout_tty {
+                                    println!("    \x1b[1mNetworkPolicy/{}\x1b[0m", ap.name);
+                                } else {
+                                    println!("    NetworkPolicy/{}", ap.name);
+                                }
+                                println!("      Types: {}", ap.policy_types.join(", "));
+                                let mut effects = Vec::new();
+                                if ap.isolates_ingress {
+                                    effects.push("isolates ingress");
+                                }
+                                if ap.isolates_egress {
+                                    effects.push("isolates egress");
+                                }
+                                println!("      Effect: {}", effects.join("; "));
+                                for rule in &ap.ingress_rules {
+                                    let peers_str = format_policy_peers(&rule.peers);
+                                    let ports_str = format_policy_ports(&rule.ports);
+                                    print!("      Allows ingress:");
+                                    if !peers_str.is_empty() {
+                                        print!(" from: {}", peers_str);
+                                    }
+                                    if !ports_str.is_empty() {
+                                        print!(" ports: {}", ports_str);
+                                    }
+                                    if peers_str.is_empty() && ports_str.is_empty() {
+                                        print!(" (all)");
+                                    }
+                                    println!();
+                                }
+                                for rule in &ap.egress_rules {
+                                    let peers_str = format_policy_peers(&rule.peers);
+                                    let ports_str = format_policy_ports(&rule.ports);
+                                    print!("      Allows egress:");
+                                    if !peers_str.is_empty() {
+                                        print!(" to: {}", peers_str);
+                                    }
+                                    if !ports_str.is_empty() {
+                                        print!(" ports: {}", ports_str);
+                                    }
+                                    if peers_str.is_empty() && ports_str.is_empty() {
+                                        print!(" (all)");
+                                    }
+                                    println!();
+                                }
+                                if ap.isolates_ingress && ap.ingress_rules.is_empty() {
+                                    println!(
+                                        "      (no ingress allow rules \u{2192} deny all ingress)"
+                                    );
+                                }
+                                if ap.isolates_egress && ap.egress_rules.is_empty() {
+                                    println!(
+                                        "      (no egress allow rules \u{2192} deny all egress)"
+                                    );
+                                }
+                            }
+                        }
+                        println!();
+                    }
                 }
             }
             if !inventory.warnings.is_empty() {
@@ -5532,6 +5717,70 @@ async fn main() -> Result<()> {
         std::process::exit(2);
     }
     Ok(())
+}
+
+fn format_policy_peers(peers: &[crate::analyzers::selector::NetworkPolicyPeer]) -> String {
+    if peers.is_empty() {
+        return String::new();
+    }
+    peers
+        .iter()
+        .map(|peer| {
+            let mut parts = Vec::new();
+            if let Some(ns) = &peer.namespace_selector {
+                let labels: Vec<_> = ns
+                    .match_labels
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect();
+                if labels.is_empty() {
+                    parts.push("namespaceSelector{*}".to_string());
+                } else {
+                    parts.push(format!("namespaceSelector{{{}}}", labels.join(",")));
+                }
+            }
+            if let Some(ps) = &peer.pod_selector {
+                let labels: Vec<_> = ps
+                    .match_labels
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect();
+                if labels.is_empty() {
+                    parts.push("podSelector{*}".to_string());
+                } else {
+                    parts.push(format!("podSelector{{{}}}", labels.join(",")));
+                }
+            }
+            if let Some(ib) = &peer.ip_block {
+                let mut s = format!("ipBlock:{}", ib.cidr);
+                if !ib.except.is_empty() {
+                    s.push_str(&format!(" except [{}]", ib.except.join(",")));
+                }
+                parts.push(s);
+            }
+            parts.join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_policy_ports(ports: &[crate::analyzers::selector::NetworkPolicyPort]) -> String {
+    if ports.is_empty() {
+        return String::new();
+    }
+    ports
+        .iter()
+        .map(|p| {
+            let proto = p.protocol.as_deref().unwrap_or("TCP");
+            let port = p.port.as_deref().unwrap_or("*");
+            if let Some(ep) = p.end_port {
+                format!("{}/{}-{}", proto, port, ep)
+            } else {
+                format!("{}/{}", proto, port)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn build_residual_evidence(
