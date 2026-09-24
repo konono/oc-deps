@@ -325,6 +325,8 @@ pub async fn scan_namespace(
                                     .into_iter()
                                     .collect();
 
+                                let pod_template = extract_pod_template(&kind, &data);
+
                                 Some((
                                     ResourceInfo {
                                         group: info.group.clone(),
@@ -335,6 +337,7 @@ pub async fn scan_namespace(
                                         owner_refs,
                                         labels,
                                         annotations,
+                                        pod_template,
                                     },
                                     wk_refs,
                                     spec_strs,
@@ -622,6 +625,7 @@ pub async fn resolve_missing_parents(
                     .into_iter()
                     .collect();
 
+                let pod_template = extract_pod_template(&owner.kind, &obj.data);
                 let next_uid = uid.clone();
                 index.insert(ResourceInfo {
                     group: owner_group.clone(),
@@ -632,6 +636,7 @@ pub async fn resolve_missing_parents(
                     owner_refs,
                     labels,
                     annotations,
+                    pod_template,
                 });
                 current = next_uid;
             }
@@ -669,6 +674,7 @@ pub async fn find_parents_only(
                     owner_refs: vec![],
                     labels: HashMap::new(),
                     annotations: HashMap::new(),
+                    pod_template: None,
                 });
                 break;
             }
@@ -718,6 +724,8 @@ pub async fn find_parents_only(
                     .into_iter()
                     .collect();
 
+                let pod_template = extract_pod_template(&current_kind, &obj.data);
+
                 chain.push(ResourceInfo {
                     group: info.group.clone(),
                     kind: current_kind,
@@ -727,6 +735,7 @@ pub async fn find_parents_only(
                     owner_refs,
                     labels,
                     annotations,
+                    pod_template,
                 });
 
                 match next {
@@ -747,6 +756,7 @@ pub async fn find_parents_only(
                     owner_refs: vec![],
                     labels: HashMap::new(),
                     annotations: HashMap::new(),
+                    pod_template: None,
                 });
                 break;
             }

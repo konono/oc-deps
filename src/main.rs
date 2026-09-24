@@ -207,8 +207,8 @@ fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &
             eprintln!("\n📦 Namespace: {}\n", namespace);
             print_tree(tree, "", true, true, opts);
         }
-        OutputFormat::Table => print_table(tree),
-        OutputFormat::Json => print_json(tree, namespace, opts.show_annotations),
+        OutputFormat::Table => print_table(tree, opts.show_spec),
+        OutputFormat::Json => print_json(tree, namespace, opts.show_annotations, opts.show_spec),
     }
 }
 
@@ -3953,6 +3953,7 @@ async fn main() -> Result<()> {
     let tree_opts = TreeDisplayOpts {
         show_labels: args.labels,
         show_annotations: args.annotations,
+        show_spec: args.show_spec,
     };
 
     if args.map {
@@ -4047,7 +4048,7 @@ async fn main() -> Result<()> {
                     "namespace": namespace,
                     "totalResources": index.by_uid.len(),
                     "matchedTrees": trees.len(),
-                    "trees": trees.iter().map(|t| tree_to_json(t, args.annotations)).collect::<Vec<_>>(),
+                    "trees": trees.iter().map(|t| tree_to_json(t, args.annotations, args.show_spec)).collect::<Vec<_>>(),
                 });
                 if !map_filters.is_empty() {
                     output["totalTrees"] = serde_json::json!(total_trees);
@@ -4131,8 +4132,10 @@ async fn main() -> Result<()> {
                 eprintln!("\n📦 Namespace: {}\n", namespace);
                 print_chain_tree(&chain, &tree_opts);
             }
-            OutputFormat::Table => print_chain_table(&chain),
-            OutputFormat::Json => print_chain_json(&chain, &namespace, args.annotations),
+            OutputFormat::Table => print_chain_table(&chain, args.show_spec),
+            OutputFormat::Json => {
+                print_chain_json(&chain, &namespace, args.annotations, args.show_spec)
+            }
         }
         return Ok(());
     }
@@ -4366,7 +4369,7 @@ async fn main() -> Result<()> {
                 let mut output = serde_json::json!({
                     "namespace": namespace,
                     "target": target,
-                    "tree": tree_to_json(&t, args.annotations),
+                    "tree": tree_to_json(&t, args.annotations, args.show_spec),
                 });
                 for (k, v) in extra_json {
                     output[k] = v;

@@ -102,6 +102,7 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
 | `-v, --verbose` | Show all scan/discovery warnings (default: first 5) |
 | `--strict` | Exit with code 2 if discovery/scan is incomplete. Partial results are output before exit. AllNamespaces scope messages alone do not trigger exit 2 |
+| `--show-spec` | Show container resource requests/limits for Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, DeploymentConfig |
 | `--network` | Show network paths (Service/Ingress/Route) for Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan (skipped by default) |

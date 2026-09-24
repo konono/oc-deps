@@ -1,5 +1,5 @@
 use crate::graph::tree::TreeNode;
-use crate::kube::resource::{EXCLUDED_ANNOTATION_KEYS, ResourceInfo};
+use crate::kube::resource::{ContainerResources, EXCLUDED_ANNOTATION_KEYS, ResourceInfo};
 
 const MAX_ANNOTATION_VALUE_CHARS: usize = 80;
 
@@ -7,6 +7,7 @@ const MAX_ANNOTATION_VALUE_CHARS: usize = 80;
 pub struct TreeDisplayOpts {
     pub show_labels: bool,
     pub show_annotations: bool,
+    pub show_spec: bool,
 }
 
 fn sanitize_value(v: &str) -> String {
@@ -78,9 +79,70 @@ fn format_metadata_lines(
     lines
 }
 
+fn format_resource_pair(c: &ContainerResources, key: &str) -> String {
+    let req = c
+        .requests
+        .as_ref()
+        .and_then(|r| r.get(key))
+        .map(|s| s.as_str())
+        .unwrap_or("-");
+    let lim = c
+        .limits
+        .as_ref()
+        .and_then(|r| r.get(key))
+        .map(|s| s.as_str())
+        .unwrap_or("-");
+    format!("{}={}/{}", key, req, lim)
+}
+
+fn format_spec_lines(info: &ResourceInfo, child_prefix: &str) -> Vec<String> {
+    let pt = match &info.pod_template {
+        Some(pt) => pt,
+        None => return vec![],
+    };
+
+    let mut lines = Vec::new();
+    let format_container = |c: &ContainerResources, label: &str| -> Vec<String> {
+        let cpu = format_resource_pair(c, "cpu");
+        let mem = format_resource_pair(c, "memory");
+        let has_resources = c.requests.is_some() || c.limits.is_some();
+        if has_resources {
+            vec![format!(
+                "{}│    \x1b[2;33m{}{}: {}, {}\x1b[0m",
+                child_prefix, label, c.name, cpu, mem
+            )]
+        } else {
+            vec![format!(
+                "{}│    \x1b[2;33m{}{}: <no resources>\x1b[0m",
+                child_prefix, label, c.name
+            )]
+        }
+    };
+
+    if !pt.containers.is_empty() || !pt.init_containers.is_empty() {
+        lines.push(format!(
+            "{}│  \x1b[33mcontainers ({})\x1b[0m",
+            child_prefix,
+            pt.containers.len() + pt.init_containers.len()
+        ));
+        for c in &pt.containers {
+            lines.extend(format_container(c, ""));
+        }
+        for c in &pt.init_containers {
+            lines.extend(format_container(c, "init:"));
+        }
+    }
+    lines
+}
+
 fn print_metadata_block(info: &ResourceInfo, child_prefix: &str, opts: &TreeDisplayOpts) {
     for line in format_metadata_lines(info, child_prefix, opts) {
         println!("{}", line);
+    }
+    if opts.show_spec {
+        for line in format_spec_lines(info, child_prefix) {
+            println!("{}", line);
+        }
     }
 }
 
@@ -202,6 +264,7 @@ mod tests {
             owner_refs: vec![],
             labels,
             annotations,
+            pod_template: None,
         }
     }
 
@@ -211,6 +274,7 @@ mod tests {
         let opts = TreeDisplayOpts {
             show_labels: true,
             show_annotations: false,
+            ..Default::default()
         };
         let lines = format_metadata_lines(&info, "", &opts);
         assert!(lines.is_empty(), "empty labels should produce no lines");
@@ -225,6 +289,7 @@ mod tests {
         let opts = TreeDisplayOpts {
             show_labels: true,
             show_annotations: false,
+            ..Default::default()
         };
         let lines = format_metadata_lines(&info, "", &opts);
         assert!(lines[0].contains("labels (2)"));
@@ -251,6 +316,7 @@ mod tests {
         let opts = TreeDisplayOpts {
             show_labels: false,
             show_annotations: true,
+            ..Default::default()
         };
         let lines = format_metadata_lines(&info, "", &opts);
         assert!(lines[0].contains("annotations (2)"));
@@ -273,6 +339,7 @@ mod tests {
         let opts = TreeDisplayOpts {
             show_labels: false,
             show_annotations: true,
+            ..Default::default()
         };
         let lines = format_metadata_lines(&info, "", &opts);
         assert!(lines[0].contains("annotations (1)"));
@@ -288,6 +355,7 @@ mod tests {
         let opts = TreeDisplayOpts {
             show_labels: true,
             show_annotations: false,
+            ..Default::default()
         };
         let lines = format_metadata_lines(&info, "│  ", &opts);
         for line in &lines {

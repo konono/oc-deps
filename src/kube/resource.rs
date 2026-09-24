@@ -330,6 +330,107 @@ pub fn filter_annotations(annotations: &HashMap<String, String>) -> HashMap<Stri
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Container resource spec (--show-spec)
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContainerResources {
+    pub name: String,
+    pub requests: Option<HashMap<String, String>>,
+    pub limits: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PodTemplateInfo {
+    pub containers: Vec<ContainerResources>,
+    pub init_containers: Vec<ContainerResources>,
+}
+
+const SHOW_SPEC_KINDS: &[&str] = &[
+    "Pod",
+    "Deployment",
+    "StatefulSet",
+    "DaemonSet",
+    "Job",
+    "CronJob",
+    "DeploymentConfig",
+];
+
+fn parse_container_resources(container: &serde_json::Value) -> Option<ContainerResources> {
+    let name = container.get("name")?.as_str()?.to_string();
+    let resources = container.get("resources");
+
+    let requests = resources
+        .and_then(|r| r.get("requests"))
+        .and_then(|r| r.as_object())
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("?").to_string()))
+                .collect()
+        });
+
+    let limits = resources
+        .and_then(|r| r.get("limits"))
+        .and_then(|r| r.as_object())
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("?").to_string()))
+                .collect()
+        });
+
+    Some(ContainerResources {
+        name,
+        requests,
+        limits,
+    })
+}
+
+fn parse_containers_from(
+    pod_spec: &serde_json::Value,
+) -> (Vec<ContainerResources>, Vec<ContainerResources>) {
+    let containers = pod_spec
+        .get("containers")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_container_resources).collect())
+        .unwrap_or_default();
+    let init_containers = pod_spec
+        .get("initContainers")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_container_resources).collect())
+        .unwrap_or_default();
+    (containers, init_containers)
+}
+
+pub fn extract_pod_template(kind: &str, data: &serde_json::Value) -> Option<PodTemplateInfo> {
+    if !SHOW_SPEC_KINDS.iter().any(|k| k.eq_ignore_ascii_case(kind)) {
+        return None;
+    }
+
+    let pod_spec = match kind {
+        "Pod" => data.get("spec"),
+        "CronJob" => data
+            .get("spec")
+            .and_then(|s| s.get("jobTemplate"))
+            .and_then(|j| j.get("spec"))
+            .and_then(|s| s.get("template"))
+            .and_then(|t| t.get("spec")),
+        _ => data
+            .get("spec")
+            .and_then(|s| s.get("template"))
+            .and_then(|t| t.get("spec")),
+    }?;
+
+    let (containers, init_containers) = parse_containers_from(pod_spec);
+    if containers.is_empty() && init_containers.is_empty() {
+        return None;
+    }
+    Some(PodTemplateInfo {
+        containers,
+        init_containers,
+    })
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Runtime types — used for live tree traversal (existing)
 // ──────────────────────────────────────────────────────────────
 
@@ -343,6 +444,7 @@ pub struct ResourceInfo {
     pub owner_refs: Vec<OwnerRef>,
     pub labels: HashMap<String, String>,
     pub annotations: HashMap<String, String>,
+    pub pod_template: Option<PodTemplateInfo>,
 }
 
 pub type NamespaceIndexKey = (String, String, Option<String>, String);

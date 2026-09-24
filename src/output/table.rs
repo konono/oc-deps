@@ -3,10 +3,68 @@ use comfy_table::Table;
 use crate::graph::tree::TreeNode;
 use crate::kube::resource::ResourceInfo;
 
+struct TableRow {
+    relation: String,
+    kind: String,
+    name: String,
+    containers: String,
+}
+
+fn format_containers(info: &ResourceInfo) -> String {
+    let pt = match &info.pod_template {
+        Some(pt) => pt,
+        None => return String::new(),
+    };
+    let mut parts = Vec::new();
+    for c in &pt.containers {
+        parts.push(format_container_summary(c, ""));
+    }
+    for c in &pt.init_containers {
+        parts.push(format_container_summary(c, "init:"));
+    }
+    parts.join("; ")
+}
+
+fn format_container_summary(c: &crate::kube::resource::ContainerResources, prefix: &str) -> String {
+    let has_resources = c.requests.is_some() || c.limits.is_some();
+    if !has_resources {
+        return format!("{}{}: <no resources>", prefix, c.name);
+    }
+    let cpu_req = c
+        .requests
+        .as_ref()
+        .and_then(|r| r.get("cpu"))
+        .map(|s| s.as_str())
+        .unwrap_or("-");
+    let cpu_lim = c
+        .limits
+        .as_ref()
+        .and_then(|r| r.get("cpu"))
+        .map(|s| s.as_str())
+        .unwrap_or("-");
+    let mem_req = c
+        .requests
+        .as_ref()
+        .and_then(|r| r.get("memory"))
+        .map(|s| s.as_str())
+        .unwrap_or("-");
+    let mem_lim = c
+        .limits
+        .as_ref()
+        .and_then(|r| r.get("memory"))
+        .map(|s| s.as_str())
+        .unwrap_or("-");
+    format!(
+        "{}{}: cpu={}/{} mem={}/{}",
+        prefix, c.name, cpu_req, cpu_lim, mem_req, mem_lim
+    )
+}
+
 fn flatten_for_table(
     node: &TreeNode,
-    rows: &mut Vec<(String, String, String)>,
+    rows: &mut Vec<TableRow>,
     found_target: &mut bool,
+    show_spec: bool,
 ) {
     let relation = if node.is_target {
         *found_target = true;
@@ -17,52 +75,82 @@ fn flatten_for_table(
         "Parent".to_string()
     };
 
-    rows.push((relation, node.info.kind.clone(), node.info.name.clone()));
+    rows.push(TableRow {
+        relation,
+        kind: node.info.kind.clone(),
+        name: node.info.name.clone(),
+        containers: if show_spec {
+            format_containers(&node.info)
+        } else {
+            String::new()
+        },
+    });
 
     for child in &node.children {
-        flatten_for_table(child, rows, found_target);
+        flatten_for_table(child, rows, found_target, show_spec);
     }
 
     for sref in &node.spec_refs {
-        rows.push((
-            "Ref".to_string(),
-            sref.target_kind.clone(),
-            sref.target_name.clone(),
-        ));
+        rows.push(TableRow {
+            relation: "Ref".to_string(),
+            kind: sref.target_kind.clone(),
+            name: sref.target_name.clone(),
+            containers: String::new(),
+        });
     }
 
     for iref in &node.incoming_refs {
-        rows.push((
-            "RefBy".to_string(),
-            iref.source_kind.clone(),
-            iref.source_name.clone(),
-        ));
+        rows.push(TableRow {
+            relation: "RefBy".to_string(),
+            kind: iref.source_kind.clone(),
+            name: iref.source_name.clone(),
+            containers: String::new(),
+        });
     }
 }
 
-pub fn print_table(tree: &TreeNode) {
+pub fn print_table(tree: &TreeNode, show_spec: bool) {
     let mut rows = Vec::new();
     let mut found_target = false;
-    flatten_for_table(tree, &mut rows, &mut found_target);
+    flatten_for_table(tree, &mut rows, &mut found_target, show_spec);
 
     let mut table = Table::new();
-    table.set_header(vec!["Relation", "Kind", "Name"]);
-    for (rel, kind, name) in &rows {
-        table.add_row(vec![rel.as_str(), kind.as_str(), name.as_str()]);
+    if show_spec {
+        table.set_header(vec!["Relation", "Kind", "Name", "Containers"]);
+        for row in &rows {
+            table.add_row(vec![&row.relation, &row.kind, &row.name, &row.containers]);
+        }
+    } else {
+        table.set_header(vec!["Relation", "Kind", "Name"]);
+        for row in &rows {
+            table.add_row(vec![&row.relation, &row.kind, &row.name]);
+        }
     }
     println!("{table}");
 }
 
-pub fn print_chain_table(chain: &[ResourceInfo]) {
+pub fn print_chain_table(chain: &[ResourceInfo], show_spec: bool) {
     let mut table = Table::new();
-    table.set_header(vec!["Relation", "Kind", "Name"]);
-    for (i, info) in chain.iter().enumerate() {
-        let rel = if i == chain.len() - 1 {
-            "Self"
-        } else {
-            "Parent"
-        };
-        table.add_row(vec![rel, &info.kind, &info.name]);
+    if show_spec {
+        table.set_header(vec!["Relation", "Kind", "Name", "Containers"]);
+        for (i, info) in chain.iter().enumerate() {
+            let rel = if i == chain.len() - 1 {
+                "Self"
+            } else {
+                "Parent"
+            };
+            table.add_row(vec![rel, &info.kind, &info.name, &format_containers(info)]);
+        }
+    } else {
+        table.set_header(vec!["Relation", "Kind", "Name"]);
+        for (i, info) in chain.iter().enumerate() {
+            let rel = if i == chain.len() - 1 {
+                "Self"
+            } else {
+                "Parent"
+            };
+            table.add_row(vec![rel, &info.kind, &info.name]);
+        }
     }
     println!("{table}");
 }

@@ -315,6 +315,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         index.insert(ResourceInfo {
             group: String::new(),
@@ -325,6 +326,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         index.insert(ResourceInfo {
             group: String::new(),
@@ -335,6 +337,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         index.insert(ResourceInfo {
             group: String::new(),
@@ -345,6 +348,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         let data = deployment_spec_with_service_account("rhods-dashboard");
