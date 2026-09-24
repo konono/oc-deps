@@ -704,6 +704,52 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Some(Command::Snapshot {
+        all_namespaces,
+        namespace,
+        namespace_selector,
+        exclude_namespace,
+        exclude_system_namespaces,
+        ..
+    }) = &args.command
+    {
+        if *all_namespaces && namespace.is_some() {
+            bail!("-A/--all-namespaces and -n/--namespace are mutually exclusive");
+        }
+        if (!namespace_selector.is_empty()
+            || !exclude_namespace.is_empty()
+            || *exclude_system_namespaces)
+            && !all_namespaces
+        {
+            bail!(
+                "--namespace-selector, --exclude-namespace, and --exclude-system-namespaces require -A"
+            );
+        }
+        for sel in namespace_selector {
+            if !sel.contains('=') || sel.starts_with('=') || sel.ends_with('=') {
+                bail!(
+                    "Invalid --namespace-selector '{}': expected key=value format",
+                    sel
+                );
+            }
+        }
+        for pat in exclude_namespace {
+            let star_count = pat.chars().filter(|c| *c == '*').count();
+            if star_count > 1 {
+                bail!(
+                    "Invalid --exclude-namespace '{}': only prefix* or *suffix patterns are supported",
+                    pat
+                );
+            }
+            if star_count == 1 && !pat.starts_with('*') && !pat.ends_with('*') {
+                bail!(
+                    "Invalid --exclude-namespace '{}': * must be at the start or end",
+                    pat
+                );
+            }
+        }
+    }
+
     let (config, client) = load_config_and_client().await?;
 
     // ── Subcommand dispatch ──
@@ -714,28 +760,225 @@ async fn main() -> Result<()> {
                 output_file,
                 include_events,
                 no_cache,
+                all_namespaces,
+                namespace_selector,
+                exclude_namespace,
+                exclude_system_namespaces,
+                strict,
             } => {
-                let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
+                let snapshot_strict = strict;
                 let t0 = Instant::now();
                 eprintln!("🔍 Discovering API resources...");
                 let (kind_map, _, _gk_map, _) =
                     build_kind_lookup_cached(&client, &config, no_cache).await?;
                 eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
-                let snapshot =
-                    build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
+                if all_namespaces {
+                    // ── Cluster-wide snapshot ──
+                    use crate::kube::resource::{
+                        ClusterSnapshot, IncompleteNamespace, SNAPSHOT_SCHEMA_VERSION,
+                        SnapshotScope,
+                    };
+                    use crate::kube::scanner::list_namespaces_with_retry;
 
-                let resource_count = snapshot.resources.len();
-                let warning_count = snapshot.scan_warnings.len();
-                format_scan_warnings(&snapshot.scan_warnings, args.verbose);
-                save_snapshot(&snapshot, &output_file)?;
+                    let all_ns = list_namespaces_with_retry(&client).await?;
+                    let target_namespaces = filter_namespaces(
+                        all_ns,
+                        &namespace_selector,
+                        &exclude_namespace,
+                        exclude_system_namespaces,
+                    );
 
-                eprintln!(
-                    "✅ Snapshot saved to {} ({} resources, {} scan warnings)",
-                    output_file, resource_count, warning_count
-                );
-                if args.strict && warning_count > 0 {
-                    std::process::exit(2);
+                    if target_namespaces.is_empty() {
+                        bail!("No namespaces matched the given selectors/filters");
+                    }
+
+                    let total_ns = target_namespaces.len();
+                    eprintln!(
+                        "📦 Scanning {} namespace{}...",
+                        total_ns,
+                        if total_ns == 1 { "" } else { "s" }
+                    );
+
+                    let scanned_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                    let cancel_token = tokio_util::sync::CancellationToken::new();
+                    let cancel_for_handler = cancel_token.clone();
+                    let tmp_path = format!("{}.tmp", output_file);
+                    let tmp_path_cleanup = tmp_path.clone();
+
+                    // Ctrl-C handler
+                    tokio::spawn(async move {
+                        if tokio::signal::ctrl_c().await.is_ok() {
+                            eprintln!("\n⚠ Interrupted — cleaning up...");
+                            cancel_for_handler.cancel();
+                        }
+                    });
+
+                    let mut all_resources = std::collections::HashMap::<
+                        String,
+                        crate::kube::resource::ResourceEntry,
+                    >::new();
+                    let mut all_warnings = Vec::new();
+                    let mut complete_namespaces = Vec::new();
+                    let mut incomplete_namespaces = Vec::new();
+                    let mut scanned_ns_list = Vec::new();
+
+                    let api_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+                    ));
+
+                    let futs = target_namespaces.iter().map(|ns| {
+                        let client = client.clone();
+                        let config_clone = config.clone();
+                        let kind_map = kind_map.clone();
+                        let scanned = scanned_count.clone();
+                        let ns = ns.clone();
+                        let sem = api_semaphore.clone();
+
+                        async move {
+                            let ns_start = Instant::now();
+                            let result = crate::kube::snapshot::build_snapshot_with_semaphore(
+                                &client,
+                                &config_clone,
+                                &ns,
+                                &kind_map,
+                                include_events,
+                                sem,
+                            )
+                            .await;
+                            let count =
+                                scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            let elapsed = ns_start.elapsed().as_secs_f64();
+                            (ns, result, count, elapsed)
+                        }
+                    });
+
+                    use futures::stream::StreamExt as _;
+                    let mut stream = futures::stream::iter(futs)
+                        .buffer_unordered(MAX_NAMESPACE_CONCURRENCY)
+                        .boxed();
+
+                    while let Some((ns, result, count, elapsed)) = tokio::select! {
+                        item = stream.next() => item,
+                        _ = cancel_token.cancelled() => None,
+                    } {
+                        match result {
+                            Ok(ns_snapshot) => {
+                                let resource_count = ns_snapshot.resources.len();
+                                let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+                                if is_tty {
+                                    eprint!(
+                                        "\r\x1b[2K  [{}/{}] {} — {} resources, {:.1}s",
+                                        count, total_ns, ns, resource_count, elapsed
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "  [{}/{}] {} — {} resources, {:.1}s",
+                                        count, total_ns, ns, resource_count, elapsed
+                                    );
+                                }
+
+                                if ns_snapshot.scan_warnings.is_empty() {
+                                    complete_namespaces.push(ns.clone());
+                                } else {
+                                    incomplete_namespaces.push(IncompleteNamespace {
+                                        namespace: ns.clone(),
+                                        warnings: ns_snapshot.scan_warnings.clone(),
+                                        error: None,
+                                    });
+                                    all_warnings.extend(ns_snapshot.scan_warnings);
+                                }
+
+                                all_resources.extend(ns_snapshot.resources);
+                            }
+                            Err(e) => {
+                                eprint!(
+                                    "\r\x1b[2K  [{}/{}] {} — ERROR: {}",
+                                    count, total_ns, ns, e
+                                );
+                                incomplete_namespaces.push(IncompleteNamespace {
+                                    namespace: ns.clone(),
+                                    warnings: vec![],
+                                    error: Some(e.to_string()),
+                                });
+                            }
+                        }
+                        scanned_ns_list.push(ns);
+                    }
+
+                    if cancel_token.is_cancelled() {
+                        let _ = std::fs::remove_file(&tmp_path_cleanup);
+                        eprintln!("\n⚠ Snapshot cancelled.");
+                        std::process::exit(130);
+                    }
+
+                    eprintln!(
+                        "\r\x1b[2K✅ Scanned {} namespaces in {:.1}s",
+                        total_ns,
+                        t0.elapsed().as_secs_f64()
+                    );
+
+                    let scope_mode = if namespace_selector.is_empty()
+                        && exclude_namespace.is_empty()
+                        && !exclude_system_namespaces
+                    {
+                        "all-namespaces"
+                    } else {
+                        "filtered"
+                    };
+
+                    scanned_ns_list.sort();
+                    complete_namespaces.sort();
+
+                    let snapshot = ClusterSnapshot {
+                        schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
+                        resources: all_resources,
+                        scan_warnings: all_warnings.clone(),
+                        cluster_url: config.cluster_url.to_string(),
+                        taken_at: chrono::Utc::now().to_rfc3339(),
+                        namespaces: scanned_ns_list,
+                        scope: Some(SnapshotScope {
+                            mode: scope_mode.to_string(),
+                            namespace_selectors: namespace_selector,
+                            exclude_namespaces: exclude_namespace,
+                            exclude_system_namespaces,
+                            requested_namespaces: vec![],
+                            complete_namespaces,
+                            incomplete_namespaces,
+                        }),
+                    };
+
+                    let resource_count = snapshot.resources.len();
+                    let warning_count = snapshot.scan_warnings.len();
+                    format_scan_warnings(&snapshot.scan_warnings, args.verbose);
+                    save_snapshot(&snapshot, &output_file)?;
+
+                    eprintln!(
+                        "✅ Snapshot saved to {} ({} resources across {} namespaces, {} scan warnings)",
+                        output_file, resource_count, total_ns, warning_count
+                    );
+                    if snapshot_strict && warning_count > 0 {
+                        std::process::exit(2);
+                    }
+                } else {
+                    // ── Single-namespace snapshot ──
+                    let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
+                    let snapshot =
+                        build_snapshot(&client, &config, &namespace, &kind_map, include_events)
+                            .await?;
+
+                    let resource_count = snapshot.resources.len();
+                    let warning_count = snapshot.scan_warnings.len();
+                    format_scan_warnings(&snapshot.scan_warnings, args.verbose);
+                    save_snapshot(&snapshot, &output_file)?;
+
+                    eprintln!(
+                        "✅ Snapshot saved to {} ({} resources, {} scan warnings)",
+                        output_file, resource_count, warning_count
+                    );
+                    if snapshot_strict && warning_count > 0 {
+                        std::process::exit(2);
+                    }
                 }
                 return Ok(());
             }

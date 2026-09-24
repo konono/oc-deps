@@ -345,9 +345,21 @@ oc-deps teardown apply rhods-operator --force       # suppress advisory warnings
 ### Cluster snapshot and evidence graph
 
 ```bash
+# Single namespace
 oc-deps snapshot -n <namespace> -o snapshot.json
+
+# Cluster-wide (schema v3 with scope metadata)
+oc-deps snapshot -A -o cluster-snapshot.json
+oc-deps snapshot -A --namespace-selector env=prod -o filtered.json
+oc-deps snapshot -A --exclude-system-namespaces --exclude-namespace "temp-*" -o clean.json
+oc-deps snapshot -A --strict -o snap.json  # save then exit 2 on warnings
+
 oc-deps graph -n <namespace> -o evidence-graph.json
 ```
+
+**Cluster-wide snapshot:** Scans all namespaces (or filtered subset) with bounded concurrency (shared global API semaphore, max 50 concurrent LIST requests). Schema v3 adds `scope` with mode (`single-namespace`/`all-namespaces`/`filtered`), requested filters, complete/incomplete namespace lists with typed ScanWarning. Atomic save (temp file + rename) prevents corruption on Ctrl-C (exit 130). Secret values stored as SHA-256 hashes.
+
+**Diff scope comparison:** When comparing snapshots with different scopes (mode, filters, namespaces), diff adds scope warnings. v2 vs v3 snapshots accepted with "scope comparison unavailable" warning. Resource diff proceeds regardless.
 
 ### Snapshot diff
 

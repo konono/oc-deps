@@ -86,6 +86,36 @@ pub async fn build_snapshot(
     kind_map: &KindMap,
     include_events: bool,
 ) -> Result<ClusterSnapshot> {
+    build_snapshot_inner(client, config, namespace, kind_map, include_events, None).await
+}
+
+pub async fn build_snapshot_with_semaphore(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    kind_map: &KindMap,
+    include_events: bool,
+    api_semaphore: Arc<tokio::sync::Semaphore>,
+) -> Result<ClusterSnapshot> {
+    build_snapshot_inner(
+        client,
+        config,
+        namespace,
+        kind_map,
+        include_events,
+        Some(api_semaphore),
+    )
+    .await
+}
+
+async fn build_snapshot_inner(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    kind_map: &KindMap,
+    include_events: bool,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+) -> Result<ClusterSnapshot> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
     } else {
@@ -103,9 +133,12 @@ pub async fn build_snapshot(
     let scan_errors: Arc<std::sync::Mutex<Vec<ScanWarning>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
 
+    let api_sem = api_semaphore.clone();
+
     let futs = scan_targets.into_iter().map(|(kind, info)| {
         let client = client.clone();
         let ns = namespace.to_string();
+        let sem = api_sem.clone();
         let scanned = scanned.clone();
         let scan_errors = scan_errors.clone();
 
@@ -116,6 +149,11 @@ pub async fn build_snapshot(
 
             let mut last_warning = None;
             for attempt in 0..=MAX_RETRIES {
+                let _permit = if let Some(s) = &sem {
+                    Some(s.acquire().await.expect("semaphore closed"))
+                } else {
+                    None
+                };
                 let result = api.list(&ListParams::default()).await;
                 if attempt == 0 {
                     let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
@@ -231,8 +269,9 @@ pub async fn build_snapshot(
     });
 
     let scan_start = Instant::now();
+    let concurrency = if api_semaphore.is_some() { total } else { 50 };
     let results: Vec<_> = futures::stream::iter(futs)
-        .buffer_unordered(50)
+        .buffer_unordered(concurrency)
         .collect()
         .await;
 
@@ -261,20 +300,37 @@ pub async fn build_snapshot(
         cluster_url: config.cluster_url.to_string(),
         taken_at: chrono::Utc::now().to_rfc3339(),
         namespaces: vec![namespace.to_string()],
+        scope: Some(SnapshotScope {
+            mode: "single-namespace".to_string(),
+            requested_namespaces: vec![namespace.to_string()],
+            complete_namespaces: vec![namespace.to_string()],
+            ..Default::default()
+        }),
     };
 
     Ok(snapshot)
 }
 
 pub fn save_snapshot(snapshot: &ClusterSnapshot, path: &str) -> Result<()> {
+    let tmp_path = format!("{}.tmp", path);
     let json = serde_json::to_string_pretty(snapshot)?;
-    std::fs::write(path, json)?;
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
 pub fn load_snapshot(path: &str) -> Result<ClusterSnapshot> {
     let data = std::fs::read_to_string(path)?;
     let snapshot: ClusterSnapshot = serde_json::from_str(&data)?;
+    if let Some(v) = snapshot.schema_version
+        && v > SNAPSHOT_SCHEMA_VERSION
+    {
+        bail!(
+            "Unsupported snapshot schema version {} (max supported: {}). Please upgrade oc-deps.",
+            v,
+            SNAPSHOT_SCHEMA_VERSION
+        );
+    }
     Ok(snapshot)
 }
 
@@ -528,6 +584,34 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
     if b_ns != a_ns {
         scope_warnings.push(format!("Different namespaces: {:?} vs {:?}", b_ns, a_ns));
     }
+    // Scope comparison (v3+)
+    match (&before.scope, &after.scope) {
+        (None, Some(_)) | (Some(_), None) => {
+            scope_warnings.push(
+                "Scope comparison unavailable (one snapshot is v2 or earlier without scope metadata)".to_string(),
+            );
+        }
+        (Some(bs), Some(as_)) => {
+            if bs.mode != as_.mode {
+                scope_warnings.push(format!(
+                    "Different snapshot modes: {} vs {}",
+                    bs.mode, as_.mode
+                ));
+            }
+            if bs.namespace_selectors != as_.namespace_selectors
+                || bs.exclude_namespaces != as_.exclude_namespaces
+                || bs.exclude_system_namespaces != as_.exclude_system_namespaces
+            {
+                scope_warnings.push("Different namespace filters applied".to_string());
+            }
+            if !bs.incomplete_namespaces.is_empty() || !as_.incomplete_namespaces.is_empty() {
+                scope_warnings
+                    .push("One or both snapshots have incomplete namespace scans".to_string());
+            }
+        }
+        (None, None) => {}
+    }
+
     if !before.scan_warnings.is_empty() {
         scope_warnings.push(format!(
             "Before snapshot had {} scan warnings",
@@ -827,6 +911,7 @@ mod tests {
             cluster_url: "https://api.test:6443".into(),
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![ns.into()],
+            scope: None,
         }
     }
 
@@ -1221,6 +1306,145 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("namespace")),
             "same namespace set in different order should not warn"
+        );
+    }
+
+    #[test]
+    fn atomic_save_creates_file() {
+        let dir = std::env::temp_dir().join("oc-deps-test-atomic");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test-snap.json");
+        let snap = make_snapshot(vec![], "default");
+        save_snapshot(&snap, path.to_str().unwrap()).unwrap();
+        assert!(path.exists());
+        // tmp file should not remain
+        assert!(!dir.join("test-snap.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_save_does_not_corrupt_on_existing() {
+        let dir = std::env::temp_dir().join("oc-deps-test-atomic2");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("snap.json");
+        let snap1 = make_snapshot(
+            vec![make_entry("", "ConfigMap", "cm1", "default", "uid-1")],
+            "default",
+        );
+        save_snapshot(&snap1, path.to_str().unwrap()).unwrap();
+        // Save again — should overwrite cleanly
+        let snap2 = make_snapshot(
+            vec![make_entry("", "ConfigMap", "cm2", "default", "uid-2")],
+            "default",
+        );
+        save_snapshot(&snap2, path.to_str().unwrap()).unwrap();
+        let loaded = load_snapshot(path.to_str().unwrap()).unwrap();
+        assert!(loaded.resources.contains_key("uid-2"));
+        assert!(!loaded.resources.contains_key("uid-1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_future_schema_version() {
+        let dir = std::env::temp_dir().join("oc-deps-test-future");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("future.json");
+        let json = serde_json::json!({
+            "schema_version": 99,
+            "resources": {},
+            "scan_warnings": [],
+            "cluster_url": "https://test:6443",
+            "taken_at": "2026-01-01T00:00:00Z",
+            "namespaces": ["default"]
+        });
+        std::fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+        let result = load_snapshot(path.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diff_scope_warning_v2_vs_v3() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = None; // v2 style
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "single-namespace".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("v2 or earlier")),
+            "should warn about v2 snapshot missing scope"
+        );
+    }
+
+    #[test]
+    fn diff_scope_warning_different_mode() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = Some(SnapshotScope {
+            mode: "single-namespace".into(),
+            ..Default::default()
+        });
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different snapshot modes")),
+        );
+    }
+
+    #[test]
+    fn diff_scope_warning_different_filters() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".into(),
+            namespace_selectors: vec!["env=prod".into()],
+            ..Default::default()
+        });
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".into(),
+            namespace_selectors: vec!["env=dev".into()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different namespace filters")),
+        );
+    }
+
+    #[test]
+    fn diff_scope_same_mode_no_warning() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("mode") || w.contains("filter")),
         );
     }
 }
