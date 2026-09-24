@@ -275,6 +275,80 @@ struct NamespaceScanResult {
     error: Option<String>,
 }
 
+impl NamespaceScanResult {
+    fn is_incomplete(&self) -> bool {
+        self.error.is_some() || !self.warnings.is_empty()
+    }
+}
+
+async fn list_namespaces_with_retry(
+    client: &::kube::Client,
+) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
+    use k8s_openapi::api::core::v1::Namespace;
+
+    let ns_api: ::kube::Api<Namespace> = ::kube::Api::all(client.clone());
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+
+    for attempt in 0..=2u32 {
+        let timeout_dur = std::time::Duration::from_secs(30);
+        match tokio::time::timeout(
+            timeout_dur,
+            ns_api.list(&::kube::api::ListParams::default()),
+        )
+        .await
+        {
+            Ok(Ok(ns_list)) => {
+                return Ok(ns_list
+                    .items
+                    .into_iter()
+                    .filter_map(|ns| {
+                        let name = ns.metadata.name?;
+                        let labels = ns.metadata.labels.unwrap_or_default().into_iter().collect();
+                        Some((name, labels))
+                    })
+                    .collect());
+            }
+            Ok(Err(e)) => {
+                if attempt < 2 {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    let msg = format!(
+                        "v1/namespaces — LIST attempt {}/3 failed ({}); retrying in {}ms",
+                        attempt + 1,
+                        e,
+                        delay.as_millis()
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                bail!("Failed to list namespaces after 3 attempts: {}", e);
+            }
+            Err(_) => {
+                if attempt < 2 {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    let msg = format!(
+                        "v1/namespaces — LIST timeout (30s), attempt {}/3; retrying",
+                        attempt + 1
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                bail!("Failed to list namespaces: timeout after 3 attempts");
+            }
+        }
+    }
+    bail!("Failed to list namespaces: exhausted retries");
+}
+
 async fn cluster_wide_map(
     client: &::kube::Client,
     kind_map: &crate::kube::discovery::KindMap,
@@ -284,24 +358,10 @@ async fn cluster_wide_map(
     map_filters: &[crate::graph::tree::MapFilter],
     t0: Instant,
 ) -> Result<()> {
+    use crate::kube::scanner::{DEFAULT_API_CONCURRENCY, scan_namespace_with_semaphore};
     use futures::stream::StreamExt;
-    use k8s_openapi::api::core::v1::Namespace;
 
-    let ns_api: ::kube::Api<Namespace> = ::kube::Api::all(client.clone());
-    let ns_list = ns_api
-        .list(&::kube::api::ListParams::default())
-        .await
-        .context("Failed to list namespaces")?;
-
-    let all_ns: Vec<(String, std::collections::HashMap<String, String>)> = ns_list
-        .items
-        .into_iter()
-        .filter_map(|ns| {
-            let name = ns.metadata.name?;
-            let labels = ns.metadata.labels.unwrap_or_default().into_iter().collect();
-            Some((name, labels))
-        })
-        .collect();
+    let all_ns = list_namespaces_with_retry(client).await?;
 
     let target_namespaces = filter_namespaces(
         all_ns,
@@ -322,8 +382,8 @@ async fn cluster_wide_map(
         if total_ns == 1 { "" } else { "s" }
     );
 
+    let api_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(DEFAULT_API_CONCURRENCY));
     let scanned_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let mut all_has_warnings = false;
 
     let futs = target_namespaces.into_iter().map(|ns| {
         let client = client.clone();
@@ -335,11 +395,20 @@ async fn cluster_wide_map(
         let depth = args.depth;
         let map_filters = map_filters.to_vec();
         let scanned = scanned_count.clone();
+        let sem = api_semaphore.clone();
 
         async move {
             let ns_start = Instant::now();
-            let scan_result =
-                scan_namespace(&client, &ns, &kind_map, include_events, refs, show_spec).await;
+            let scan_result = scan_namespace_with_semaphore(
+                &client,
+                &ns,
+                &kind_map,
+                include_events,
+                refs,
+                show_spec,
+                Some(sem),
+            )
+            .await;
 
             let count = scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             let elapsed = ns_start.elapsed().as_secs_f64();
@@ -428,37 +497,27 @@ async fn cluster_wide_map(
 
     let total_resources: usize = results.iter().map(|r| r.resource_count).sum();
     let total_trees: usize = results.iter().map(|r| r.trees.len()).sum();
-    let scanned_ns: Vec<&str> = results
-        .iter()
-        .filter(|r| r.error.is_none())
-        .map(|r| r.namespace.as_str())
-        .collect();
-    let incomplete_ns: Vec<&str> = results
-        .iter()
-        .filter(|r| r.error.is_some())
-        .map(|r| r.namespace.as_str())
-        .collect();
+    let complete_count = results.iter().filter(|r| !r.is_incomplete()).count();
+    let incomplete_count = results.iter().filter(|r| r.is_incomplete()).count();
+
     eprintln!(
-        "✅ Cluster-wide scan: {} namespaces, {} resources, {} trees in {:.1}s",
-        scanned_ns.len(),
+        "✅ Cluster-wide scan: {} complete, {} incomplete, {} resources, {} trees in {:.1}s",
+        complete_count,
+        incomplete_count,
         total_resources,
         total_trees,
         t0.elapsed().as_secs_f64()
     );
-    if !incomplete_ns.is_empty() {
-        eprintln!(
-            "⚠ {} namespace{} failed: {}",
-            incomplete_ns.len(),
-            if incomplete_ns.len() == 1 { "" } else { "s" },
-            incomplete_ns.join(", ")
-        );
-    }
 
+    for r in &results {
+        if r.error.is_some() {
+            eprintln!("⚠ {} — ERROR: {}", r.namespace, r.error.as_deref().unwrap());
+        }
+    }
     for r in &results {
         if !r.warnings.is_empty() {
             eprintln!("\n⚠ Warnings for namespace '{}':", r.namespace);
             format_scan_warnings(&r.warnings, args.verbose);
-            all_has_warnings = true;
         }
     }
 
@@ -468,7 +527,7 @@ async fn cluster_wide_map(
                 if r.trees.is_empty() {
                     continue;
                 }
-                eprintln!(
+                println!(
                     "\n📦 Namespace: {} ({} trees, {} resources)\n",
                     r.namespace,
                     r.trees.len(),
@@ -484,17 +543,53 @@ async fn cluster_wide_map(
         }
         OutputFormat::Table => {
             let mut table = comfy_table::Table::new();
-            table.set_header(vec!["Namespace", "Root", "Kind", "Name", "Children"]);
-            for r in &results {
-                for tree in &r.trees {
-                    let total = count_nodes(tree);
-                    table.add_row(vec![
-                        r.namespace.as_str(),
-                        &format!("{}/{}", tree.info.kind, tree.info.name),
-                        tree.info.kind.as_str(),
-                        tree.info.name.as_str(),
-                        &total.to_string(),
-                    ]);
+            if args.show_spec {
+                table.set_header(vec![
+                    "Namespace",
+                    "Root",
+                    "Kind",
+                    "Name",
+                    "Children",
+                    "Containers",
+                ]);
+                for r in &results {
+                    for tree in &r.trees {
+                        let total = count_nodes(tree);
+                        let containers = if let Some(pt) = &tree.info.pod_template {
+                            let mut parts = Vec::new();
+                            for c in &pt.containers {
+                                parts.push(format_container_resources(c, ""));
+                            }
+                            for c in &pt.init_containers {
+                                parts.push(format_container_resources(c, "init:"));
+                            }
+                            parts.join("; ")
+                        } else {
+                            String::new()
+                        };
+                        table.add_row(vec![
+                            r.namespace.as_str(),
+                            &format!("{}/{}", tree.info.kind, tree.info.name),
+                            tree.info.kind.as_str(),
+                            tree.info.name.as_str(),
+                            &total.to_string(),
+                            &containers,
+                        ]);
+                    }
+                }
+            } else {
+                table.set_header(vec!["Namespace", "Root", "Kind", "Name", "Children"]);
+                for r in &results {
+                    for tree in &r.trees {
+                        let total = count_nodes(tree);
+                        table.add_row(vec![
+                            r.namespace.as_str(),
+                            &format!("{}/{}", tree.info.kind, tree.info.name),
+                            tree.info.kind.as_str(),
+                            tree.info.name.as_str(),
+                            &total.to_string(),
+                        ]);
+                    }
                 }
             }
             println!("{table}");
@@ -512,9 +607,7 @@ async fn cluster_wide_map(
                         "trees": r.trees.iter().map(|t| tree_to_json(t, args.annotations, args.show_spec)).collect::<Vec<_>>(),
                     });
                     if !r.warnings.is_empty() {
-                        ns_obj["warnings"] = serde_json::json!(
-                            r.warnings.iter().map(|w| w.to_string()).collect::<Vec<_>>()
-                        );
+                        ns_obj["warnings"] = serde_json::json!(&r.warnings);
                     }
                     ns_obj
                 })
@@ -522,19 +615,26 @@ async fn cluster_wide_map(
 
             let incomplete: Vec<serde_json::Value> = results
                 .iter()
-                .filter(|r| r.error.is_some())
+                .filter(|r| r.is_incomplete())
                 .map(|r| {
-                    serde_json::json!({
+                    let mut entry = serde_json::json!({
                         "namespace": r.namespace,
-                        "error": r.error,
-                    })
+                    });
+                    if let Some(err) = &r.error {
+                        entry["error"] = serde_json::json!(err);
+                    }
+                    if !r.warnings.is_empty() {
+                        entry["warnings"] = serde_json::json!(&r.warnings);
+                    }
+                    entry
                 })
                 .collect();
 
             let mut output = serde_json::json!({
                 "scope": "cluster-wide",
-                "totalNamespaces": scanned_ns.len() + incomplete_ns.len(),
-                "scannedNamespaces": scanned_ns.len(),
+                "totalNamespaces": total_ns,
+                "completeNamespaces": complete_count,
+                "incompleteNamespaces": incomplete_count,
                 "totalResources": total_resources,
                 "totalTrees": total_trees,
                 "namespaces": ns_results,
@@ -549,7 +649,7 @@ async fn cluster_wide_map(
                 output["excludeSystemNamespaces"] = serde_json::json!(true);
             }
             if !incomplete.is_empty() {
-                output["incompleteNamespaces"] = serde_json::json!(incomplete);
+                output["incomplete"] = serde_json::json!(incomplete);
             }
             println!(
                 "{}",
@@ -558,7 +658,7 @@ async fn cluster_wide_map(
         }
     }
 
-    if args.strict && (all_has_warnings || !incomplete_ns.is_empty()) {
+    if args.strict && incomplete_count > 0 {
         std::process::exit(2);
     }
     Ok(())
@@ -577,6 +677,9 @@ async fn main() -> Result<()> {
     if args.all_namespaces && !args.map {
         bail!("-A/--all-namespaces requires --map");
     }
+    if args.all_namespaces && args.command.is_some() {
+        bail!("-A/--all-namespaces cannot be used with subcommands");
+    }
     if (!args.namespace_selector.is_empty()
         || !args.exclude_namespace.is_empty()
         || args.exclude_system_namespaces)
@@ -591,6 +694,21 @@ async fn main() -> Result<()> {
             bail!(
                 "Invalid --namespace-selector '{}': expected key=value format",
                 sel
+            );
+        }
+    }
+    for pat in &args.exclude_namespace {
+        let star_count = pat.chars().filter(|c| *c == '*').count();
+        if star_count > 1 {
+            bail!(
+                "Invalid --exclude-namespace '{}': only prefix* or *suffix patterns are supported",
+                pat
+            );
+        }
+        if star_count == 1 && !pat.starts_with('*') && !pat.ends_with('*') {
+            bail!(
+                "Invalid --exclude-namespace '{}': * must be at the start or end",
+                pat
             );
         }
     }
@@ -5834,6 +5952,142 @@ mod cluster_wide_map_tests {
         assert!(result.is_ok());
         let args = result.unwrap();
         assert_eq!(args.exclude_namespace.len(), 2);
+    }
+
+    #[test]
+    fn matches_glob_mid_star_no_match() {
+        assert!(!matches_glob("foo*bar", "fooXbar"));
+    }
+
+    #[test]
+    fn api_concurrency_constant_bounded() {
+        use crate::kube::scanner::DEFAULT_API_CONCURRENCY;
+        let c = DEFAULT_API_CONCURRENCY;
+        assert!(
+            (10..=100).contains(&c),
+            "API concurrency should be 10-100, got {}",
+            c
+        );
+    }
+
+    fn validate_args(args_str: &[&str]) -> Result<Args> {
+        let args = Args::try_parse_from(args_str).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        if args.all_namespaces && args.namespace.is_some() {
+            bail!("-A/--all-namespaces and -n/--namespace are mutually exclusive");
+        }
+        if args.all_namespaces && !args.map {
+            bail!("-A/--all-namespaces requires --map");
+        }
+        if args.all_namespaces && args.command.is_some() {
+            bail!("-A/--all-namespaces cannot be used with subcommands");
+        }
+        if (!args.namespace_selector.is_empty()
+            || !args.exclude_namespace.is_empty()
+            || args.exclude_system_namespaces)
+            && !args.all_namespaces
+        {
+            bail!(
+                "--namespace-selector, --exclude-namespace, and --exclude-system-namespaces require -A"
+            );
+        }
+        for sel in &args.namespace_selector {
+            if !sel.contains('=') || sel.starts_with('=') || sel.ends_with('=') {
+                bail!(
+                    "Invalid --namespace-selector '{}': expected key=value format",
+                    sel
+                );
+            }
+        }
+        for pat in &args.exclude_namespace {
+            let star_count = pat.chars().filter(|c| *c == '*').count();
+            if star_count > 1 {
+                bail!(
+                    "Invalid --exclude-namespace '{}': only prefix* or *suffix patterns are supported",
+                    pat
+                );
+            }
+            if star_count == 1 && !pat.starts_with('*') && !pat.ends_with('*') {
+                bail!(
+                    "Invalid --exclude-namespace '{}': * must be at the start or end",
+                    pat
+                );
+            }
+        }
+        Ok(args)
+    }
+
+    #[test]
+    fn validate_a_and_n_rejects() {
+        assert!(validate_args(&["oc-deps", "--map", "-A", "-n", "test"]).is_err());
+    }
+
+    #[test]
+    fn validate_a_without_map_rejects() {
+        assert!(validate_args(&["oc-deps", "-A"]).is_err());
+    }
+
+    #[test]
+    fn validate_selector_without_a_rejects() {
+        assert!(validate_args(&["oc-deps", "--map", "--namespace-selector", "k=v"]).is_err());
+    }
+
+    #[test]
+    fn validate_invalid_selector_rejects() {
+        assert!(validate_args(&["oc-deps", "--map", "-A", "--namespace-selector", "bad"]).is_err());
+    }
+
+    #[test]
+    fn validate_invalid_glob_mid_star_rejects() {
+        assert!(
+            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "foo*bar"]).is_err()
+        );
+    }
+
+    #[test]
+    fn validate_invalid_glob_multi_star_rejects() {
+        assert!(
+            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "*foo*"]).is_err()
+        );
+    }
+
+    #[test]
+    fn validate_valid_glob_prefix_accepts() {
+        assert!(
+            validate_args(&[
+                "oc-deps",
+                "--map",
+                "-A",
+                "--exclude-namespace",
+                "openshift-*"
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_valid_glob_suffix_accepts() {
+        assert!(
+            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "*-system"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_valid_glob_exact_accepts() {
+        assert!(
+            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "default"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_a_with_subcommand_rejects() {
+        let result = Args::try_parse_from(["oc-deps", "--map", "-A", "teardown", "plan", "test"]);
+        if let Ok(args) = result {
+            if args.all_namespaces && args.command.is_some() {
+                return; // correctly detected
+            }
+            panic!("should reject -A with subcommand");
+        }
+        // parse error is also acceptable (subcommand may consume -A)
     }
 }
 

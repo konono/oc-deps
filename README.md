@@ -98,7 +98,7 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--map` | Show all dependency trees in the namespace (or cluster-wide with -A) |
 | `-A, --all-namespaces` | Scan all namespaces (requires `--map`) |
 | `--namespace-selector` | Select namespaces by label `key=value` (repeatable, AND). Requires `-A` |
-| `--exclude-namespace` | Exclude namespaces matching glob pattern (repeatable). Requires `-A` |
+| `--exclude-namespace` | Exclude namespaces matching pattern: `prefix*`, `*suffix`, or exact (repeatable). Requires `-A` |
 | `--exclude-system-namespaces` | Exclude `openshift-*`, `kube-*`, `default`. Requires `-A` |
 | `--filter` | Filter `--map` results by root node. `kind=X` or `label=key=value`. Repeatable (AND). Requires `--map` |
 | `--crd-origin` | Show which Operator/CSV installed the CRD |

@@ -232,6 +232,8 @@ fn is_plausible_resource_name(s: &str) -> bool {
     true
 }
 
+pub const DEFAULT_API_CONCURRENCY: usize = 50;
+
 pub async fn scan_namespace(
     client: &Client,
     namespace: &str,
@@ -239,6 +241,27 @@ pub async fn scan_namespace(
     include_events: bool,
     refs: bool,
     show_spec: bool,
+) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
+    scan_namespace_with_semaphore(
+        client,
+        namespace,
+        kind_map,
+        include_events,
+        refs,
+        show_spec,
+        None,
+    )
+    .await
+}
+
+pub async fn scan_namespace_with_semaphore(
+    client: &Client,
+    namespace: &str,
+    kind_map: &KindMap,
+    include_events: bool,
+    refs: bool,
+    show_spec: bool,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
@@ -257,10 +280,13 @@ pub async fn scan_namespace(
     let scan_start = std::time::Instant::now();
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
 
+    let api_sem = api_semaphore.clone();
+
     let futs = scan_targets.into_iter().map(|(kind, info)| {
         let client = client.clone();
         let ns = namespace.to_string();
         let scanned = scanned.clone();
+        let sem = api_sem.clone();
 
         async move {
             let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&kind);
@@ -269,6 +295,11 @@ pub async fn scan_namespace(
 
             let mut last_err = None;
             for attempt in 0..=MAX_RETRIES {
+                let _permit = if let Some(s) = &sem {
+                    Some(s.acquire().await.expect("semaphore closed"))
+                } else {
+                    None
+                };
                 let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
                 let result =
                     tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await;
@@ -420,8 +451,13 @@ pub async fn scan_namespace(
     });
 
     let scan_start = Instant::now();
+    let concurrency = if api_semaphore.is_some() {
+        total
+    } else {
+        DEFAULT_API_CONCURRENCY
+    };
     let results: Vec<Result<Vec<ScanItem>, ScanWarning>> = futures::stream::iter(futs)
-        .buffer_unordered(50)
+        .buffer_unordered(concurrency)
         .collect()
         .await;
 
