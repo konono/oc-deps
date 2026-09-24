@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -336,8 +336,8 @@ pub fn filter_annotations(annotations: &HashMap<String, String>) -> HashMap<Stri
 #[derive(Clone, Debug, Serialize)]
 pub struct ContainerResources {
     pub name: String,
-    pub requests: Option<HashMap<String, String>>,
-    pub limits: Option<HashMap<String, String>>,
+    pub requests: Option<BTreeMap<String, String>>,
+    pub limits: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -997,6 +997,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         index.insert(ResourceInfo {
             group: "apps".into(),
@@ -1007,6 +1008,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         assert_eq!(
@@ -1032,6 +1034,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         let mut index2 = NamespaceIndex::new();
@@ -1044,6 +1047,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         index1.merge(index2);
@@ -1064,6 +1068,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         index.insert(ResourceInfo {
             group: "custom.io".into(),
@@ -1074,6 +1079,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         assert_eq!(
@@ -1098,6 +1104,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         assert_eq!(
@@ -1122,6 +1129,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         assert_eq!(
@@ -1142,6 +1150,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         // Exact lookup for networking.k8s.io should NOT find config.openshift.io
@@ -1173,6 +1182,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         // Child of root
         index.insert(ResourceInfo {
@@ -1190,6 +1200,7 @@ mod tests {
             }],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
         // Unrelated tree
         index.insert(ResourceInfo {
@@ -1201,6 +1212,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         });
 
         // BFS from root should find child but not unrelated
@@ -1272,5 +1284,166 @@ mod tests {
             message: "unknown error".into(),
         };
         assert!(!w.is_retryable());
+    }
+
+    // ── extract_pod_template tests ──
+
+    #[test]
+    fn extract_pod_from_pod_spec() {
+        let data = serde_json::json!({
+            "spec": {
+                "containers": [
+                    {"name": "app", "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}}
+                ]
+            }
+        });
+        let pt = extract_pod_template("Pod", &data).unwrap();
+        assert_eq!(pt.containers.len(), 1);
+        assert_eq!(pt.containers[0].name, "app");
+        assert_eq!(pt.containers[0].requests.as_ref().unwrap()["cpu"], "100m");
+        assert_eq!(pt.containers[0].limits.as_ref().unwrap()["memory"], "256Mi");
+        assert!(pt.init_containers.is_empty());
+    }
+
+    #[test]
+    fn extract_pod_from_deployment_template() {
+        let data = serde_json::json!({
+            "spec": {"template": {"spec": {
+                "containers": [{"name": "web", "resources": {"requests": {"cpu": "1"}, "limits": {"cpu": "2", "memory": "1Gi"}}}],
+                "initContainers": [{"name": "init", "resources": {"requests": {"cpu": "50m"}, "limits": {"cpu": "100m"}}}]
+            }}}
+        });
+        let pt = extract_pod_template("Deployment", &data).unwrap();
+        assert_eq!(pt.containers.len(), 1);
+        assert_eq!(pt.init_containers.len(), 1);
+        assert_eq!(pt.init_containers[0].name, "init");
+    }
+
+    #[test]
+    fn extract_pod_from_statefulset_template() {
+        let data = serde_json::json!({
+            "spec": {"template": {"spec": {
+                "containers": [{"name": "db", "resources": {"requests": {"cpu": "500m"}}}]
+            }}}
+        });
+        let pt = extract_pod_template("StatefulSet", &data).unwrap();
+        assert_eq!(pt.containers[0].name, "db");
+    }
+
+    #[test]
+    fn extract_pod_from_daemonset_template() {
+        let data = serde_json::json!({
+            "spec": {"template": {"spec": {
+                "containers": [{"name": "agent", "resources": {}}]
+            }}}
+        });
+        let pt = extract_pod_template("DaemonSet", &data).unwrap();
+        assert_eq!(pt.containers[0].name, "agent");
+        assert!(pt.containers[0].requests.is_none());
+        assert!(pt.containers[0].limits.is_none());
+    }
+
+    #[test]
+    fn extract_pod_from_job_template() {
+        let data = serde_json::json!({
+            "spec": {"template": {"spec": {
+                "containers": [{"name": "worker", "resources": {"limits": {"nvidia.com/gpu": "1"}}}]
+            }}}
+        });
+        let pt = extract_pod_template("Job", &data).unwrap();
+        assert_eq!(
+            pt.containers[0].limits.as_ref().unwrap()["nvidia.com/gpu"],
+            "1"
+        );
+    }
+
+    #[test]
+    fn extract_pod_from_cronjob_job_template() {
+        let data = serde_json::json!({
+            "spec": {"jobTemplate": {"spec": {"template": {"spec": {
+                "containers": [{"name": "cron", "resources": {"requests": {"cpu": "10m"}}}]
+            }}}}}
+        });
+        let pt = extract_pod_template("CronJob", &data).unwrap();
+        assert_eq!(pt.containers[0].name, "cron");
+    }
+
+    #[test]
+    fn extract_pod_from_deploymentconfig_template() {
+        let data = serde_json::json!({
+            "spec": {"template": {"spec": {
+                "containers": [{"name": "dc-app", "resources": {"requests": {"cpu": "200m"}}}]
+            }}}
+        });
+        let pt = extract_pod_template("DeploymentConfig", &data).unwrap();
+        assert_eq!(pt.containers[0].name, "dc-app");
+    }
+
+    #[test]
+    fn extract_pod_returns_none_for_unsupported_kind() {
+        let data = serde_json::json!({"spec": {"containers": [{"name": "x"}]}});
+        assert!(extract_pod_template("Service", &data).is_none());
+        assert!(extract_pod_template("ConfigMap", &data).is_none());
+    }
+
+    #[test]
+    fn extract_pod_no_resources_field() {
+        let data = serde_json::json!({
+            "spec": {"containers": [{"name": "bare"}]}
+        });
+        let pt = extract_pod_template("Pod", &data).unwrap();
+        assert_eq!(pt.containers[0].name, "bare");
+        assert!(pt.containers[0].requests.is_none());
+        assert!(pt.containers[0].limits.is_none());
+    }
+
+    #[test]
+    fn extract_pod_empty_resources() {
+        let data = serde_json::json!({
+            "spec": {"containers": [{"name": "empty", "resources": {}}]}
+        });
+        let pt = extract_pod_template("Pod", &data).unwrap();
+        assert!(pt.containers[0].requests.is_none());
+        assert!(pt.containers[0].limits.is_none());
+    }
+
+    #[test]
+    fn extract_pod_gpu_and_ephemeral_storage() {
+        let data = serde_json::json!({
+            "spec": {"containers": [{
+                "name": "gpu-app",
+                "resources": {
+                    "requests": {"cpu": "500m", "memory": "4Gi", "nvidia.com/gpu": "1", "ephemeral-storage": "10Gi"},
+                    "limits": {"cpu": "2", "memory": "8Gi", "nvidia.com/gpu": "1", "ephemeral-storage": "20Gi"}
+                }
+            }]}
+        });
+        let pt = extract_pod_template("Pod", &data).unwrap();
+        let c = &pt.containers[0];
+        assert_eq!(c.requests.as_ref().unwrap()["nvidia.com/gpu"], "1");
+        assert_eq!(c.limits.as_ref().unwrap()["ephemeral-storage"], "20Gi");
+    }
+
+    #[test]
+    fn extract_pod_btreemap_sorted_keys() {
+        let data = serde_json::json!({
+            "spec": {"containers": [{
+                "name": "sorted",
+                "resources": {"requests": {"memory": "1Gi", "cpu": "100m", "nvidia.com/gpu": "1"}}
+            }]}
+        });
+        let pt = extract_pod_template("Pod", &data).unwrap();
+        let keys: Vec<_> = pt.containers[0].requests.as_ref().unwrap().keys().collect();
+        assert_eq!(keys, vec!["cpu", "memory", "nvidia.com/gpu"]);
+    }
+
+    #[test]
+    fn extract_pod_init_containers_only() {
+        let data = serde_json::json!({
+            "spec": {"initContainers": [{"name": "init-only", "resources": {"requests": {"cpu": "10m"}}}]}
+        });
+        let pt = extract_pod_template("Pod", &data).unwrap();
+        assert!(pt.containers.is_empty());
+        assert_eq!(pt.init_containers.len(), 1);
     }
 }

@@ -110,7 +110,35 @@ oc-deps -o json  deployment/<name> -n <namespace>
 
 **JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
 
-**Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name:
+### `--show-spec` — Container Resource Display
+
+Shows container names, resource requests, and limits for workload resources. Supports all resource keys including `cpu`, `memory`, `nvidia.com/gpu`, `ephemeral-storage`, `hugepages-*`, and any extended resources. Format: `name: key=request/limit` (dash `-` for unset values). initContainers are prefixed with `init:`. Resources without requests/limits show `<no resources>`.
+
+```bash
+# Tree output
+oc-deps --show-spec deployment/myapp -n mynamespace
+# Deployment/myapp  ◀ target
+#    containers (2)
+#      app: cpu=500m/1, memory=512Mi/1Gi, nvidia.com/gpu=1/1
+#      init:setup: cpu=10m/100m, memory=16Mi/64Mi
+
+# Table output — adds a Containers column
+oc-deps --show-spec -o table deployment/myapp -n mynamespace
+
+# JSON output — adds podTemplate field with full requests/limits
+oc-deps --show-spec -o json deployment/myapp -n mynamespace
+
+# Up-only (fast, no namespace scan)
+oc-deps --up-only --show-spec pod/myapp-abc123 -n mynamespace
+
+# Map mode with spec
+oc-deps --map --show-spec -o table -n mynamespace
+
+# Combine with --labels
+oc-deps --show-spec --labels deployment/myapp -n mynamespace
+```
+
+**Root-level options:** `--verbose`, `--strict`, `--labels`, `--annotations`, and `--show-spec` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name:
 
 ```bash
 oc-deps --strict snapshot -n <namespace> -o snapshot.json

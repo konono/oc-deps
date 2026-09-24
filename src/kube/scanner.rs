@@ -237,6 +237,7 @@ pub async fn scan_namespace(
     kind_map: &KindMap,
     include_events: bool,
     refs: bool,
+    show_spec: bool,
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
@@ -325,7 +326,11 @@ pub async fn scan_namespace(
                                     .into_iter()
                                     .collect();
 
-                                let pod_template = extract_pod_template(&kind, &data);
+                                let pod_template = if show_spec {
+                                    extract_pod_template(&kind, &data)
+                                } else {
+                                    None
+                                };
 
                                 Some((
                                     ResourceInfo {
@@ -520,6 +525,7 @@ pub async fn resolve_missing_parents(
     namespace: &str,
     kind_map: &KindMap,
     gk_map: &GroupKindMap,
+    show_spec: bool,
 ) -> Vec<ScanWarning> {
     let mut warnings = Vec::new();
     let mut current = start_uid.to_string();
@@ -625,7 +631,11 @@ pub async fn resolve_missing_parents(
                     .into_iter()
                     .collect();
 
-                let pod_template = extract_pod_template(&owner.kind, &obj.data);
+                let pod_template = if show_spec {
+                    extract_pod_template(&owner.kind, &obj.data)
+                } else {
+                    None
+                };
                 let next_uid = uid.clone();
                 index.insert(ResourceInfo {
                     group: owner_group.clone(),
@@ -655,6 +665,7 @@ pub async fn find_parents_only(
     name: &str,
     namespace: &str,
     kind_map: &KindMap,
+    show_spec: bool,
 ) -> Result<Vec<ResourceInfo>> {
     let mut chain = Vec::new();
     let mut current_kind = kind.to_string();
@@ -724,7 +735,11 @@ pub async fn find_parents_only(
                     .into_iter()
                     .collect();
 
-                let pod_template = extract_pod_template(&current_kind, &obj.data);
+                let pod_template = if show_spec {
+                    extract_pod_template(&current_kind, &obj.data)
+                } else {
+                    None
+                };
 
                 chain.push(ResourceInfo {
                     group: info.group.clone(),

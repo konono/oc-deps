@@ -2,6 +2,7 @@ use comfy_table::Table;
 
 use crate::graph::tree::TreeNode;
 use crate::kube::resource::ResourceInfo;
+use crate::output::tree::format_container_resources;
 
 struct TableRow {
     relation: String,
@@ -17,47 +18,12 @@ fn format_containers(info: &ResourceInfo) -> String {
     };
     let mut parts = Vec::new();
     for c in &pt.containers {
-        parts.push(format_container_summary(c, ""));
+        parts.push(format_container_resources(c, ""));
     }
     for c in &pt.init_containers {
-        parts.push(format_container_summary(c, "init:"));
+        parts.push(format_container_resources(c, "init:"));
     }
     parts.join("; ")
-}
-
-fn format_container_summary(c: &crate::kube::resource::ContainerResources, prefix: &str) -> String {
-    let has_resources = c.requests.is_some() || c.limits.is_some();
-    if !has_resources {
-        return format!("{}{}: <no resources>", prefix, c.name);
-    }
-    let cpu_req = c
-        .requests
-        .as_ref()
-        .and_then(|r| r.get("cpu"))
-        .map(|s| s.as_str())
-        .unwrap_or("-");
-    let cpu_lim = c
-        .limits
-        .as_ref()
-        .and_then(|r| r.get("cpu"))
-        .map(|s| s.as_str())
-        .unwrap_or("-");
-    let mem_req = c
-        .requests
-        .as_ref()
-        .and_then(|r| r.get("memory"))
-        .map(|s| s.as_str())
-        .unwrap_or("-");
-    let mem_lim = c
-        .limits
-        .as_ref()
-        .and_then(|r| r.get("memory"))
-        .map(|s| s.as_str())
-        .unwrap_or("-");
-    format!(
-        "{}{}: cpu={}/{} mem={}/{}",
-        prefix, c.name, cpu_req, cpu_lim, mem_req, mem_lim
-    )
 }
 
 fn flatten_for_table(

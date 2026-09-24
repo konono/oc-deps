@@ -428,7 +428,7 @@ pub async fn scan_candidate_namespaces(
             ns,
             elapsed
         );
-        let result = scan_namespace(client, ns, kind_map, false, true).await;
+        let result = scan_namespace(client, ns, kind_map, false, true, false).await;
         match result {
             Ok((index, warnings)) => {
                 let resource_count = index.by_uid.len();
