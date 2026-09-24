@@ -281,76 +281,6 @@ impl NamespaceScanResult {
     }
 }
 
-async fn list_namespaces_with_retry(
-    client: &::kube::Client,
-) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
-    use crate::kube::resource::ScanWarning;
-    use k8s_openapi::api::core::v1::Namespace;
-
-    let ns_api: ::kube::Api<Namespace> = ::kube::Api::all(client.clone());
-    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-
-    for attempt in 0..=2u32 {
-        let timeout_dur = std::time::Duration::from_secs(30);
-        match tokio::time::timeout(
-            timeout_dur,
-            ns_api.list(&::kube::api::ListParams::default()),
-        )
-        .await
-        {
-            Ok(Ok(ns_list)) => {
-                return Ok(ns_list
-                    .items
-                    .into_iter()
-                    .filter_map(|ns| {
-                        let name = ns.metadata.name?;
-                        let labels = ns.metadata.labels.unwrap_or_default().into_iter().collect();
-                        Some((name, labels))
-                    })
-                    .collect());
-            }
-            Ok(Err(e)) => {
-                let warning = ScanWarning::from_kube_error(&e, "", "v1", "namespaces");
-                if warning.is_retryable() && attempt < 2 {
-                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    let msg = format!(
-                        "v1/namespaces — LIST attempt {}/3 failed ({}); retrying in {}ms",
-                        attempt + 1,
-                        e,
-                        delay.as_millis()
-                    );
-                    if is_tty {
-                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
-                    } else {
-                        eprintln!("   ⚠ {}", msg);
-                    }
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                bail!("Failed to list namespaces: {}", e);
-            }
-            Err(_) => {
-                if attempt < 2 {
-                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    let msg = format!(
-                        "v1/namespaces — LIST timeout (30s), attempt {}/3; retrying",
-                        attempt + 1
-                    );
-                    if is_tty {
-                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
-                    } else {
-                        eprintln!("   ⚠ {}", msg);
-                    }
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                bail!("Failed to list namespaces: timeout after 3 attempts");
-            }
-        }
-    }
-    bail!("Failed to list namespaces: exhausted retries");
-}
-
 async fn cluster_wide_map(
     client: &::kube::Client,
     kind_map: &crate::kube::discovery::KindMap,
@@ -360,7 +290,9 @@ async fn cluster_wide_map(
     map_filters: &[crate::graph::tree::MapFilter],
     t0: Instant,
 ) -> Result<()> {
-    use crate::kube::scanner::{DEFAULT_API_CONCURRENCY, scan_namespace_with_semaphore};
+    use crate::kube::scanner::{
+        DEFAULT_API_CONCURRENCY, list_namespaces_with_retry, scan_namespace_with_semaphore,
+    };
     use futures::stream::StreamExt;
 
     let all_ns = list_namespaces_with_retry(client).await?;
