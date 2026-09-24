@@ -40,7 +40,9 @@ use crate::kube::snapshot::{
 };
 use crate::output::json::{print_chain_json, print_json, tree_to_json};
 use crate::output::table::{print_chain_table, print_table};
-use crate::output::tree::{TreeDisplayOpts, count_nodes, print_chain_tree, print_tree};
+use crate::output::tree::{
+    TreeDisplayOpts, count_nodes, format_container_resources, print_chain_tree, print_tree,
+};
 use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::journal::{
@@ -207,8 +209,8 @@ fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &
             eprintln!("\n📦 Namespace: {}\n", namespace);
             print_tree(tree, "", true, true, opts);
         }
-        OutputFormat::Table => print_table(tree),
-        OutputFormat::Json => print_json(tree, namespace, opts.show_annotations),
+        OutputFormat::Table => print_table(tree, opts.show_spec),
+        OutputFormat::Json => print_json(tree, namespace, opts.show_annotations, opts.show_spec),
     }
 }
 
@@ -3673,12 +3675,12 @@ async fn main() -> Result<()> {
                 })?;
 
                 let (mut index, mut scan_warnings) = if kind_info.namespaced {
-                    scan_namespace(&client, &namespace, &kind_map, false, true).await?
+                    scan_namespace(&client, &namespace, &kind_map, false, true, false).await?
                 } else {
                     // For cluster-scoped targets, scan the namespace for children
                     // but also fetch the target itself
                     let (idx, warnings) =
-                        scan_namespace(&client, &namespace, &kind_map, false, true).await?;
+                        scan_namespace(&client, &namespace, &kind_map, false, true, false).await?;
                     (idx, warnings)
                 };
                 // For cluster-scoped targets, fetch the target via exact GET and insert
@@ -3724,6 +3726,7 @@ async fn main() -> Result<()> {
                                 owner_refs: vec![],
                                 labels,
                                 annotations,
+                                pod_template: None,
                             };
                             index.insert(info);
                             eprintln!(" done");
@@ -3755,6 +3758,7 @@ async fn main() -> Result<()> {
                             &namespace,
                             &kind_map,
                             &gk_map_trace,
+                            false,
                         )
                         .await;
                         scan_warnings.extend(parent_warnings);
@@ -3953,6 +3957,7 @@ async fn main() -> Result<()> {
     let tree_opts = TreeDisplayOpts {
         show_labels: args.labels,
         show_annotations: args.annotations,
+        show_spec: args.show_spec,
     };
 
     if args.map {
@@ -3967,6 +3972,7 @@ async fn main() -> Result<()> {
             &kind_map,
             args.include_events,
             !args.no_refs,
+            args.show_spec,
         )
         .await?;
 
@@ -3990,6 +3996,7 @@ async fn main() -> Result<()> {
                     &namespace,
                     &kind_map,
                     &gk_map_default,
+                    args.show_spec,
                 )
                 .await;
                 scan_warnings.extend(parent_warnings);
@@ -4030,15 +4037,41 @@ async fn main() -> Result<()> {
             }
             OutputFormat::Table => {
                 let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Root", "Kind", "Name", "Children"]);
-                for tree in &trees {
-                    let total = count_nodes(tree);
-                    table.add_row(vec![
-                        format!("{}/{}", tree.info.kind, tree.info.name),
-                        tree.info.kind.clone(),
-                        tree.info.name.clone(),
-                        total.to_string(),
-                    ]);
+                if args.show_spec {
+                    table.set_header(vec!["Root", "Kind", "Name", "Children", "Containers"]);
+                    for tree in &trees {
+                        let total = count_nodes(tree);
+                        let containers = if let Some(pt) = &tree.info.pod_template {
+                            let mut parts = Vec::new();
+                            for c in &pt.containers {
+                                parts.push(format_container_resources(c, ""));
+                            }
+                            for c in &pt.init_containers {
+                                parts.push(format_container_resources(c, "init:"));
+                            }
+                            parts.join("; ")
+                        } else {
+                            String::new()
+                        };
+                        table.add_row(vec![
+                            format!("{}/{}", tree.info.kind, tree.info.name),
+                            tree.info.kind.clone(),
+                            tree.info.name.clone(),
+                            total.to_string(),
+                            containers,
+                        ]);
+                    }
+                } else {
+                    table.set_header(vec!["Root", "Kind", "Name", "Children"]);
+                    for tree in &trees {
+                        let total = count_nodes(tree);
+                        table.add_row(vec![
+                            format!("{}/{}", tree.info.kind, tree.info.name),
+                            tree.info.kind.clone(),
+                            tree.info.name.clone(),
+                            total.to_string(),
+                        ]);
+                    }
                 }
                 println!("{table}");
             }
@@ -4047,7 +4080,7 @@ async fn main() -> Result<()> {
                     "namespace": namespace,
                     "totalResources": index.by_uid.len(),
                     "matchedTrees": trees.len(),
-                    "trees": trees.iter().map(|t| tree_to_json(t, args.annotations)).collect::<Vec<_>>(),
+                    "trees": trees.iter().map(|t| tree_to_json(t, args.annotations, args.show_spec)).collect::<Vec<_>>(),
                 });
                 if !map_filters.is_empty() {
                     output["totalTrees"] = serde_json::json!(total_trees);
@@ -4121,7 +4154,8 @@ async fn main() -> Result<()> {
     }
 
     if args.up_only {
-        let chain = find_parents_only(&client, &kind, &name, &namespace, &kind_map).await?;
+        let chain =
+            find_parents_only(&client, &kind, &name, &namespace, &kind_map, args.show_spec).await?;
         if chain.is_empty() {
             println!("No resources found.");
             return Ok(());
@@ -4131,8 +4165,10 @@ async fn main() -> Result<()> {
                 eprintln!("\n📦 Namespace: {}\n", namespace);
                 print_chain_tree(&chain, &tree_opts);
             }
-            OutputFormat::Table => print_chain_table(&chain),
-            OutputFormat::Json => print_chain_json(&chain, &namespace, args.annotations),
+            OutputFormat::Table => print_chain_table(&chain, args.show_spec),
+            OutputFormat::Json => {
+                print_chain_json(&chain, &namespace, args.annotations, args.show_spec)
+            }
         }
         return Ok(());
     }
@@ -4143,6 +4179,7 @@ async fn main() -> Result<()> {
         &kind_map,
         args.include_events,
         !args.no_refs,
+        args.show_spec,
     )
     .await?;
 
@@ -4174,6 +4211,7 @@ async fn main() -> Result<()> {
         &namespace,
         &kind_map,
         &gk_map,
+        args.show_spec,
     )
     .await;
     scan_warnings.extend(parent_warnings);
@@ -4366,7 +4404,7 @@ async fn main() -> Result<()> {
                 let mut output = serde_json::json!({
                     "namespace": namespace,
                     "target": target,
-                    "tree": tree_to_json(&t, args.annotations),
+                    "tree": tree_to_json(&t, args.annotations, args.show_spec),
                 });
                 for (k, v) in extra_json {
                     output[k] = v;

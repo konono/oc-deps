@@ -100,6 +100,7 @@ fn find_owner_ref_info(parent_uid: &str, index: &NamespaceIndex) -> Option<Resou
                     owner_refs: vec![],
                     labels: std::collections::HashMap::new(),
                     annotations: std::collections::HashMap::new(),
+                    pod_template: None,
                 });
             }
         }
@@ -259,6 +260,7 @@ mod tests {
                 .map(|(k, v)| (k.into(), v.into()))
                 .collect(),
             annotations: HashMap::new(),
+            pod_template: None,
         }
     }
 

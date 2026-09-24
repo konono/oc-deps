@@ -466,6 +466,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         }
     }
 
@@ -479,6 +480,7 @@ mod tests {
             owner_refs: vec![],
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            pod_template: None,
         }
     }
 

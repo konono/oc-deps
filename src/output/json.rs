@@ -1,14 +1,18 @@
 use crate::graph::tree::TreeNode;
 use crate::kube::resource::{ResourceInfo, filter_annotations};
 
-pub fn tree_to_json(node: &TreeNode, include_annotations: bool) -> serde_json::Value {
+pub fn tree_to_json(
+    node: &TreeNode,
+    include_annotations: bool,
+    show_spec: bool,
+) -> serde_json::Value {
     let mut obj = serde_json::json!({
         "kind": node.info.kind,
         "name": node.info.name,
         "namespace": node.info.namespace,
         "uid": node.info.uid,
         "isTarget": node.is_target,
-        "children": node.children.iter().map(|c| tree_to_json(c, include_annotations)).collect::<Vec<_>>(),
+        "children": node.children.iter().map(|c| tree_to_json(c, include_annotations, show_spec)).collect::<Vec<_>>(),
     });
     obj["labels"] = serde_json::json!(node.info.labels);
     if include_annotations && !node.info.annotations.is_empty() {
@@ -16,6 +20,9 @@ pub fn tree_to_json(node: &TreeNode, include_annotations: bool) -> serde_json::V
         if !filtered.is_empty() {
             obj["annotations"] = serde_json::json!(filtered);
         }
+    }
+    if show_spec && let Some(pt) = &node.info.pod_template {
+        obj["podTemplate"] = serde_json::json!(pt);
     }
     if !node.spec_refs.is_empty() {
         obj["specRefs"] = serde_json::json!(
@@ -57,12 +64,12 @@ fn find_target_ref(node: &TreeNode) -> String {
     String::new()
 }
 
-pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool) {
+pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool, show_spec: bool) {
     let target = find_target_ref(tree);
     let output = serde_json::json!({
         "namespace": namespace,
         "target": target,
-        "tree": tree_to_json(tree, include_annotations),
+        "tree": tree_to_json(tree, include_annotations, show_spec),
     });
     println!(
         "{}",
@@ -70,7 +77,12 @@ pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool) {
     );
 }
 
-pub fn print_chain_json(chain: &[ResourceInfo], namespace: &str, include_annotations: bool) {
+pub fn print_chain_json(
+    chain: &[ResourceInfo],
+    namespace: &str,
+    include_annotations: bool,
+    show_spec: bool,
+) {
     let items: Vec<_> = chain
         .iter()
         .enumerate()
@@ -88,6 +100,9 @@ pub fn print_chain_json(chain: &[ResourceInfo], namespace: &str, include_annotat
                 if !filtered.is_empty() {
                     obj["annotations"] = serde_json::json!(filtered);
                 }
+            }
+            if show_spec && let Some(pt) = &info.pod_template {
+                obj["podTemplate"] = serde_json::json!(pt);
             }
             obj
         })

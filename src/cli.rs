@@ -70,6 +70,10 @@ pub struct Args {
     #[arg(long)]
     pub annotations: bool,
 
+    /// Show container resource requests/limits for Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, DeploymentConfig
+    #[arg(long)]
+    pub show_spec: bool,
+
     /// Show network paths (Service/Ingress/Route) for Pod/Deployment/ReplicaSet/StatefulSet/DaemonSet
     #[arg(long)]
     pub network: bool,
