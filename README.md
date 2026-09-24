@@ -137,7 +137,7 @@ oc-deps --map -A --strict  # outputs results, then exit 2 if any namespace faile
 
 **Identity:** Resources use `group/kind/namespace/name` — no cross-namespace name-match edges. Each namespace is scanned independently.
 
-**JSON schema (cluster-wide):** `{"scope", "totalNamespaces", "scannedNamespaces", "totalResources", "totalTrees", "namespaces": [{namespace, totalResources, totalTrees, matchedTrees, trees[], warnings?}], "incompleteNamespaces?": [{namespace, error}], "namespaceSelectors?", "excludeNamespaces?", "excludeSystemNamespaces?"}`.
+**JSON schema (cluster-wide):** `{"scope", "totalNamespaces", "completeNamespaceCount", "incompleteNamespaceCount", "totalResources", "totalTrees", "namespaces": [{namespace, totalResources, totalTrees, matchedTrees, trees[], warnings?}], "incompleteNamespaces?": [{namespace, error?, warnings?}], "namespaceSelectors?", "excludeNamespaces?", "excludeSystemNamespaces?"}`. Count fields use `*Count` suffix; `incompleteNamespaces` is an array of namespace objects with typed ScanWarning details.
 
 **Progress:** Per-namespace progress on stderr (`[current/total] namespace — resources, elapsed`). Non-TTY output uses plain line-per-namespace format.
 

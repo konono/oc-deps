@@ -284,6 +284,7 @@ impl NamespaceScanResult {
 async fn list_namespaces_with_retry(
     client: &::kube::Client,
 ) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
+    use crate::kube::resource::ScanWarning;
     use k8s_openapi::api::core::v1::Namespace;
 
     let ns_api: ::kube::Api<Namespace> = ::kube::Api::all(client.clone());
@@ -309,7 +310,8 @@ async fn list_namespaces_with_retry(
                     .collect());
             }
             Ok(Err(e)) => {
-                if attempt < 2 {
+                let warning = ScanWarning::from_kube_error(&e, "", "v1", "namespaces");
+                if warning.is_retryable() && attempt < 2 {
                     let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
                     let msg = format!(
                         "v1/namespaces — LIST attempt {}/3 failed ({}); retrying in {}ms",
@@ -325,7 +327,7 @@ async fn list_namespaces_with_retry(
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                bail!("Failed to list namespaces after 3 attempts: {}", e);
+                bail!("Failed to list namespaces: {}", e);
             }
             Err(_) => {
                 if attempt < 2 {
@@ -633,8 +635,8 @@ async fn cluster_wide_map(
             let mut output = serde_json::json!({
                 "scope": "cluster-wide",
                 "totalNamespaces": total_ns,
-                "completeNamespaces": complete_count,
-                "incompleteNamespaces": incomplete_count,
+                "completeNamespaceCount": complete_count,
+                "incompleteNamespaceCount": incomplete_count,
                 "totalResources": total_resources,
                 "totalTrees": total_trees,
                 "namespaces": ns_results,
@@ -649,7 +651,7 @@ async fn cluster_wide_map(
                 output["excludeSystemNamespaces"] = serde_json::json!(true);
             }
             if !incomplete.is_empty() {
-                output["incomplete"] = serde_json::json!(incomplete);
+                output["incompleteNamespaces"] = serde_json::json!(incomplete);
             }
             println!(
                 "{}",
@@ -664,13 +666,7 @@ async fn cluster_wide_map(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
-
-    if !args.filter.is_empty() && (!args.map || args.command.is_some()) {
-        bail!("--filter requires --map (without subcommands)");
-    }
+fn validate_cluster_wide_args(args: &Args) -> Result<()> {
     if args.all_namespaces && args.namespace.is_some() {
         bail!("-A/--all-namespaces and -n/--namespace are mutually exclusive");
     }
@@ -712,6 +708,17 @@ async fn main() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    if !args.filter.is_empty() && (!args.map || args.command.is_some()) {
+        bail!("--filter requires --map (without subcommands)");
+    }
+    validate_cluster_wide_args(&args)?;
     if args.network && (args.map || args.up_only || args.command.is_some()) {
         bail!("--network is incompatible with --map, --up-only, and subcommands");
     }
@@ -5970,90 +5977,65 @@ mod cluster_wide_map_tests {
         );
     }
 
-    fn validate_args(args_str: &[&str]) -> Result<Args> {
-        let args = Args::try_parse_from(args_str).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        if args.all_namespaces && args.namespace.is_some() {
-            bail!("-A/--all-namespaces and -n/--namespace are mutually exclusive");
-        }
-        if args.all_namespaces && !args.map {
-            bail!("-A/--all-namespaces requires --map");
-        }
-        if args.all_namespaces && args.command.is_some() {
-            bail!("-A/--all-namespaces cannot be used with subcommands");
-        }
-        if (!args.namespace_selector.is_empty()
-            || !args.exclude_namespace.is_empty()
-            || args.exclude_system_namespaces)
-            && !args.all_namespaces
-        {
-            bail!(
-                "--namespace-selector, --exclude-namespace, and --exclude-system-namespaces require -A"
-            );
-        }
-        for sel in &args.namespace_selector {
-            if !sel.contains('=') || sel.starts_with('=') || sel.ends_with('=') {
-                bail!(
-                    "Invalid --namespace-selector '{}': expected key=value format",
-                    sel
-                );
-            }
-        }
-        for pat in &args.exclude_namespace {
-            let star_count = pat.chars().filter(|c| *c == '*').count();
-            if star_count > 1 {
-                bail!(
-                    "Invalid --exclude-namespace '{}': only prefix* or *suffix patterns are supported",
-                    pat
-                );
-            }
-            if star_count == 1 && !pat.starts_with('*') && !pat.ends_with('*') {
-                bail!(
-                    "Invalid --exclude-namespace '{}': * must be at the start or end",
-                    pat
-                );
-            }
-        }
-        Ok(args)
+    fn parse_and_validate(args_str: &[&str]) -> std::result::Result<(), String> {
+        let args = Args::try_parse_from(args_str).map_err(|e| e.to_string())?;
+        validate_cluster_wide_args(&args).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     #[test]
     fn validate_a_and_n_rejects() {
-        assert!(validate_args(&["oc-deps", "--map", "-A", "-n", "test"]).is_err());
+        let err = parse_and_validate(&["oc-deps", "--map", "-A", "-n", "test"]).unwrap_err();
+        assert!(err.contains("mutually exclusive"), "{}", err);
     }
 
     #[test]
     fn validate_a_without_map_rejects() {
-        assert!(validate_args(&["oc-deps", "-A"]).is_err());
+        let err = parse_and_validate(&["oc-deps", "-A"]).unwrap_err();
+        assert!(err.contains("requires --map"), "{}", err);
+    }
+
+    #[test]
+    fn validate_a_with_subcommand_rejects() {
+        let result = Args::try_parse_from(["oc-deps", "--map", "-A", "teardown", "plan", "test"]);
+        if let Ok(args) = result {
+            let err = validate_cluster_wide_args(&args).unwrap_err().to_string();
+            assert!(err.contains("subcommands"), "{}", err);
+        }
     }
 
     #[test]
     fn validate_selector_without_a_rejects() {
-        assert!(validate_args(&["oc-deps", "--map", "--namespace-selector", "k=v"]).is_err());
+        let err =
+            parse_and_validate(&["oc-deps", "--map", "--namespace-selector", "k=v"]).unwrap_err();
+        assert!(err.contains("require -A"), "{}", err);
     }
 
     #[test]
     fn validate_invalid_selector_rejects() {
-        assert!(validate_args(&["oc-deps", "--map", "-A", "--namespace-selector", "bad"]).is_err());
+        let err = parse_and_validate(&["oc-deps", "--map", "-A", "--namespace-selector", "bad"])
+            .unwrap_err();
+        assert!(err.contains("key=value"), "{}", err);
     }
 
     #[test]
     fn validate_invalid_glob_mid_star_rejects() {
-        assert!(
-            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "foo*bar"]).is_err()
-        );
+        let err = parse_and_validate(&["oc-deps", "--map", "-A", "--exclude-namespace", "foo*bar"])
+            .unwrap_err();
+        assert!(err.contains("start or end"), "{}", err);
     }
 
     #[test]
     fn validate_invalid_glob_multi_star_rejects() {
-        assert!(
-            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "*foo*"]).is_err()
-        );
+        let err = parse_and_validate(&["oc-deps", "--map", "-A", "--exclude-namespace", "*foo*"])
+            .unwrap_err();
+        assert!(err.contains("prefix*"), "{}", err);
     }
 
     #[test]
     fn validate_valid_glob_prefix_accepts() {
         assert!(
-            validate_args(&[
+            parse_and_validate(&[
                 "oc-deps",
                 "--map",
                 "-A",
@@ -6067,27 +6049,55 @@ mod cluster_wide_map_tests {
     #[test]
     fn validate_valid_glob_suffix_accepts() {
         assert!(
-            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "*-system"]).is_ok()
+            parse_and_validate(&["oc-deps", "--map", "-A", "--exclude-namespace", "*-system"])
+                .is_ok()
         );
     }
 
     #[test]
     fn validate_valid_glob_exact_accepts() {
         assert!(
-            validate_args(&["oc-deps", "--map", "-A", "--exclude-namespace", "default"]).is_ok()
+            parse_and_validate(&["oc-deps", "--map", "-A", "--exclude-namespace", "default"])
+                .is_ok()
         );
     }
 
-    #[test]
-    fn validate_a_with_subcommand_rejects() {
-        let result = Args::try_parse_from(["oc-deps", "--map", "-A", "teardown", "plan", "test"]);
-        if let Ok(args) = result {
-            if args.all_namespaces && args.command.is_some() {
-                return; // correctly detected
-            }
-            panic!("should reject -A with subcommand");
+    #[tokio::test]
+    async fn shared_semaphore_limits_concurrent_requests() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+        let current = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let sem = semaphore.clone();
+            let max_c = max_concurrent.clone();
+            let cur = current.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let c = cur.fetch_add(1, Ordering::SeqCst) + 1;
+                max_c.fetch_max(c, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                cur.fetch_sub(1, Ordering::SeqCst);
+            }));
         }
-        // parse error is also acceptable (subcommand may consume -A)
+        for h in handles {
+            h.await.unwrap();
+        }
+        let observed_max = max_concurrent.load(Ordering::SeqCst);
+        assert!(
+            observed_max <= 3,
+            "max concurrent should be <= 3 (semaphore permits), got {}",
+            observed_max
+        );
+        assert!(
+            observed_max >= 2,
+            "should have some parallelism, got max {}",
+            observed_max
+        );
     }
 }
 
