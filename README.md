@@ -187,6 +187,40 @@ Service/my-app
       TLS:  edge
 ```
 
+#### Network Policy Posture
+
+When `--network` is used, oc-deps also evaluates the NetworkPolicy posture of each Pod in the dependency tree. For every Pod, it determines:
+
+- **Ingress isolation**: "isolated" if any applicable NetworkPolicy includes "Ingress" in its policyTypes; "non-isolated" otherwise.
+- **Egress isolation**: "isolated" if any applicable NetworkPolicy includes "Egress" in its policyTypes; "non-isolated" otherwise.
+- **Applicable policies**: NetworkPolicies whose `spec.podSelector` matches the Pod's labels.
+
+**policyTypes defaults** (per Kubernetes spec): If `policyTypes` is omitted, "Ingress" is always implied. "Egress" is implied only when egress rules are present.
+
+**Selector evaluation**: `matchLabels` requires all key-value pairs to match. `matchExpressions` supports `In`, `NotIn`, `Exists`, and `DoesNotExist` operators. An empty podSelector (`{}`) selects all pods in the namespace.
+
+**Caveat**: oc-deps shows which policies apply and their rules, but does not compute whether a specific connection is allowed or denied. Multiple policies are additive -- a Pod's allowed traffic is the union of all applicable policy rules.
+
+```
+  Pod/app-xxx
+    Ingress: isolated
+    Egress: non-isolated
+    NetworkPolicy/default-deny
+      Types: Ingress
+      Effect: isolates ingress
+      (no ingress allow rules -> deny all ingress)
+    NetworkPolicy/allow-web
+      Types: Ingress
+      Effect: isolates ingress
+      Selector: app=web
+      Allows ingress: from: namespaceSelector{team in (frontend,mobile)} podSelector{role notin (blocked)} ports: TCP/8080, TCP/http-alt
+```
+
+**JSON `networkPolicyPostures[]`:**
+Each entry: `podName`, `podUid`, `ingressIsolation`, `egressIsolation`, `applicablePolicies[]`. Each policy: `name`, `podSelector` (with `matchLabels` and `matchExpressions`), `policyTypes`, `isolatesIngress`, `isolatesEgress`, `ingressRules[]`, `egressRules[]`. Ports preserve type: numeric as JSON number, named as string.
+
+**API failure**: If NetworkPolicy LIST fails (403/500/timeout), isolation is shown as "unknown" and partial Service/EndpointSlice results are preserved. `--strict` exits 2 after output. Warnings are typed ScanWarning objects in JSON.
+
 ### Cluster-Wide Map (`--map -A`)
 
 Scan all namespaces (or a filtered subset) and display dependency trees grouped by namespace. Discovery cache is shared across all namespaces. Namespace scan concurrency is bounded (max 5 parallel) to prevent connection exhaustion.
