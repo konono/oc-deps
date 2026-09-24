@@ -5283,10 +5283,13 @@ async fn main() -> Result<()> {
                                                         obj.insert("protocol".into(), serde_json::json!(proto));
                                                     }
                                                     if let Some(p) = &port.port {
-                                                        if let Ok(n) = p.parse::<u16>() {
-                                                            obj.insert("port".into(), serde_json::json!(n));
-                                                        } else {
-                                                            obj.insert("port".into(), serde_json::json!(p));
+                                                        match p {
+                                                            crate::analyzers::selector::IntOrString::Int(n) => {
+                                                                obj.insert("port".into(), serde_json::json!(n));
+                                                            }
+                                                            crate::analyzers::selector::IntOrString::String(s) => {
+                                                                obj.insert("port".into(), serde_json::json!(s));
+                                                            }
                                                         }
                                                     }
                                                     if let Some(ep) = port.end_port {
@@ -5321,10 +5324,13 @@ async fn main() -> Result<()> {
                                                         obj.insert("protocol".into(), serde_json::json!(proto));
                                                     }
                                                     if let Some(p) = &port.port {
-                                                        if let Ok(n) = p.parse::<u16>() {
-                                                            obj.insert("port".into(), serde_json::json!(n));
-                                                        } else {
-                                                            obj.insert("port".into(), serde_json::json!(p));
+                                                        match p {
+                                                            crate::analyzers::selector::IntOrString::Int(n) => {
+                                                                obj.insert("port".into(), serde_json::json!(n));
+                                                            }
+                                                            crate::analyzers::selector::IntOrString::String(s) => {
+                                                                obj.insert("port".into(), serde_json::json!(s));
+                                                            }
                                                         }
                                                     }
                                                     if let Some(ep) = port.end_port {
@@ -5337,6 +5343,7 @@ async fn main() -> Result<()> {
                                         .collect();
                                     serde_json::json!({
                                         "name": ap.name,
+                                        "podSelector": selector_to_json(&ap.pod_selector),
                                         "policyTypes": ap.policy_types,
                                         "isolatesIngress": ap.isolates_ingress,
                                         "isolatesEgress": ap.isolates_egress,
@@ -5640,6 +5647,7 @@ async fn main() -> Result<()> {
                                     println!("    NetworkPolicy/{}", ap.name);
                                 }
                                 println!("      Types: {}", ap.policy_types.join(", "));
+                                println!("      Selector: {}", format_selector(&ap.pod_selector));
                                 let mut effects = Vec::new();
                                 if ap.isolates_ingress {
                                     effects.push("isolates ingress");
@@ -5695,8 +5703,18 @@ async fn main() -> Result<()> {
                 }
             }
             if !inventory.warnings.is_empty() {
-                format_scan_warnings(&inventory.warnings, args.verbose);
-                scan_warnings.extend(inventory.warnings);
+                let existing_keys: std::collections::HashSet<String> =
+                    scan_warnings.iter().map(|w| format!("{}", w)).collect();
+                let new_warnings: Vec<_> = inventory
+                    .warnings
+                    .iter()
+                    .filter(|w| !existing_keys.contains(&format!("{}", w)))
+                    .cloned()
+                    .collect();
+                if !new_warnings.is_empty() {
+                    format_scan_warnings(&new_warnings, args.verbose);
+                }
+                scan_warnings.extend(new_warnings);
             }
         }
     }
@@ -5808,7 +5826,11 @@ fn format_policy_ports(ports: &[crate::analyzers::selector::NetworkPolicyPort]) 
         .iter()
         .map(|p| {
             let proto = p.protocol.as_deref().unwrap_or("TCP");
-            let port = p.port.as_deref().unwrap_or("*");
+            let port = match &p.port {
+                Some(crate::analyzers::selector::IntOrString::Int(n)) => n.to_string(),
+                Some(crate::analyzers::selector::IntOrString::String(s)) => s.clone(),
+                None => "*".to_string(),
+            };
             if let Some(ep) = p.end_port {
                 format!("{}/{}-{}", proto, port, ep)
             } else {

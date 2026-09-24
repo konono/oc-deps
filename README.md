@@ -212,8 +212,14 @@ When `--network` is used, oc-deps also evaluates the NetworkPolicy posture of ea
     NetworkPolicy/allow-web
       Types: Ingress
       Effect: isolates ingress
-      Allows ingress: from: namespaceSelector{team=frontend} podSelector{app=client} ports: TCP/8080
+      Selector: app=web
+      Allows ingress: from: namespaceSelector{team in (frontend,mobile)} podSelector{role notin (blocked)} ports: TCP/8080, TCP/http-alt
 ```
+
+**JSON `networkPolicyPostures[]`:**
+Each entry: `podName`, `podUid`, `ingressIsolation`, `egressIsolation`, `applicablePolicies[]`. Each policy: `name`, `podSelector` (with `matchLabels` and `matchExpressions`), `policyTypes`, `isolatesIngress`, `isolatesEgress`, `ingressRules[]`, `egressRules[]`. Ports preserve type: numeric as JSON number, named as string.
+
+**API failure**: If NetworkPolicy LIST fails (403/500/timeout), isolation is shown as "unknown" and partial Service/EndpointSlice results are preserved. `--strict` exits 2 after output. Warnings are typed ScanWarning objects in JSON.
 
 ### Cluster-Wide Map (`--map -A`)
 

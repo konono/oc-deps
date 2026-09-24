@@ -374,9 +374,15 @@ pub struct IpBlock {
 }
 
 #[derive(Clone, Debug)]
+pub enum IntOrString {
+    Int(u16),
+    String(String),
+}
+
+#[derive(Clone, Debug)]
 pub struct NetworkPolicyPort {
     pub protocol: Option<String>,
-    pub port: Option<String>,
+    pub port: Option<IntOrString>,
     pub end_port: Option<u16>,
 }
 
@@ -392,6 +398,7 @@ pub struct PodNetworkPosture {
 #[derive(Clone, Debug)]
 pub struct ApplicablePolicy {
     pub name: String,
+    pub pod_selector: PodSelector,
     pub policy_types: Vec<String>,
     pub isolates_ingress: bool,
     pub isolates_egress: bool,
@@ -1006,10 +1013,10 @@ fn parse_network_policy_ports(ports: &[serde_json::Value]) -> Vec<NetworkPolicyP
         .iter()
         .map(|p| {
             let protocol = p.get("protocol").and_then(|v| v.as_str()).map(String::from);
-            let port = p.get("port").map(|v| match v {
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::String(s) => s.clone(),
-                _ => "?".into(),
+            let port = p.get("port").and_then(|v| match v {
+                serde_json::Value::Number(n) => n.as_u64().map(|n| IntOrString::Int(n as u16)),
+                serde_json::Value::String(s) => Some(IntOrString::String(s.clone())),
+                _ => None,
             });
             let end_port = p.get("endPort").and_then(|v| v.as_u64()).map(|v| v as u16);
             NetworkPolicyPort {
@@ -1187,6 +1194,7 @@ pub(crate) fn evaluate_network_postures(
                 }
                 applicable.push(ApplicablePolicy {
                     name: np.name.clone(),
+                    pod_selector: np.pod_selector.clone(),
                     policy_types: eff_types,
                     isolates_ingress,
                     isolates_egress,
@@ -2273,7 +2281,7 @@ mod tests {
                 peers: vec![],
                 ports: vec![NetworkPolicyPort {
                     protocol: Some("TCP".into()),
-                    port: Some("80".into()),
+                    port: Some(IntOrString::Int(80)),
                     end_port: None,
                 }],
             }],
@@ -2516,13 +2524,19 @@ mod tests {
         assert_eq!(ib.cidr, "10.0.0.0/8");
         assert_eq!(ib.except, vec!["10.0.1.0/24"]);
         assert_eq!(np.ingress_rules[0].ports.len(), 1);
-        assert_eq!(np.ingress_rules[0].ports[0].port.as_deref(), Some("8080"));
+        assert!(matches!(
+            &np.ingress_rules[0].ports[0].port,
+            Some(IntOrString::Int(8080))
+        ));
         assert_eq!(np.ingress_rules[0].ports[0].end_port, Some(8090));
         assert_eq!(np.egress_rules.len(), 1);
         assert_eq!(np.egress_rules[0].peers.len(), 1);
         assert!(np.egress_rules[0].peers[0].namespace_selector.is_some());
         assert_eq!(np.egress_rules[0].ports[0].protocol.as_deref(), Some("UDP"));
-        assert_eq!(np.egress_rules[0].ports[0].port.as_deref(), Some("dns"));
+        assert!(matches!(
+            &np.egress_rules[0].ports[0].port,
+            Some(IntOrString::String(s)) if s == "dns"
+        ));
     }
 
     #[tokio::test]
@@ -2576,5 +2590,148 @@ mod tests {
             matches!(&warnings[0], ScanWarning::Forbidden { status: 403, .. }),
             "expected Forbidden warning"
         );
+    }
+
+    #[tokio::test]
+    async fn network_policy_500_unavailable() {
+        use http::Response;
+        let mut gk_map = GroupKindMap::new();
+        gk_map.insert(
+            ("networking.k8s.io".to_string(), "NetworkPolicy".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: "networking.k8s.io".into(),
+                version: "v1".into(),
+                plural: "networkpolicies".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.unwrap();
+                rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let body = serde_json::json!({
+                    "kind": "Status", "apiVersion": "v1", "metadata": {},
+                    "status": "Failure", "message": "error", "reason": "InternalError", "code": 500
+                });
+                send.send_response(
+                    Response::builder()
+                        .status(500)
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                );
+            }
+        });
+
+        let (policies, availability, warnings) =
+            list_network_policies(&client, "test-ns", &gk_map).await;
+        spawned.await.unwrap();
+
+        assert!(policies.is_empty());
+        assert_eq!(availability, NetworkPolicyAvailability::Unavailable);
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 3);
+        assert!(matches!(
+            &warnings[0],
+            ScanWarning::ServerError { retries: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn posture_500_unavailable_all_unknown() {
+        let pods = vec![(
+            "pod-1".into(),
+            "uid-1".into(),
+            std::collections::HashMap::new(),
+        )];
+        let policies = vec![NetworkPolicyInfo {
+            name: "deny".into(),
+            pod_selector: PodSelector {
+                match_labels: BTreeMap::new(),
+                match_expressions: vec![],
+            },
+            policy_types: vec!["Ingress".into()],
+            ingress_rules: vec![],
+            egress_rules: vec![],
+        }];
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Unavailable);
+        assert_eq!(postures[0].ingress_isolation, "unknown");
+        assert_eq!(postures[0].egress_isolation, "unknown");
+    }
+
+    #[test]
+    fn applicable_policy_has_pod_selector() {
+        let pods = vec![(
+            "pod-1".into(),
+            "uid-1".into(),
+            [("app".into(), "web".into())].into_iter().collect(),
+        )];
+        let policies = vec![NetworkPolicyInfo {
+            name: "allow-web".into(),
+            pod_selector: PodSelector {
+                match_labels: [("app".into(), "web".into())].into_iter().collect(),
+                match_expressions: vec![LabelSelectorRequirement {
+                    key: "tier".into(),
+                    operator: "Exists".into(),
+                    values: vec![],
+                }],
+            },
+            policy_types: vec!["Ingress".into()],
+            ingress_rules: vec![],
+            egress_rules: vec![],
+        }];
+        // Pod doesn't have tier label → won't match
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Available);
+        assert!(postures[0].applicable_policies.is_empty());
+
+        // Pod with tier label → matches, and ApplicablePolicy has the selector
+        let pods2 = vec![(
+            "pod-1".into(),
+            "uid-1".into(),
+            [
+                ("app".into(), "web".into()),
+                ("tier".into(), "frontend".into()),
+            ]
+            .into_iter()
+            .collect(),
+        )];
+        let postures2 =
+            evaluate_network_postures(&pods2, &policies, &NetworkPolicyAvailability::Available);
+        assert_eq!(postures2[0].applicable_policies.len(), 1);
+        let ap = &postures2[0].applicable_policies[0];
+        assert_eq!(ap.pod_selector.match_labels.get("app").unwrap(), "web");
+        assert_eq!(ap.pod_selector.match_expressions.len(), 1);
+        assert_eq!(ap.pod_selector.match_expressions[0].operator, "Exists");
+    }
+
+    #[test]
+    fn int_or_string_port_preservation() {
+        let data = serde_json::json!({
+            "spec": {
+                "podSelector": {},
+                "ingress": [{
+                    "ports": [
+                        {"protocol": "TCP", "port": 8080},
+                        {"protocol": "TCP", "port": "http-alt"},
+                        {"protocol": "TCP", "port": 443, "endPort": 445}
+                    ]
+                }]
+            }
+        });
+        let obj = make_dynamic_object("test-np", data);
+        let np = parse_network_policy(obj).unwrap();
+        let ports = &np.ingress_rules[0].ports;
+        assert!(matches!(&ports[0].port, Some(IntOrString::Int(8080))));
+        assert!(matches!(&ports[1].port, Some(IntOrString::String(s)) if s == "http-alt"));
+        assert!(matches!(&ports[2].port, Some(IntOrString::Int(443))));
+        assert_eq!(ports[2].end_port, Some(445));
     }
 }
