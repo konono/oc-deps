@@ -86,6 +86,36 @@ pub async fn build_snapshot(
     kind_map: &KindMap,
     include_events: bool,
 ) -> Result<ClusterSnapshot> {
+    build_snapshot_inner(client, config, namespace, kind_map, include_events, None).await
+}
+
+pub async fn build_snapshot_with_semaphore(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    kind_map: &KindMap,
+    include_events: bool,
+    api_semaphore: Arc<tokio::sync::Semaphore>,
+) -> Result<ClusterSnapshot> {
+    build_snapshot_inner(
+        client,
+        config,
+        namespace,
+        kind_map,
+        include_events,
+        Some(api_semaphore),
+    )
+    .await
+}
+
+async fn build_snapshot_inner(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    kind_map: &KindMap,
+    include_events: bool,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+) -> Result<ClusterSnapshot> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
     } else {
@@ -103,9 +133,12 @@ pub async fn build_snapshot(
     let scan_errors: Arc<std::sync::Mutex<Vec<ScanWarning>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
 
+    let api_sem = api_semaphore.clone();
+
     let futs = scan_targets.into_iter().map(|(kind, info)| {
         let client = client.clone();
         let ns = namespace.to_string();
+        let sem = api_sem.clone();
         let scanned = scanned.clone();
         let scan_errors = scan_errors.clone();
 
@@ -114,16 +147,26 @@ pub async fn build_snapshot(
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
             let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
 
+            let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
             let mut last_warning = None;
             for attempt in 0..=MAX_RETRIES {
-                let result = api.list(&ListParams::default()).await;
+                let _permit = if let Some(s) = &sem {
+                    Some(s.acquire().await.expect("semaphore closed"))
+                } else {
+                    None
+                };
+                let timeout_dur = std::time::Duration::from_secs(30);
+                let result =
+                    tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await;
                 if attempt == 0 {
                     let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-                    eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
+                    if is_tty {
+                        eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
+                    }
                 }
 
                 match result {
-                    Ok(list) => {
+                    Ok(Ok(list)) => {
                         let entries: Vec<(String, ResourceEntry)> = list
                             .items
                             .into_iter()
@@ -198,7 +241,7 @@ pub async fn build_snapshot(
                             .collect();
                         return Some(entries);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         let mut warning = ScanWarning::from_kube_error(
                             &e,
                             &info.group,
@@ -208,11 +251,66 @@ pub async fn build_snapshot(
                         if warning.is_retryable() && attempt < MAX_RETRIES {
                             let delay =
                                 std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            let gvr = if info.group.is_empty() {
+                                format!("{}/{}", info.version, info.plural)
+                            } else {
+                                format!("{}/{}/{}", info.group, info.version, info.plural)
+                            };
+                            if is_tty {
+                                eprintln!(
+                                    "   \x1b[33m⚠ {} — LIST attempt {}/{} failed; retrying in {}ms\x1b[0m",
+                                    gvr, attempt + 1, MAX_RETRIES + 1, delay.as_millis()
+                                );
+                            } else {
+                                eprintln!(
+                                    "   ⚠ {} — LIST attempt {}/{} failed; retrying in {}ms",
+                                    gvr, attempt + 1, MAX_RETRIES + 1, delay.as_millis()
+                                );
+                            }
                             tokio::time::sleep(delay).await;
                             last_warning = Some(warning);
                             continue;
                         }
                         warning.set_retries(attempt);
+                        if let Ok(mut errors) = scan_errors.lock() {
+                            errors.push(warning);
+                        }
+                        return None;
+                    }
+                    Err(_elapsed) => {
+                        let gvr = if info.group.is_empty() {
+                            format!("{}/{}", info.version, info.plural)
+                        } else {
+                            format!("{}/{}/{}", info.group, info.version, info.plural)
+                        };
+                        let warning = ScanWarning::Timeout {
+                            gvr,
+                            message: Some("request timeout (30s)".to_string()),
+                            retries: attempt,
+                        };
+                        if attempt < MAX_RETRIES {
+                            let delay =
+                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            let gvr_label = if info.group.is_empty() {
+                                format!("{}/{}", info.version, info.plural)
+                            } else {
+                                format!("{}/{}/{}", info.group, info.version, info.plural)
+                            };
+                            if is_tty {
+                                eprintln!(
+                                    "   \x1b[33m⚠ {} — LIST timeout (30s), attempt {}/{} failed; retrying\x1b[0m",
+                                    gvr_label, attempt + 1, MAX_RETRIES + 1
+                                );
+                            } else {
+                                eprintln!(
+                                    "   ⚠ {} — LIST timeout (30s), attempt {}/{} failed; retrying",
+                                    gvr_label, attempt + 1, MAX_RETRIES + 1
+                                );
+                            }
+                            tokio::time::sleep(delay).await;
+                            last_warning = Some(warning);
+                            continue;
+                        }
                         if let Ok(mut errors) = scan_errors.lock() {
                             errors.push(warning);
                         }
@@ -231,16 +329,26 @@ pub async fn build_snapshot(
     });
 
     let scan_start = Instant::now();
+    let concurrency = if api_semaphore.is_some() { total } else { 50 };
     let results: Vec<_> = futures::stream::iter(futs)
-        .buffer_unordered(50)
+        .buffer_unordered(concurrency)
         .collect()
         .await;
 
-    eprintln!(
-        "\r\x1b[2K✅ Scanned {} resource types in {:.1}s",
-        total,
-        scan_start.elapsed().as_secs_f64()
-    );
+    let is_tty_final = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    if is_tty_final {
+        eprintln!(
+            "\r\x1b[2K✅ Scanned {} resource types in {:.1}s",
+            total,
+            scan_start.elapsed().as_secs_f64()
+        );
+    } else {
+        eprintln!(
+            "✅ Scanned {} resource types in {:.1}s",
+            total,
+            scan_start.elapsed().as_secs_f64()
+        );
+    }
 
     let mut resources = HashMap::new();
     for entries in results.into_iter().flatten() {
@@ -254,6 +362,19 @@ pub async fn build_snapshot(
         Err(arc) => arc.lock().unwrap().clone(),
     };
 
+    let (complete, incomplete) = if warnings.is_empty() {
+        (vec![namespace.to_string()], vec![])
+    } else {
+        (
+            vec![],
+            vec![IncompleteNamespace {
+                namespace: namespace.to_string(),
+                warnings: warnings.clone(),
+                error: None,
+            }],
+        )
+    };
+
     let snapshot = ClusterSnapshot {
         schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
         resources,
@@ -261,20 +382,44 @@ pub async fn build_snapshot(
         cluster_url: config.cluster_url.to_string(),
         taken_at: chrono::Utc::now().to_rfc3339(),
         namespaces: vec![namespace.to_string()],
+        scope: Some(SnapshotScope {
+            mode: "single-namespace".to_string(),
+            requested_namespaces: vec![namespace.to_string()],
+            complete_namespaces: complete,
+            incomplete_namespaces: incomplete,
+            ..Default::default()
+        }),
     };
 
     Ok(snapshot)
 }
 
 pub fn save_snapshot(snapshot: &ClusterSnapshot, path: &str) -> Result<()> {
+    let tmp_path = format!("{}.{}.tmp", path, std::process::id());
     let json = serde_json::to_string_pretty(snapshot)?;
-    std::fs::write(path, json)?;
+    if let Err(e) = std::fs::write(&tmp_path, &json) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
     Ok(())
 }
 
 pub fn load_snapshot(path: &str) -> Result<ClusterSnapshot> {
     let data = std::fs::read_to_string(path)?;
     let snapshot: ClusterSnapshot = serde_json::from_str(&data)?;
+    if let Some(v) = snapshot.schema_version
+        && v > SNAPSHOT_SCHEMA_VERSION
+    {
+        bail!(
+            "Unsupported snapshot schema version {} (max supported: {}). Please upgrade oc-deps.",
+            v,
+            SNAPSHOT_SCHEMA_VERSION
+        );
+    }
     Ok(snapshot)
 }
 
@@ -503,18 +648,21 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
     let av = after.schema_version;
     if bv != av {
         scope_warnings.push(format!(
-            "Schema version mismatch: before={}, after={}. ConfigMap/Secret data comparison may be incomplete",
-            bv.map_or("legacy".into(), |v| v.to_string()),
-            av.map_or("legacy".into(), |v| v.to_string()),
+            "Schema version mismatch: before={}, after={}",
+            bv.map_or("legacy".into(), |v: u32| v.to_string()),
+            av.map_or("legacy".into(), |v: u32| v.to_string()),
         ));
     }
-    let has_old_schema = bv.is_none()
-        || av.is_none()
-        || bv < Some(SNAPSHOT_SCHEMA_VERSION)
-        || av < Some(SNAPSHOT_SCHEMA_VERSION);
-    if has_old_schema {
+    let has_pre_data_schema = bv.is_none() || av.is_none() || bv < Some(2) || av < Some(2);
+    if has_pre_data_schema {
         scope_warnings.push(
-            "One or both snapshots use an older schema. ConfigMap/Secret data comparison is unavailable for resources from old-schema snapshots".to_string(),
+            "One or both snapshots predate schema v2. ConfigMap/Secret data comparison is unavailable for resources from old-schema snapshots".to_string(),
+        );
+    }
+    let has_pre_scope_schema = bv < Some(3) || av < Some(3);
+    if has_pre_scope_schema {
+        scope_warnings.push(
+            "One or both snapshots predate schema v3. Scope comparison is unavailable".to_string(),
         );
     }
     if before.cluster_url != after.cluster_url {
@@ -528,6 +676,82 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
     if b_ns != a_ns {
         scope_warnings.push(format!("Different namespaces: {:?} vs {:?}", b_ns, a_ns));
     }
+    // Scope comparison (v3+)
+    match (&before.scope, &after.scope) {
+        (None, Some(_)) | (Some(_), None) => {
+            let both_v3 = before.schema_version >= Some(3) && after.schema_version >= Some(3);
+            if both_v3 {
+                scope_warnings.push(
+                    "Scope metadata missing from one v3 snapshot (possible migration or corruption)".to_string(),
+                );
+            }
+            // v2-or-earlier case is already covered by has_pre_scope_schema warning above
+        }
+        (Some(bs), Some(as_)) => {
+            if bs.mode != as_.mode {
+                scope_warnings.push(format!(
+                    "Different snapshot modes: {} vs {}",
+                    bs.mode, as_.mode
+                ));
+            }
+            let mut b_sel: Vec<_> = bs.namespace_selectors.clone();
+            let mut a_sel: Vec<_> = as_.namespace_selectors.clone();
+            b_sel.sort();
+            a_sel.sort();
+            let mut b_excl: Vec<_> = bs.exclude_namespaces.clone();
+            let mut a_excl: Vec<_> = as_.exclude_namespaces.clone();
+            b_excl.sort();
+            a_excl.sort();
+            if b_sel != a_sel
+                || b_excl != a_excl
+                || bs.exclude_system_namespaces != as_.exclude_system_namespaces
+            {
+                scope_warnings.push("Different namespace filters applied".to_string());
+            }
+            let mut b_req: Vec<_> = bs.requested_namespaces.clone();
+            let mut a_req: Vec<_> = as_.requested_namespaces.clone();
+            b_req.sort();
+            a_req.sort();
+            if b_req != a_req {
+                scope_warnings.push(format!(
+                    "Different requested namespaces: {:?} vs {:?}",
+                    b_req, a_req
+                ));
+            }
+            let mut b_comp: Vec<_> = bs.complete_namespaces.clone();
+            let mut a_comp: Vec<_> = as_.complete_namespaces.clone();
+            b_comp.sort();
+            a_comp.sort();
+            if b_comp != a_comp {
+                scope_warnings.push(format!(
+                    "Different complete namespaces: {:?} vs {:?}",
+                    b_comp, a_comp
+                ));
+            }
+            let mut b_inc: Vec<_> = bs
+                .incomplete_namespaces
+                .iter()
+                .map(|i| i.namespace.clone())
+                .collect();
+            let mut a_inc: Vec<_> = as_
+                .incomplete_namespaces
+                .iter()
+                .map(|i| i.namespace.clone())
+                .collect();
+            b_inc.sort();
+            a_inc.sort();
+            if b_inc != a_inc {
+                scope_warnings.push(format!(
+                    "Different incomplete namespaces: {:?} vs {:?}",
+                    b_inc, a_inc
+                ));
+            } else if !b_inc.is_empty() {
+                scope_warnings.push("Both snapshots have incomplete namespace scans".to_string());
+            }
+        }
+        (None, None) => {}
+    }
+
     if !before.scan_warnings.is_empty() {
         scope_warnings.push(format!(
             "Before snapshot had {} scan warnings",
@@ -819,6 +1043,18 @@ mod tests {
         )
     }
 
+    fn make_empty_snapshot() -> ClusterSnapshot {
+        ClusterSnapshot {
+            schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
+            resources: HashMap::new(),
+            scan_warnings: vec![],
+            cluster_url: "https://api.test:6443".into(),
+            taken_at: "2026-01-01T00:00:00Z".into(),
+            namespaces: vec![],
+            scope: None,
+        }
+    }
+
     fn make_snapshot(entries: Vec<(String, ResourceEntry)>, ns: &str) -> ClusterSnapshot {
         ClusterSnapshot {
             schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
@@ -827,6 +1063,7 @@ mod tests {
             cluster_url: "https://api.test:6443".into(),
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![ns.into()],
+            scope: None,
         }
     }
 
@@ -1142,7 +1379,7 @@ mod tests {
             result
                 .scope_warnings
                 .iter()
-                .any(|w| w.contains("older schema")),
+                .any(|w| w.contains("predate schema") || w.contains("data comparison")),
             "scope warning about old schema expected"
         );
     }
@@ -1221,6 +1458,717 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("namespace")),
             "same namespace set in different order should not warn"
+        );
+    }
+
+    #[test]
+    fn atomic_save_creates_file() {
+        let dir = std::env::temp_dir().join("oc-deps-test-atomic");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test-snap.json");
+        let snap = make_snapshot(vec![], "default");
+        save_snapshot(&snap, path.to_str().unwrap()).unwrap();
+        assert!(path.exists());
+        // tmp file should not remain
+        assert!(!dir.join("test-snap.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_save_does_not_corrupt_on_existing() {
+        let dir = std::env::temp_dir().join("oc-deps-test-atomic2");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("snap.json");
+        let snap1 = make_snapshot(
+            vec![make_entry("", "ConfigMap", "cm1", "default", "uid-1")],
+            "default",
+        );
+        save_snapshot(&snap1, path.to_str().unwrap()).unwrap();
+        // Save again — should overwrite cleanly
+        let snap2 = make_snapshot(
+            vec![make_entry("", "ConfigMap", "cm2", "default", "uid-2")],
+            "default",
+        );
+        save_snapshot(&snap2, path.to_str().unwrap()).unwrap();
+        let loaded = load_snapshot(path.to_str().unwrap()).unwrap();
+        assert!(loaded.resources.contains_key("uid-2"));
+        assert!(!loaded.resources.contains_key("uid-1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_future_schema_version() {
+        let dir = std::env::temp_dir().join("oc-deps-test-future");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("future.json");
+        let json = serde_json::json!({
+            "schema_version": 99,
+            "resources": {},
+            "scan_warnings": [],
+            "cluster_url": "https://test:6443",
+            "taken_at": "2026-01-01T00:00:00Z",
+            "namespaces": ["default"]
+        });
+        std::fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+        let result = load_snapshot(path.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diff_scope_warning_v2_vs_v3() {
+        let mut before = make_snapshot(vec![], "default");
+        before.schema_version = Some(2);
+        before.scope = None; // v2 style
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "single-namespace".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        let scope_unavail: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| {
+                w.contains("Scope comparison") || w.contains("scope") && w.contains("unavailable")
+            })
+            .collect();
+        assert_eq!(
+            scope_unavail.len(),
+            1,
+            "exactly 1 scope unavailable warning for v2 vs v3: got {:?}",
+            scope_unavail
+        );
+    }
+
+    #[test]
+    fn diff_scope_warning_different_mode() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = Some(SnapshotScope {
+            mode: "single-namespace".into(),
+            ..Default::default()
+        });
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different snapshot modes")),
+        );
+    }
+
+    #[test]
+    fn diff_scope_warning_different_filters() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".into(),
+            namespace_selectors: vec!["env=prod".into()],
+            ..Default::default()
+        });
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".into(),
+            namespace_selectors: vec!["env=dev".into()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different namespace filters")),
+        );
+    }
+
+    #[test]
+    fn diff_scope_same_mode_no_warning() {
+        let mut before = make_snapshot(vec![], "default");
+        before.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let mut after = make_snapshot(vec![], "default");
+        after.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("mode") || w.contains("filter")),
+        );
+    }
+
+    #[test]
+    fn diff_scope_selectors_order_independent() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            namespace_selectors: vec!["b=2".to_string(), "a=1".to_string()],
+            exclude_namespaces: vec!["z-*".to_string(), "a-*".to_string()],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            namespace_selectors: vec!["a=1".to_string(), "b=2".to_string()],
+            exclude_namespaces: vec!["a-*".to_string(), "z-*".to_string()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result.scope_warnings.iter().any(|w| w.contains("filter")),
+            "same selectors in different order should not warn"
+        );
+    }
+
+    #[test]
+    fn diff_scope_different_complete_namespaces_warns() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            complete_namespaces: vec!["ns-a".to_string(), "ns-b".to_string()],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            complete_namespaces: vec!["ns-a".to_string()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("complete namespaces")),
+            "different complete sets should warn"
+        );
+    }
+
+    #[test]
+    fn diff_scope_different_requested_namespaces_warns() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            requested_namespaces: vec!["ns-a".to_string(), "ns-b".to_string()],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            requested_namespaces: vec!["ns-a".to_string(), "ns-c".to_string()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("requested namespaces")),
+            "different requested sets should warn"
+        );
+    }
+
+    #[test]
+    fn save_snapshot_atomic_no_tmp_residue() {
+        let path = format!("/tmp/oc-deps-test-snap-{}.json", std::process::id());
+        let snap = make_empty_snapshot();
+        save_snapshot(&snap, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("schema_version"));
+        let tmp_path = format!("{}.{}.tmp", path, std::process::id());
+        assert!(
+            !std::path::Path::new(&tmp_path).exists(),
+            "tmp file should be cleaned up after successful save"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_snapshot_rename_fail_preserves_target() {
+        let dir = format!("/tmp/oc-deps-test-rename-{}", std::process::id());
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let target = format!("{}/target", dir);
+        std::fs::create_dir(&target).unwrap();
+
+        let snap = make_empty_snapshot();
+        let result = save_snapshot(&snap, &target);
+        assert!(result.is_err(), "file→directory rename should fail");
+
+        assert!(
+            std::path::Path::new(&target).is_dir(),
+            "target directory must still exist"
+        );
+
+        let tmp_path = format!("{}.{}.tmp", target, std::process::id());
+        assert!(
+            !std::path::Path::new(&tmp_path).exists(),
+            "tmp file must be cleaned up after rename failure"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diff_incomplete_same_set_no_specific_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![
+                IncompleteNamespace {
+                    namespace: "ns-b".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+                IncompleteNamespace {
+                    namespace: "ns-a".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+            ],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![
+                IncompleteNamespace {
+                    namespace: "ns-a".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+                IncompleteNamespace {
+                    namespace: "ns-b".into(),
+                    warnings: vec![],
+                    error: None,
+                },
+            ],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different incomplete")),
+            "same incomplete set (different order) should not warn about difference"
+        );
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Both snapshots have incomplete")),
+        );
+    }
+
+    #[test]
+    fn diff_incomplete_different_sets_warns_specifically() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![IncompleteNamespace {
+                namespace: "ns-a".into(),
+                warnings: vec![],
+                error: None,
+            }],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            incomplete_namespaces: vec![IncompleteNamespace {
+                namespace: "ns-b".into(),
+                warnings: vec![],
+                error: None,
+            }],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("Different incomplete")),
+            "different incomplete sets should produce specific warning"
+        );
+    }
+
+    #[test]
+    fn diff_v2_v2_no_data_unavailable_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(2);
+        after.schema_version = Some(2);
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("data comparison")),
+            "v2 has data support — no data unavailable warning"
+        );
+    }
+
+    #[test]
+    fn diff_v2_v3_scope_unavailable_warning() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(2);
+        after.schema_version = Some(3);
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        let scope_unavail: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| {
+                w.contains("Scope comparison")
+                    || (w.contains("scope") && w.contains("unavailable"))
+                    || w.contains("predate schema v3")
+            })
+            .collect();
+        assert_eq!(
+            scope_unavail.len(),
+            1,
+            "exactly 1 scope unavailable warning for v2 vs v3, got: {:?}",
+            scope_unavail
+        );
+        assert!(
+            !result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("data comparison")),
+            "v2 has data support — no data warning"
+        );
+    }
+
+    #[test]
+    fn diff_v3_v3_missing_scope_warns() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(3);
+        after.schema_version = Some(3);
+        before.scope = None; // invalid/migration data
+        after.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        let migration_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("missing") || w.contains("migration"))
+            .collect();
+        assert_eq!(
+            migration_warnings.len(),
+            1,
+            "v3 with missing scope should produce exactly 1 warning"
+        );
+    }
+
+    #[test]
+    fn diff_v1_v3_data_and_scope_unavailable() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(1);
+        after.schema_version = Some(3);
+        let result = diff_snapshots(&before, &after).unwrap();
+        let data_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("data comparison"))
+            .collect();
+        assert_eq!(data_warnings.len(), 1, "v1→v3: exactly 1 data unavailable");
+        let scope_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("predate schema v3") || w.contains("Scope comparison"))
+            .collect();
+        assert_eq!(
+            scope_warnings.len(),
+            1,
+            "v1→v3: exactly 1 scope unavailable"
+        );
+    }
+
+    #[test]
+    fn diff_legacy_v3_data_and_scope_unavailable() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = None; // legacy
+        after.schema_version = Some(3);
+        let result = diff_snapshots(&before, &after).unwrap();
+        let data_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("data comparison"))
+            .collect();
+        assert_eq!(
+            data_warnings.len(),
+            1,
+            "legacy→v3: exactly 1 data unavailable"
+        );
+        let scope_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("predate schema v3") || w.contains("Scope comparison"))
+            .collect();
+        assert_eq!(
+            scope_warnings.len(),
+            1,
+            "legacy→v3: exactly 1 scope unavailable"
+        );
+    }
+
+    // ── Mock API tests for snapshot LIST retry/timeout ──
+
+    use kube::client::Body;
+    use std::pin::pin;
+
+    fn mock_json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": reason, "reason": reason, "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_empty_list_response() -> http::Response<Body> {
+        mock_json_response(serde_json::json!({
+            "apiVersion": "v1", "kind": "List",
+            "metadata": {"resourceVersion": "1"}, "items": []
+        }))
+    }
+
+    fn make_test_kind_map(n: usize) -> KindMap {
+        let mut km = KindMap::new();
+        for i in 0..n {
+            km.insert(
+                format!("Kind{}", i),
+                crate::kube::discovery::KindInfo {
+                    group: "test".to_string(),
+                    version: "v1".to_string(),
+                    plural: format!("kind{}s", i),
+                    namespaced: true,
+                    listable: true,
+                },
+            );
+        }
+        km
+    }
+
+    fn make_test_config() -> kube::config::Config {
+        kube::config::Config {
+            cluster_url: "https://api.test:6443".parse().unwrap(),
+            default_namespace: "default".into(),
+            root_cert: None,
+            connect_timeout: None,
+            read_timeout: None,
+            write_timeout: None,
+            accept_invalid_certs: true,
+            auth_info: Default::default(),
+            proxy_url: None,
+            tls_server_name: None,
+            disable_compression: false,
+            headers: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_list_403_no_retry() {
+        let kind_map = make_test_kind_map(1);
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected request");
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(403, "Forbidden"));
+        });
+
+        let result = build_snapshot(&client, &config, "test-ns", &kind_map, false).await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "403 = 1 request"
+        );
+        assert_eq!(snap.scan_warnings.len(), 1);
+        assert!(matches!(
+            &snap.scan_warnings[0],
+            ScanWarning::Forbidden { status: 403, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn snapshot_list_500_retries_3_times() {
+        let kind_map = make_test_kind_map(1);
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                send.send_response(mock_status_response(500, "Internal Server Error"));
+            }
+        });
+
+        let result = build_snapshot(&client, &config, "test-ns", &kind_map, false).await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            3,
+            "500 = 3 requests"
+        );
+        assert_eq!(snap.scan_warnings.len(), 1);
+        assert!(
+            matches!(
+                &snap.scan_warnings[0],
+                ScanWarning::ServerError { status: 500, retries, .. } if *retries == 2
+            ),
+            "warning should be ServerError 500 with retries=2, got: {:?}",
+            snap.scan_warnings[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_list_500_then_200_succeeds() {
+        let kind_map = make_test_kind_map(1);
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(500, "Internal Server Error"));
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_empty_list_response());
+        });
+
+        let result = build_snapshot(&client, &config, "test-ns", &kind_map, false).await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "500→200 = 2 requests"
+        );
+        assert!(snap.scan_warnings.is_empty(), "transient error recovered");
+    }
+
+    #[tokio::test]
+    async fn snapshot_shared_semaphore_limits_concurrent() {
+        let permits = 2usize;
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(permits));
+        let kind_map = make_test_kind_map(4);
+        let config = make_test_config();
+        let total_requests = 8; // 4 kinds × 2 namespaces
+        let max_concurrent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let current = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let max_c = max_concurrent.clone();
+        let cur_c = current.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let mut tasks = Vec::new();
+            for _ in 0..total_requests {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                let mc = max_c.clone();
+                let cc = cur_c.clone();
+                tasks.push(tokio::spawn(async move {
+                    let c = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    mc.fetch_max(c, std::sync::atomic::Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    cc.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    send.send_response(mock_empty_list_response());
+                }));
+            }
+            for t in tasks {
+                t.await.unwrap();
+            }
+        });
+
+        let s1 = semaphore.clone();
+        let s2 = semaphore.clone();
+        let km1 = kind_map.clone();
+        let km2 = kind_map.clone();
+        let c1 = client.clone();
+        let c2 = client.clone();
+        let cfg1 = config.clone();
+        let cfg2 = config.clone();
+
+        let (r1, r2) = tokio::join!(
+            build_snapshot_with_semaphore(&c1, &cfg1, "ns-a", &km1, false, s1),
+            build_snapshot_with_semaphore(&c2, &cfg2, "ns-b", &km2, false, s2),
+        );
+
+        spawned.await.unwrap();
+        assert!(r1.is_ok());
+        assert!(r2.is_ok());
+
+        let observed = max_concurrent.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            observed <= permits,
+            "max concurrent should be <= {} permits, got {}",
+            permits,
+            observed
+        );
+        assert!(
+            observed >= 2,
+            "should achieve parallelism (>= 2), got {}",
+            observed
         );
     }
 }

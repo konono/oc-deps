@@ -143,6 +143,26 @@ pub enum Command {
         /// Skip discovery cache (force fresh API discovery)
         #[arg(long)]
         no_cache: bool,
+
+        /// Scan all namespaces
+        #[arg(short = 'A', long = "all-namespaces")]
+        all_namespaces: bool,
+
+        /// Select namespaces by label (repeatable, AND). Requires -A
+        #[arg(long, value_name = "KEY=VALUE")]
+        namespace_selector: Vec<String>,
+
+        /// Exclude namespaces matching glob pattern (repeatable). Requires -A
+        #[arg(long, value_name = "PATTERN")]
+        exclude_namespace: Vec<String>,
+
+        /// Exclude system namespaces (openshift-*, kube-*, default). Requires -A
+        #[arg(long)]
+        exclude_system_namespaces: bool,
+
+        /// Exit with code 2 if any API types were skipped during scan
+        #[arg(long)]
+        strict: bool,
     },
 
     /// Compare two snapshot files (offline, no cluster connection required)
@@ -592,6 +612,74 @@ mod tests {
                 assert!(strict);
             }
             _ => panic!("Expected Command::Inspect"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_all_namespaces_parse() {
+        let args = Args::parse_from(["oc-deps", "snapshot", "-A", "-o", "out.json"]);
+        match args.command {
+            Some(Command::Snapshot {
+                all_namespaces,
+                output_file,
+                namespace,
+                ..
+            }) => {
+                assert!(all_namespaces);
+                assert_eq!(output_file, "out.json");
+                assert!(namespace.is_none());
+            }
+            _ => panic!("Expected Command::Snapshot"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_with_filters() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "snapshot",
+            "-A",
+            "--namespace-selector",
+            "env=prod",
+            "--exclude-namespace",
+            "temp-*",
+            "--exclude-system-namespaces",
+            "--strict",
+        ]);
+        match args.command {
+            Some(Command::Snapshot {
+                all_namespaces,
+                namespace_selector,
+                exclude_namespace,
+                exclude_system_namespaces,
+                strict,
+                ..
+            }) => {
+                assert!(all_namespaces);
+                assert_eq!(namespace_selector, vec!["env=prod"]);
+                assert_eq!(exclude_namespace, vec!["temp-*"]);
+                assert!(exclude_system_namespaces);
+                assert!(strict);
+            }
+            _ => panic!("Expected Command::Snapshot"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_n_and_a_exclusive() {
+        // clap won't reject this at parse time since they're separate fields,
+        // but validation in main.rs will. Here we just test parsing works.
+        let args = Args::parse_from(["oc-deps", "snapshot", "-n", "ns", "-A"]);
+        match args.command {
+            Some(Command::Snapshot {
+                namespace,
+                all_namespaces,
+                ..
+            }) => {
+                assert!(namespace.is_some());
+                assert!(all_namespaces);
+            }
+            _ => panic!("Expected Command::Snapshot"),
         }
     }
 }

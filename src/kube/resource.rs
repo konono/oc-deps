@@ -236,7 +236,7 @@ pub struct SpecRefEntry {
     pub field_path: String,
 }
 
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResourceEntry {
@@ -254,6 +254,32 @@ pub struct ResourceEntry {
     pub secret_value_hashes: Option<HashMap<String, String>>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SnapshotScope {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub namespace_selectors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_namespaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclude_system_namespaces: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_namespaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub complete_namespaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incomplete_namespaces: Vec<IncompleteNamespace>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IncompleteNamespace {
+    pub namespace: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ScanWarning>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterSnapshot {
     #[serde(default)]
@@ -268,6 +294,8 @@ pub struct ClusterSnapshot {
     pub cluster_url: String,
     pub taken_at: String,
     pub namespaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<SnapshotScope>,
 }
 
 fn deserialize_scan_warnings<'de, D>(deserializer: D) -> Result<Vec<ScanWarning>, D::Error>
@@ -1024,6 +1052,7 @@ mod tests {
             cluster_url: "https://api.test:6443".into(),
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec!["default".into()],
+            scope: None,
         };
         let json = serde_json::to_string(&snap).unwrap();
         let snap2: ClusterSnapshot = serde_json::from_str(&json).unwrap();
@@ -1702,5 +1731,72 @@ mod tests {
         assert_eq!(refs[1].target_kind, "ConfigMap");
         assert_eq!(refs[1].field_path, "spec.volumes.[1]");
         assert_eq!(refs[2].target_kind, "Secret");
+    }
+
+    #[test]
+    fn snapshot_v3_scope_roundtrip() {
+        let snap = ClusterSnapshot {
+            schema_version: Some(3),
+            resources: HashMap::new(),
+            scan_warnings: vec![],
+            cluster_url: "https://api.test:6443".into(),
+            taken_at: "2026-01-01T00:00:00Z".into(),
+            namespaces: vec!["ns-a".into(), "ns-b".into()],
+            scope: Some(SnapshotScope {
+                mode: "filtered".into(),
+                namespace_selectors: vec!["env=prod".into()],
+                exclude_namespaces: vec!["temp-*".into()],
+                exclude_system_namespaces: true,
+                requested_namespaces: vec![],
+                complete_namespaces: vec!["ns-a".into()],
+                incomplete_namespaces: vec![IncompleteNamespace {
+                    namespace: "ns-b".into(),
+                    warnings: vec![ScanWarning::Forbidden {
+                        gvr: "v1/secrets".into(),
+                        status: 403,
+                    }],
+                    error: None,
+                }],
+            }),
+        };
+        let json = serde_json::to_string_pretty(&snap).unwrap();
+        let snap2: ClusterSnapshot = serde_json::from_str(&json).unwrap();
+        let scope = snap2.scope.unwrap();
+        assert_eq!(scope.mode, "filtered");
+        assert_eq!(scope.namespace_selectors, vec!["env=prod"]);
+        assert_eq!(scope.exclude_namespaces, vec!["temp-*"]);
+        assert!(scope.exclude_system_namespaces);
+        assert_eq!(scope.complete_namespaces, vec!["ns-a"]);
+        assert_eq!(scope.incomplete_namespaces.len(), 1);
+        assert_eq!(scope.incomplete_namespaces[0].namespace, "ns-b");
+    }
+
+    #[test]
+    fn v2_snapshot_deserializes_with_scope_none() {
+        let json = serde_json::json!({
+            "schema_version": 2,
+            "resources": {},
+            "scan_warnings": [],
+            "cluster_url": "https://api.test:6443",
+            "taken_at": "2026-01-01T00:00:00Z",
+            "namespaces": ["default"]
+        });
+        let snap: ClusterSnapshot = serde_json::from_value(json).unwrap();
+        assert!(snap.scope.is_none());
+        assert_eq!(snap.schema_version, Some(2));
+    }
+
+    #[test]
+    fn v1_snapshot_no_version_deserializes() {
+        let json = serde_json::json!({
+            "resources": {},
+            "scan_warnings": [],
+            "cluster_url": "https://api.test:6443",
+            "taken_at": "2026-01-01T00:00:00Z",
+            "namespaces": ["default"]
+        });
+        let snap: ClusterSnapshot = serde_json::from_value(json).unwrap();
+        assert!(snap.schema_version.is_none());
+        assert!(snap.scope.is_none());
     }
 }
