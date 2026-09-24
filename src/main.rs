@@ -5442,9 +5442,30 @@ async fn main() -> Result<()> {
                                             }
                                         })
                                         .unwrap_or_default();
+                                    let mut meta_parts = Vec::new();
+                                    if let Some(h) = &ep.hostname {
+                                        meta_parts.push(format!("host={}", h));
+                                    }
+                                    if let Some(n) = &ep.node_name {
+                                        meta_parts.push(format!("node={}", n));
+                                    }
+                                    if let Some(z) = &ep.zone {
+                                        meta_parts.push(format!("zone={}", z));
+                                    }
+                                    let meta_str = if meta_parts.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!(" {}", meta_parts.join(" "))
+                                    };
                                     println!(
-                                        "      {} [{}{}{}]{}{}",
-                                        addrs, ready_str, serving_str, term_str, target, hints_str
+                                        "      {} [{}{}{}]{}{}{}",
+                                        addrs,
+                                        ready_str,
+                                        serving_str,
+                                        term_str,
+                                        target,
+                                        meta_str,
+                                        hints_str
                                     );
                                 }
                             }

@@ -19,9 +19,25 @@ pub(crate) async fn list_with_retry_and_timeout(
     version: &str,
     plural: &str,
 ) -> Result<Vec<DynamicObject>, ScanWarning> {
+    list_with_retry_inner(
+        api,
+        group,
+        version,
+        plural,
+        std::time::Duration::from_secs(30),
+    )
+    .await
+}
+
+pub(crate) async fn list_with_retry_inner(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    timeout_dur: std::time::Duration,
+) -> Result<Vec<DynamicObject>, ScanWarning> {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     for attempt in 0..=2usize {
-        let timeout_dur = std::time::Duration::from_secs(30);
         match tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await {
             Ok(Ok(list)) => return Ok(list.items),
             Ok(Err(e)) => {
@@ -295,7 +311,7 @@ pub struct NetworkInventory {
     pub warnings: Vec<ScanWarning>,
 }
 
-fn parse_service(obj: DynamicObject) -> Option<NetworkService> {
+pub(crate) fn parse_service(obj: DynamicObject) -> Option<NetworkService> {
     let name = obj.metadata.name?;
     let spec = obj.data.get("spec");
     let status = obj.data.get("status");
@@ -1426,169 +1442,174 @@ mod tests {
         assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 
-    // ── Parse service field matrix test ──
+    // ── Parse service via real parse_service function ──
+
+    fn make_dynamic_object(name: &str, data: serde_json::Value) -> DynamicObject {
+        DynamicObject {
+            metadata: kube::core::ObjectMeta {
+                name: Some(name.into()),
+                ..Default::default()
+            },
+            types: None,
+            data,
+        }
+    }
 
     #[test]
     fn parse_service_full_field_matrix() {
-        let data = serde_json::json!({
-            "spec": {
-                "type": "LoadBalancer",
-                "clusterIP": "10.0.0.1",
-                "selector": {"app": "test"},
-                "ports": [{
-                    "port": 443,
-                    "targetPort": 8443,
-                    "protocol": "TCP",
-                    "nodePort": 31443
-                }],
-                "externalIPs": ["192.168.1.1", "192.168.1.2"],
-                "ipFamilies": ["IPv4", "IPv6"],
-                "externalTrafficPolicy": "Local",
-                "internalTrafficPolicy": "Cluster",
-                "ipFamilyPolicy": "PreferDualStack",
-                "healthCheckNodePort": 30000,
-                "loadBalancerClass": "metallb",
-                "allocateLoadBalancerNodePorts": true
-            },
-            "status": {
-                "loadBalancer": {
-                    "ingress": [
-                        {"ip": "203.0.113.1", "hostname": "lb.example.com", "ipMode": "VIP"},
-                        {"hostname": "lb2.example.com"}
-                    ]
+        let obj = make_dynamic_object(
+            "lb-svc",
+            serde_json::json!({
+                "spec": {
+                    "type": "LoadBalancer",
+                    "clusterIP": "10.0.0.1",
+                    "selector": {"app": "test"},
+                    "ports": [{"port": 443, "targetPort": 8443, "protocol": "TCP", "nodePort": 31443}],
+                    "externalIPs": ["192.168.1.1", "192.168.1.2"],
+                    "ipFamilies": ["IPv4", "IPv6"],
+                    "externalTrafficPolicy": "Local",
+                    "internalTrafficPolicy": "Cluster",
+                    "ipFamilyPolicy": "PreferDualStack",
+                    "healthCheckNodePort": 30000,
+                    "loadBalancerClass": "metallb",
+                    "allocateLoadBalancerNodePorts": true
+                },
+                "status": {
+                    "loadBalancer": {
+                        "ingress": [
+                            {"ip": "203.0.113.1", "hostname": "lb.example.com", "ipMode": "VIP"},
+                            {"hostname": "lb2.example.com"}
+                        ]
+                    }
                 }
-            }
-        });
-
-        let spec = data.get("spec");
-        let status = data.get("status");
-        let selector: BTreeMap<String, String> =
-            [("app".into(), "test".into())].into_iter().collect();
-
-        let svc_type = spec
-            .and_then(|s| s.get("type"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("ClusterIP")
-            .to_string();
-        let cluster_ip = spec
-            .and_then(|s| s.get("clusterIP"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("None")
-            .to_string();
-
-        assert_eq!(svc_type, "LoadBalancer");
-        assert_eq!(cluster_ip, "10.0.0.1");
-        assert!(!selector.is_empty());
-
-        // Verify nodePort extraction
-        let ports: Vec<_> = spec
-            .and_then(|s| s.get("ports"))
-            .and_then(|p| p.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|p| {
-                        let port = p.get("port")?.as_u64()? as u16;
-                        let np = p.get("nodePort").and_then(|v| v.as_u64()).map(|v| v as u16);
-                        Some((port, np))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert_eq!(ports, vec![(443, Some(31443))]);
-
-        // Verify externalIPs
-        let external_ips: Vec<String> = spec
-            .and_then(|s| s.get("externalIPs"))
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert_eq!(external_ips, vec!["192.168.1.1", "192.168.1.2"]);
-
-        // Verify ipFamilies
-        let ip_families: Vec<String> = spec
-            .and_then(|s| s.get("ipFamilies"))
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert_eq!(ip_families, vec!["IPv4", "IPv6"]);
-
-        // Verify LB ingress with ip+hostname+ipMode
-        let lb_ingress: Vec<_> = status
-            .and_then(|s| s.get("loadBalancer"))
-            .and_then(|lb| lb.get("ingress"))
-            .and_then(|i| i.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|entry| {
-                        let ip = entry.get("ip").and_then(|v| v.as_str()).map(String::from);
-                        let hostname = entry
-                            .get("hostname")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                        let ip_mode = entry
-                            .get("ipMode")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                        (ip, hostname, ip_mode)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert_eq!(lb_ingress.len(), 2);
-        assert_eq!(lb_ingress[0].0, Some("203.0.113.1".into()));
-        assert_eq!(lb_ingress[0].1, Some("lb.example.com".into()));
-        assert_eq!(lb_ingress[0].2, Some("VIP".into()));
-        assert_eq!(lb_ingress[1].0, None);
-        assert_eq!(lb_ingress[1].1, Some("lb2.example.com".into()));
-
-        // Verify traffic policies
-        assert_eq!(
-            spec.and_then(|s| s.get("externalTrafficPolicy"))
-                .and_then(|v| v.as_str()),
-            Some("Local")
+            }),
         );
+
+        let svc = parse_service(obj).expect("should parse");
+        assert_eq!(svc.name, "lb-svc");
+        assert_eq!(svc.svc_type, "LoadBalancer");
+        assert_eq!(svc.cluster_ip, "10.0.0.1");
+        assert!(svc.has_selector);
+        assert_eq!(svc.selector.get("app").unwrap(), "test");
+
+        assert_eq!(svc.ports.len(), 1);
+        assert_eq!(svc.ports[0].port, 443);
+        assert_eq!(svc.ports[0].node_port, Some(31443));
+
+        assert_eq!(svc.external_ips, vec!["192.168.1.1", "192.168.1.2"]);
+        assert_eq!(svc.ip_families, vec!["IPv4", "IPv6"]);
+        assert_eq!(svc.external_traffic_policy.as_deref(), Some("Local"));
+        assert_eq!(svc.internal_traffic_policy.as_deref(), Some("Cluster"));
+        assert_eq!(svc.ip_family_policy.as_deref(), Some("PreferDualStack"));
+        assert_eq!(svc.health_check_node_port, Some(30000));
+        assert_eq!(svc.load_balancer_class.as_deref(), Some("metallb"));
+        assert_eq!(svc.allocate_lb_node_ports, Some(true));
+
+        assert_eq!(svc.lb_ingress.len(), 2);
+        assert_eq!(svc.lb_ingress[0].ip.as_deref(), Some("203.0.113.1"));
         assert_eq!(
-            spec.and_then(|s| s.get("healthCheckNodePort"))
-                .and_then(|v| v.as_u64()),
-            Some(30000)
+            svc.lb_ingress[0].hostname.as_deref(),
+            Some("lb.example.com")
         );
+        assert_eq!(svc.lb_ingress[0].ip_mode.as_deref(), Some("VIP"));
+        assert_eq!(svc.lb_ingress[1].ip, None);
         assert_eq!(
-            spec.and_then(|s| s.get("ipFamilyPolicy"))
-                .and_then(|v| v.as_str()),
-            Some("PreferDualStack")
-        );
-        assert_eq!(
-            spec.and_then(|s| s.get("loadBalancerClass"))
-                .and_then(|v| v.as_str()),
-            Some("metallb")
+            svc.lb_ingress[1].hostname.as_deref(),
+            Some("lb2.example.com")
         );
     }
 
     #[test]
-    fn headless_classification() {
-        let cluster_ip = "None";
-        let svc_type = "ClusterIP";
-        let classified = if cluster_ip == "None" && svc_type == "ClusterIP" {
-            "Headless"
-        } else {
-            svc_type
-        };
-        assert_eq!(classified, "Headless");
+    fn parse_service_headless() {
+        let obj = make_dynamic_object(
+            "headless-svc",
+            serde_json::json!({
+                "spec": {
+                    "type": "ClusterIP",
+                    "clusterIP": "None",
+                    "selector": {"app": "test"},
+                    "ports": [{"port": 80, "targetPort": 8080, "protocol": "TCP"}]
+                }
+            }),
+        );
+        let svc = parse_service(obj).expect("should parse");
+        assert_eq!(svc.svc_type, "Headless");
+        assert_eq!(svc.cluster_ip, "None");
+    }
 
-        let cluster_ip2 = "10.0.0.1";
-        let classified2 = if cluster_ip2 == "None" && svc_type == "ClusterIP" {
-            "Headless"
-        } else {
-            svc_type
-        };
-        assert_eq!(classified2, "ClusterIP");
+    #[test]
+    fn parse_service_nodeport() {
+        let obj = make_dynamic_object(
+            "np-svc",
+            serde_json::json!({
+                "spec": {
+                    "type": "NodePort",
+                    "clusterIP": "10.0.0.2",
+                    "selector": {"app": "test"},
+                    "ports": [{"port": 80, "targetPort": 8080, "protocol": "TCP", "nodePort": 30080}]
+                }
+            }),
+        );
+        let svc = parse_service(obj).expect("should parse");
+        assert_eq!(svc.svc_type, "NodePort");
+        assert_eq!(svc.ports[0].node_port, Some(30080));
+    }
+
+    #[test]
+    fn parse_service_selectorless() {
+        let obj = make_dynamic_object(
+            "no-sel",
+            serde_json::json!({
+                "spec": {
+                    "type": "ClusterIP",
+                    "clusterIP": "10.0.0.3",
+                    "ports": [{"port": 9090, "targetPort": 9090, "protocol": "TCP"}]
+                }
+            }),
+        );
+        let svc = parse_service(obj).expect("should parse selectorless");
+        assert!(!svc.has_selector);
+        assert!(svc.selector.is_empty());
+    }
+
+    #[tokio::test]
+    async fn retry_timeout_3_attempts() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gvk = kube::core::GroupVersion::gv("", "v1").with_kind("Service");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, "services");
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.unwrap();
+                rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // Don't respond — let it timeout
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                send.send_response(mock_empty_list());
+            }
+        });
+
+        // Use very short timeout (50ms) so test doesn't take 90s
+        let result = list_with_retry_inner(
+            &api,
+            "",
+            "v1",
+            "services",
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        spawned.await.unwrap();
+
+        assert!(result.is_err(), "should fail after 3 timeout attempts");
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 3);
+        assert!(
+            matches!(result.unwrap_err(), ScanWarning::Timeout { retries: 2, .. }),
+            "should be Timeout with retries=2"
+        );
     }
 }
