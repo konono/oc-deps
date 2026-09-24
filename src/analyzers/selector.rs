@@ -296,6 +296,13 @@ impl EndpointSummary {
 
 // ── NetworkPolicy types ──
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum NetworkPolicyAvailability {
+    Available,
+    ApiAbsent,
+    Unavailable,
+}
+
 #[derive(Clone, Debug)]
 pub struct NetworkPolicyInfo {
     pub name: String,
@@ -407,6 +414,7 @@ pub struct NetworkInventory {
     pub ingresses: Vec<NetworkIngress>,
     pub endpoint_slices: Vec<EndpointSliceInfo>,
     pub network_policies: Vec<NetworkPolicyInfo>,
+    pub np_availability: NetworkPolicyAvailability,
     pub warnings: Vec<ScanWarning>,
 }
 
@@ -1094,14 +1102,18 @@ pub(crate) async fn list_network_policies(
     client: &Client,
     namespace: &str,
     gk_map: &GroupKindMap,
-) -> (Vec<NetworkPolicyInfo>, Vec<ScanWarning>) {
+) -> (
+    Vec<NetworkPolicyInfo>,
+    NetworkPolicyAvailability,
+    Vec<ScanWarning>,
+) {
     let mut result = Vec::new();
     let mut warnings = Vec::new();
 
     let key = ("networking.k8s.io".to_string(), "NetworkPolicy".to_string());
     let info = match gk_map.get(&key) {
         Some(i) => i,
-        None => return (result, warnings),
+        None => return (result, NetworkPolicyAvailability::ApiAbsent, warnings),
     };
 
     let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("NetworkPolicy");
@@ -1115,13 +1127,13 @@ pub(crate) async fn list_network_policies(
                     result.push(np);
                 }
             }
+            (result, NetworkPolicyAvailability::Available, warnings)
         }
         Err(w) => {
             warnings.push(w);
+            (result, NetworkPolicyAvailability::Unavailable, warnings)
         }
     }
-
-    (result, warnings)
 }
 
 /// Determine effective policyTypes for a NetworkPolicy.
@@ -1141,12 +1153,12 @@ fn effective_policy_types(np: &NetworkPolicyInfo) -> Vec<String> {
 pub(crate) fn evaluate_network_postures(
     pod_entries: &[(String, String, std::collections::HashMap<String, String>)],
     policies: &[NetworkPolicyInfo],
-    api_available: bool,
+    availability: &NetworkPolicyAvailability,
 ) -> Vec<PodNetworkPosture> {
     pod_entries
         .iter()
         .map(|(pod_name, pod_uid, labels)| {
-            if !api_available {
+            if *availability != NetworkPolicyAvailability::Available {
                 return PodNetworkPosture {
                     pod_name: pod_name.clone(),
                     pod_uid: pod_uid.clone(),
@@ -1226,7 +1238,8 @@ pub async fn build_network_inventory(
     let (endpoint_slices, eps_warnings) = list_endpoint_slices(client, namespace, gk_map).await;
     warnings.extend(eps_warnings);
 
-    let (network_policies, np_warnings) = list_network_policies(client, namespace, gk_map).await;
+    let (network_policies, np_availability, np_warnings) =
+        list_network_policies(client, namespace, gk_map).await;
     warnings.extend(np_warnings);
 
     NetworkInventory {
@@ -1234,6 +1247,7 @@ pub async fn build_network_inventory(
         ingresses,
         endpoint_slices,
         network_policies,
+        np_availability,
         warnings,
     }
 }
@@ -1489,6 +1503,7 @@ mod tests {
             }],
             endpoint_slices: vec![],
             network_policies: vec![],
+            np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
         };
         let labels: std::collections::HashMap<String, String> =
@@ -1508,6 +1523,7 @@ mod tests {
             ingresses: vec![],
             endpoint_slices: vec![],
             network_policies: vec![],
+            np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
         };
         let labels: std::collections::HashMap<String, String> =
@@ -1692,6 +1708,7 @@ mod tests {
                 ],
             }],
             network_policies: vec![],
+            np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
         };
         let labels: std::collections::HashMap<String, String> =
@@ -2239,7 +2256,7 @@ mod tests {
             "uid-1".into(),
             make_labels(&[("app", "web")]),
         )];
-        let postures = evaluate_network_postures(&pods, &[], true);
+        let postures = evaluate_network_postures(&pods, &[], &NetworkPolicyAvailability::Available);
         assert_eq!(postures.len(), 1);
         assert_eq!(postures[0].ingress_isolation, "non-isolated");
         assert_eq!(postures[0].egress_isolation, "non-isolated");
@@ -2267,7 +2284,8 @@ mod tests {
             "uid-1".into(),
             make_labels(&[("app", "web")]),
         )];
-        let postures = evaluate_network_postures(&pods, &policies, true);
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Available);
         assert_eq!(postures[0].ingress_isolation, "isolated");
         assert_eq!(postures[0].egress_isolation, "non-isolated");
         assert_eq!(postures[0].applicable_policies.len(), 1);
@@ -2289,7 +2307,8 @@ mod tests {
             "uid-1".into(),
             make_labels(&[("app", "web")]),
         )];
-        let postures = evaluate_network_postures(&pods, &policies, true);
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Available);
         // policyTypes=["Egress"] only isolates egress, not ingress
         assert_eq!(postures[0].ingress_isolation, "non-isolated");
         assert_eq!(postures[0].egress_isolation, "isolated");
@@ -2313,7 +2332,8 @@ mod tests {
             "uid-1".into(),
             make_labels(&[("app", "web")]),
         )];
-        let postures = evaluate_network_postures(&pods, &[pol1], true);
+        let postures =
+            evaluate_network_postures(&pods, &[pol1], &NetworkPolicyAvailability::Available);
         assert_eq!(postures[0].ingress_isolation, "isolated");
         assert_eq!(postures[0].egress_isolation, "non-isolated");
 
@@ -2328,7 +2348,8 @@ mod tests {
                 ports: vec![],
             }],
         };
-        let postures2 = evaluate_network_postures(&pods, &[pol2], true);
+        let postures2 =
+            evaluate_network_postures(&pods, &[pol2], &NetworkPolicyAvailability::Available);
         assert_eq!(postures2[0].ingress_isolation, "isolated");
         assert_eq!(postures2[0].egress_isolation, "isolated");
     }
@@ -2343,7 +2364,8 @@ mod tests {
             egress_rules: vec![],
         }];
         let pods = vec![("pod-1".into(), "uid-1".into(), make_labels(&[]))];
-        let postures = evaluate_network_postures(&pods, &policies, true);
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Available);
         assert_eq!(postures[0].ingress_isolation, "isolated");
         assert_eq!(postures[0].egress_isolation, "isolated");
         assert!(postures[0].applicable_policies[0].ingress_rules.is_empty());
@@ -2379,7 +2401,8 @@ mod tests {
             "uid-1".into(),
             make_labels(&[("app", "web")]),
         )];
-        let postures = evaluate_network_postures(&pods, &policies, true);
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Available);
         assert_eq!(postures[0].applicable_policies.len(), 2);
         assert_eq!(postures[0].ingress_isolation, "isolated");
         assert_eq!(postures[0].egress_isolation, "isolated");
@@ -2406,7 +2429,8 @@ mod tests {
                 make_labels(&[("app", "db")]),
             ),
         ];
-        let postures = evaluate_network_postures(&pods, &policies, true);
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Available);
         assert_eq!(postures[0].pod_name, "pod-web");
         assert_eq!(postures[0].ingress_isolation, "isolated");
         assert_eq!(postures[1].pod_name, "pod-db");
@@ -2423,7 +2447,8 @@ mod tests {
             egress_rules: vec![],
         }];
         let pods = vec![("pod-1".into(), "uid-1".into(), make_labels(&[]))];
-        let postures = evaluate_network_postures(&pods, &policies, false);
+        let postures =
+            evaluate_network_postures(&pods, &policies, &NetworkPolicyAvailability::Unavailable);
         assert_eq!(postures[0].ingress_isolation, "unknown");
         assert_eq!(postures[0].egress_isolation, "unknown");
         assert!(postures[0].applicable_policies.is_empty());
@@ -2540,10 +2565,12 @@ mod tests {
             send.send_response(resp);
         });
 
-        let (policies, warnings) = list_network_policies(&client, "test-ns", &gk_map).await;
+        let (policies, availability, warnings) =
+            list_network_policies(&client, "test-ns", &gk_map).await;
         spawned.await.unwrap();
 
         assert!(policies.is_empty());
+        assert_eq!(availability, NetworkPolicyAvailability::Unavailable);
         assert_eq!(warnings.len(), 1);
         assert!(
             matches!(&warnings[0], ScanWarning::Forbidden { status: 403, .. }),

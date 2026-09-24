@@ -5017,6 +5017,7 @@ async fn main() -> Result<()> {
             match args.output {
                 OutputFormat::Json => {
                     extra_json.insert("networkPaths".into(), serde_json::json!([]));
+                    extra_json.insert("networkPolicyPostures".into(), serde_json::json!([]));
                 }
                 _ => println!("\n📎 No Pods found under {}/{}", kind, name),
             }
@@ -5032,14 +5033,10 @@ async fn main() -> Result<()> {
                 all_paths.push((pod_name, path));
             }
 
-            let np_api_available = !inventory.warnings.iter().any(|w| {
-                matches!(w, crate::kube::resource::ScanWarning::Forbidden { .. })
-                    && format!("{}", w).contains("networkpolicies")
-            });
             let postures = evaluate_network_postures(
                 &pod_labels_list,
                 &inventory.network_policies,
-                np_api_available,
+                &inventory.np_availability,
             );
 
             match args.output {
@@ -5270,10 +5267,10 @@ async fn main() -> Result<()> {
                                                 "peers": r.peers.iter().map(|peer| {
                                                     let mut obj = serde_json::Map::new();
                                                     if let Some(ps) = &peer.pod_selector {
-                                                        obj.insert("podSelector".into(), serde_json::json!({"matchLabels": ps.match_labels}));
+                                                        obj.insert("podSelector".into(), selector_to_json(ps));
                                                     }
                                                     if let Some(ns) = &peer.namespace_selector {
-                                                        obj.insert("namespaceSelector".into(), serde_json::json!({"matchLabels": ns.match_labels}));
+                                                        obj.insert("namespaceSelector".into(), selector_to_json(ns));
                                                     }
                                                     if let Some(ib) = &peer.ip_block {
                                                         obj.insert("ipBlock".into(), serde_json::json!({"cidr": ib.cidr, "except": ib.except}));
@@ -5286,7 +5283,11 @@ async fn main() -> Result<()> {
                                                         obj.insert("protocol".into(), serde_json::json!(proto));
                                                     }
                                                     if let Some(p) = &port.port {
-                                                        obj.insert("port".into(), serde_json::json!(p));
+                                                        if let Ok(n) = p.parse::<u16>() {
+                                                            obj.insert("port".into(), serde_json::json!(n));
+                                                        } else {
+                                                            obj.insert("port".into(), serde_json::json!(p));
+                                                        }
                                                     }
                                                     if let Some(ep) = port.end_port {
                                                         obj.insert("endPort".into(), serde_json::json!(ep));
@@ -5304,10 +5305,10 @@ async fn main() -> Result<()> {
                                                 "peers": r.peers.iter().map(|peer| {
                                                     let mut obj = serde_json::Map::new();
                                                     if let Some(ps) = &peer.pod_selector {
-                                                        obj.insert("podSelector".into(), serde_json::json!({"matchLabels": ps.match_labels}));
+                                                        obj.insert("podSelector".into(), selector_to_json(ps));
                                                     }
                                                     if let Some(ns) = &peer.namespace_selector {
-                                                        obj.insert("namespaceSelector".into(), serde_json::json!({"matchLabels": ns.match_labels}));
+                                                        obj.insert("namespaceSelector".into(), selector_to_json(ns));
                                                     }
                                                     if let Some(ib) = &peer.ip_block {
                                                         obj.insert("ipBlock".into(), serde_json::json!({"cidr": ib.cidr, "except": ib.except}));
@@ -5320,7 +5321,11 @@ async fn main() -> Result<()> {
                                                         obj.insert("protocol".into(), serde_json::json!(proto));
                                                     }
                                                     if let Some(p) = &port.port {
-                                                        obj.insert("port".into(), serde_json::json!(p));
+                                                        if let Ok(n) = p.parse::<u16>() {
+                                                            obj.insert("port".into(), serde_json::json!(n));
+                                                        } else {
+                                                            obj.insert("port".into(), serde_json::json!(p));
+                                                        }
                                                     }
                                                     if let Some(ep) = port.end_port {
                                                         obj.insert("endPort".into(), serde_json::json!(ep));
@@ -5355,7 +5360,13 @@ async fn main() -> Result<()> {
                     );
 
                     let mut all_warnings = scan_warnings.clone();
-                    all_warnings.extend(inventory.warnings.iter().cloned());
+                    let existing: std::collections::HashSet<String> =
+                        all_warnings.iter().map(|w| format!("{}", w)).collect();
+                    for w in &inventory.warnings {
+                        if !existing.contains(&format!("{}", w)) {
+                            all_warnings.push(w.clone());
+                        }
+                    }
                     let json_warnings: Vec<_> = all_warnings
                         .iter()
                         .map(|w| {
@@ -5719,6 +5730,49 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn selector_to_json(sel: &crate::analyzers::selector::PodSelector) -> serde_json::Value {
+    let mut obj = serde_json::json!({});
+    if !sel.match_labels.is_empty() {
+        obj["matchLabels"] = serde_json::json!(sel.match_labels);
+    }
+    if !sel.match_expressions.is_empty() {
+        let exprs: Vec<_> = sel
+            .match_expressions
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "key": e.key,
+                    "operator": e.operator,
+                    "values": e.values,
+                })
+            })
+            .collect();
+        obj["matchExpressions"] = serde_json::json!(exprs);
+    }
+    obj
+}
+
+fn format_selector(sel: &crate::analyzers::selector::PodSelector) -> String {
+    let mut parts = Vec::new();
+    for (k, v) in &sel.match_labels {
+        parts.push(format!("{}={}", k, v));
+    }
+    for expr in &sel.match_expressions {
+        match expr.operator.as_str() {
+            "In" => parts.push(format!("{} in ({})", expr.key, expr.values.join(","))),
+            "NotIn" => parts.push(format!("{} notin ({})", expr.key, expr.values.join(","))),
+            "Exists" => parts.push(expr.key.clone()),
+            "DoesNotExist" => parts.push(format!("!{}", expr.key)),
+            _ => parts.push(format!("{}?{}", expr.key, expr.operator)),
+        }
+    }
+    if parts.is_empty() {
+        "*".to_string()
+    } else {
+        parts.join(",")
+    }
+}
+
 fn format_policy_peers(peers: &[crate::analyzers::selector::NetworkPolicyPeer]) -> String {
     if peers.is_empty() {
         return String::new();
@@ -5728,28 +5782,10 @@ fn format_policy_peers(peers: &[crate::analyzers::selector::NetworkPolicyPeer]) 
         .map(|peer| {
             let mut parts = Vec::new();
             if let Some(ns) = &peer.namespace_selector {
-                let labels: Vec<_> = ns
-                    .match_labels
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
-                    .collect();
-                if labels.is_empty() {
-                    parts.push("namespaceSelector{*}".to_string());
-                } else {
-                    parts.push(format!("namespaceSelector{{{}}}", labels.join(",")));
-                }
+                parts.push(format!("namespaceSelector{{{}}}", format_selector(ns)));
             }
             if let Some(ps) = &peer.pod_selector {
-                let labels: Vec<_> = ps
-                    .match_labels
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
-                    .collect();
-                if labels.is_empty() {
-                    parts.push("podSelector{*}".to_string());
-                } else {
-                    parts.push(format!("podSelector{{{}}}", labels.join(",")));
-                }
+                parts.push(format!("podSelector{{{}}}", format_selector(ps)));
             }
             if let Some(ib) = &peer.ip_block {
                 let mut s = format!("ipBlock:{}", ib.cidr);
