@@ -1,4 +1,4 @@
-use crate::kube::resource::{SpecRef, dedup_spec_refs};
+use crate::kube::resource::{SpecRef, SpecRefSource, dedup_spec_refs};
 
 pub fn extract_well_known_refs(data: &serde_json::Value) -> Vec<SpecRef> {
     let mut refs = Vec::new();
@@ -22,6 +22,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "Secret".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.name", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -31,6 +32,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "ConfigMap".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.name", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -40,6 +42,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "ConfigMap".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.name", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -49,6 +52,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "Secret".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.name", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -60,6 +64,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "ServiceAccount".to_string(),
                                 target_name: name.to_string(),
                                 field_path: path.join("."),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -69,6 +74,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "ConfigMap".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.name", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -78,6 +84,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "Secret".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.secretName", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -87,6 +94,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "PersistentVolumeClaim".to_string(),
                                 target_name: name.to_string(),
                                 field_path: format!("{}.claimName", path.join(".")),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -98,6 +106,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                         target_kind: "Secret".to_string(),
                                         target_name: name.to_string(),
                                         field_path: format!("{}[{}].name", path.join("."), i),
+                                        source: SpecRefSource::Typed,
                                     });
                                 }
                             }
@@ -111,6 +120,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                                 target_kind: "Secret".to_string(),
                                 target_name: name.to_string(),
                                 field_path: path.join("."),
+                                source: SpecRefSource::Typed,
                             });
                         }
                     }
@@ -126,6 +136,7 @@ fn walk_for_well_known(value: &serde_json::Value, path: &mut Vec<String>, refs: 
                             target_kind: "PersistentVolumeClaim".to_string(),
                             target_name: pvc_name.to_string(),
                             field_path: path.join("."),
+                            source: SpecRefSource::Typed,
                         });
                     }
                 }
@@ -386,5 +397,168 @@ mod tests {
                 .map(|r| format!("{}/{}", r.target_kind, r.target_name))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn well_known_refs_have_typed_source() {
+        let data = serde_json::json!({
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "my-sa",
+                        "containers": [{
+                            "name": "app",
+                            "envFrom": [{"secretRef": {"name": "my-secret"}}]
+                        }],
+                        "volumes": [
+                            {"name": "config", "configMap": {"name": "my-cm"}},
+                            {"name": "data", "persistentVolumeClaim": {"claimName": "my-pvc"}}
+                        ]
+                    }
+                }
+            }
+        });
+        let refs = extract_well_known_refs(&data);
+        assert!(
+            refs.len() >= 4,
+            "expected at least 4 refs, got {}",
+            refs.len()
+        );
+        for r in &refs {
+            assert_eq!(
+                r.source,
+                SpecRefSource::Typed,
+                "ref {}/{} should be Typed, got {:?}",
+                r.target_kind,
+                r.target_name,
+                r.source
+            );
+        }
+        assert!(
+            refs.iter()
+                .any(|r| r.target_kind == "ServiceAccount" && r.target_name == "my-sa")
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.target_kind == "Secret" && r.target_name == "my-secret")
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.target_kind == "ConfigMap" && r.target_name == "my-cm")
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.target_kind == "PersistentVolumeClaim" && r.target_name == "my-pvc")
+        );
+    }
+
+    #[test]
+    fn pod_spec_secret_volume_typed() {
+        let data = serde_json::json!({
+            "spec": {
+                "volumes": [{"name": "tls", "secret": {"secretName": "tls-cert"}}],
+                "containers": [{"name": "app"}]
+            }
+        });
+        let refs = extract_well_known_refs(&data);
+        let secret_ref = refs.iter().find(|r| r.target_name == "tls-cert").unwrap();
+        assert_eq!(secret_ref.target_kind, "Secret");
+        assert_eq!(secret_ref.source, SpecRefSource::Typed);
+        assert!(secret_ref.field_path.contains("secretName"));
+    }
+
+    #[test]
+    fn image_pull_secret_typed() {
+        let data = serde_json::json!({
+            "spec": {
+                "imagePullSecrets": [{"name": "registry-cred"}],
+                "containers": [{"name": "app"}]
+            }
+        });
+        let refs = extract_well_known_refs(&data);
+        let r = refs
+            .iter()
+            .find(|r| r.target_name == "registry-cred")
+            .unwrap();
+        assert_eq!(r.target_kind, "Secret");
+        assert_eq!(r.source, SpecRefSource::Typed);
+    }
+
+    #[test]
+    fn env_value_from_configmap_typed() {
+        let data = serde_json::json!({
+            "spec": {
+                "containers": [{
+                    "name": "app",
+                    "env": [{"name": "DB_HOST", "valueFrom": {"configMapKeyRef": {"name": "db-config", "key": "host"}}}]
+                }]
+            }
+        });
+        let refs = extract_well_known_refs(&data);
+        let r = refs.iter().find(|r| r.target_name == "db-config").unwrap();
+        assert_eq!(r.target_kind, "ConfigMap");
+        assert_eq!(r.source, SpecRefSource::Typed);
+    }
+
+    #[test]
+    fn projected_volume_configmap_typed() {
+        let data = serde_json::json!({
+            "spec": {
+                "volumes": [{
+                    "name": "projected",
+                    "projected": {
+                        "sources": [
+                            {"configMap": {"name": "ca-bundle"}}
+                        ]
+                    }
+                }],
+                "containers": [{"name": "app"}]
+            }
+        });
+        let refs = extract_well_known_refs(&data);
+        assert!(refs.iter().any(|r| r.target_kind == "ConfigMap"
+            && r.target_name == "ca-bundle"
+            && r.source == SpecRefSource::Typed));
+    }
+
+    #[test]
+    fn service_account_dedup_across_both_fields() {
+        let data = deployment_spec_with_service_account("dashboard");
+        let refs = extract_well_known_refs(&data);
+        let sa_refs: Vec<_> = refs
+            .iter()
+            .filter(|r| r.target_kind == "ServiceAccount")
+            .collect();
+        assert_eq!(
+            sa_refs.len(),
+            1,
+            "serviceAccount + serviceAccountName should dedup to 1"
+        );
+        assert_eq!(sa_refs[0].target_name, "dashboard");
+    }
+
+    #[test]
+    fn cronjob_template_refs_typed() {
+        let data = serde_json::json!({
+            "spec": {
+                "jobTemplate": {
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "serviceAccountName": "cron-sa",
+                                "containers": [{"name": "job"}]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let refs = extract_well_known_refs(&data);
+        let sa = refs.iter().find(|r| r.target_kind == "ServiceAccount");
+        assert!(
+            sa.is_some(),
+            "CronJob jobTemplate serviceAccountName should be found"
+        );
+        assert_eq!(sa.unwrap().source, SpecRefSource::Typed);
     }
 }

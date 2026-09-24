@@ -4154,8 +4154,16 @@ async fn main() -> Result<()> {
     }
 
     if args.up_only {
-        let chain =
-            find_parents_only(&client, &kind, &name, &namespace, &kind_map, args.show_spec).await?;
+        let chain = find_parents_only(
+            &client,
+            &kind,
+            &name,
+            &namespace,
+            &kind_map,
+            args.show_spec,
+            !args.no_refs,
+        )
+        .await?;
         if chain.is_empty() {
             println!("No resources found.");
             return Ok(());
