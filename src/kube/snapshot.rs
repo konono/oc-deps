@@ -679,9 +679,16 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
     // Scope comparison (v3+)
     match (&before.scope, &after.scope) {
         (None, Some(_)) | (Some(_), None) => {
-            scope_warnings.push(
-                "Scope comparison unavailable (one snapshot is v2 or earlier without scope metadata)".to_string(),
-            );
+            let both_v3 = before.schema_version >= Some(3) && after.schema_version >= Some(3);
+            if both_v3 {
+                scope_warnings.push(
+                    "Scope metadata missing from one v3 snapshot (possible migration or corruption)".to_string(),
+                );
+            } else {
+                scope_warnings.push(
+                    "Scope comparison unavailable (one snapshot is v2 or earlier without scope metadata)".to_string(),
+                );
+            }
         }
         (Some(bs), Some(as_)) => {
             if bs.mode != as_.mode {
@@ -1515,6 +1522,7 @@ mod tests {
     #[test]
     fn diff_scope_warning_v2_vs_v3() {
         let mut before = make_snapshot(vec![], "default");
+        before.schema_version = Some(2);
         before.scope = None; // v2 style
         let mut after = make_snapshot(vec![], "default");
         after.scope = Some(SnapshotScope {
@@ -1824,12 +1832,22 @@ mod tests {
             ..Default::default()
         });
         let result = diff_snapshots(&before, &after).unwrap();
+        let scope_unavail: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("v2 or earlier"))
+            .collect();
+        assert_eq!(
+            scope_unavail.len(),
+            1,
+            "exactly 1 scope unavailable warning for v2 vs v3"
+        );
         assert!(
             result
                 .scope_warnings
                 .iter()
-                .any(|w| w.contains("Scope comparison is unavailable")),
-            "v2 vs v3 should warn about scope unavailability"
+                .any(|w| w.contains("Scope comparison") || w.contains("predate schema v3")),
+            "should warn about scope unavailability"
         );
         assert!(
             !result
@@ -1837,6 +1855,30 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("data comparison")),
             "v2 has data support — no data warning"
+        );
+    }
+
+    #[test]
+    fn diff_v3_v3_missing_scope_warns() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.schema_version = Some(3);
+        after.schema_version = Some(3);
+        before.scope = None; // invalid/migration data
+        after.scope = Some(SnapshotScope {
+            mode: "all-namespaces".into(),
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        let migration_warnings: Vec<_> = result
+            .scope_warnings
+            .iter()
+            .filter(|w| w.contains("missing") || w.contains("migration"))
+            .collect();
+        assert_eq!(
+            migration_warnings.len(),
+            1,
+            "v3 with missing scope should produce exactly 1 warning"
         );
     }
 
