@@ -138,7 +138,7 @@ oc-deps --map --show-spec -o table -n mynamespace
 oc-deps --show-spec --labels deployment/myapp -n mynamespace
 ```
 
-**Root-level options:** `--verbose`, `--strict`, `--labels`, `--annotations`, and `--show-spec` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name:
+**Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name. `--show-spec` is a root-level flag for the default resource/map mode only (not used by subcommands):
 
 ```bash
 oc-deps --strict snapshot -n <namespace> -o snapshot.json
