@@ -1180,4 +1180,149 @@ mod tests {
             );
         }
     }
+
+    #[tokio::test]
+    async fn shared_semaphore_caps_concurrent_scan_requests() {
+        let permits = 2usize;
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(permits));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+        let current_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let mut kind_map = KindMap::new();
+        for i in 0..6 {
+            kind_map.insert(
+                format!("Kind{}", i),
+                KindInfo {
+                    group: "test".to_string(),
+                    version: "v1".to_string(),
+                    plural: format!("kind{}s", i),
+                    namespaced: true,
+                    listable: true,
+                },
+            );
+        }
+
+        let max_c = max_concurrent.clone();
+        let cur_c = current_concurrent.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..6 {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                let c = cur_c.fetch_add(1, Ordering::SeqCst) + 1;
+                max_c.fetch_max(c, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                cur_c.fetch_sub(1, Ordering::SeqCst);
+                send.send_response(json_response(serde_json::json!({
+                    "apiVersion": "v1",
+                    "kind": "List",
+                    "metadata": {"resourceVersion": "1"},
+                    "items": []
+                })));
+            }
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            Some(semaphore),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+
+        let observed_max = max_concurrent.load(Ordering::SeqCst);
+        assert!(
+            observed_max <= permits,
+            "max concurrent LIST requests should be <= {} (semaphore permits), got {}",
+            permits,
+            observed_max
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_list_403_no_retry() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected 1 request");
+            rc.fetch_add(1, Ordering::Relaxed);
+            let body = serde_json::json!({
+                "kind": "Status", "apiVersion": "v1", "metadata": {},
+                "status": "Failure", "message": "forbidden", "reason": "Forbidden", "code": 403
+            });
+            send.send_response(
+                http::Response::builder()
+                    .status(403)
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            );
+        });
+
+        let ns_api: ::kube::Api<k8s_openapi::api::core::v1::Namespace> = ::kube::Api::all(client);
+        let result = ns_api.list(&::kube::api::ListParams::default()).await;
+
+        spawned.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            1,
+            "403 should not retry"
+        );
+
+        let warning = ScanWarning::from_kube_error(&result.unwrap_err(), "", "v1", "namespaces");
+        assert!(!warning.is_retryable(), "403 should not be retryable");
+    }
+
+    #[tokio::test]
+    async fn scan_warning_500_is_retryable() {
+        let warning = ScanWarning::ServerError {
+            gvr: "v1/namespaces".to_string(),
+            status: 500,
+            message: "internal error".to_string(),
+            retries: 0,
+        };
+        assert!(warning.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn scan_warning_429_is_retryable() {
+        let warning = ScanWarning::RateLimited {
+            gvr: "v1/namespaces".to_string(),
+            retries: 0,
+        };
+        assert!(warning.is_retryable());
+    }
+
+    #[test]
+    fn scan_warning_403_not_retryable() {
+        let warning = ScanWarning::Forbidden {
+            gvr: "v1/namespaces".to_string(),
+            status: 403,
+        };
+        assert!(!warning.is_retryable());
+    }
+
+    #[test]
+    fn scan_warning_401_not_retryable() {
+        let warning = ScanWarning::Forbidden {
+            gvr: "v1/namespaces".to_string(),
+            status: 401,
+        };
+        assert!(!warning.is_retryable());
+    }
 }

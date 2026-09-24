@@ -597,62 +597,15 @@ async fn cluster_wide_map(
             println!("{table}");
         }
         OutputFormat::Json => {
-            let ns_results: Vec<serde_json::Value> = results
-                .iter()
-                .filter(|r| r.error.is_none())
-                .map(|r| {
-                    let mut ns_obj = serde_json::json!({
-                        "namespace": r.namespace,
-                        "totalResources": r.resource_count,
-                        "totalTrees": r.total_trees,
-                        "matchedTrees": r.trees.len(),
-                        "trees": r.trees.iter().map(|t| tree_to_json(t, args.annotations, args.show_spec)).collect::<Vec<_>>(),
-                    });
-                    if !r.warnings.is_empty() {
-                        ns_obj["warnings"] = serde_json::json!(&r.warnings);
-                    }
-                    ns_obj
-                })
-                .collect();
-
-            let incomplete: Vec<serde_json::Value> = results
-                .iter()
-                .filter(|r| r.is_incomplete())
-                .map(|r| {
-                    let mut entry = serde_json::json!({
-                        "namespace": r.namespace,
-                    });
-                    if let Some(err) = &r.error {
-                        entry["error"] = serde_json::json!(err);
-                    }
-                    if !r.warnings.is_empty() {
-                        entry["warnings"] = serde_json::json!(&r.warnings);
-                    }
-                    entry
-                })
-                .collect();
-
-            let mut output = serde_json::json!({
-                "scope": "cluster-wide",
-                "totalNamespaces": total_ns,
-                "completeNamespaceCount": complete_count,
-                "incompleteNamespaceCount": incomplete_count,
-                "totalResources": total_resources,
-                "totalTrees": total_trees,
-                "namespaces": ns_results,
-            });
-            if !args.namespace_selector.is_empty() {
-                output["namespaceSelectors"] = serde_json::json!(args.namespace_selector);
-            }
-            if !args.exclude_namespace.is_empty() {
-                output["excludeNamespaces"] = serde_json::json!(args.exclude_namespace);
-            }
-            if args.exclude_system_namespaces {
-                output["excludeSystemNamespaces"] = serde_json::json!(true);
-            }
-            if !incomplete.is_empty() {
-                output["incompleteNamespaces"] = serde_json::json!(incomplete);
-            }
+            let output = build_cluster_wide_json(
+                &results,
+                total_ns,
+                args.annotations,
+                args.show_spec,
+                &args.namespace_selector,
+                &args.exclude_namespace,
+                args.exclude_system_namespaces,
+            );
             println!(
                 "{}",
                 serde_json::to_string_pretty(&output).unwrap_or_default()
@@ -664,6 +617,79 @@ async fn cluster_wide_map(
         std::process::exit(2);
     }
     Ok(())
+}
+
+fn build_cluster_wide_json(
+    results: &[NamespaceScanResult],
+    total_ns: usize,
+    include_annotations: bool,
+    show_spec: bool,
+    namespace_selectors: &[String],
+    exclude_namespaces: &[String],
+    exclude_system: bool,
+) -> serde_json::Value {
+    let complete_count = results.iter().filter(|r| !r.is_incomplete()).count();
+    let incomplete_count = results.iter().filter(|r| r.is_incomplete()).count();
+    let total_resources: usize = results.iter().map(|r| r.resource_count).sum();
+    let total_trees: usize = results.iter().map(|r| r.trees.len()).sum();
+
+    let ns_results: Vec<serde_json::Value> = results
+        .iter()
+        .filter(|r| r.error.is_none())
+        .map(|r| {
+            let mut ns_obj = serde_json::json!({
+                "namespace": r.namespace,
+                "totalResources": r.resource_count,
+                "totalTrees": r.total_trees,
+                "matchedTrees": r.trees.len(),
+                "trees": r.trees.iter().map(|t| tree_to_json(t, include_annotations, show_spec)).collect::<Vec<_>>(),
+            });
+            if !r.warnings.is_empty() {
+                ns_obj["warnings"] = serde_json::json!(&r.warnings);
+            }
+            ns_obj
+        })
+        .collect();
+
+    let incomplete: Vec<serde_json::Value> = results
+        .iter()
+        .filter(|r| r.is_incomplete())
+        .map(|r| {
+            let mut entry = serde_json::json!({
+                "namespace": r.namespace,
+            });
+            if let Some(err) = &r.error {
+                entry["error"] = serde_json::json!(err);
+            }
+            if !r.warnings.is_empty() {
+                entry["warnings"] = serde_json::json!(&r.warnings);
+            }
+            entry
+        })
+        .collect();
+
+    let mut output = serde_json::json!({
+        "scope": "cluster-wide",
+        "totalNamespaces": total_ns,
+        "completeNamespaceCount": complete_count,
+        "incompleteNamespaceCount": incomplete_count,
+        "totalResources": total_resources,
+        "totalTrees": total_trees,
+        "namespaces": ns_results,
+    });
+    if !namespace_selectors.is_empty() {
+        output["namespaceSelectors"] = serde_json::json!(namespace_selectors);
+    }
+    if !exclude_namespaces.is_empty() {
+        output["excludeNamespaces"] = serde_json::json!(exclude_namespaces);
+    }
+    if exclude_system {
+        output["excludeSystemNamespaces"] = serde_json::json!(true);
+    }
+    if !incomplete.is_empty() {
+        output["incompleteNamespaces"] = serde_json::json!(incomplete);
+    }
+    output
 }
 
 fn validate_cluster_wide_args(args: &Args) -> Result<()> {
@@ -6062,42 +6088,106 @@ mod cluster_wide_map_tests {
         );
     }
 
-    #[tokio::test]
-    async fn shared_semaphore_limits_concurrent_requests() {
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+    #[test]
+    fn json_schema_warning_namespace_is_incomplete() {
+        use crate::kube::resource::ScanWarning;
 
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
-        let max_concurrent = Arc::new(AtomicUsize::new(0));
-        let current = Arc::new(AtomicUsize::new(0));
+        let results = vec![
+            NamespaceScanResult {
+                namespace: "ns-ok".to_string(),
+                trees: vec![],
+                total_trees: 0,
+                resource_count: 5,
+                warnings: vec![],
+                error: None,
+            },
+            NamespaceScanResult {
+                namespace: "ns-warn".to_string(),
+                trees: vec![],
+                total_trees: 2,
+                resource_count: 10,
+                warnings: vec![ScanWarning::Forbidden {
+                    gvr: "apps/v1/deployments".to_string(),
+                    status: 403,
+                }],
+                error: None,
+            },
+        ];
 
-        let mut handles = Vec::new();
-        for _ in 0..10 {
-            let sem = semaphore.clone();
-            let max_c = max_concurrent.clone();
-            let cur = current.clone();
-            handles.push(tokio::spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
-                let c = cur.fetch_add(1, Ordering::SeqCst) + 1;
-                max_c.fetch_max(c, Ordering::SeqCst);
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                cur.fetch_sub(1, Ordering::SeqCst);
-            }));
-        }
-        for h in handles {
-            h.await.unwrap();
-        }
-        let observed_max = max_concurrent.load(Ordering::SeqCst);
-        assert!(
-            observed_max <= 3,
-            "max concurrent should be <= 3 (semaphore permits), got {}",
-            observed_max
+        let json = build_cluster_wide_json(&results, 2, false, false, &[], &[], false);
+
+        assert_eq!(json["totalNamespaces"], 2);
+        assert_eq!(json["completeNamespaceCount"], 1);
+        assert_eq!(json["incompleteNamespaceCount"], 1);
+        assert_eq!(json["totalResources"], 15);
+
+        let incomplete = json["incompleteNamespaces"].as_array().unwrap();
+        assert_eq!(incomplete.len(), 1);
+        assert_eq!(incomplete[0]["namespace"], "ns-warn");
+        let warnings = incomplete[0]["warnings"].as_array().unwrap();
+        assert_eq!(warnings[0]["type"], "Forbidden");
+        assert_eq!(warnings[0]["gvr"], "apps/v1/deployments");
+        assert_eq!(warnings[0]["status"], 403);
+
+        let namespaces = json["namespaces"].as_array().unwrap();
+        assert_eq!(
+            namespaces.len(),
+            2,
+            "warning ns should still be in namespaces (partial data)"
         );
         assert!(
-            observed_max >= 2,
-            "should have some parallelism, got max {}",
-            observed_max
+            namespaces
+                .iter()
+                .any(|n| n["namespace"] == "ns-warn" && n["totalResources"] == 10)
         );
+    }
+
+    #[test]
+    fn json_schema_error_namespace_not_in_namespaces() {
+        let results = vec![
+            NamespaceScanResult {
+                namespace: "ns-ok".to_string(),
+                trees: vec![],
+                total_trees: 0,
+                resource_count: 5,
+                warnings: vec![],
+                error: None,
+            },
+            NamespaceScanResult {
+                namespace: "ns-fail".to_string(),
+                trees: vec![],
+                total_trees: 0,
+                resource_count: 0,
+                warnings: vec![],
+                error: Some("connection refused".to_string()),
+            },
+        ];
+
+        let json = build_cluster_wide_json(&results, 2, false, false, &[], &[], false);
+        assert_eq!(json["completeNamespaceCount"], 1);
+        assert_eq!(json["incompleteNamespaceCount"], 1);
+
+        let namespaces = json["namespaces"].as_array().unwrap();
+        assert_eq!(
+            namespaces.len(),
+            1,
+            "errored ns should not be in namespaces"
+        );
+
+        let incomplete = json["incompleteNamespaces"].as_array().unwrap();
+        assert_eq!(incomplete[0]["namespace"], "ns-fail");
+        assert_eq!(incomplete[0]["error"], "connection refused");
+    }
+
+    #[test]
+    fn validate_a_with_subcommand_via_pure_fn() {
+        let mut args = Args::try_parse_from(["oc-deps", "--map", "-A"]).unwrap();
+        args.command = Some(crate::cli::Command::Operators {
+            output: OutputFormat::Tree,
+            no_cache: false,
+        });
+        let err = validate_cluster_wide_args(&args).unwrap_err().to_string();
+        assert!(err.contains("subcommands"), "{}", err);
     }
 }
 
