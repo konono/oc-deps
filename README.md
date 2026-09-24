@@ -114,6 +114,79 @@ oc-deps -o json  deployment/<name> -n <namespace>
 
 **JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
 
+### Network Paths (`--network`)
+
+Shows the full network reachability chain for workloads: Pod labels -> Service selector -> Ingress/Route backends, plus EndpointSlice health.
+
+**Service fields displayed:**
+
+| Field | Description |
+|-------|-------------|
+| `type` | ClusterIP, NodePort, LoadBalancer, ExternalName |
+| `clusterIP` | Virtual IP assigned to the service |
+| `selector` | Label selector used to match Pods |
+| `internalTrafficPolicy` | Cluster or Local |
+| `externalTrafficPolicy` | Cluster or Local (NodePort/LB only) |
+| `ipFamilyPolicy` | SingleStack, PreferDualStack, RequireDualStack |
+| `healthCheckNodePort` | Port for LB health checks (when externalTrafficPolicy=Local) |
+| `loadBalancerClass` | Custom LB implementation class |
+| `allocateLoadBalancerNodePorts` | Whether to allocate NodePorts for LB type |
+| `loadBalancerIngress` | LB-assigned addresses with optional `ipMode` |
+
+**EndpointSlice and endpoint conditions:**
+
+EndpointSlices are the modern replacement for Endpoints. Each slice contains a list of endpoints with conditions:
+
+- `ready` -- the endpoint is ready to receive traffic
+- `serving` -- the endpoint is serving traffic (can be true even when terminating)
+- `terminating` -- the endpoint's Pod is terminating
+- When `ready` is `None` (null), the K8s spec treats it as effectively ready. The `effectiveReady` count = `ready` + `unknown`
+
+**Selector vs selectorless Services:**
+
+- Services with a `selector` field match Pods by label. `selectorMatchedPods` lists these
+- EndpointSlice `targetRef` points to the actual backing Pods. `targetRefMatchedPods` lists these
+- For selectorless Services, only `targetRefMatchedPods` is populated (manual Endpoints/EndpointSlices)
+
+**External reachability** is not determined by Service type alone. A LoadBalancer type does not guarantee external access — it depends on cloud provider, MetalLB, or other LB implementation.
+
+**JSON field reference (`-o json --network`):**
+
+Each entry in `networkPaths[]` contains:
+- `service: {name, config: {...}, status: {...}}` — config holds spec fields, status holds observed state
+  - Config: `type`, `clusterIP`, `ports[]` (with `nodePort`), `selector`, `hasSelector`, `externalIPs`, `ipFamilies`, `externalTrafficPolicy`, `internalTrafficPolicy`, `ipFamilyPolicy`, `healthCheckNodePort`, `loadBalancerClass`, `allocateLoadBalancerNodePorts`
+  - Status: `loadBalancerIngress[]` (with `ip`, `hostname`, `ipMode`)
+- `endpointSlices[]` with `name`, `addressType`, `ports[]` (including `appProtocol`), `endpoints[]`
+- Each endpoint: `addresses[]`, `hostname`, `nodeName`, `zone`, `ready`, `serving`, `terminating`, `targetRef` (with `apiVersion`), `hints`
+- `endpointSummary`: `ready`, `notReady`, `unknown`, `effectiveReady`, `serving`, `terminating`
+- `selectorMatchedPods[]`, `targetRefMatchedPods[]`
+- `ingresses[]` with `kind`, `name`, `host`, `path`, `tls`
+- Top-level `warnings[]` (typed ScanWarning array) and `warningCount`
+
+**Example tree output:**
+
+```
+Service/my-app
+    Type:      NodePort
+    ClusterIP: 10.96.100.42
+    Port:      8080/TCP → 8080 (nodePort: 31234)
+    ExternalIPs: 192.0.2.50
+    IPFamilies: IPv4
+    ExternalTrafficPolicy: Cluster
+    Selector:  app=my-app
+    SelectorPods:  Pod/my-app-abc123
+    Endpoints: 2 ready, 0 not-ready, 0 terminating, 2 serving
+
+    EndpointSlice/my-app-abc12 (IPv4)
+      Port: http 8080/TCP
+      10.244.0.5 [ready serving] -> Pod/my-app-abc123
+      10.244.0.6 [ready serving] -> Pod/my-app-def456
+
+    Route/my-app-route -> Service/my-app
+      Host: my-app.example.com
+      TLS:  edge
+```
+
 ### Cluster-Wide Map (`--map -A`)
 
 Scan all namespaces (or a filtered subset) and display dependency trees grouped by namespace. Discovery cache is shared across all namespaces. Namespace scan concurrency is bounded (max 5 parallel) to prevent connection exhaustion.
