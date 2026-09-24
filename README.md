@@ -95,7 +95,11 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `-d, --depth` | Max traversal depth (default: 20) |
 | `--up-only` | Show only parent chain (fast, no namespace scan) |
 | `--down-only` | Show only child resources |
-| `--map` | Show all dependency trees in the namespace |
+| `--map` | Show all dependency trees in the namespace (or cluster-wide with -A) |
+| `-A, --all-namespaces` | Scan all namespaces (requires `--map`) |
+| `--namespace-selector` | Select namespaces by label `key=value` (repeatable, AND). Requires `-A` |
+| `--exclude-namespace` | Exclude namespaces matching pattern: `prefix*`, `*suffix`, or exact (repeatable). Requires `-A` |
+| `--exclude-system-namespaces` | Exclude `openshift-*`, `kube-*`, `default`. Requires `-A` |
 | `--filter` | Filter `--map` results by root node. `kind=X` or `label=key=value`. Repeatable (AND). Requires `--map` |
 | `--crd-origin` | Show which Operator/CSV installed the CRD |
 | `--labels` | Show labels on each resource in tree output |
@@ -109,6 +113,33 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--no-cache` | Skip API discovery cache |
 
 **JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
+
+### Cluster-Wide Map (`--map -A`)
+
+Scan all namespaces (or a filtered subset) and display dependency trees grouped by namespace. Discovery cache is shared across all namespaces. Namespace scan concurrency is bounded (max 5 parallel) to prevent connection exhaustion.
+
+```bash
+# All namespaces
+oc-deps --map -A
+
+# Filter by namespace label (AND)
+oc-deps --map -A --namespace-selector env=prod --namespace-selector team=platform
+
+# Exclude patterns and system namespaces
+oc-deps --map -A --exclude-system-namespaces --exclude-namespace "temp-*"
+
+# JSON output with scope metadata
+oc-deps --map -A -o json --exclude-system-namespaces
+
+# Partial failures: 403/timeout namespaces shown as incomplete
+oc-deps --map -A --strict  # outputs results, then exit 2 if any namespace failed
+```
+
+**Identity:** Resources use `group/kind/namespace/name` — no cross-namespace name-match edges. Each namespace is scanned independently.
+
+**JSON schema (cluster-wide):** `{"scope", "totalNamespaces", "completeNamespaceCount", "incompleteNamespaceCount", "totalResources", "totalTrees", "namespaces": [{namespace, totalResources, totalTrees, matchedTrees, trees[], warnings?}], "incompleteNamespaces?": [{namespace, error?, warnings?}], "namespaceSelectors?", "excludeNamespaces?", "excludeSystemNamespaces?"}`. Count fields use `*Count` suffix; `incompleteNamespaces` is an array of namespace objects with typed ScanWarning details.
+
+**Progress:** Per-namespace progress on stderr (`[current/total] namespace — resources, elapsed`). Non-TTY output uses plain line-per-namespace format.
 
 ### `--show-spec` — Container Resource Display
 

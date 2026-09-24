@@ -34,9 +34,25 @@ pub struct Args {
     #[arg(long)]
     pub down_only: bool,
 
-    /// Show ALL dependency trees in the namespace
+    /// Show ALL dependency trees in the namespace (or cluster-wide with -A)
     #[arg(long)]
     pub map: bool,
+
+    /// Scan all namespaces (requires --map)
+    #[arg(short = 'A', long = "all-namespaces")]
+    pub all_namespaces: bool,
+
+    /// Select namespaces by label (repeatable, AND). Requires -A
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub namespace_selector: Vec<String>,
+
+    /// Exclude namespaces matching glob pattern (repeatable). Requires -A
+    #[arg(long, value_name = "PATTERN")]
+    pub exclude_namespace: Vec<String>,
+
+    /// Exclude system namespaces (openshift-*, kube-*, default). Requires -A
+    #[arg(long)]
+    pub exclude_system_namespaces: bool,
 
     /// Show which Operator/CSV installed the CRD for this Kind
     #[arg(long)]
