@@ -9,45 +9,28 @@ use kube::{
 use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::ScanWarning;
 
-// ──────────────────────────────────────────────────────────────
-//  Shared retry+timeout helper for all LIST calls
-// ──────────────────────────────────────────────────────────────
+const MAX_RETRIES: usize = 2;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
 
-async fn list_with_retry_and_timeout(
+pub async fn list_with_retry_and_timeout(
     api: &Api<DynamicObject>,
     group: &str,
     version: &str,
     plural: &str,
-) -> Result<Vec<DynamicObject>, ScanWarning> {
-    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    for attempt in 0..=2usize {
-        let timeout_dur = std::time::Duration::from_secs(30);
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    for attempt in 0..=MAX_RETRIES {
+        let timeout_dur = std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS);
         match tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await {
             Ok(Ok(list)) => return Ok(list.items),
             Ok(Err(e)) => {
                 let warning = ScanWarning::from_kube_error(&e, group, version, plural);
-                if warning.is_retryable() && attempt < 2 {
+                if warning.is_retryable() && attempt < MAX_RETRIES {
                     let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    let gvr = if group.is_empty() {
-                        format!("{}/{}", version, plural)
-                    } else {
-                        format!("{}/{}/{}", group, version, plural)
-                    };
-                    if is_tty {
-                        eprintln!(
-                            "   \x1b[33m\u{26a0} {} \u{2014} LIST attempt {}/3 failed; retrying in {}ms\x1b[0m",
-                            gvr,
-                            attempt + 1,
-                            delay.as_millis()
-                        );
-                    } else {
-                        eprintln!(
-                            "   \u{26a0} {} \u{2014} LIST attempt {}/3 failed; retrying in {}ms",
-                            gvr,
-                            attempt + 1,
-                            delay.as_millis()
-                        );
-                    }
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -55,39 +38,24 @@ async fn list_with_retry_and_timeout(
                 w.set_retries(attempt);
                 return Err(w);
             }
-            Err(_) => {
-                let gvr = if group.is_empty() {
-                    format!("{}/{}", version, plural)
-                } else {
-                    format!("{}/{}/{}", group, version, plural)
-                };
-                if attempt < 2 {
+            Err(_elapsed) => {
+                if attempt < MAX_RETRIES {
                     let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    if is_tty {
-                        eprintln!(
-                            "   \x1b[33m\u{26a0} {} \u{2014} LIST timeout (30s), attempt {}/3; retrying\x1b[0m",
-                            gvr,
-                            attempt + 1
-                        );
-                    } else {
-                        eprintln!(
-                            "   \u{26a0} {} \u{2014} LIST timeout (30s), attempt {}/3; retrying",
-                            gvr,
-                            attempt + 1
-                        );
-                    }
                     tokio::time::sleep(delay).await;
                     continue;
                 }
                 return Err(ScanWarning::Timeout {
-                    gvr,
-                    message: Some("timeout (30s)".into()),
+                    gvr: gvr.clone(),
+                    message: Some(format!("LIST timeout ({}s)", REQUEST_TIMEOUT_SECS)),
                     retries: attempt,
                 });
             }
         }
     }
-    unreachable!()
+    Err(ScanWarning::Other {
+        gvr,
+        message: "exhausted retries".to_string(),
+    })
 }
 
 pub async fn get_service_selected_pods(
@@ -162,30 +130,18 @@ pub struct ServicePort {
     pub port: u16,
     pub target_port: String,
     pub protocol: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct LBIngress {
-    pub ip: Option<String>,
-    pub hostname: Option<String>,
-    pub ip_mode: Option<String>,
+    pub node_port: Option<u16>,
 }
 
 #[derive(Clone, Debug)]
 pub struct NetworkService {
     pub name: String,
     pub selector: BTreeMap<String, String>,
-    pub has_selector: bool,
     pub cluster_ip: String,
     pub svc_type: String,
     pub ports: Vec<ServicePort>,
-    pub health_check_node_port: Option<u16>,
-    pub internal_traffic_policy: Option<String>,
-    pub ip_family_policy: Option<String>,
-    pub load_balancer_class: Option<String>,
-    pub allocate_lb_node_ports: Option<bool>,
-    pub external_traffic_policy: Option<String>,
-    pub lb_ingress: Vec<LBIngress>,
+    pub external_ips: Vec<String>,
+    pub ip_families: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -198,88 +154,34 @@ pub struct NetworkIngress {
     pub tls: Option<String>,
 }
 
-// ──────────────────────────────────────────────────────────────
-//  EndpointSlice types
-// ──────────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug)]
-pub struct EndpointTargetRef {
-    pub api_version: Option<String>,
-    pub kind: Option<String>,
-    pub name: Option<String>,
-    pub namespace: Option<String>,
-    pub uid: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct EndpointPort {
-    pub name: Option<String>,
-    pub port: Option<u16>,
-    pub protocol: String,
-    pub app_protocol: Option<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct EndpointInfo {
     pub addresses: Vec<String>,
-    pub conditions_ready: Option<bool>,
-    pub conditions_serving: Option<bool>,
-    pub conditions_terminating: Option<bool>,
-    pub target_ref: Option<EndpointTargetRef>,
-    pub hints: Option<Vec<String>>,
+    pub port: Option<u16>,
+    pub protocol: Option<String>,
+    pub ready: Option<bool>,
+    pub hostname: Option<String>,
+    pub node_name: Option<String>,
+    pub zone: Option<String>,
+    pub target_ref_name: Option<String>,
+    pub target_ref_uid: Option<String>,
+    pub target_ref_kind: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct EndpointSliceInfo {
     pub name: String,
-    pub service_name: Option<String>,
     pub address_type: String,
-    pub ports: Vec<EndpointPort>,
     pub endpoints: Vec<EndpointInfo>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct EndpointSummary {
-    pub ready: usize,
-    pub not_ready: usize,
-    pub unknown: usize,
-    pub serving: usize,
-    pub terminating: usize,
-    pub effective_ready: usize,
-}
-
-impl EndpointSummary {
-    pub fn from_slices(slices: &[EndpointSliceInfo]) -> Self {
-        let mut s = EndpointSummary::default();
-        for slice in slices {
-            for ep in &slice.endpoints {
-                match ep.conditions_ready {
-                    Some(true) => s.ready += 1,
-                    Some(false) => s.not_ready += 1,
-                    None => s.unknown += 1,
-                }
-                if ep.conditions_serving == Some(true) {
-                    s.serving += 1;
-                }
-                if ep.conditions_terminating == Some(true) {
-                    s.terminating += 1;
-                }
-            }
-        }
-        // Per K8s spec: ready=None is treated as effectively ready
-        s.effective_ready = s.ready + s.unknown;
-        s
-    }
 }
 
 #[derive(Clone, Debug)]
 pub struct NetworkPath {
     pub service: NetworkService,
-    pub ingresses: Vec<NetworkIngress>,
-    pub endpoint_slices: Vec<EndpointSliceInfo>,
-    pub endpoint_summary: EndpointSummary,
     pub selector_matched_pods: Vec<String>,
     pub target_ref_matched_pods: Vec<String>,
+    pub endpoint_slices: Vec<EndpointSliceInfo>,
+    pub ingresses: Vec<NetworkIngress>,
 }
 
 pub struct NetworkInventory {
@@ -287,135 +189,6 @@ pub struct NetworkInventory {
     pub ingresses: Vec<NetworkIngress>,
     pub endpoint_slices: Vec<EndpointSliceInfo>,
     pub warnings: Vec<ScanWarning>,
-}
-
-fn parse_service(obj: DynamicObject) -> Option<NetworkService> {
-    let name = obj.metadata.name?;
-    let spec = obj.data.get("spec");
-    let status = obj.data.get("status");
-
-    let selector = spec
-        .and_then(|s| s.get("selector"))
-        .and_then(|s| s.as_object())
-        .map(|m| {
-            m.iter()
-                .filter_map(|(k, v)| v.as_str().map(|val| (k.clone(), val.to_string())))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-    let has_selector = !selector.is_empty();
-
-    let cluster_ip = spec
-        .and_then(|s| s.get("clusterIP"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("None")
-        .to_string();
-    let svc_type = spec
-        .and_then(|s| s.get("type"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("ClusterIP")
-        .to_string();
-    let ports = spec
-        .and_then(|s| s.get("ports"))
-        .and_then(|p| p.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|p| {
-                    let port = p.get("port")?.as_u64()? as u16;
-                    let target_port = p
-                        .get("targetPort")
-                        .map(|v| match v {
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::String(s) => s.clone(),
-                            _ => "?".into(),
-                        })
-                        .unwrap_or_else(|| port.to_string());
-                    let protocol = p
-                        .get("protocol")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("TCP")
-                        .to_string();
-                    Some(ServicePort {
-                        port,
-                        target_port,
-                        protocol,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Extra Service fields
-    let health_check_node_port = spec
-        .and_then(|s| s.get("healthCheckNodePort"))
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u16);
-    let internal_traffic_policy = spec
-        .and_then(|s| s.get("internalTrafficPolicy"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let ip_family_policy = spec
-        .and_then(|s| s.get("ipFamilyPolicy"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let load_balancer_class = spec
-        .and_then(|s| s.get("loadBalancerClass"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let allocate_lb_node_ports = spec
-        .and_then(|s| s.get("allocateLoadBalancerNodePorts"))
-        .and_then(|v| v.as_bool());
-    let external_traffic_policy = spec
-        .and_then(|s| s.get("externalTrafficPolicy"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    // LB ingress from status
-    let lb_ingress = status
-        .and_then(|s| s.get("loadBalancer"))
-        .and_then(|lb| lb.get("ingress"))
-        .and_then(|i| i.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|entry| {
-                    let ip = entry.get("ip").and_then(|v| v.as_str()).map(String::from);
-                    let hostname = entry
-                        .get("hostname")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                    let ip_mode = entry
-                        .get("ipMode")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                    if ip.is_some() || hostname.is_some() {
-                        Some(LBIngress {
-                            ip,
-                            hostname,
-                            ip_mode,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    Some(NetworkService {
-        name,
-        selector,
-        has_selector,
-        cluster_ip,
-        svc_type,
-        ports,
-        health_check_node_port,
-        internal_traffic_policy,
-        ip_family_policy,
-        load_balancer_class,
-        allocate_lb_node_ports,
-        external_traffic_policy,
-        lb_ingress,
-    })
 }
 
 async fn list_services(
@@ -431,10 +204,108 @@ async fn list_services(
     let ar = ApiResource::from_gvk_with_plural(&gvk, &svc_info.plural);
     let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
 
-    let items =
-        list_with_retry_and_timeout(&api, &svc_info.group, &svc_info.version, &svc_info.plural)
-            .await?;
-    Ok(items.into_iter().filter_map(parse_service).collect())
+    match list_with_retry_and_timeout(&api, &svc_info.group, &svc_info.version, &svc_info.plural)
+        .await
+    {
+        Ok(items) => {
+            let services = items
+                .into_iter()
+                .filter_map(|obj| {
+                    let name = obj.metadata.name?;
+                    let selector = obj
+                        .data
+                        .get("spec")
+                        .and_then(|s| s.get("selector"))
+                        .and_then(|s| s.as_object())
+                        .map(|m| {
+                            m.iter()
+                                .filter_map(|(k, v)| {
+                                    v.as_str().map(|val| (k.clone(), val.to_string()))
+                                })
+                                .collect::<BTreeMap<_, _>>()
+                        })
+                        .unwrap_or_default();
+                    let spec = obj.data.get("spec");
+                    let cluster_ip = spec
+                        .and_then(|s| s.get("clusterIP"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("None")
+                        .to_string();
+                    let mut svc_type = spec
+                        .and_then(|s| s.get("type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ClusterIP")
+                        .to_string();
+                    if cluster_ip == "None" && svc_type == "ClusterIP" {
+                        svc_type = "Headless".to_string();
+                    }
+                    let ports = spec
+                        .and_then(|s| s.get("ports"))
+                        .and_then(|p| p.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|p| {
+                                    let port = p.get("port")?.as_u64()? as u16;
+                                    let target_port = p
+                                        .get("targetPort")
+                                        .map(|v| match v {
+                                            serde_json::Value::Number(n) => n.to_string(),
+                                            serde_json::Value::String(s) => s.clone(),
+                                            _ => "?".into(),
+                                        })
+                                        .unwrap_or_else(|| port.to_string());
+                                    let protocol = p
+                                        .get("protocol")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("TCP")
+                                        .to_string();
+                                    let node_port = p
+                                        .get("nodePort")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n as u16);
+                                    Some(ServicePort {
+                                        port,
+                                        target_port,
+                                        protocol,
+                                        node_port,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let external_ips = spec
+                        .and_then(|s| s.get("externalIPs"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let ip_families = spec
+                        .and_then(|s| s.get("ipFamilies"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(NetworkService {
+                        name,
+                        selector,
+                        cluster_ip,
+                        svc_type,
+                        ports,
+                        external_ips,
+                        ip_families,
+                    })
+                })
+                .collect();
+            Ok(services)
+        }
+        Err(w) => Err(w),
+    }
 }
 
 fn extract_ingress_refs(ingress_name: &str, data: &serde_json::Value) -> Vec<NetworkIngress> {
@@ -553,166 +424,6 @@ fn extract_route_refs(route_name: &str, data: &serde_json::Value) -> Vec<Network
     refs
 }
 
-async fn list_endpoint_slices(
-    client: &Client,
-    namespace: &str,
-    gk_map: &GroupKindMap,
-) -> (Vec<EndpointSliceInfo>, Vec<ScanWarning>) {
-    let mut result = Vec::new();
-    let mut warnings = Vec::new();
-
-    let key = ("discovery.k8s.io".to_string(), "EndpointSlice".to_string());
-    let info = match gk_map.get(&key) {
-        Some(i) => i,
-        None => return (result, warnings),
-    };
-
-    let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("EndpointSlice");
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
-
-    match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
-        Ok(items) => {
-            for obj in items {
-                let name = match obj.metadata.name {
-                    Some(n) => n,
-                    None => continue,
-                };
-                let service_name = obj
-                    .metadata
-                    .labels
-                    .as_ref()
-                    .and_then(|l| l.get("kubernetes.io/service-name"))
-                    .cloned();
-                let address_type = obj
-                    .data
-                    .get("addressType")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("IPv4")
-                    .to_string();
-
-                let ports = obj
-                    .data
-                    .get("ports")
-                    .and_then(|p| p.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .map(|p| {
-                                let port = p.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
-                                let protocol = p
-                                    .get("protocol")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("TCP")
-                                    .to_string();
-                                let app_protocol = p
-                                    .get("appProtocol")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from);
-                                let ep_name =
-                                    p.get("name").and_then(|v| v.as_str()).map(String::from);
-                                EndpointPort {
-                                    name: ep_name,
-                                    port,
-                                    protocol,
-                                    app_protocol,
-                                }
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let mut endpoints: Vec<EndpointInfo> = obj
-                    .data
-                    .get("endpoints")
-                    .and_then(|e| e.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .map(|ep| {
-                                let addresses = ep
-                                    .get("addresses")
-                                    .and_then(|a| a.as_array())
-                                    .map(|a| {
-                                        a.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect::<Vec<_>>()
-                                    })
-                                    .unwrap_or_default();
-                                let conditions = ep.get("conditions");
-                                let conditions_ready = conditions
-                                    .and_then(|c| c.get("ready"))
-                                    .and_then(|v| v.as_bool());
-                                let conditions_serving = conditions
-                                    .and_then(|c| c.get("serving"))
-                                    .and_then(|v| v.as_bool());
-                                let conditions_terminating = conditions
-                                    .and_then(|c| c.get("terminating"))
-                                    .and_then(|v| v.as_bool());
-                                let target_ref = ep.get("targetRef").map(|tr| EndpointTargetRef {
-                                    api_version: tr
-                                        .get("apiVersion")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
-                                    kind: tr.get("kind").and_then(|v| v.as_str()).map(String::from),
-                                    name: tr.get("name").and_then(|v| v.as_str()).map(String::from),
-                                    namespace: tr
-                                        .get("namespace")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
-                                    uid: tr.get("uid").and_then(|v| v.as_str()).map(String::from),
-                                });
-                                let hints = ep
-                                    .get("hints")
-                                    .and_then(|h| h.get("forZones"))
-                                    .and_then(|fz| fz.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|z| {
-                                                z.get("name")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from)
-                                            })
-                                            .collect()
-                                    });
-                                EndpointInfo {
-                                    addresses,
-                                    conditions_ready,
-                                    conditions_serving,
-                                    conditions_terminating,
-                                    target_ref,
-                                    hints,
-                                }
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                // Stable sort: endpoints by first address
-                endpoints.sort_by(|a, b| {
-                    let addr_a = a.addresses.first().map(|s| s.as_str()).unwrap_or("");
-                    let addr_b = b.addresses.first().map(|s| s.as_str()).unwrap_or("");
-                    addr_a.cmp(addr_b)
-                });
-
-                result.push(EndpointSliceInfo {
-                    name,
-                    service_name,
-                    address_type,
-                    ports,
-                    endpoints,
-                });
-            }
-        }
-        Err(w) => {
-            warnings.push(w);
-        }
-    }
-
-    // Stable sort: slices by name
-    result.sort_by(|a, b| a.name.cmp(&b.name));
-
-    (result, warnings)
-}
-
 async fn list_ingresses(
     client: &Client,
     namespace: &str,
@@ -725,16 +436,21 @@ async fn list_ingresses(
         let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("Ingress");
         let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
         let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
-        match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
-            Ok(items) => {
-                for obj in items {
+        match api.list(&ListParams::default()).await {
+            Ok(list) => {
+                for obj in list.items {
                     if let Some(name) = obj.metadata.name {
                         result.extend(extract_ingress_refs(&name, &obj.data));
                     }
                 }
             }
-            Err(w) => {
-                warnings.push(w);
+            Err(e) => {
+                warnings.push(ScanWarning::from_kube_error(
+                    &e,
+                    &info.group,
+                    &info.version,
+                    &info.plural,
+                ));
             }
         }
     }
@@ -743,21 +459,172 @@ async fn list_ingresses(
         let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("Route");
         let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
         let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
-        match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
-            Ok(items) => {
-                for obj in items {
+        match api.list(&ListParams::default()).await {
+            Ok(list) => {
+                for obj in list.items {
                     if let Some(name) = obj.metadata.name {
                         result.extend(extract_route_refs(&name, &obj.data));
                     }
                 }
             }
-            Err(w) => {
-                warnings.push(w);
+            Err(e) => {
+                warnings.push(ScanWarning::from_kube_error(
+                    &e,
+                    &info.group,
+                    &info.version,
+                    &info.plural,
+                ));
             }
         }
     }
 
     (result, warnings)
+}
+
+async fn list_endpoint_slices(
+    client: &Client,
+    namespace: &str,
+    gk_map: &GroupKindMap,
+) -> (Vec<EndpointSliceInfo>, Vec<ScanWarning>) {
+    let mut slices = Vec::new();
+    let mut warnings = Vec::new();
+
+    let info = match gk_map.get(&("discovery.k8s.io".to_string(), "EndpointSlice".to_string())) {
+        Some(i) => i,
+        None => return (slices, warnings),
+    };
+
+    let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("EndpointSlice");
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+
+    match api.list(&ListParams::default()).await {
+        Ok(list) => {
+            for obj in list.items {
+                let name = match obj.metadata.name {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let address_type = obj
+                    .data
+                    .get("addressType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("IPv4")
+                    .to_string();
+
+                let ep_ports: Vec<(Option<u16>, Option<String>)> = obj
+                    .data
+                    .get("ports")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|p| {
+                                let port = p.get("port").and_then(|v| v.as_u64()).map(|n| n as u16);
+                                let protocol =
+                                    p.get("protocol").and_then(|v| v.as_str()).map(String::from);
+                                (port, protocol)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let endpoints = obj
+                    .data
+                    .get("endpoints")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .flat_map(|ep| {
+                                let addresses: Vec<String> = ep
+                                    .get("addresses")
+                                    .and_then(|v| v.as_array())
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let ready = ep
+                                    .get("conditions")
+                                    .and_then(|c| c.get("ready"))
+                                    .and_then(|v| v.as_bool());
+                                let hostname = ep
+                                    .get("hostname")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let node_name = ep
+                                    .get("nodeName")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let zone =
+                                    ep.get("zone").and_then(|v| v.as_str()).map(String::from);
+                                let target_ref = ep.get("targetRef");
+                                let target_ref_name = target_ref
+                                    .and_then(|t| t.get("name"))
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let target_ref_uid = target_ref
+                                    .and_then(|t| t.get("uid"))
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let target_ref_kind = target_ref
+                                    .and_then(|t| t.get("kind"))
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+
+                                if ep_ports.is_empty() {
+                                    vec![EndpointInfo {
+                                        addresses: addresses.clone(),
+                                        port: None,
+                                        protocol: None,
+                                        ready,
+                                        hostname: hostname.clone(),
+                                        node_name: node_name.clone(),
+                                        zone: zone.clone(),
+                                        target_ref_name: target_ref_name.clone(),
+                                        target_ref_uid: target_ref_uid.clone(),
+                                        target_ref_kind: target_ref_kind.clone(),
+                                    }]
+                                } else {
+                                    ep_ports
+                                        .iter()
+                                        .map(|(port, protocol)| EndpointInfo {
+                                            addresses: addresses.clone(),
+                                            port: *port,
+                                            protocol: protocol.clone(),
+                                            ready,
+                                            hostname: hostname.clone(),
+                                            node_name: node_name.clone(),
+                                            zone: zone.clone(),
+                                            target_ref_name: target_ref_name.clone(),
+                                            target_ref_uid: target_ref_uid.clone(),
+                                            target_ref_kind: target_ref_kind.clone(),
+                                        })
+                                        .collect()
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                slices.push(EndpointSliceInfo {
+                    name,
+                    address_type,
+                    endpoints,
+                });
+            }
+        }
+        Err(e) => {
+            warnings.push(ScanWarning::from_kube_error(
+                &e,
+                &info.group,
+                &info.version,
+                &info.plural,
+            ));
+        }
+    }
+
+    (slices, warnings)
 }
 
 pub async fn build_network_inventory(
@@ -790,103 +657,221 @@ pub async fn build_network_inventory(
     }
 }
 
-/// Find EndpointSlices that belong to a Service (via kubernetes.io/service-name label).
-fn find_service_endpoint_slices<'a>(
-    svc_name: &str,
-    slices: &'a [EndpointSliceInfo],
-) -> Vec<&'a EndpointSliceInfo> {
-    slices
-        .iter()
-        .filter(|s| s.service_name.as_deref() == Some(svc_name))
-        .collect()
-}
-
+/// Find network paths for a set of pods.
+///
+/// `pod_entries` is a slice of `(name, uid, labels)` tuples.
+/// Each Service is matched against individual pod labels rather than merged labels,
+/// so only pods whose labels actually satisfy the selector are included.
 pub fn find_network_paths(
-    pod_labels: &std::collections::HashMap<String, String>,
-    pod_names: &[String],
-    pod_uids: &[String],
-    namespace: &str,
+    pod_entries: &[(String, String, std::collections::HashMap<String, String>)],
     inventory: &NetworkInventory,
 ) -> Vec<NetworkPath> {
-    let mut paths = Vec::new();
-    let pod_uid_set: std::collections::HashSet<&str> =
-        pod_uids.iter().map(|s| s.as_str()).collect();
+    let pod_uids: std::collections::HashSet<&str> =
+        pod_entries.iter().map(|(_, uid, _)| uid.as_str()).collect();
 
-    for svc in &inventory.services {
-        let selector_matched = svc.has_selector
-            && svc
-                .selector
+    inventory
+        .services
+        .iter()
+        .filter_map(|svc| {
+            // Find pods whose labels match the service selector
+            let selector_matched: Vec<String> = pod_entries
                 .iter()
-                .all(|(k, v)| pod_labels.get(k) == Some(v));
+                .filter(|(_, _, labels)| {
+                    !svc.selector.is_empty()
+                        && svc.selector.iter().all(|(k, v)| labels.get(k) == Some(v))
+                })
+                .map(|(name, _, _)| name.clone())
+                .collect();
 
-        let svc_slices: Vec<EndpointSliceInfo> =
-            find_service_endpoint_slices(&svc.name, &inventory.endpoint_slices)
-                .into_iter()
+            // Find EndpointSlices whose kubernetes.io/service-name label matches this service
+            // and collect those with targetRef pointing to our pods
+            let mut matched_slices = Vec::new();
+            let mut target_ref_pods = Vec::new();
+            for slice in &inventory.endpoint_slices {
+                // EndpointSlice names typically start with the service name
+                // We match by checking endpoints' targetRef UIDs against our pod UIDs
+                let mut has_match = false;
+                for ep in &slice.endpoints {
+                    if let Some(ref uid) = ep.target_ref_uid
+                        && pod_uids.contains(uid.as_str())
+                    {
+                        has_match = true;
+                        if let Some(ref name) = ep.target_ref_name {
+                            target_ref_pods.push(name.clone());
+                        }
+                    }
+                }
+                if has_match {
+                    matched_slices.push(slice.clone());
+                }
+            }
+
+            target_ref_pods.sort();
+            target_ref_pods.dedup();
+
+            if selector_matched.is_empty() && target_ref_pods.is_empty() {
+                return None;
+            }
+
+            let matching_ingresses: Vec<NetworkIngress> = inventory
+                .ingresses
+                .iter()
+                .filter(|ing| ing.backend_service == svc.name)
                 .cloned()
                 .collect();
 
-        let target_ref_match = !selector_matched
-            && !svc.has_selector
-            && svc_slices.iter().any(|s| {
-                s.endpoints.iter().any(|ep| {
-                    ep.target_ref.as_ref().is_some_and(|tr| {
-                        tr.kind.as_deref() == Some("Pod")
-                            && tr.namespace.as_deref().is_none_or(|ns| ns == namespace)
-                            && tr
-                                .uid
-                                .as_deref()
-                                .is_some_and(|uid| pod_uid_set.contains(uid))
-                    })
-                })
-            });
-
-        if !selector_matched && !target_ref_match {
-            continue;
-        }
-
-        let matching_ingresses: Vec<NetworkIngress> = inventory
-            .ingresses
-            .iter()
-            .filter(|ing| ing.backend_service == svc.name)
-            .cloned()
-            .collect();
-
-        let endpoint_summary = EndpointSummary::from_slices(&svc_slices);
-
-        let selector_matched_pods: Vec<String> = if selector_matched {
-            pod_names.iter().map(|n| format!("Pod/{}", n)).collect()
-        } else {
-            vec![]
-        };
-
-        let target_ref_matched_pods: Vec<String> = svc_slices
-            .iter()
-            .flat_map(|s| &s.endpoints)
-            .filter_map(|ep| {
-                let tr = ep.target_ref.as_ref()?;
-                if tr.kind.as_deref() != Some("Pod") {
-                    return None;
-                }
-                if tr.namespace.as_deref().is_some_and(|ns| ns != namespace) {
-                    return None;
-                }
-                tr.name.as_ref().map(|n| format!("Pod/{}", n))
+            Some(NetworkPath {
+                service: svc.clone(),
+                selector_matched_pods: selector_matched,
+                target_ref_matched_pods: target_ref_pods,
+                endpoint_slices: matched_slices,
+                ingresses: matching_ingresses,
             })
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        })
+        .collect()
+}
 
-        paths.push(NetworkPath {
-            service: svc.clone(),
-            ingresses: matching_ingresses,
-            endpoint_slices: svc_slices,
-            endpoint_summary,
-            selector_matched_pods,
-            target_ref_matched_pods,
-        });
+pub fn network_path_to_json(path: &NetworkPath) -> serde_json::Value {
+    let ports: Vec<_> = path
+        .service
+        .ports
+        .iter()
+        .map(|sp| {
+            let mut obj = serde_json::json!({
+                "port": sp.port,
+                "targetPort": sp.target_port,
+                "protocol": sp.protocol,
+            });
+            if let Some(np) = sp.node_port {
+                obj["nodePort"] = serde_json::json!(np);
+            }
+            obj
+        })
+        .collect();
+
+    let ingresses: Vec<_> = path
+        .ingresses
+        .iter()
+        .map(|i| {
+            let mut obj = serde_json::json!({
+                "kind": i.kind,
+                "name": i.name,
+            });
+            if let Some(h) = &i.host {
+                obj["host"] = serde_json::json!(h);
+            }
+            if let Some(pa) = &i.path {
+                obj["path"] = serde_json::json!(pa);
+            }
+            if let Some(t) = &i.tls {
+                obj["tls"] = serde_json::json!(t);
+            }
+            obj
+        })
+        .collect();
+
+    let endpoint_slices: Vec<_> = path
+        .endpoint_slices
+        .iter()
+        .map(|es| {
+            let endpoints: Vec<_> = es
+                .endpoints
+                .iter()
+                .map(|ep| {
+                    let mut obj = serde_json::json!({
+                        "addresses": ep.addresses,
+                    });
+                    if let Some(p) = ep.port {
+                        obj["port"] = serde_json::json!(p);
+                    }
+                    if let Some(ref proto) = ep.protocol {
+                        obj["protocol"] = serde_json::json!(proto);
+                    }
+                    if let Some(r) = ep.ready {
+                        obj["ready"] = serde_json::json!(r);
+                    }
+                    if let Some(ref h) = ep.hostname {
+                        obj["hostname"] = serde_json::json!(h);
+                    }
+                    if let Some(ref n) = ep.node_name {
+                        obj["nodeName"] = serde_json::json!(n);
+                    }
+                    if let Some(ref z) = ep.zone {
+                        obj["zone"] = serde_json::json!(z);
+                    }
+                    if let Some(ref name) = ep.target_ref_name {
+                        obj["targetRefName"] = serde_json::json!(name);
+                    }
+                    if let Some(ref uid) = ep.target_ref_uid {
+                        obj["targetRefUID"] = serde_json::json!(uid);
+                    }
+                    if let Some(ref kind) = ep.target_ref_kind {
+                        obj["targetRefKind"] = serde_json::json!(kind);
+                    }
+                    obj
+                })
+                .collect();
+            serde_json::json!({
+                "name": es.name,
+                "addressType": es.address_type,
+                "endpoints": endpoints,
+            })
+        })
+        .collect();
+
+    // Endpoint summary
+    let total_endpoints: usize = path
+        .endpoint_slices
+        .iter()
+        .map(|es| es.endpoints.len())
+        .sum();
+    let ready_count = path
+        .endpoint_slices
+        .iter()
+        .flat_map(|es| &es.endpoints)
+        .filter(|ep| ep.ready == Some(true))
+        .count();
+    let not_ready_count = path
+        .endpoint_slices
+        .iter()
+        .flat_map(|es| &es.endpoints)
+        .filter(|ep| ep.ready == Some(false))
+        .count();
+    let unknown_count = total_endpoints - ready_count - not_ready_count;
+
+    let svc = &path.service;
+
+    let mut config = serde_json::json!({
+        "type": svc.svc_type,
+        "clusterIP": svc.cluster_ip,
+        "ports": ports,
+        "selector": svc.selector,
+        "hasSelector": !svc.selector.is_empty(),
+    });
+    if !svc.external_ips.is_empty() {
+        config["externalIPs"] = serde_json::json!(svc.external_ips);
+    }
+    if !svc.ip_families.is_empty() {
+        config["ipFamilies"] = serde_json::json!(svc.ip_families);
     }
 
-    paths
+    serde_json::json!({
+        "service": {
+            "name": svc.name,
+            "config": config,
+            "status": {},
+        },
+        "selectorMatchedPods": path.selector_matched_pods,
+        "targetRefMatchedPods": path.target_ref_matched_pods,
+        "endpointSlices": endpoint_slices,
+        "endpointSummary": {
+            "total": total_endpoints,
+            "ready": ready_count,
+            "notReady": not_ready_count,
+            "unknown": unknown_count,
+        },
+        "ingresses": ingresses,
+    })
 }
 
 #[cfg(test)]
@@ -999,35 +984,46 @@ mod tests {
         assert!(extract_route_refs("test", &data).is_empty());
     }
 
-    fn test_svc(name: &str, selector: &[(&str, &str)]) -> NetworkService {
+    fn make_svc(
+        name: &str,
+        selector: &[(&str, &str)],
+        svc_type: &str,
+        cluster_ip: &str,
+    ) -> NetworkService {
         NetworkService {
             name: name.into(),
             selector: selector
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            has_selector: !selector.is_empty(),
-            cluster_ip: "10.0.0.1".into(),
-            svc_type: "ClusterIP".into(),
+            cluster_ip: cluster_ip.into(),
+            svc_type: svc_type.into(),
             ports: vec![],
-            health_check_node_port: None,
-            internal_traffic_policy: None,
-            ip_family_policy: None,
-            load_balancer_class: None,
-            allocate_lb_node_ports: None,
-            external_traffic_policy: None,
-            lb_ingress: vec![],
+            external_ips: vec![],
+            ip_families: vec![],
+        }
+    }
+
+    fn make_inventory(
+        services: Vec<NetworkService>,
+        ingresses: Vec<NetworkIngress>,
+    ) -> NetworkInventory {
+        NetworkInventory {
+            services,
+            ingresses,
+            endpoint_slices: vec![],
+            warnings: vec![],
         }
     }
 
     #[test]
     fn find_paths_matches_service_selector() {
-        let inventory = NetworkInventory {
-            services: vec![
-                test_svc("svc-a", &[("app", "x")]),
-                test_svc("svc-b", &[("app", "y")]),
+        let inventory = make_inventory(
+            vec![
+                make_svc("svc-a", &[("app", "x")], "ClusterIP", "10.0.0.1"),
+                make_svc("svc-b", &[("app", "y")], "ClusterIP", "10.0.0.2"),
             ],
-            ingresses: vec![NetworkIngress {
+            vec![NetworkIngress {
                 kind: "Route".into(),
                 name: "route-a".into(),
                 backend_service: "svc-a".into(),
@@ -1035,215 +1031,386 @@ mod tests {
                 path: None,
                 tls: None,
             }],
-            endpoint_slices: vec![],
-            warnings: vec![],
-        };
-        let labels: std::collections::HashMap<String, String> =
-            [("app".into(), "x".into())].into_iter().collect();
-        let paths = find_network_paths(
-            &labels,
-            &["pod-1".into()],
-            &["uid-pod-1".into()],
-            "default",
-            &inventory,
         );
+        let pods = vec![(
+            "pod-1".into(),
+            "uid-1".into(),
+            [("app".into(), "x".into())].into_iter().collect(),
+        )];
+        let paths = find_network_paths(&pods, &inventory);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].service.name, "svc-a");
+        assert_eq!(paths[0].selector_matched_pods, vec!["pod-1"]);
         assert_eq!(paths[0].ingresses.len(), 1);
         assert_eq!(paths[0].ingresses[0].name, "route-a");
     }
 
     #[test]
     fn find_paths_no_match() {
-        let inventory = NetworkInventory {
-            services: vec![test_svc("svc-a", &[("app", "x")])],
-            ingresses: vec![],
-            endpoint_slices: vec![],
-            warnings: vec![],
-        };
-        let labels: std::collections::HashMap<String, String> =
-            [("app".into(), "z".into())].into_iter().collect();
-        let paths = find_network_paths(
-            &labels,
-            &["pod-1".into()],
-            &["uid-pod-1".into()],
-            "default",
-            &inventory,
+        let inventory = make_inventory(
+            vec![make_svc("svc-a", &[("app", "x")], "ClusterIP", "10.0.0.1")],
+            vec![],
         );
+        let pods = vec![(
+            "pod-1".into(),
+            "uid-1".into(),
+            [("app".into(), "z".into())].into_iter().collect(),
+        )];
+        let paths = find_network_paths(&pods, &inventory);
         assert!(paths.is_empty());
     }
 
     #[test]
-    fn endpoint_summary_ready_none_counted_as_unknown() {
-        let slices = vec![EndpointSliceInfo {
-            name: "test-slice".into(),
-            service_name: Some("test-svc".into()),
-            address_type: "IPv4".into(),
-            ports: vec![],
-            endpoints: vec![
-                EndpointInfo {
-                    addresses: vec!["10.0.0.1".into()],
-                    conditions_ready: Some(true),
-                    conditions_serving: Some(true),
-                    conditions_terminating: Some(false),
-                    target_ref: None,
-                    hints: None,
-                },
-                EndpointInfo {
-                    addresses: vec!["10.0.0.2".into()],
-                    conditions_ready: None, // unknown
-                    conditions_serving: None,
-                    conditions_terminating: None,
-                    target_ref: None,
-                    hints: None,
-                },
-                EndpointInfo {
-                    addresses: vec!["10.0.0.3".into()],
-                    conditions_ready: Some(false),
-                    conditions_serving: Some(false),
-                    conditions_terminating: Some(true),
-                    target_ref: None,
-                    hints: None,
-                },
-            ],
-        }];
-        let summary = EndpointSummary::from_slices(&slices);
-        assert_eq!(summary.ready, 1);
-        assert_eq!(summary.unknown, 1);
-        assert_eq!(summary.not_ready, 1);
-        assert_eq!(summary.effective_ready, 2); // ready + unknown
-        assert_eq!(summary.serving, 1);
-        assert_eq!(summary.terminating, 1);
+    fn service_type_classification() {
+        // ClusterIP
+        let svc = make_svc("s1", &[("a", "b")], "ClusterIP", "10.0.0.1");
+        assert_eq!(svc.svc_type, "ClusterIP");
+
+        // NodePort
+        let svc = make_svc("s2", &[("a", "b")], "NodePort", "10.0.0.2");
+        assert_eq!(svc.svc_type, "NodePort");
+
+        // LoadBalancer
+        let svc = make_svc("s3", &[("a", "b")], "LoadBalancer", "10.0.0.3");
+        assert_eq!(svc.svc_type, "LoadBalancer");
+
+        // Headless
+        let svc = make_svc("s4", &[("a", "b")], "Headless", "None");
+        assert_eq!(svc.svc_type, "Headless");
+
+        // ExternalName
+        let svc = make_svc("s5", &[("a", "b")], "ExternalName", "None");
+        assert_eq!(svc.svc_type, "ExternalName");
     }
 
     #[test]
-    #[allow(clippy::useless_vec)]
-    fn endpoint_slices_stable_sort() {
-        let mut slices = vec![
-            EndpointSliceInfo {
-                name: "svc-z-abc".into(),
-                service_name: Some("svc-z".into()),
-                address_type: "IPv4".into(),
-                ports: vec![],
-                endpoints: vec![
-                    EndpointInfo {
-                        addresses: vec!["10.0.0.5".into()],
-                        conditions_ready: Some(true),
-                        conditions_serving: None,
-                        conditions_terminating: None,
-                        target_ref: None,
-                        hints: None,
-                    },
-                    EndpointInfo {
-                        addresses: vec!["10.0.0.1".into()],
-                        conditions_ready: Some(true),
-                        conditions_serving: None,
-                        conditions_terminating: None,
-                        target_ref: None,
-                        hints: None,
-                    },
-                ],
+    fn load_balancer_status() {
+        // This tests that NetworkPath JSON includes LB info when present
+        let path = NetworkPath {
+            service: NetworkService {
+                name: "lb-svc".into(),
+                selector: [("app".into(), "web".into())].into_iter().collect(),
+                cluster_ip: "10.0.0.5".into(),
+                svc_type: "LoadBalancer".into(),
+                ports: vec![ServicePort {
+                    port: 80,
+                    target_port: "8080".into(),
+                    protocol: "TCP".into(),
+                    node_port: Some(31234),
+                }],
+                external_ips: vec![],
+                ip_families: vec!["IPv4".into()],
             },
-            EndpointSliceInfo {
-                name: "svc-a-xyz".into(),
-                service_name: Some("svc-a".into()),
-                address_type: "IPv4".into(),
-                ports: vec![],
-                endpoints: vec![],
-            },
-        ];
-        slices.sort_by(|a, b| a.name.cmp(&b.name));
-        assert_eq!(slices[0].name, "svc-a-xyz");
-        assert_eq!(slices[1].name, "svc-z-abc");
-        // Endpoints within a slice: sort by address (simulating what parsing does)
-        for s in &mut slices {
-            s.endpoints.sort_by(|a, b| {
-                let aa = a.addresses.first().map(|s| s.as_str()).unwrap_or("");
-                let ab = b.addresses.first().map(|s| s.as_str()).unwrap_or("");
-                aa.cmp(ab)
-            });
-        }
-        let eps = &slices[1].endpoints;
-        assert!(eps[0].addresses[0] < eps[1].addresses[0]);
+            selector_matched_pods: vec!["web-pod".into()],
+            target_ref_matched_pods: vec![],
+            endpoint_slices: vec![],
+            ingresses: vec![],
+        };
+        let json = network_path_to_json(&path);
+        assert_eq!(json["service"]["config"]["type"], "LoadBalancer");
+        assert_eq!(json["service"]["config"]["ports"][0]["nodePort"], 31234);
     }
 
     #[test]
-    fn target_ref_matched_pods_vs_selector_matched_pods() {
+    fn endpoint_slice_api_absent() {
+        // When GroupKindMap has no EndpointSlice entry, slices should be empty
+        let inventory = make_inventory(
+            vec![make_svc("svc", &[("app", "x")], "ClusterIP", "10.0.0.1")],
+            vec![],
+        );
+        assert!(inventory.endpoint_slices.is_empty());
+    }
+
+    #[test]
+    fn selectorless_uid_mismatch() {
+        // EndpointSlice with targetRef UID that doesn't match any pod
         let inventory = NetworkInventory {
-            services: vec![test_svc("svc-a", &[("app", "x")])],
+            services: vec![make_svc("svc", &[("app", "x")], "ClusterIP", "10.0.0.1")],
             ingresses: vec![],
             endpoint_slices: vec![EndpointSliceInfo {
-                name: "svc-a-abc".into(),
-                service_name: Some("svc-a".into()),
+                name: "svc-abc".into(),
                 address_type: "IPv4".into(),
-                ports: vec![],
-                endpoints: vec![
-                    EndpointInfo {
-                        addresses: vec!["10.0.0.1".into()],
-                        conditions_ready: Some(true),
-                        conditions_serving: Some(true),
-                        conditions_terminating: None,
-                        target_ref: Some(EndpointTargetRef {
-                            api_version: Some("v1".into()),
-                            kind: Some("Pod".into()),
-                            name: Some("pod-1".into()),
-                            namespace: Some("default".into()),
-                            uid: None,
-                        }),
-                        hints: None,
-                    },
-                    EndpointInfo {
-                        addresses: vec!["10.0.0.2".into()],
-                        conditions_ready: Some(true),
-                        conditions_serving: Some(true),
-                        conditions_terminating: None,
-                        target_ref: Some(EndpointTargetRef {
-                            api_version: Some("v1".into()),
-                            kind: Some("Pod".into()),
-                            name: Some("pod-2".into()),
-                            namespace: Some("default".into()),
-                            uid: None,
-                        }),
-                        hints: None,
-                    },
-                    // Non-Pod targetRef should be excluded
-                    EndpointInfo {
-                        addresses: vec!["10.0.0.3".into()],
-                        conditions_ready: Some(true),
-                        conditions_serving: Some(true),
-                        conditions_terminating: None,
-                        target_ref: Some(EndpointTargetRef {
-                            api_version: Some("v1".into()),
-                            kind: Some("Node".into()),
-                            name: Some("node-1".into()),
-                            namespace: None,
-                            uid: None,
-                        }),
-                        hints: None,
-                    },
-                ],
+                endpoints: vec![EndpointInfo {
+                    addresses: vec!["10.0.1.1".into()],
+                    port: Some(80),
+                    protocol: Some("TCP".into()),
+                    ready: Some(true),
+                    hostname: None,
+                    node_name: None,
+                    zone: None,
+                    target_ref_name: Some("other-pod".into()),
+                    target_ref_uid: Some("wrong-uid".into()),
+                    target_ref_kind: Some("Pod".into()),
+                }],
             }],
             warnings: vec![],
         };
-        let labels: std::collections::HashMap<String, String> =
-            [("app".into(), "x".into())].into_iter().collect();
-        let paths = find_network_paths(
-            &labels,
-            &["pod-1".into(), "pod-3".into()],
-            &["uid-pod-1".into(), "uid-pod-3".into()],
-            "default",
-            &inventory,
-        );
+        let pods = vec![(
+            "my-pod".into(),
+            "my-uid".into(),
+            [("app".into(), "x".into())].into_iter().collect(),
+        )];
+        let paths = find_network_paths(&pods, &inventory);
+        // Should match by selector but not by targetRef
         assert_eq!(paths.len(), 1);
-        // selector_matched_pods comes from the pod_names parameter
-        assert_eq!(
-            paths[0].selector_matched_pods,
-            vec!["Pod/pod-1", "Pod/pod-3"]
+        assert!(paths[0].endpoint_slices.is_empty());
+        assert!(paths[0].target_ref_matched_pods.is_empty());
+    }
+
+    #[test]
+    fn nodeport_in_service_port() {
+        let sp = ServicePort {
+            port: 80,
+            target_port: "8080".into(),
+            protocol: "TCP".into(),
+            node_port: Some(31234),
+        };
+        assert_eq!(sp.node_port, Some(31234));
+    }
+
+    #[test]
+    fn external_ips_and_ip_families() {
+        let svc = NetworkService {
+            name: "ext-svc".into(),
+            selector: [("app".into(), "web".into())].into_iter().collect(),
+            cluster_ip: "10.0.0.1".into(),
+            svc_type: "ClusterIP".into(),
+            ports: vec![],
+            external_ips: vec!["1.2.3.4".into(), "5.6.7.8".into()],
+            ip_families: vec!["IPv4".into(), "IPv6".into()],
+        };
+        assert_eq!(svc.external_ips, vec!["1.2.3.4", "5.6.7.8"]);
+        assert_eq!(svc.ip_families, vec!["IPv4", "IPv6"]);
+
+        // Verify JSON output includes them
+        let path = NetworkPath {
+            service: svc,
+            selector_matched_pods: vec![],
+            target_ref_matched_pods: vec![],
+            endpoint_slices: vec![],
+            ingresses: vec![],
+        };
+        let json = network_path_to_json(&path);
+        assert_eq!(json["service"]["config"]["externalIPs"][0], "1.2.3.4");
+        assert_eq!(json["service"]["config"]["ipFamilies"][1], "IPv6");
+    }
+
+    #[test]
+    fn per_pod_selector_matching() {
+        // Two pods with different labels; only one matches the service
+        let inventory = make_inventory(
+            vec![make_svc("svc", &[("app", "x")], "ClusterIP", "10.0.0.1")],
+            vec![],
         );
-        // target_ref_matched_pods comes from EndpointSlice targetRef (only kind=Pod, matching namespace)
+        let pods = vec![
+            (
+                "pod-match".into(),
+                "uid-1".into(),
+                [("app".into(), "x".into())].into_iter().collect(),
+            ),
+            (
+                "pod-no".into(),
+                "uid-2".into(),
+                [("app".into(), "y".into())].into_iter().collect(),
+            ),
+        ];
+        let paths = find_network_paths(&pods, &inventory);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].selector_matched_pods, vec!["pod-match"]);
+    }
+
+    #[test]
+    fn endpoint_info_fields() {
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.1.1".into()],
+            port: Some(8080),
+            protocol: Some("TCP".into()),
+            ready: Some(true),
+            hostname: Some("pod-0".into()),
+            node_name: Some("node-1".into()),
+            zone: Some("us-east-1a".into()),
+            target_ref_name: Some("pod-0".into()),
+            target_ref_uid: Some("uid-123".into()),
+            target_ref_kind: Some("Pod".into()),
+        };
+        assert_eq!(ep.hostname.as_deref(), Some("pod-0"));
+        assert_eq!(ep.node_name.as_deref(), Some("node-1"));
+        assert_eq!(ep.zone.as_deref(), Some("us-east-1a"));
+    }
+
+    #[test]
+    fn json_config_status_separation() {
+        let path = NetworkPath {
+            service: NetworkService {
+                name: "my-svc".into(),
+                selector: [("app".into(), "web".into())].into_iter().collect(),
+                cluster_ip: "10.0.0.1".into(),
+                svc_type: "ClusterIP".into(),
+                ports: vec![ServicePort {
+                    port: 80,
+                    target_port: "8080".into(),
+                    protocol: "TCP".into(),
+                    node_port: None,
+                }],
+                external_ips: vec![],
+                ip_families: vec!["IPv4".into()],
+            },
+            selector_matched_pods: vec!["pod-1".into()],
+            target_ref_matched_pods: vec![],
+            endpoint_slices: vec![],
+            ingresses: vec![],
+        };
+        let json = network_path_to_json(&path);
+        // config/status separation
+        assert!(json["service"]["config"].is_object());
+        assert!(json["service"]["status"].is_object());
+        assert_eq!(json["service"]["name"], "my-svc");
+        assert_eq!(json["service"]["config"]["type"], "ClusterIP");
+        assert_eq!(json["service"]["config"]["clusterIP"], "10.0.0.1");
+        assert_eq!(json["service"]["config"]["hasSelector"], true);
+        assert_eq!(json["selectorMatchedPods"][0], "pod-1");
+        assert!(json["endpointSummary"]["total"].is_number());
+    }
+
+    // ── Mock retry tests for list_with_retry_and_timeout ──
+
+    use kube::client::Body;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": reason, "reason": reason, "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn svc_list_response() -> http::Response<Body> {
+        json_response(serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "ServiceList",
+            "metadata": {"resourceVersion": "1"},
+            "items": [{
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {"name": "test-svc", "namespace": "default"}
+            }]
+        }))
+    }
+
+    #[tokio::test]
+    async fn retry_403_no_retry() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&GroupVersion::gv("", "v1").with_kind("Service"));
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected request");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        let result = list_with_retry_and_timeout(&api, "", "v1", "services").await;
+        spawned.await.unwrap();
+
+        assert!(result.is_err(), "403 should fail");
         assert_eq!(
-            paths[0].target_ref_matched_pods,
-            vec!["Pod/pod-1", "Pod/pod-2"]
+            request_count.load(Ordering::Relaxed),
+            1,
+            "403 should not retry"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ScanWarning::Forbidden { .. }),
+            "should be Forbidden"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_500_persistent_3_requests() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&GroupVersion::gv("", "v1").with_kind("Service"));
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, Ordering::Relaxed);
+                send.send_response(status_response(500, "Internal Server Error"));
+            }
+        });
+
+        let result = list_with_retry_and_timeout(&api, "", "v1", "services").await;
+        spawned.await.unwrap();
+
+        assert!(result.is_err(), "persistent 500 should fail");
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            3,
+            "500 should retry — expected 3 requests (1 + 2 retries)"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ScanWarning::ServerError { retries: 2, .. }),
+            "should be ServerError with 2 retries, got {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_500_then_200_succeeds() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&GroupVersion::gv("", "v1").with_kind("Service"));
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "default", &ar);
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // First: 500
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(status_response(500, "Internal Server Error"));
+            // Second: success
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(svc_list_response());
+        });
+
+        let result = list_with_retry_and_timeout(&api, "", "v1", "services").await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok(), "should succeed after retry");
+        let items = result.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            2,
+            "500 then 200 = 2 requests"
         );
     }
 }
