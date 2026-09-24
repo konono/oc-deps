@@ -147,6 +147,7 @@ async fn build_snapshot_inner(
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
             let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
 
+            let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
             let mut last_warning = None;
             for attempt in 0..=MAX_RETRIES {
                 let _permit = if let Some(s) = &sem {
@@ -154,14 +155,18 @@ async fn build_snapshot_inner(
                 } else {
                     None
                 };
-                let result = api.list(&ListParams::default()).await;
+                let timeout_dur = std::time::Duration::from_secs(30);
+                let result =
+                    tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await;
                 if attempt == 0 {
                     let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-                    eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
+                    if is_tty {
+                        eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
+                    }
                 }
 
                 match result {
-                    Ok(list) => {
+                    Ok(Ok(list)) => {
                         let entries: Vec<(String, ResourceEntry)> = list
                             .items
                             .into_iter()
@@ -236,7 +241,7 @@ async fn build_snapshot_inner(
                             .collect();
                         return Some(entries);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         let mut warning = ScanWarning::from_kube_error(
                             &e,
                             &info.group,
@@ -251,6 +256,29 @@ async fn build_snapshot_inner(
                             continue;
                         }
                         warning.set_retries(attempt);
+                        if let Ok(mut errors) = scan_errors.lock() {
+                            errors.push(warning);
+                        }
+                        return None;
+                    }
+                    Err(_elapsed) => {
+                        let gvr = if info.group.is_empty() {
+                            format!("{}/{}", info.version, info.plural)
+                        } else {
+                            format!("{}/{}/{}", info.group, info.version, info.plural)
+                        };
+                        let warning = ScanWarning::Timeout {
+                            gvr,
+                            message: Some("request timeout (30s)".to_string()),
+                            retries: attempt,
+                        };
+                        if attempt < MAX_RETRIES {
+                            let delay =
+                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            tokio::time::sleep(delay).await;
+                            last_warning = Some(warning);
+                            continue;
+                        }
                         if let Ok(mut errors) = scan_errors.lock() {
                             errors.push(warning);
                         }
@@ -275,11 +303,20 @@ async fn build_snapshot_inner(
         .collect()
         .await;
 
-    eprintln!(
-        "\r\x1b[2K✅ Scanned {} resource types in {:.1}s",
-        total,
-        scan_start.elapsed().as_secs_f64()
-    );
+    let is_tty_final = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    if is_tty_final {
+        eprintln!(
+            "\r\x1b[2K✅ Scanned {} resource types in {:.1}s",
+            total,
+            scan_start.elapsed().as_secs_f64()
+        );
+    } else {
+        eprintln!(
+            "✅ Scanned {} resource types in {:.1}s",
+            total,
+            scan_start.elapsed().as_secs_f64()
+        );
+    }
 
     let mut resources = HashMap::new();
     for entries in results.into_iter().flatten() {
@@ -293,6 +330,19 @@ async fn build_snapshot_inner(
         Err(arc) => arc.lock().unwrap().clone(),
     };
 
+    let (complete, incomplete) = if warnings.is_empty() {
+        (vec![namespace.to_string()], vec![])
+    } else {
+        (
+            vec![],
+            vec![IncompleteNamespace {
+                namespace: namespace.to_string(),
+                warnings: warnings.clone(),
+                error: None,
+            }],
+        )
+    };
+
     let snapshot = ClusterSnapshot {
         schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
         resources,
@@ -303,7 +353,8 @@ async fn build_snapshot_inner(
         scope: Some(SnapshotScope {
             mode: "single-namespace".to_string(),
             requested_namespaces: vec![namespace.to_string()],
-            complete_namespaces: vec![namespace.to_string()],
+            complete_namespaces: complete,
+            incomplete_namespaces: incomplete,
             ..Default::default()
         }),
     };
@@ -312,10 +363,16 @@ async fn build_snapshot_inner(
 }
 
 pub fn save_snapshot(snapshot: &ClusterSnapshot, path: &str) -> Result<()> {
-    let tmp_path = format!("{}.tmp", path);
+    let tmp_path = format!("{}.{}.tmp", path, std::process::id());
     let json = serde_json::to_string_pretty(snapshot)?;
-    std::fs::write(&tmp_path, &json)?;
-    std::fs::rename(&tmp_path, path)?;
+    if let Err(e) = std::fs::write(&tmp_path, &json) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
     Ok(())
 }
 
@@ -598,11 +655,39 @@ pub fn diff_snapshots(before: &ClusterSnapshot, after: &ClusterSnapshot) -> Resu
                     bs.mode, as_.mode
                 ));
             }
-            if bs.namespace_selectors != as_.namespace_selectors
-                || bs.exclude_namespaces != as_.exclude_namespaces
+            let mut b_sel: Vec<_> = bs.namespace_selectors.clone();
+            let mut a_sel: Vec<_> = as_.namespace_selectors.clone();
+            b_sel.sort();
+            a_sel.sort();
+            let mut b_excl: Vec<_> = bs.exclude_namespaces.clone();
+            let mut a_excl: Vec<_> = as_.exclude_namespaces.clone();
+            b_excl.sort();
+            a_excl.sort();
+            if b_sel != a_sel
+                || b_excl != a_excl
                 || bs.exclude_system_namespaces != as_.exclude_system_namespaces
             {
                 scope_warnings.push("Different namespace filters applied".to_string());
+            }
+            let mut b_req: Vec<_> = bs.requested_namespaces.clone();
+            let mut a_req: Vec<_> = as_.requested_namespaces.clone();
+            b_req.sort();
+            a_req.sort();
+            if b_req != a_req {
+                scope_warnings.push(format!(
+                    "Different requested namespaces: {:?} vs {:?}",
+                    b_req, a_req
+                ));
+            }
+            let mut b_comp: Vec<_> = bs.complete_namespaces.clone();
+            let mut a_comp: Vec<_> = as_.complete_namespaces.clone();
+            b_comp.sort();
+            a_comp.sort();
+            if b_comp != a_comp {
+                scope_warnings.push(format!(
+                    "Different complete namespaces: {:?} vs {:?}",
+                    b_comp, a_comp
+                ));
             }
             if !bs.incomplete_namespaces.is_empty() || !as_.incomplete_namespaces.is_empty() {
                 scope_warnings
@@ -901,6 +986,18 @@ mod tests {
                 secret_value_hashes: None,
             },
         )
+    }
+
+    fn make_empty_snapshot() -> ClusterSnapshot {
+        ClusterSnapshot {
+            schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
+            resources: HashMap::new(),
+            scan_warnings: vec![],
+            cluster_url: "https://api.test:6443".into(),
+            taken_at: "2026-01-01T00:00:00Z".into(),
+            namespaces: vec![],
+            scope: None,
+        }
     }
 
     fn make_snapshot(entries: Vec<(String, ResourceEntry)>, ns: &str) -> ClusterSnapshot {
@@ -1446,5 +1543,106 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("mode") || w.contains("filter")),
         );
+    }
+
+    #[test]
+    fn diff_scope_selectors_order_independent() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            namespace_selectors: vec!["b=2".to_string(), "a=1".to_string()],
+            exclude_namespaces: vec!["z-*".to_string(), "a-*".to_string()],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            namespace_selectors: vec!["a=1".to_string(), "b=2".to_string()],
+            exclude_namespaces: vec!["a-*".to_string(), "z-*".to_string()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            !result.scope_warnings.iter().any(|w| w.contains("filter")),
+            "same selectors in different order should not warn"
+        );
+    }
+
+    #[test]
+    fn diff_scope_different_complete_namespaces_warns() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            complete_namespaces: vec!["ns-a".to_string(), "ns-b".to_string()],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            complete_namespaces: vec!["ns-a".to_string()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("complete namespaces")),
+            "different complete sets should warn"
+        );
+    }
+
+    #[test]
+    fn diff_scope_different_requested_namespaces_warns() {
+        let mut before = make_empty_snapshot();
+        let mut after = make_empty_snapshot();
+        before.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            requested_namespaces: vec!["ns-a".to_string(), "ns-b".to_string()],
+            ..Default::default()
+        });
+        after.scope = Some(SnapshotScope {
+            mode: "filtered".to_string(),
+            requested_namespaces: vec!["ns-a".to_string(), "ns-c".to_string()],
+            ..Default::default()
+        });
+        let result = diff_snapshots(&before, &after).unwrap();
+        assert!(
+            result
+                .scope_warnings
+                .iter()
+                .any(|w| w.contains("requested namespaces")),
+            "different requested sets should warn"
+        );
+    }
+
+    #[test]
+    fn save_snapshot_atomic_no_tmp_residue() {
+        let path = format!("/tmp/oc-deps-test-snap-{}.json", std::process::id());
+        let snap = make_empty_snapshot();
+        save_snapshot(&snap, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("schema_version"));
+        let tmp_path = format!("{}.{}.tmp", path, std::process::id());
+        assert!(
+            !std::path::Path::new(&tmp_path).exists(),
+            "tmp file should be cleaned up after successful save"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_snapshot_preserves_existing_on_bad_rename() {
+        let path = format!("/tmp/oc-deps-test-existing-{}.json", std::process::id());
+        std::fs::write(&path, "original").unwrap();
+        let snap = make_empty_snapshot();
+        let result = save_snapshot(&snap, &path);
+        assert!(result.is_ok());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("schema_version"),
+            "successful save should overwrite"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

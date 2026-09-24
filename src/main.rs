@@ -766,7 +766,7 @@ async fn main() -> Result<()> {
                 exclude_system_namespaces,
                 strict,
             } => {
-                let snapshot_strict = strict;
+                let snapshot_strict = strict || args.strict;
                 let t0 = Instant::now();
                 eprintln!("🔍 Discovering API resources...");
                 let (kind_map, _, _gk_map, _) =
@@ -793,6 +793,7 @@ async fn main() -> Result<()> {
                         bail!("No namespaces matched the given selectors/filters");
                     }
 
+                    let requested_namespaces = target_namespaces.clone();
                     let total_ns = target_namespaces.len();
                     eprintln!(
                         "📦 Scanning {} namespace{}...",
@@ -803,7 +804,7 @@ async fn main() -> Result<()> {
                     let scanned_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
                     let cancel_token = tokio_util::sync::CancellationToken::new();
                     let cancel_for_handler = cancel_token.clone();
-                    let tmp_path = format!("{}.tmp", output_file);
+                    let tmp_path = format!("{}.{}.tmp", output_file, std::process::id());
                     let tmp_path_cleanup = tmp_path.clone();
 
                     // Ctrl-C handler
@@ -892,10 +893,15 @@ async fn main() -> Result<()> {
                                 all_resources.extend(ns_snapshot.resources);
                             }
                             Err(e) => {
-                                eprint!(
-                                    "\r\x1b[2K  [{}/{}] {} — ERROR: {}",
-                                    count, total_ns, ns, e
-                                );
+                                let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+                                if is_tty {
+                                    eprint!(
+                                        "\r\x1b[2K  [{}/{}] {} — ERROR: {}",
+                                        count, total_ns, ns, e
+                                    );
+                                } else {
+                                    eprintln!("  [{}/{}] {} — ERROR: {}", count, total_ns, ns, e);
+                                }
                                 incomplete_namespaces.push(IncompleteNamespace {
                                     namespace: ns.clone(),
                                     warnings: vec![],
@@ -912,11 +918,20 @@ async fn main() -> Result<()> {
                         std::process::exit(130);
                     }
 
-                    eprintln!(
-                        "\r\x1b[2K✅ Scanned {} namespaces in {:.1}s",
-                        total_ns,
-                        t0.elapsed().as_secs_f64()
-                    );
+                    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+                    if is_tty {
+                        eprintln!(
+                            "\r\x1b[2K✅ Scanned {} namespaces in {:.1}s",
+                            total_ns,
+                            t0.elapsed().as_secs_f64()
+                        );
+                    } else {
+                        eprintln!(
+                            "✅ Scanned {} namespaces in {:.1}s",
+                            total_ns,
+                            t0.elapsed().as_secs_f64()
+                        );
+                    }
 
                     let scope_mode = if namespace_selector.is_empty()
                         && exclude_namespace.is_empty()
@@ -927,6 +942,8 @@ async fn main() -> Result<()> {
                         "filtered"
                     };
 
+                    let mut requested_ns = requested_namespaces.clone();
+                    requested_ns.sort();
                     scanned_ns_list.sort();
                     complete_namespaces.sort();
 
@@ -942,22 +959,29 @@ async fn main() -> Result<()> {
                             namespace_selectors: namespace_selector,
                             exclude_namespaces: exclude_namespace,
                             exclude_system_namespaces,
-                            requested_namespaces: vec![],
+                            requested_namespaces: requested_ns,
                             complete_namespaces,
                             incomplete_namespaces,
                         }),
                     };
 
                     let resource_count = snapshot.resources.len();
-                    let warning_count = snapshot.scan_warnings.len();
                     format_scan_warnings(&snapshot.scan_warnings, args.verbose);
                     save_snapshot(&snapshot, &output_file)?;
 
+                    let scope = snapshot.scope.as_ref().unwrap();
                     eprintln!(
-                        "✅ Snapshot saved to {} ({} resources across {} namespaces, {} scan warnings)",
-                        output_file, resource_count, total_ns, warning_count
+                        "✅ Snapshot saved to {} ({} resources, {} requested, {} complete, {} incomplete)",
+                        output_file,
+                        resource_count,
+                        scope.requested_namespaces.len(),
+                        scope.complete_namespaces.len(),
+                        scope.incomplete_namespaces.len(),
                     );
-                    if snapshot_strict && warning_count > 0 {
+                    if snapshot_strict
+                        && (!scope.incomplete_namespaces.is_empty()
+                            || !snapshot.scan_warnings.is_empty())
+                    {
                         std::process::exit(2);
                     }
                 } else {
@@ -968,15 +992,16 @@ async fn main() -> Result<()> {
                             .await?;
 
                     let resource_count = snapshot.resources.len();
-                    let warning_count = snapshot.scan_warnings.len();
                     format_scan_warnings(&snapshot.scan_warnings, args.verbose);
                     save_snapshot(&snapshot, &output_file)?;
 
                     eprintln!(
                         "✅ Snapshot saved to {} ({} resources, {} scan warnings)",
-                        output_file, resource_count, warning_count
+                        output_file,
+                        resource_count,
+                        snapshot.scan_warnings.len()
                     );
-                    if snapshot_strict && warning_count > 0 {
+                    if snapshot_strict && !snapshot.scan_warnings.is_empty() {
                         std::process::exit(2);
                     }
                 }
