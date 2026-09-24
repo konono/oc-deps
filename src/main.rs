@@ -12,6 +12,10 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
+use crate::analyzers::inspect::{
+    inspect_operator_with_options, print_inspection as print_inspection_top,
+};
+use crate::analyzers::namespace_scope::{discover_operator_namespaces, scan_candidate_namespaces};
 use crate::analyzers::olm::{
     WhoManagesInput, compute_operator_dependencies, discover_operators, find_crd_origin,
     print_crd_origin, print_operators, print_who_manages, who_manages,
@@ -19,6 +23,7 @@ use crate::analyzers::olm::{
 use crate::analyzers::selector::{
     build_network_inventory, find_network_paths, get_service_selected_pods,
 };
+use crate::analyzers::trace::{print_trace, trace_resource};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
@@ -38,7 +43,6 @@ use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{TreeDisplayOpts, count_nodes, print_chain_tree, print_tree};
 use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
-use crate::teardown::inspect::{inspect_operator, print_inspection};
 use crate::teardown::journal::{
     self, CleanupResult, ExecutionRecord, JournalStore, ResidualStatus, RunJournal, RunState,
 };
@@ -1952,11 +1956,12 @@ async fn main() -> Result<()> {
                             resolve_operator_targets(&[operator_query], &all_operators)?;
                         let target_op = &all_operators[target_indices[0]];
 
-                        let inspection =
-                            inspect_operator(&client, target_op, &kind_map, &gvr_map, &gk_map)
-                                .await?;
+                        let inspection = inspect_operator_with_options(
+                            &client, target_op, &kind_map, &gvr_map, &gk_map, false,
+                        )
+                        .await?;
 
-                        print_inspection(&inspection, &output);
+                        print_inspection_top(&inspection, &output, args.verbose);
                     }
                     TeardownAction::Explain {
                         operators: operator_queries,
@@ -3584,6 +3589,294 @@ async fn main() -> Result<()> {
                 }
                 return Ok(());
             }
+            Command::Inspect {
+                operator: operator_query,
+                output,
+                no_cache,
+                cross_namespace,
+                verbose,
+                strict,
+            } => {
+                let verbose = verbose || args.verbose;
+                let strict = strict || args.strict;
+                let t0 = Instant::now();
+                eprintln!("🔍 Discovering API resources...");
+                let (kind_map, gvr_map, gk_map, _) =
+                    build_kind_lookup_cached(&client, &config, no_cache).await?;
+                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                eprint!("🔍 Discovering operators...");
+                let all_operators = discover_operators(&client, &kind_map).await?;
+                eprintln!(" found {} operators", all_operators.len());
+
+                let target_indices = resolve_operator_targets(&[operator_query], &all_operators)?;
+                let target_op = &all_operators[target_indices[0]];
+
+                let inspection = inspect_operator_with_options(
+                    &client,
+                    target_op,
+                    &kind_map,
+                    &gvr_map,
+                    &gk_map,
+                    cross_namespace,
+                )
+                .await?;
+
+                print_inspection_top(&inspection, &output, verbose);
+                if strict && inspection.scan_warning_count > 0 {
+                    std::process::exit(2);
+                }
+                return Ok(());
+            }
+            Command::Trace {
+                resource,
+                namespace,
+                output,
+                no_cache,
+                depth,
+                verbose,
+                strict,
+                cross_namespace,
+            } => {
+                let verbose = verbose || args.verbose;
+                let strict = strict || args.strict;
+                let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
+                let (kind_input, name) = if let Some((k, n)) = resource.split_once('/') {
+                    (k.to_string(), n.to_string())
+                } else {
+                    bail!("Resource must be in kind/name format (e.g. datasciencecluster/default)");
+                };
+
+                let t0 = Instant::now();
+                eprintln!("🔍 Discovering API resources...");
+                let (kind_map, gvr_map, gk_map_trace, _) =
+                    build_kind_lookup_cached(&client, &config, no_cache).await?;
+                eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                let (kind, target_group) =
+                    resolve_kind_with_group(&kind_input, &kind_map, &gvr_map)?;
+                let kind_info = if !target_group.is_empty() {
+                    gk_map_trace.get(&(target_group.clone(), kind.clone()))
+                } else {
+                    kind_map.get(&kind)
+                }
+                .ok_or_else(|| {
+                    if !target_group.is_empty() {
+                        anyhow::anyhow!(
+                            "Kind {}/{} not found in discovery (group may be incorrect)",
+                            target_group,
+                            kind
+                        )
+                    } else {
+                        anyhow::anyhow!("Kind {} not found in discovery", kind)
+                    }
+                })?;
+
+                let (mut index, mut scan_warnings) = if kind_info.namespaced {
+                    scan_namespace(&client, &namespace, &kind_map, false, true).await?
+                } else {
+                    // For cluster-scoped targets, scan the namespace for children
+                    // but also fetch the target itself
+                    let (idx, warnings) =
+                        scan_namespace(&client, &namespace, &kind_map, false, true).await?;
+                    (idx, warnings)
+                };
+                // For cluster-scoped targets, fetch the target via exact GET and insert
+                if !kind_info.namespaced {
+                    eprint!("🔍 Fetching cluster-scoped target...");
+                    let gvk = ::kube::core::GroupVersion::gv(&kind_info.group, &kind_info.version)
+                        .with_kind(&kind);
+                    let ar =
+                        ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
+                    let api: ::kube::Api<::kube::api::DynamicObject> =
+                        ::kube::Api::all_with(client.clone(), &ar);
+                    match crate::kube::scanner::get_with_retry(
+                        &api,
+                        &name,
+                        &kind_info.group,
+                        &kind_info.version,
+                        &kind_info.plural,
+                    )
+                    .await
+                    {
+                        Ok(obj) => {
+                            let uid = obj.metadata.uid.clone().unwrap_or_default();
+                            let labels = obj
+                                .metadata
+                                .labels
+                                .clone()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect();
+                            let annotations = obj
+                                .metadata
+                                .annotations
+                                .clone()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .collect();
+                            let info = crate::kube::resource::ResourceInfo {
+                                group: kind_info.group.clone(),
+                                kind: kind.clone(),
+                                name: name.clone(),
+                                namespace: None,
+                                uid,
+                                owner_refs: vec![],
+                                labels,
+                                annotations,
+                            };
+                            index.insert(info);
+                            eprintln!(" done");
+                        }
+                        Err(w) => {
+                            scan_warnings.push(w.clone());
+                            bail!("Failed to fetch {}/{}: {}", kind, name, w);
+                        }
+                    }
+                }
+
+                let uids_with_missing_parents: Vec<String> = index
+                    .by_uid
+                    .iter()
+                    .filter(|(_, info)| {
+                        info.owner_refs
+                            .iter()
+                            .any(|r| !index.by_uid.contains_key(&r.uid))
+                    })
+                    .map(|(uid, _)| uid.clone())
+                    .collect();
+                if !uids_with_missing_parents.is_empty() {
+                    eprint!("🔗 Resolving cluster-scoped parents...");
+                    for uid in &uids_with_missing_parents {
+                        let parent_warnings = resolve_missing_parents(
+                            &mut index,
+                            uid,
+                            &client,
+                            &namespace,
+                            &kind_map,
+                            &gk_map_trace,
+                        )
+                        .await;
+                        scan_warnings.extend(parent_warnings);
+                    }
+                    eprintln!(" done");
+                }
+
+                // Determine managing operator via who-manages (for same-operator CRD + cross-ns)
+                let mut confirmed_csv: Option<String> = None;
+                eprint!("🔍 Tracing ownership...");
+                let wm_result = who_manages(&WhoManagesInput {
+                    client: &client,
+                    kind: &kind,
+                    group: &target_group,
+                    name: &name,
+                    namespace: &namespace,
+                    kind_map: &kind_map,
+                    gk_map: &gk_map_trace,
+                })
+                .await;
+                match wm_result {
+                    Ok(wm) => {
+                        confirmed_csv = wm
+                            .chain
+                            .iter()
+                            .find(|s| s.kind == "ClusterServiceVersion")
+                            .map(|s| s.name.clone());
+                        scan_warnings.extend(wm.scan_failures);
+                        eprintln!(" {}", confirmed_csv.as_deref().unwrap_or("unattributed"));
+                    }
+                    Err(e) => {
+                        eprintln!(" failed: {}", e);
+                        if let Some(w) = e.scan_failure {
+                            scan_warnings.push(w);
+                        } else {
+                            scan_warnings.push(crate::kube::resource::ScanWarning::Other {
+                                gvr: format!("{}/{}", kind, name),
+                                message: format!("who-manages failed: {}", e.message),
+                            });
+                        }
+                    }
+                }
+
+                // Cross-namespace scan using confirmed operator
+                if cross_namespace && let Some(csv_name) = &confirmed_csv {
+                    let operators = discover_operators(&client, &kind_map).await?;
+                    let csv_query = csv_name.to_string();
+                    if let Ok(indices) = resolve_operator_targets(&[csv_query], &operators)
+                        && let Some(&idx) = indices.first()
+                    {
+                        let target_op = &operators[idx];
+                        let scope_result = discover_operator_namespaces(
+                            &client,
+                            target_op,
+                            &kind_map,
+                            &gvr_map,
+                            &gk_map_trace,
+                        )
+                        .await?;
+                        let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+                        for msg in &scope_result.info_messages {
+                            if is_tty {
+                                eprintln!("  \x1b[33m⚠ {}\x1b[0m", msg);
+                            } else {
+                                eprintln!("  ⚠ {}", msg);
+                            }
+                        }
+                        scan_warnings.extend(scope_result.scan_failures);
+                        let ns_scan = scan_candidate_namespaces(
+                            &client,
+                            &scope_result.candidates,
+                            &kind_map,
+                            Some(&namespace),
+                        )
+                        .await;
+                        for w in &ns_scan.namespace_warnings {
+                            scan_warnings.push(crate::kube::resource::ScanWarning::Other {
+                                gvr: "cross-namespace".to_string(),
+                                message: w.clone(),
+                            });
+                        }
+                        scan_warnings.extend(ns_scan.scan_warnings);
+                        index.merge(ns_scan.index);
+                    }
+                }
+
+                let mut result = trace_resource(
+                    &client,
+                    &kind,
+                    &name,
+                    &namespace,
+                    &target_group,
+                    &index,
+                    &kind_map,
+                    &gvr_map,
+                    &gk_map_trace,
+                    depth,
+                    confirmed_csv.as_deref(),
+                )
+                .await?;
+
+                // Merge trace-internal typed warnings into scan_warnings for strict + display
+                scan_warnings.extend(std::mem::take(&mut result.scan_failures));
+                // Put unified warnings back for JSON output
+                result.scan_failures = scan_warnings.clone();
+
+                format_scan_warnings(&scan_warnings, verbose);
+                print_trace(&result, &output);
+
+                // strict: exit 2 only for actual scan failures (not scope info messages)
+                let has_scan_failures = scan_warnings.iter().any(|w| {
+                    !matches!(
+                        w,
+                        crate::kube::resource::ScanWarning::Other { message, .. }
+                            if message.starts_with("AllNamespaces operator")
+                    )
+                });
+                if strict && has_scan_failures {
+                    std::process::exit(2);
+                }
+                return Ok(());
+            }
             Command::Operators { output, no_cache } => {
                 let t0 = Instant::now();
                 eprintln!("🔍 Discovering API resources...");
@@ -3625,7 +3918,7 @@ async fn main() -> Result<()> {
                     resolve_kind_with_group(&kind_input, &kind_map, &gvr_map)?;
 
                 eprint!("🔍 Tracing ownership...");
-                let result = who_manages(&WhoManagesInput {
+                let result = match who_manages(&WhoManagesInput {
                     client: &client,
                     kind: &kind,
                     group: &target_group,
@@ -3634,7 +3927,14 @@ async fn main() -> Result<()> {
                     kind_map: &kind_map,
                     gk_map: &gk_map_wm,
                 })
-                .await?;
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!(" failed\n");
+                        bail!("{}", e.message);
+                    }
+                };
                 eprintln!(" done\n");
 
                 print_who_manages(&result, &output);
@@ -3658,10 +3958,10 @@ async fn main() -> Result<()> {
     if args.map {
         let t0 = Instant::now();
         eprintln!("🔍 Discovering API resources...");
-        let (kind_map, _, _gk_map, _) =
+        let (kind_map, _, gk_map_default, _) =
             build_kind_lookup_cached(&client, &config, args.no_cache).await?;
         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
-        let (mut index, scan_warnings) = scan_namespace(
+        let (mut index, mut scan_warnings) = scan_namespace(
             &client,
             &namespace,
             &kind_map,
@@ -3683,7 +3983,16 @@ async fn main() -> Result<()> {
         if !uids_with_missing_parents.is_empty() {
             eprint!("🔗 Resolving cluster-scoped parents...");
             for uid in &uids_with_missing_parents {
-                resolve_missing_parents(&mut index, uid, &client, &namespace, &kind_map).await;
+                let parent_warnings = resolve_missing_parents(
+                    &mut index,
+                    uid,
+                    &client,
+                    &namespace,
+                    &kind_map,
+                    &gk_map_default,
+                )
+                .await;
+                scan_warnings.extend(parent_warnings);
             }
             eprintln!(" done");
         }
@@ -3839,7 +4148,12 @@ async fn main() -> Result<()> {
 
     format_scan_warnings(&scan_warnings, args.verbose);
 
-    let target_uid = match index.by_kind_name.get(&(kind.to_lowercase(), name.clone())) {
+    let target_uid = match index.lookup_by_kind_name(
+        kind_map.get(&kind).map(|ki| ki.group.as_str()),
+        &kind,
+        &name,
+        Some(&namespace),
+    ) {
         Some(uid) => uid.clone(),
         None => {
             if args.strict && !scan_warnings.is_empty() {
@@ -3853,7 +4167,16 @@ async fn main() -> Result<()> {
         }
     };
 
-    resolve_missing_parents(&mut index, &target_uid, &client, &namespace, &kind_map).await;
+    let parent_warnings = resolve_missing_parents(
+        &mut index,
+        &target_uid,
+        &client,
+        &namespace,
+        &kind_map,
+        &gk_map,
+    )
+    .await;
+    scan_warnings.extend(parent_warnings);
 
     let tree = if args.down_only {
         let mut visited = HashSet::new();

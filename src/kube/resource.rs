@@ -335,6 +335,7 @@ pub fn filter_annotations(annotations: &HashMap<String, String>) -> HashMap<Stri
 
 #[derive(Clone)]
 pub struct ResourceInfo {
+    pub group: String,
     pub kind: String,
     pub name: String,
     pub namespace: Option<String>,
@@ -343,6 +344,8 @@ pub struct ResourceInfo {
     pub labels: HashMap<String, String>,
     pub annotations: HashMap<String, String>,
 }
+
+pub type NamespaceIndexKey = (String, String, Option<String>, String);
 
 #[derive(Clone)]
 pub struct OwnerRef {
@@ -373,7 +376,7 @@ pub type RefData = (String, String, Vec<SpecRef>, Vec<(String, String)>);
 pub struct NamespaceIndex {
     pub by_uid: HashMap<String, ResourceInfo>,
     pub children_of: HashMap<String, Vec<String>>,
-    pub by_kind_name: HashMap<(String, String), String>,
+    pub by_kind_name: HashMap<NamespaceIndexKey, String>,
     pub refs_from: HashMap<String, Vec<SpecRef>>,
     pub refs_to: HashMap<String, Vec<IncomingRef>>,
 }
@@ -391,8 +394,12 @@ impl NamespaceIndex {
 
     pub fn insert(&mut self, info: ResourceInfo) {
         let uid = info.uid.clone();
-        let kind_lower = info.kind.to_lowercase();
-        let name = info.name.clone();
+        let key = (
+            info.group.to_lowercase(),
+            info.kind.to_lowercase(),
+            info.namespace.clone(),
+            info.name.clone(),
+        );
 
         for oref in &info.owner_refs {
             self.children_of
@@ -401,8 +408,63 @@ impl NamespaceIndex {
                 .push(uid.clone());
         }
 
-        self.by_kind_name.insert((kind_lower, name), uid.clone());
+        self.by_kind_name.insert(key, uid.clone());
         self.by_uid.insert(uid, info);
+    }
+
+    pub fn merge(&mut self, other: NamespaceIndex) {
+        for (uid, info) in other.by_uid {
+            if !self.by_uid.contains_key(&uid) {
+                self.insert(info);
+            }
+        }
+        for (uid, refs) in other.refs_from {
+            self.refs_from.entry(uid).or_default().extend(refs);
+        }
+        for (uid, refs) in other.refs_to {
+            self.refs_to.entry(uid).or_default().extend(refs);
+        }
+    }
+
+    pub fn lookup_by_kind_name(
+        &self,
+        group: Option<&str>,
+        kind: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Option<&String> {
+        let kind_lower = kind.to_lowercase();
+        if let Some(g) = group {
+            // Exact group match only — no fallback to other groups
+            return self.by_kind_name.get(&(
+                g.to_lowercase(),
+                kind_lower,
+                namespace.map(|s| s.to_string()),
+                name.to_string(),
+            ));
+        }
+        // group=None: match any group (for spec-refs where group is unknown)
+        for ((_, k, ns, n), uid) in &self.by_kind_name {
+            if *k == kind_lower && *n == name && ns.as_deref() == namespace {
+                return Some(uid);
+            }
+        }
+        None
+    }
+
+    pub fn lookup_exact(
+        &self,
+        group: &str,
+        kind: &str,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Option<&String> {
+        self.by_kind_name.get(&(
+            group.to_lowercase(),
+            kind.to_lowercase(),
+            namespace.map(|s| s.to_string()),
+            name.to_string(),
+        ))
     }
 }
 
@@ -819,5 +881,294 @@ mod tests {
             format!("{}", snap2.scan_warnings[1]),
             format!("{}", snap.scan_warnings[1])
         );
+    }
+
+    #[test]
+    fn test_namespace_index_group_kind_ns_name_identity() {
+        let mut index = NamespaceIndex::new();
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("ns-a".into()),
+            uid: "uid-1".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("ns-b".into()),
+            uid: "uid-2".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        assert_eq!(
+            index.lookup_exact("apps", "Deployment", Some("ns-a"), "myapp"),
+            Some(&"uid-1".to_string())
+        );
+        assert_eq!(
+            index.lookup_exact("apps", "Deployment", Some("ns-b"), "myapp"),
+            Some(&"uid-2".to_string())
+        );
+        assert_eq!(index.by_uid.len(), 2);
+    }
+
+    #[test]
+    fn test_namespace_index_merge_no_overwrite() {
+        let mut index1 = NamespaceIndex::new();
+        index1.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("ns-a".into()),
+            uid: "uid-1".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        let mut index2 = NamespaceIndex::new();
+        index2.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("ns-b".into()),
+            uid: "uid-2".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        index1.merge(index2);
+        assert_eq!(index1.by_uid.len(), 2);
+        assert!(index1.by_uid.contains_key("uid-1"));
+        assert!(index1.by_uid.contains_key("uid-2"));
+    }
+
+    #[test]
+    fn test_lookup_by_kind_name_exact_group() {
+        let mut index = NamespaceIndex::new();
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("default".into()),
+            uid: "uid-apps".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+        index.insert(ResourceInfo {
+            group: "custom.io".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("default".into()),
+            uid: "uid-custom".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        assert_eq!(
+            index.lookup_by_kind_name(Some("apps"), "Deployment", "myapp", Some("default")),
+            Some(&"uid-apps".to_string())
+        );
+        assert_eq!(
+            index.lookup_by_kind_name(Some("custom.io"), "Deployment", "myapp", Some("default")),
+            Some(&"uid-custom".to_string())
+        );
+    }
+
+    #[test]
+    fn test_lookup_wrong_group_returns_none() {
+        let mut index = NamespaceIndex::new();
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("default".into()),
+            uid: "uid-1".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        assert_eq!(
+            index.lookup_by_kind_name(Some("wrong.io"), "Deployment", "myapp", Some("default")),
+            None
+        );
+        assert_eq!(
+            index.lookup_exact("wrong.io", "Deployment", Some("default"), "myapp"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_lookup_none_group_matches_any() {
+        let mut index = NamespaceIndex::new();
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "myapp".into(),
+            namespace: Some("default".into()),
+            uid: "uid-1".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        assert_eq!(
+            index.lookup_by_kind_name(None, "Deployment", "myapp", Some("default")),
+            Some(&"uid-1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_exact_group_no_fallback_to_other_group() {
+        let mut index = NamespaceIndex::new();
+        index.insert(ResourceInfo {
+            group: "config.openshift.io".into(),
+            kind: "Ingress".into(),
+            name: "cluster".into(),
+            namespace: None,
+            uid: "uid-config".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        // Exact lookup for networking.k8s.io should NOT find config.openshift.io
+        assert_eq!(
+            index.lookup_by_kind_name(Some("networking.k8s.io"), "Ingress", "cluster", None,),
+            None
+        );
+        assert_eq!(
+            index.lookup_exact("networking.k8s.io", "Ingress", None, "cluster"),
+            None
+        );
+        // But exact match for the correct group works
+        assert_eq!(
+            index.lookup_exact("config.openshift.io", "Ingress", None, "cluster"),
+            Some(&"uid-config".to_string())
+        );
+    }
+
+    #[test]
+    fn test_bfs_descendant_does_not_include_unrelated_tree() {
+        let mut index = NamespaceIndex::new();
+        // CR root
+        index.insert(ResourceInfo {
+            group: "example.com".into(),
+            kind: "Widget".into(),
+            name: "root".into(),
+            namespace: Some("ns-a".into()),
+            uid: "uid-root".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+        // Child of root
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "child".into(),
+            namespace: Some("ns-a".into()),
+            uid: "uid-child".into(),
+            owner_refs: vec![OwnerRef {
+                api_version: "example.com/v1".into(),
+                kind: "Widget".into(),
+                name: "root".into(),
+                uid: "uid-root".into(),
+                controller: true,
+            }],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+        // Unrelated tree
+        index.insert(ResourceInfo {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            name: "unrelated".into(),
+            namespace: Some("ns-a".into()),
+            uid: "uid-unrelated".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+        });
+
+        // BFS from root should find child but not unrelated
+        let known_roots: HashSet<String> = ["uid-root".to_string()].into_iter().collect();
+        let mut reachable = HashSet::new();
+        let mut queue: Vec<String> = known_roots.iter().cloned().collect();
+        while let Some(parent) = queue.pop() {
+            if let Some(children) = index.children_of.get(&parent) {
+                for child in children {
+                    if reachable.insert(child.clone()) {
+                        queue.push(child.clone());
+                    }
+                }
+            }
+        }
+        assert!(reachable.contains("uid-child"));
+        assert!(!reachable.contains("uid-unrelated"));
+    }
+
+    #[test]
+    fn test_scan_warning_forbidden_no_retry() {
+        let w = ScanWarning::Forbidden {
+            gvr: "apps/v1/deployments".into(),
+            status: 403,
+        };
+        assert!(!w.is_retryable());
+        assert!(format!("{}", w).contains("403"));
+        assert!(format!("{}", w).contains("Forbidden"));
+    }
+
+    #[test]
+    fn test_scan_warning_timeout_is_retryable() {
+        let mut w = ScanWarning::Timeout {
+            gvr: "apps/v1/deployments".into(),
+            message: Some("connection timed out".into()),
+            retries: 0,
+        };
+        assert!(w.is_retryable());
+        w.set_retries(2);
+        assert!(format!("{}", w).contains("retried 2x"));
+    }
+
+    #[test]
+    fn test_scan_warning_server_error_is_retryable() {
+        let w = ScanWarning::ServerError {
+            gvr: "apps/v1/deployments".into(),
+            status: 503,
+            message: "service unavailable".into(),
+            retries: 1,
+        };
+        assert!(w.is_retryable());
+        assert!(format!("{}", w).contains("503"));
+    }
+
+    #[test]
+    fn test_scan_warning_canonical_gvr_format() {
+        let w = ScanWarning::Forbidden {
+            gvr: "datasciencecluster.opendatahub.io/v1/datascienceclusters".into(),
+            status: 403,
+        };
+        let display = format!("{}", w);
+        assert!(display.starts_with("datasciencecluster.opendatahub.io/v1/datascienceclusters"));
+    }
+
+    #[test]
+    fn test_scan_warning_other_not_retryable() {
+        let w = ScanWarning::Other {
+            gvr: "test".into(),
+            message: "unknown error".into(),
+        };
+        assert!(!w.is_retryable());
     }
 }

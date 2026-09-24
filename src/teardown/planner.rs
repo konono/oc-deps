@@ -17,7 +17,7 @@ use crate::analyzers::olm::{
 use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
-use crate::kube::resource::{ResourceId, resolve_api};
+use crate::kube::resource::{ResourceId, ScanWarning, resolve_api};
 
 // ── UID binding result ──
 
@@ -593,7 +593,7 @@ pub fn resolve_operator_targets(
 
 enum CrdDiscoveryResult {
     Success(Vec<CrInstance>),
-    Unavailable { crd_name: String, reason: String },
+    Unavailable(ScanWarning),
 }
 
 async fn discover_one_crd(
@@ -605,10 +605,10 @@ async fn discover_one_crd(
     let (plural, group) = match crd_name.split_once('.') {
         Some((p, g)) => (p, g),
         None => {
-            return CrdDiscoveryResult::Unavailable {
-                crd_name: crd_name.to_string(),
-                reason: "cannot parse CRD name".to_string(),
-            };
+            return CrdDiscoveryResult::Unavailable(ScanWarning::Other {
+                gvr: crd_name.to_string(),
+                message: "cannot parse CRD name".to_string(),
+            });
         }
     };
 
@@ -616,10 +616,10 @@ async fn discover_one_crd(
     let kind = match gvr_map.get(&gvr_key) {
         Some(k) => k.clone(),
         None => {
-            return CrdDiscoveryResult::Unavailable {
-                crd_name: crd_name.to_string(),
-                reason: format!("kind not found for GVR {}", gvr_key),
-            };
+            return CrdDiscoveryResult::Unavailable(ScanWarning::Other {
+                gvr: crd_name.to_string(),
+                message: format!("kind not found for GVR {}", gvr_key),
+            });
         }
     };
 
@@ -627,10 +627,10 @@ async fn discover_one_crd(
     let kind_info = match gk_map.get(&(group.to_string(), kind.clone())) {
         Some(i) => i,
         None => {
-            return CrdDiscoveryResult::Unavailable {
-                crd_name: crd_name.to_string(),
-                reason: format!("no GroupKind mapping for {}/{}", group, kind),
-            };
+            return CrdDiscoveryResult::Unavailable(ScanWarning::Other {
+                gvr: crd_name.to_string(),
+                message: format!("no GroupKind mapping for {}/{}", group, kind),
+            });
         }
     };
 
@@ -638,13 +638,17 @@ async fn discover_one_crd(
     let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
 
-    let items = match list_paginated(&api).await {
+    let items = match list_paginated_with_retry(
+        &api,
+        &kind_info.group,
+        &kind_info.version,
+        &kind_info.plural,
+    )
+    .await
+    {
         Ok(items) => items,
-        Err(e) => {
-            return CrdDiscoveryResult::Unavailable {
-                crd_name: crd_name.to_string(),
-                reason: format!("LIST failed: {}", e),
-            };
+        Err(warning) => {
+            return CrdDiscoveryResult::Unavailable(warning);
         }
     };
 
@@ -706,7 +710,7 @@ pub struct CrDiscoveryReport {
     pub instances: Vec<CrInstance>,
     #[allow(dead_code)]
     pub total_observations: usize,
-    pub unavailable_crds: Vec<(String, String)>,
+    pub unavailable_crds: Vec<ScanWarning>,
 }
 
 pub async fn discover_cr_instances(
@@ -723,15 +727,28 @@ pub async fn discover_cr_instances(
             .collect()
     };
 
+    let total_crds = unique_crds.len();
     let gvr_map = Arc::new(gvr_map.clone());
     let gk_map = Arc::new(gk_map.clone());
+    let discovered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
 
     let futs = unique_crds.into_iter().map(|crd_name| {
         let client = client.clone();
         let crd_name = crd_name.clone();
         let gvr_map = gvr_map.clone();
         let gk_map = gk_map.clone();
-        async move { discover_one_crd(&client, &crd_name, &gvr_map, &gk_map).await }
+        let discovered = discovered.clone();
+        async move {
+            let result = discover_one_crd(&client, &crd_name, &gvr_map, &gk_map).await;
+            if is_tty {
+                let count = discovered.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                eprint!("\r\x1b[2K   CRD {}/{}: {}", count, total_crds, crd_name);
+            } else {
+                discovered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            result
+        }
     });
 
     let results: Vec<CrdDiscoveryResult> = futures::stream::iter(futs)
@@ -739,13 +756,14 @@ pub async fn discover_cr_instances(
         .collect()
         .await;
 
+    eprintln!();
     let mut instances = Vec::new();
     let mut unavailable_crds = Vec::new();
     for result in results {
         match result {
             CrdDiscoveryResult::Success(crs) => instances.extend(crs),
-            CrdDiscoveryResult::Unavailable { crd_name, reason } => {
-                unavailable_crds.push((crd_name, reason));
+            CrdDiscoveryResult::Unavailable(warning) => {
+                unavailable_crds.push(warning);
             }
         }
     }
@@ -787,7 +805,14 @@ async fn discover_api_service_instances(
             let api: Api<DynamicObject> = Api::all_with(client, &ar);
 
             let owner_key = format!("{}/{}/{}", def_group, def_version, kind);
-            match list_paginated(&api).await {
+            match list_paginated_with_retry(
+                &api,
+                &kind_info.group,
+                &kind_info.version,
+                &kind_info.plural,
+            )
+            .await
+            {
                 Ok(items) => {
                     let crs: Vec<CrInstance> = items
                         .into_iter()
@@ -837,10 +862,7 @@ async fn discover_api_service_instances(
                         .collect();
                     CrdDiscoveryResult::Success(crs)
                 }
-                Err(e) => CrdDiscoveryResult::Unavailable {
-                    crd_name: owner_key,
-                    reason: format!("LIST failed: {}", e),
-                },
+                Err(warning) => CrdDiscoveryResult::Unavailable(warning),
             }
         }
     });
@@ -853,8 +875,8 @@ async fn discover_api_service_instances(
     for result in results {
         match result {
             CrdDiscoveryResult::Success(crs) => instances.extend(crs),
-            CrdDiscoveryResult::Unavailable { crd_name, reason } => {
-                unavailable_crds.push((crd_name, reason));
+            CrdDiscoveryResult::Unavailable(warning) => {
+                unavailable_crds.push(warning);
             }
         }
     }
@@ -1060,7 +1082,92 @@ pub fn topo_sort_operators(
     TopoSortResult::Layers(layers)
 }
 
-async fn list_paginated(api: &Api<DynamicObject>) -> Result<Vec<DynamicObject>> {
+const DISCOVERY_MAX_RETRIES: usize = 2;
+const DISCOVERY_REQUEST_TIMEOUT_SECS: u64 = 30;
+
+pub(crate) async fn list_paginated_with_retry(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let mut last_warning = None;
+    for attempt in 0..=DISCOVERY_MAX_RETRIES {
+        let timeout_duration = std::time::Duration::from_secs(DISCOVERY_REQUEST_TIMEOUT_SECS);
+        match tokio::time::timeout(timeout_duration, list_paginated_inner(api)).await {
+            Ok(Ok(items)) => return Ok(items),
+            Ok(Err(e)) => {
+                let mut warning = ScanWarning::from_kube_error(&e, group, version, plural);
+                if warning.is_retryable() && attempt < DISCOVERY_MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    let msg = format!(
+                        "{} — attempt {}/{} failed; retrying as {}/{} in {}ms",
+                        gvr,
+                        attempt + 1,
+                        DISCOVERY_MAX_RETRIES + 1,
+                        attempt + 2,
+                        DISCOVERY_MAX_RETRIES + 1,
+                        delay.as_millis()
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    last_warning = Some(warning);
+                    continue;
+                }
+                warning.set_retries(attempt);
+                return Err(warning);
+            }
+            Err(_elapsed) => {
+                let warning = ScanWarning::Timeout {
+                    gvr: gvr.clone(),
+                    message: Some(format!(
+                        "request timeout ({}s)",
+                        DISCOVERY_REQUEST_TIMEOUT_SECS
+                    )),
+                    retries: attempt,
+                };
+                if attempt < DISCOVERY_MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    let msg = format!(
+                        "{} — timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
+                        gvr,
+                        DISCOVERY_REQUEST_TIMEOUT_SECS,
+                        attempt + 1,
+                        DISCOVERY_MAX_RETRIES + 1,
+                        attempt + 2,
+                        DISCOVERY_MAX_RETRIES + 1,
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    last_warning = Some(warning);
+                    continue;
+                }
+                return Err(warning);
+            }
+        }
+    }
+    let mut w = last_warning.unwrap();
+    w.set_retries(DISCOVERY_MAX_RETRIES);
+    Err(w)
+}
+
+async fn list_paginated_inner(
+    api: &Api<DynamicObject>,
+) -> std::result::Result<Vec<DynamicObject>, kube::Error> {
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
 
@@ -1131,7 +1238,7 @@ async fn run_preflight(
     total_observations: usize,
     unique_count: usize,
     review_provenance_count: usize,
-    unavailable_crds: &[(String, String)],
+    unavailable_crds: &[ScanWarning],
 ) -> Preflight {
     let mut checks = Vec::new();
 
@@ -1193,12 +1300,12 @@ async fn run_preflight(
     }
 
     // 4. Undiscoverable CRDs
-    for (crd_name, reason) in unavailable_crds {
+    for warning in unavailable_crds {
         checks.push(PreflightCheck {
-            name: format!("CR enumeration ({})", crd_name),
+            name: format!("CR enumeration ({})", warning),
             severity: PreflightSeverity::Critical,
             passed: false,
-            detail: format!("cannot enumerate: {}", reason),
+            detail: format!("cannot enumerate: {}", warning),
         });
     }
 
@@ -1308,7 +1415,7 @@ pub async fn compute_part_of_seeds(
     target_crds: &[String],
     kind_map: &KindMap,
     client: &Client,
-) -> (HashSet<(String, String)>, Vec<(String, String)>) {
+) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
     }
@@ -1322,10 +1429,10 @@ pub async fn compute_part_of_seeds(
     let Some(crd_ki) = kind_map.get("CustomResourceDefinition") else {
         return (
             HashSet::new(),
-            vec![(
-                "<related-crd-seed>".to_string(),
-                "CustomResourceDefinition kind not found in discovery".to_string(),
-            )],
+            vec![ScanWarning::Other {
+                gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
+                message: "CustomResourceDefinition kind not found in discovery".to_string(),
+            }],
         );
     };
 
@@ -1334,18 +1441,15 @@ pub async fn compute_part_of_seeds(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let crd_list = match crd_api.list(&ListParams::default()).await {
-        Ok(list) => list,
-        Err(e) => {
-            return (
-                HashSet::new(),
-                vec![(
-                    "<related-crd-seed>".to_string(),
-                    format!("LIST CustomResourceDefinitions failed: {}", e),
-                )],
-            );
-        }
-    };
+    let crd_items =
+        match list_paginated_with_retry(&crd_api, &crd_ki.group, &crd_ki.version, &crd_ki.plural)
+            .await
+        {
+            Ok(items) => items,
+            Err(w) => {
+                return (HashSet::new(), vec![w]);
+            }
+        };
 
     // Discover part-of label key/value pairs from target-owned CRDs.
     // Checks standard app.kubernetes.io/part-of and any */part-of key present on
@@ -1358,7 +1462,7 @@ pub async fn compute_part_of_seeds(
     ];
 
     let mut values = HashSet::new();
-    for crd in &crd_list.items {
+    for crd in &crd_items {
         let crd_name = crd.metadata.name.as_deref().unwrap_or("");
         let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
 
@@ -1384,7 +1488,7 @@ pub async fn compute_part_of_seeds(
 pub struct RelatedCrdReport {
     pub actions: Vec<Action>,
     pub instances: Vec<CrInstance>,
-    pub unavailable_crds: Vec<(String, String)>,
+    pub unavailable_crds: Vec<ScanWarning>,
     pub crd_count: usize,
     pub instance_count: usize,
 }
@@ -1416,10 +1520,10 @@ pub async fn discover_related_crd_instances(
             return RelatedCrdReport {
                 actions,
                 instances: vec![],
-                unavailable_crds: vec![(
-                    "<related-crd-catalog>".to_string(),
-                    "CustomResourceDefinition kind not found in discovery".to_string(),
-                )],
+                unavailable_crds: vec![ScanWarning::Other {
+                    gvr: "<related-crd-catalog>".to_string(),
+                    message: "CustomResourceDefinition kind not found in discovery".to_string(),
+                }],
                 crd_count: 0,
                 instance_count: 0,
             };
@@ -1431,16 +1535,20 @@ pub async fn discover_related_crd_instances(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let all_crds = match crd_api.list(&ListParams::default()).await {
-        Ok(list) => list.items,
-        Err(e) => {
+    let all_crds = match list_paginated_with_retry(
+        &crd_api,
+        &crd_kind_info.group,
+        &crd_kind_info.version,
+        &crd_kind_info.plural,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(w) => {
             return RelatedCrdReport {
                 actions,
                 instances: vec![],
-                unavailable_crds: vec![(
-                    "<related-crd-catalog>".to_string(),
-                    format!("LIST CustomResourceDefinitions failed: {}", e),
-                )],
+                unavailable_crds: vec![w],
                 crd_count: 0,
                 instance_count: 0,
             };
@@ -4436,11 +4544,12 @@ mod tests {
     fn crd_discovery_result_types() {
         let success = CrdDiscoveryResult::Success(vec![]);
         assert!(matches!(success, CrdDiscoveryResult::Success(_)));
-        let unavail = CrdDiscoveryResult::Unavailable {
-            crd_name: "test".to_string(),
-            reason: "403".to_string(),
-        };
-        assert!(matches!(unavail, CrdDiscoveryResult::Unavailable { .. }));
+        let unavail =
+            CrdDiscoveryResult::Unavailable(crate::kube::resource::ScanWarning::Forbidden {
+                gvr: "test".to_string(),
+                status: 403,
+            });
+        assert!(matches!(unavail, CrdDiscoveryResult::Unavailable(_)));
     }
 
     #[test]

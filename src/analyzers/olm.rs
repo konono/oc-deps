@@ -290,7 +290,18 @@ fn is_transient_list_error(error: &kube::Error) -> bool {
 async fn list_all_paginated(
     api: &Api<DynamicObject>,
     label_selector: Option<&str>,
-) -> Result<Vec<DynamicObject>> {
+    group: &str,
+    version: &str,
+    plural: &str,
+) -> std::result::Result<Vec<DynamicObject>, crate::kube::resource::ScanWarning> {
+    use crate::kube::resource::ScanWarning;
+
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
 
@@ -305,13 +316,63 @@ async fn list_all_paginated(
 
         let mut attempt = 1;
         let list = loop {
-            match api.list(&lp).await {
-                Ok(list) => break list,
-                Err(error) if attempt < LIST_MAX_ATTEMPTS && is_transient_list_error(&error) => {
-                    tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+            let timeout_dur = Duration::from_secs(30);
+            match tokio::time::timeout(timeout_dur, api.list(&lp)).await {
+                Ok(Ok(list)) => break list,
+                Ok(Err(error))
+                    if attempt < LIST_MAX_ATTEMPTS && is_transient_list_error(&error) =>
+                {
+                    let delay = Duration::from_millis(250 * attempt as u64);
+                    let msg = format!(
+                        "{} LIST attempt {}/{} failed; retrying as {}/{} in {}ms",
+                        gvr,
+                        attempt,
+                        LIST_MAX_ATTEMPTS,
+                        attempt + 1,
+                        LIST_MAX_ATTEMPTS,
+                        delay.as_millis()
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
                     attempt += 1;
                 }
-                Err(error) => return Err(error.into()),
+                Ok(Err(error)) => {
+                    let mut w = ScanWarning::from_kube_error(&error, group, version, plural);
+                    w.set_retries(attempt - 1);
+                    return Err(w);
+                }
+                Err(_elapsed) if attempt < LIST_MAX_ATTEMPTS => {
+                    let delay = Duration::from_millis(250 * attempt as u64);
+                    let msg = format!(
+                        "{} LIST timeout (30s), attempt {}/{} failed; retrying as {}/{}",
+                        gvr,
+                        attempt,
+                        LIST_MAX_ATTEMPTS,
+                        attempt + 1,
+                        LIST_MAX_ATTEMPTS
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+                Err(_elapsed) => {
+                    return Err(ScanWarning::Timeout {
+                        gvr: gvr.clone(),
+                        message: Some(format!(
+                            "LIST timeout (30s) after {} attempts",
+                            LIST_MAX_ATTEMPTS
+                        )),
+                        retries: attempt - 1,
+                    });
+                }
             }
         };
         let metadata = list.metadata;
@@ -348,11 +409,23 @@ pub async fn discover_operators(
     // olm.copiedFrom and duplicate the canonical CSV's large install strategy.
     // Exclude them server-side so discovery transfers only real installations.
     let (csv_result, sub_result) = tokio::join!(
-        list_all_paginated(&csv_api, Some(CANONICAL_CSV_LABEL_SELECTOR)),
-        list_all_paginated(&sub_api, None),
+        list_all_paginated(
+            &csv_api,
+            Some(CANONICAL_CSV_LABEL_SELECTOR),
+            &csv_info.group,
+            &csv_info.version,
+            &csv_info.plural,
+        ),
+        list_all_paginated(
+            &sub_api,
+            None,
+            "operators.coreos.com",
+            "v1alpha1",
+            "subscriptions",
+        ),
     );
-    let csv_items = csv_result?;
-    let sub_items = sub_result?;
+    let csv_items = csv_result.map_err(|w| anyhow::anyhow!("{}", w))?;
+    let sub_items = sub_result.map_err(|w| anyhow::anyhow!("{}", w))?;
 
     // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
     // namespaces via different Subscriptions produces separate installations
@@ -1040,6 +1113,29 @@ pub struct OwnershipStep {
     pub confidence: String,
 }
 
+#[derive(Debug)]
+pub struct WhoManagesError {
+    pub message: String,
+    pub scan_failure: Option<crate::kube::resource::ScanWarning>,
+}
+
+impl std::fmt::Display for WhoManagesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for WhoManagesError {}
+
+impl From<anyhow::Error> for WhoManagesError {
+    fn from(e: anyhow::Error) -> Self {
+        WhoManagesError {
+            message: format!("{}", e),
+            scan_failure: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WhoManagesResult {
     pub chain: Vec<OwnershipStep>,
@@ -1048,6 +1144,7 @@ pub struct WhoManagesResult {
     pub install_namespace: Option<String>,
     pub confidence: String,
     pub warnings: Vec<String>,
+    pub scan_failures: Vec<crate::kube::resource::ScanWarning>,
 }
 
 const LABEL_MANAGED_BY: &str = "app.kubernetes.io/managed-by";
@@ -1108,8 +1205,9 @@ pub fn infer_operator_from_labels(labels: &HashMap<String, String>) -> Option<(S
     None
 }
 
-pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult> {
-    use anyhow::bail;
+pub async fn who_manages(
+    input: &WhoManagesInput<'_>,
+) -> std::result::Result<WhoManagesResult, WhoManagesError> {
     let client = input.client;
     let kind = input.kind;
     let target_group = input.group;
@@ -1120,6 +1218,7 @@ pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult
 
     let mut steps: Vec<OwnershipStep> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+    let mut scan_failures: Vec<crate::kube::resource::ScanWarning> = Vec::new();
     let mut current_kind = kind.to_string();
     let mut current_group = target_group.to_string();
     let mut current_name = name.to_string();
@@ -1139,7 +1238,10 @@ pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult
             Some(i) => i,
             None => {
                 if steps.is_empty() {
-                    bail!("{}/{} not found (kind not in discovery)", kind, name);
+                    return Err(WhoManagesError {
+                        message: format!("{}/{} not found (kind not in discovery)", kind, name),
+                        scan_failure: None,
+                    });
                 }
                 chain_broken = true;
                 break;
@@ -1154,25 +1256,35 @@ pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult
             Api::all_with(client.clone(), &ar)
         };
 
-        let obj = match api.get(&current_name).await {
+        let obj = match crate::kube::scanner::get_with_retry(
+            &api,
+            &current_name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
             Ok(o) => o,
-            Err(e) => {
+            Err(w) => {
+                warnings.push(format!("{}", w));
                 if steps.is_empty() {
-                    bail!(
-                        "{}/{} not found in namespace \'{}\': {}",
-                        kind,
-                        name,
-                        namespace,
-                        e
-                    );
+                    return Err(WhoManagesError {
+                        message: format!(
+                            "{}/{} not found in namespace '{}': {}",
+                            current_kind, current_name, current_ns, w
+                        ),
+                        scan_failure: Some(w),
+                    });
                 }
+                scan_failures.push(w.clone());
                 steps.push(OwnershipStep {
                     kind: current_kind.clone(),
                     name: current_name.clone(),
                     namespace: Some(current_ns.clone()),
                     group: info.group.clone(),
                     relationship: "ownerRef".into(),
-                    evidence: "parent GET failed".into(),
+                    evidence: format!("parent GET failed: {}", w),
                     confidence: "None (unreachable)".into(),
                 });
                 chain_broken = true;
@@ -1255,7 +1367,15 @@ pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult
                     Api::all_with(client.clone(), &next_ar)
                 };
 
-                match next_api.get(&oref.name).await {
+                match crate::kube::scanner::get_with_retry(
+                    &next_api,
+                    &oref.name,
+                    &next_info.group,
+                    &next_info.version,
+                    &next_info.plural,
+                )
+                .await
+                {
                     Ok(parent_obj) => {
                         let parent_uid = parent_obj.metadata.uid.clone().unwrap_or_default();
                         if parent_uid != oref.uid {
@@ -1283,14 +1403,16 @@ pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult
                             .namespace
                             .unwrap_or_else(|| current_ns.clone());
                     }
-                    Err(_) => {
+                    Err(w) => {
+                        scan_failures.push(w.clone());
+                        warnings.push(format!("{}", w));
                         steps.push(OwnershipStep {
                             kind: oref.kind.clone(),
                             name: oref.name.clone(),
                             namespace: None,
                             group: next_info.group.clone(),
                             relationship: "ownerRef".into(),
-                            evidence: "parent GET failed".into(),
+                            evidence: format!("parent GET failed: {}", w),
                             confidence: "None (unreachable)".into(),
                         });
                         chain_broken = true;
@@ -1409,6 +1531,7 @@ pub async fn who_manages(input: &WhoManagesInput<'_>) -> Result<WhoManagesResult
         install_namespace,
         confidence: overall_confidence,
         warnings,
+        scan_failures,
     })
 }
 

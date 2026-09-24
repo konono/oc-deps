@@ -12,10 +12,170 @@ use kube::{
 };
 
 use crate::analyzers::spec_ref::{collect_string_values, extract_well_known_refs};
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::*;
 
 const MAX_RETRIES: usize = 2;
+const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
+
+fn warn_retry(is_tty: bool, msg: &str) {
+    if is_tty {
+        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+    } else {
+        eprintln!("   ⚠ {}", msg);
+    }
+}
+
+pub async fn get_with_retry(
+    api: &Api<DynamicObject>,
+    name: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+) -> std::result::Result<DynamicObject, ScanWarning> {
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    for attempt in 0..=MAX_RETRIES {
+        let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
+        match tokio::time::timeout(timeout_dur, api.get(name)).await {
+            Ok(Ok(obj)) => return Ok(obj),
+            Ok(Err(e)) => {
+                let warning = ScanWarning::from_kube_error(&e, group, version, plural);
+                if warning.is_retryable() && attempt < MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    warn_retry(
+                        is_tty,
+                        &format!(
+                            "{} — GET attempt {}/{} failed; retrying as {}/{} in {}ms",
+                            gvr,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            attempt + 2,
+                            MAX_RETRIES + 1,
+                            delay.as_millis()
+                        ),
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                let mut w = ScanWarning::from_kube_error(&e, group, version, plural);
+                w.set_retries(attempt);
+                return Err(w);
+            }
+            Err(_elapsed) => {
+                if attempt < MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    warn_retry(
+                        is_tty,
+                        &format!(
+                            "{} — GET timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
+                            gvr,
+                            SCAN_REQUEST_TIMEOUT_SECS,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            attempt + 2,
+                            MAX_RETRIES + 1
+                        ),
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(ScanWarning::Timeout {
+                    gvr: gvr.clone(),
+                    message: Some(format!(
+                        "GET {} timeout ({}s)",
+                        name, SCAN_REQUEST_TIMEOUT_SECS
+                    )),
+                    retries: attempt,
+                });
+            }
+        }
+    }
+    Err(ScanWarning::Other {
+        gvr,
+        message: "exhausted retries".to_string(),
+    })
+}
+
+pub async fn list_with_selector_retry(
+    api: &Api<DynamicObject>,
+    selector: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    for attempt in 0..=MAX_RETRIES {
+        let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
+        let lp = ListParams::default().labels(selector);
+        match tokio::time::timeout(timeout_dur, api.list(&lp)).await {
+            Ok(Ok(list)) => return Ok(list.items),
+            Ok(Err(e)) => {
+                let warning = ScanWarning::from_kube_error(&e, group, version, plural);
+                if warning.is_retryable() && attempt < MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    warn_retry(
+                        is_tty,
+                        &format!(
+                            "{} — LIST attempt {}/{} failed; retrying as {}/{} in {}ms",
+                            gvr,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            attempt + 2,
+                            MAX_RETRIES + 1,
+                            delay.as_millis()
+                        ),
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                let mut w = ScanWarning::from_kube_error(&e, group, version, plural);
+                w.set_retries(attempt);
+                return Err(w);
+            }
+            Err(_elapsed) => {
+                if attempt < MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    warn_retry(
+                        is_tty,
+                        &format!(
+                            "{} — LIST timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
+                            gvr,
+                            SCAN_REQUEST_TIMEOUT_SECS,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            attempt + 2,
+                            MAX_RETRIES + 1
+                        ),
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(ScanWarning::Timeout {
+                    gvr: gvr.clone(),
+                    message: Some(format!(
+                        "LIST selector={} timeout ({}s)",
+                        selector, SCAN_REQUEST_TIMEOUT_SECS
+                    )),
+                    retries: attempt,
+                });
+            }
+        }
+    }
+    Err(ScanWarning::Other {
+        gvr,
+        message: "exhausted retries".to_string(),
+    })
+}
 
 pub(crate) fn resolve_name_matches(
     spec_strs: &[(String, String)],
@@ -92,6 +252,8 @@ pub async fn scan_namespace(
 
     let total = scan_targets.len();
     let scanned = Arc::new(AtomicUsize::new(0));
+    let scan_start = std::time::Instant::now();
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
 
     let futs = scan_targets.into_iter().map(|(kind, info)| {
         let client = client.clone();
@@ -105,14 +267,22 @@ pub async fn scan_namespace(
 
             let mut last_err = None;
             for attempt in 0..=MAX_RETRIES {
-                let result = api.list(&ListParams::default()).await;
+                let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
+                let result =
+                    tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await;
                 if attempt == 0 {
                     let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-                    eprint!("\r\x1b[2K🔍 Scanning resources... ({}/{})", count, total);
+                    if is_tty {
+                        let elapsed = scan_start.elapsed().as_secs();
+                        eprint!(
+                            "\r\x1b[2K🔍 Scanning resources... ({}/{}, {}s)",
+                            count, total, elapsed
+                        );
+                    }
                 }
 
                 match result {
-                    Ok(list) => {
+                    Ok(Ok(list)) => {
                         let items: Vec<ScanItem> = list
                             .items
                             .into_iter()
@@ -157,6 +327,7 @@ pub async fn scan_namespace(
 
                                 Some((
                                     ResourceInfo {
+                                        group: info.group.clone(),
                                         kind: kind.clone(),
                                         name,
                                         namespace: ns,
@@ -172,7 +343,7 @@ pub async fn scan_namespace(
                             .collect();
                         return Ok(items);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         let mut warning = ScanWarning::from_kube_error(
                             &e,
                             &info.group,
@@ -182,11 +353,53 @@ pub async fn scan_namespace(
                         if warning.is_retryable() && attempt < MAX_RETRIES {
                             let delay =
                                 std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            let gvr_d = if info.group.is_empty() {
+                                format!("{}/{}", info.version, info.plural)
+                            } else {
+                                format!("{}/{}/{}", info.group, info.version, info.plural)
+                            };
+                            warn_retry(
+                                is_tty,
+                                &format!(
+                                    "{} — scan LIST attempt {}/{} failed; retrying as {}/{} in {}ms",
+                                    gvr_d, attempt + 1, MAX_RETRIES + 1, attempt + 2, MAX_RETRIES + 1, delay.as_millis()
+                                ),
+                            );
                             tokio::time::sleep(delay).await;
                             last_err = Some(warning);
                             continue;
                         }
                         warning.set_retries(attempt);
+                        return Err(warning);
+                    }
+                    Err(_elapsed) => {
+                        let gvr = if info.group.is_empty() {
+                            format!("{}/{}", info.version, info.plural)
+                        } else {
+                            format!("{}/{}/{}", info.group, info.version, info.plural)
+                        };
+                        let warning = ScanWarning::Timeout {
+                            gvr: gvr.clone(),
+                            message: Some(format!(
+                                "request timeout ({}s)",
+                                SCAN_REQUEST_TIMEOUT_SECS
+                            )),
+                            retries: attempt,
+                        };
+                        if attempt < MAX_RETRIES {
+                            let delay =
+                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                            warn_retry(
+                                is_tty,
+                                &format!(
+                                    "{} — scan LIST timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
+                                    gvr, SCAN_REQUEST_TIMEOUT_SECS, attempt + 1, MAX_RETRIES + 1, attempt + 2, MAX_RETRIES + 1
+                                ),
+                            );
+                            tokio::time::sleep(delay).await;
+                            last_err = Some(warning);
+                            continue;
+                        }
                         return Err(warning);
                     }
                 }
@@ -203,11 +416,19 @@ pub async fn scan_namespace(
         .collect()
         .await;
 
-    eprintln!(
-        "\r\x1b[2K✅ Scanned {} resource types in {:.1}s",
-        total,
-        scan_start.elapsed().as_secs_f64()
-    );
+    if is_tty {
+        eprintln!(
+            "\r\x1b[2K✅ Scanned {} resource types in {:.1}s",
+            total,
+            scan_start.elapsed().as_secs_f64()
+        );
+    } else {
+        eprintln!(
+            "✅ Scanned {} resource types in {:.1}s",
+            total,
+            scan_start.elapsed().as_secs_f64()
+        );
+    }
 
     let mut index = NamespaceIndex::new();
     let mut ref_data: Vec<RefData> = Vec::new();
@@ -260,8 +481,12 @@ pub async fn scan_namespace(
                 let source_kind = source_info.kind.clone();
                 let source_name = source_info.name.clone();
                 for sref in source_refs {
-                    let target_key = (sref.target_kind.to_lowercase(), sref.target_name.clone());
-                    if let Some(target_uid) = index.by_kind_name.get(&target_key) {
+                    if let Some(target_uid) = index.lookup_by_kind_name(
+                        None, // spec-ref target group unknown
+                        &sref.target_kind,
+                        &sref.target_name,
+                        source_info.namespace.as_deref(),
+                    ) {
                         index
                             .refs_to
                             .entry(target_uid.clone())
@@ -291,7 +516,9 @@ pub async fn resolve_missing_parents(
     client: &Client,
     namespace: &str,
     kind_map: &KindMap,
-) {
+    gk_map: &GroupKindMap,
+) -> Vec<ScanWarning> {
+    let mut warnings = Vec::new();
     let mut current = start_uid.to_string();
     let mut visited = HashSet::new();
 
@@ -320,15 +547,31 @@ pub async fn resolve_missing_parents(
             None => (String::new(), owner.api_version.clone()),
         };
 
-        let kind_info = kind_map
-            .iter()
-            .find(|(k, info)| k.as_str() == owner.kind && info.group == owner_group)
-            .map(|(_, info)| info)
-            .or_else(|| kind_map.get(&owner.kind));
+        let kind_info = if !owner_group.is_empty() {
+            gk_map.get(&(owner_group.clone(), owner.kind.clone()))
+        } else {
+            gk_map
+                .get(&(String::new(), owner.kind.clone()))
+                .or_else(|| kind_map.get(&owner.kind))
+        };
 
         let kind_info = match kind_info {
             Some(i) => i,
-            None => break,
+            None => {
+                let gvr = if owner_group.is_empty() {
+                    format!("{}/{}", owner_version, owner.kind)
+                } else {
+                    format!("{}/{}/{}", owner_group, owner_version, owner.kind)
+                };
+                warnings.push(ScanWarning::Other {
+                    gvr,
+                    message: format!(
+                        "parent {}/{} kind not found in discovery (group {})",
+                        owner.kind, owner.name, owner_group
+                    ),
+                });
+                break;
+            }
         };
 
         let gvk = GroupVersion::gv(&owner_group, &owner_version).with_kind(&owner.kind);
@@ -339,7 +582,15 @@ pub async fn resolve_missing_parents(
             Api::all_with(client.clone(), &ar)
         };
 
-        match api.get(&owner.name).await {
+        match get_with_retry(
+            &api,
+            &owner.name,
+            &kind_info.group,
+            &kind_info.version,
+            &kind_info.plural,
+        )
+        .await
+        {
             Ok(obj) => {
                 let uid = obj.metadata.uid.unwrap_or_default();
                 let name = obj.metadata.name.unwrap_or_default();
@@ -373,6 +624,7 @@ pub async fn resolve_missing_parents(
 
                 let next_uid = uid.clone();
                 index.insert(ResourceInfo {
+                    group: owner_group.clone(),
                     kind: owner.kind,
                     name,
                     namespace: ns,
@@ -383,9 +635,13 @@ pub async fn resolve_missing_parents(
                 });
                 current = next_uid;
             }
-            Err(_) => break,
+            Err(w) => {
+                warnings.push(w);
+                break;
+            }
         }
     }
+    warnings
 }
 
 pub async fn find_parents_only(
@@ -405,6 +661,7 @@ pub async fn find_parents_only(
             Some(i) => i,
             None => {
                 chain.push(ResourceInfo {
+                    group: String::new(),
                     kind: current_kind,
                     name: current_name,
                     namespace: None,
@@ -462,6 +719,7 @@ pub async fn find_parents_only(
                     .collect();
 
                 chain.push(ResourceInfo {
+                    group: info.group.clone(),
                     kind: current_kind,
                     name: current_name,
                     namespace: obj.metadata.namespace,
@@ -481,6 +739,7 @@ pub async fn find_parents_only(
             }
             Err(e) => {
                 chain.push(ResourceInfo {
+                    group: String::new(),
                     kind: current_kind,
                     name: format!("{} (error: {})", current_name, e),
                     namespace: None,

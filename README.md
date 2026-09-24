@@ -66,6 +66,16 @@ oc-deps who-manages deployment/<name> -n <namespace>
 oc-deps who-manages pod/<pod-name> -n <namespace>
 oc-deps who-manages -o json deployment/<name> -n <namespace>
 
+# Inspect all resources managed by an operator
+oc-deps inspect rhods-operator
+oc-deps inspect rhods-operator -o json
+oc-deps inspect rhods-operator --cross-namespace   # discover across namespaces
+
+# Trace impact radius from a root CR
+oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications
+oc-deps trace deployment/<name> -n <namespace> -o json
+oc-deps trace deployment/<name> -n <namespace> --cross-namespace
+
 # Trace which Operator installed a CRD
 oc-deps --crd-origin -k MyCustomResource -n <namespace>
 
@@ -90,8 +100,8 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `--crd-origin` | Show which Operator/CSV installed the CRD |
 | `--labels` | Show labels on each resource in tree output |
 | `--annotations` | Show annotations on each resource (opt-in). Excludes `kubectl.kubernetes.io/last-applied-configuration` and `control-plane.alpha.kubernetes.io/leader` |
-| `-v, --verbose` | Show detailed scan warnings and diagnostics |
-| `--strict` | Exit with code 2 if any API types were skipped during scan. Results are output/saved before exit |
+| `-v, --verbose` | Show all scan/discovery warnings (default: first 5) |
+| `--strict` | Exit with code 2 if discovery/scan is incomplete. Partial results are output before exit. AllNamespaces scope messages alone do not trigger exit 2 |
 | `--network` | Show network paths (Service/Ingress/Route) for Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan (skipped by default) |
@@ -99,11 +109,18 @@ oc-deps -o json  deployment/<name> -n <namespace>
 
 **JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
 
-**Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags, so for subcommands they must precede the subcommand name:
+**Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name:
 
 ```bash
 oc-deps --strict snapshot -n <namespace> -o snapshot.json
 oc-deps --verbose graph -n <namespace> -o evidence-graph.json
+```
+
+**`inspect` and `trace`** have their own `--verbose` and `--strict` flags, so both positions work:
+
+```bash
+oc-deps inspect rhods-operator --strict --verbose
+oc-deps --strict inspect rhods-operator    # also works (merged with subcommand flags)
 ```
 
 ## How it works
@@ -138,11 +155,56 @@ oc-deps operators -o json      # JSON output
 
 ### Inspect an operator
 
-Show all resources belonging to an operator (OLM resources, controllers, CRDs, CR instances, pods):
+Show all resources belonging to an operator, classified by Relationship / Evidence / Confidence:
 
 ```bash
-oc-deps teardown inspect rhods-operator
+oc-deps inspect rhods-operator              # top-level subcommand
+oc-deps inspect rhods-operator -o json       # JSON output
+oc-deps inspect rhods-operator --cross-namespace  # discover across namespaces
+oc-deps inspect rhods-operator -o table           # tabular output with group/source
+oc-deps teardown inspect rhods-operator            # also available under teardown
 ```
+
+Resources are grouped into categories with **Relationship**, **Evidence**, and **Confidence**:
+- **OLM** — Subscription, CSV (`olm`, Managed)
+- **Controller** — Deployments, ServiceAccounts from CSV installStrategy (`installStrategy`, Managed), Pods by selector match (`selector-match`, Attributed)
+- **CR Instances** — owned CRD instances with ownerRef UID match (`ownerRef`, Managed) or without (`owned-crd-instance`, Attributed)
+- **Related CR Instances** — label-matched CRDs (`label-match`, Inferred — correlation only, not causation)
+
+Each resource may have a **`source_id`** indicating the relationship edge source. For ownerRef edges, this is the parent resource; for label-match edges, this is the attributed Operator CSV. In tree output this appears as `← group/Kind/name ns:xxx`. In JSON, `source_id` is a full ResourceId with `group/kind/namespace/name/uid`; when absent the field is omitted (not null). AllNamespaces scope messages appear in `scope_warnings` (not `warnings`).
+
+**`--cross-namespace`** discovers candidate namespaces from:
+1. Install namespace (always included)
+2. OperatorGroup `status.namespaces` / `spec.targetNamespaces`
+3. Owned CRD instances' actual namespaces
+4. Spec namespace references — fields matching `*namespace*`/`*Namespace*` in CR specs (heuristic; exclusion fields like `excludedNamespaces` are skipped)
+5. Label evidence from related CRD instances
+
+Namespaces are scanned sequentially to avoid connection exhaustion. For AllNamespaces operators, only namespaces with known evidence are scanned — the tool does not scan all cluster namespaces.
+
+If some namespaces or CRDs fail (403, timeout), partial results are still returned. Use `--strict` to exit with code 2 when discovery is incomplete. Use `--verbose` to see all warnings (default: first 5). In JSON output, `warnings` contains all failure messages and `scan_warning_count` is the total count.
+
+### Trace impact radius
+
+Show the impact radius from a root resource — ownerRef descendants, spec references, same-operator CRDs, and label matches:
+
+```bash
+oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications --cross-namespace  # cluster-scoped, scan operand ns
+oc-deps trace deployment/dashboard-operator -n redhat-ods-applications
+oc-deps trace deployment/<name> -n <ns> -o json
+oc-deps trace deployment/<name> -n <ns> -o table
+oc-deps trace deployment/<name> -n <ns> --cross-namespace --strict
+```
+
+Each category shows Relationship and Confidence:
+- **ownerRef descendants** — `ownerRef`, Managed (High), confirmed by UID match
+- **spec references** — `spec-ref`, Attributed (Medium), detected from spec field paths
+- **Same Operator CRDs** — `same-operator-crd`, Inferred (Low), correlation only, not causation
+- **label matches** — `label-match`, Inferred (Low), correlation only
+
+The managing operator is determined via `who-manages` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
+
+`--cross-namespace` uses the same evidence-based namespace discovery as `inspect`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
 
 ### Generate a teardown plan
 
