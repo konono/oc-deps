@@ -629,16 +629,20 @@ pub fn primary_owner(refs: &[OwnerRef]) -> Option<&OwnerRef> {
 }
 
 pub fn dedup_spec_refs(refs: &mut Vec<SpecRef>) {
-    let sa_name_paths: HashSet<String> = refs
+    let sa_name_entries: HashSet<(String, String, SpecRefSource)> = refs
         .iter()
         .filter(|r| {
             r.target_kind == "ServiceAccount" && r.field_path.ends_with(".serviceAccountName")
         })
         .map(|r| {
-            r.field_path
-                .strip_suffix(".serviceAccountName")
-                .unwrap()
-                .to_string()
+            (
+                r.field_path
+                    .strip_suffix(".serviceAccountName")
+                    .unwrap()
+                    .to_string(),
+                r.target_name.clone(),
+                r.source,
+            )
         })
         .collect();
     refs.retain(|r| {
@@ -647,7 +651,7 @@ pub fn dedup_spec_refs(refs: &mut Vec<SpecRef>) {
                 .field_path
                 .strip_suffix(".serviceAccount")
                 .unwrap_or(&r.field_path);
-            !sa_name_paths.contains(parent)
+            !sa_name_entries.contains(&(parent.to_string(), r.target_name.clone(), r.source))
         } else {
             true
         }
@@ -1620,6 +1624,54 @@ mod tests {
                 .any(|r| r.field_path == "spec.template.spec.serviceAccountName")
         );
         assert!(refs.iter().any(|r| r.field_path == "spec.serviceAccount"));
+    }
+
+    #[test]
+    fn dedup_sa_different_names_same_parent_both_kept() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "sa-a".into(),
+                field_path: "spec.serviceAccount".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "sa-b".into(),
+                field_path: "spec.serviceAccountName".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(refs.len(), 2, "different target names → both kept");
+        assert!(
+            refs.iter()
+                .any(|r| r.target_name == "sa-a" && r.field_path == "spec.serviceAccount")
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.target_name == "sa-b" && r.field_path == "spec.serviceAccountName")
+        );
+    }
+
+    #[test]
+    fn dedup_sa_different_source_same_parent_both_kept() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "my-sa".into(),
+                field_path: "spec.serviceAccount".into(),
+                source: SpecRefSource::Heuristic,
+            },
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "my-sa".into(),
+                field_path: "spec.serviceAccountName".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(refs.len(), 2, "different sources → both kept");
     }
 
     #[test]
