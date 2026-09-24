@@ -107,12 +107,79 @@ oc-deps -o json  deployment/<name> -n <namespace>
 | `-v, --verbose` | Show all scan/discovery warnings (default: first 5) |
 | `--strict` | Exit with code 2 if discovery/scan is incomplete. Partial results are output before exit. AllNamespaces scope messages alone do not trigger exit 2 |
 | `--show-spec` | Show container resource requests/limits for Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob, DeploymentConfig |
-| `--network` | Show network paths (Service/Ingress/Route/EndpointSlice) with Service config, LB status, EndpointSlice conditions |
+| `--network` | Show network paths (Service/Ingress/Route) for Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan (skipped by default) |
 | `--no-cache` | Skip API discovery cache |
 
 **JSON output:** Labels are always included (even when empty: `"labels": {}`). Annotations are included only with `--annotations`.
+
+### Network Paths (`--network`)
+
+Shows the full network reachability chain for workloads: Pod labels -> Service selector -> Ingress/Route backends, plus EndpointSlice health.
+
+**Service fields displayed:**
+
+| Field | Description |
+|-------|-------------|
+| `type` | ClusterIP, NodePort, LoadBalancer, ExternalName |
+| `clusterIP` | Virtual IP assigned to the service |
+| `selector` | Label selector used to match Pods |
+| `internalTrafficPolicy` | Cluster or Local |
+| `externalTrafficPolicy` | Cluster or Local (NodePort/LB only) |
+| `ipFamilyPolicy` | SingleStack, PreferDualStack, RequireDualStack |
+| `healthCheckNodePort` | Port for LB health checks (when externalTrafficPolicy=Local) |
+| `loadBalancerClass` | Custom LB implementation class |
+| `allocateLoadBalancerNodePorts` | Whether to allocate NodePorts for LB type |
+| `loadBalancerIngress` | LB-assigned addresses with optional `ipMode` |
+
+**EndpointSlice and endpoint conditions:**
+
+EndpointSlices are the modern replacement for Endpoints. Each slice contains a list of endpoints with conditions:
+
+- `ready` -- the endpoint is ready to receive traffic
+- `serving` -- the endpoint is serving traffic (can be true even when terminating)
+- `terminating` -- the endpoint's Pod is terminating
+- When `ready` is `None` (null), the K8s spec treats it as effectively ready. The `effectiveReady` count = `ready` + `unknown`
+
+**Selector vs selectorless Services:**
+
+- Services with a `selector` field match Pods by label. `selectorMatchedPods` lists these
+- EndpointSlice `targetRef` points to the actual backing Pods. `targetRefMatchedPods` lists these
+- For selectorless Services, only `targetRefMatchedPods` is populated (manual Endpoints/EndpointSlices)
+
+**JSON field reference (`-o json --network`):**
+
+Each entry in `networkPaths[]` contains:
+- `service`, `serviceType`, `clusterIP`, `ports[]`, `selector`, `hasSelector`
+- `endpointSlices[]` with `name`, `addressType`, `ports[]` (including `appProtocol`), `endpoints[]`
+- Each endpoint: `addresses[]`, `ready`, `serving`, `terminating`, `targetRef`, `hints`
+- `endpointSummary`: `ready`, `notReady`, `unknown`, `effectiveReady`, `serving`, `terminating`
+- `selectorMatchedPods[]`, `targetRefMatchedPods[]`
+- `ingresses[]` with `kind`, `name`, `host`, `path`, `tls`
+- Optional: `healthCheckNodePort`, `internalTrafficPolicy`, `ipFamilyPolicy`, `loadBalancerClass`, `allocateLoadBalancerNodePorts`, `externalTrafficPolicy`, `loadBalancerIngress[]`
+- Top-level `warnings[]` (typed ScanWarning array) and `warningCount`
+
+**Example tree output:**
+
+```
+Service/my-app
+    Type:      ClusterIP
+    ClusterIP: 10.96.100.42
+    Port:      8080/TCP -> 8080
+    Selector:  app=my-app
+    SelectorPods:  Pod/my-app-abc123
+    Endpoints: 2 ready, 0 not-ready, 0 terminating, 2 serving
+
+    EndpointSlice/my-app-abc12 (IPv4)
+      Port: http 8080/TCP
+      10.244.0.5 [ready serving] -> Pod/my-app-abc123
+      10.244.0.6 [ready serving] -> Pod/my-app-def456
+
+    Route/my-app-route -> Service/my-app
+      Host: my-app.example.com
+      TLS:  edge
+```
 
 ### Cluster-Wide Map (`--map -A`)
 
