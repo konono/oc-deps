@@ -214,12 +214,385 @@ fn display_tree(tree: &TreeNode, output: &OutputFormat, namespace: &str, opts: &
     }
 }
 
+const MAX_NAMESPACE_CONCURRENCY: usize = 5;
+
+const SYSTEM_NAMESPACE_PREFIXES: &[&str] = &["openshift-", "kube-"];
+const SYSTEM_NAMESPACE_EXACT: &[&str] = &["default"];
+
+fn is_system_namespace(name: &str) -> bool {
+    SYSTEM_NAMESPACE_PREFIXES
+        .iter()
+        .any(|p| name.starts_with(p))
+        || SYSTEM_NAMESPACE_EXACT.contains(&name)
+}
+
+fn matches_glob(pattern: &str, name: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        name.starts_with(prefix)
+    } else if let Some(suffix) = pattern.strip_prefix('*') {
+        name.ends_with(suffix)
+    } else {
+        name == pattern
+    }
+}
+
+fn filter_namespaces(
+    namespaces: Vec<(String, std::collections::HashMap<String, String>)>,
+    selectors: &[String],
+    excludes: &[String],
+    exclude_system: bool,
+) -> Vec<String> {
+    namespaces
+        .into_iter()
+        .filter(|(name, labels)| {
+            if exclude_system && is_system_namespace(name) {
+                return false;
+            }
+            for pattern in excludes {
+                if matches_glob(pattern, name) {
+                    return false;
+                }
+            }
+            for sel in selectors {
+                if let Some((key, value)) = sel.split_once('=')
+                    && labels.get(key) != Some(&value.to_string())
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+struct NamespaceScanResult {
+    namespace: String,
+    trees: Vec<TreeNode>,
+    total_trees: usize,
+    resource_count: usize,
+    warnings: Vec<crate::kube::resource::ScanWarning>,
+    error: Option<String>,
+}
+
+async fn cluster_wide_map(
+    client: &::kube::Client,
+    kind_map: &crate::kube::discovery::KindMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+    args: &Args,
+    tree_opts: &TreeDisplayOpts,
+    map_filters: &[crate::graph::tree::MapFilter],
+    t0: Instant,
+) -> Result<()> {
+    use futures::stream::StreamExt;
+    use k8s_openapi::api::core::v1::Namespace;
+
+    let ns_api: ::kube::Api<Namespace> = ::kube::Api::all(client.clone());
+    let ns_list = ns_api
+        .list(&::kube::api::ListParams::default())
+        .await
+        .context("Failed to list namespaces")?;
+
+    let all_ns: Vec<(String, std::collections::HashMap<String, String>)> = ns_list
+        .items
+        .into_iter()
+        .filter_map(|ns| {
+            let name = ns.metadata.name?;
+            let labels = ns.metadata.labels.unwrap_or_default().into_iter().collect();
+            Some((name, labels))
+        })
+        .collect();
+
+    let target_namespaces = filter_namespaces(
+        all_ns,
+        &args.namespace_selector,
+        &args.exclude_namespace,
+        args.exclude_system_namespaces,
+    );
+
+    if target_namespaces.is_empty() {
+        bail!("No namespaces matched the given selectors/filters");
+    }
+
+    let total_ns = target_namespaces.len();
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    eprintln!(
+        "📦 Scanning {} namespace{}...",
+        total_ns,
+        if total_ns == 1 { "" } else { "s" }
+    );
+
+    let scanned_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut all_has_warnings = false;
+
+    let futs = target_namespaces.into_iter().map(|ns| {
+        let client = client.clone();
+        let kind_map = kind_map.clone();
+        let gk_map = gk_map.clone();
+        let include_events = args.include_events;
+        let refs = !args.no_refs;
+        let show_spec = args.show_spec;
+        let depth = args.depth;
+        let map_filters = map_filters.to_vec();
+        let scanned = scanned_count.clone();
+
+        async move {
+            let ns_start = Instant::now();
+            let scan_result =
+                scan_namespace(&client, &ns, &kind_map, include_events, refs, show_spec).await;
+
+            let count = scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            let elapsed = ns_start.elapsed().as_secs_f64();
+
+            match scan_result {
+                Ok((mut index, mut warnings)) => {
+                    let uids_with_missing_parents: Vec<String> = index
+                        .by_uid
+                        .iter()
+                        .filter(|(_, info)| {
+                            info.owner_refs
+                                .iter()
+                                .any(|r| !index.by_uid.contains_key(&r.uid))
+                        })
+                        .map(|(uid, _)| uid.clone())
+                        .collect();
+                    for uid in &uids_with_missing_parents {
+                        let parent_warnings = resolve_missing_parents(
+                            &mut index, uid, &client, &ns, &kind_map, &gk_map, show_spec,
+                        )
+                        .await;
+                        warnings.extend(parent_warnings);
+                    }
+
+                    let resource_count = index.by_uid.len();
+                    let all_trees = build_namespace_map(&index, depth);
+                    let total_trees = all_trees.len();
+                    let trees = apply_filters(all_trees, &map_filters);
+
+                    if is_tty {
+                        eprint!(
+                            "\r\x1b[2K   [{}/{}] {} — {} resources, {:.1}s",
+                            count, total_ns, ns, resource_count, elapsed
+                        );
+                    } else {
+                        eprintln!(
+                            "   [{}/{}] {} — {} resources, {:.1}s",
+                            count, total_ns, ns, resource_count, elapsed
+                        );
+                    }
+
+                    NamespaceScanResult {
+                        namespace: ns,
+                        trees,
+                        total_trees,
+                        resource_count,
+                        warnings,
+                        error: None,
+                    }
+                }
+                Err(e) => {
+                    if is_tty {
+                        eprint!(
+                            "\r\x1b[2K   [{}/{}] {} — ERROR: {}, {:.1}s",
+                            count, total_ns, ns, e, elapsed
+                        );
+                    } else {
+                        eprintln!(
+                            "   [{}/{}] {} — ERROR: {}, {:.1}s",
+                            count, total_ns, ns, e, elapsed
+                        );
+                    }
+                    NamespaceScanResult {
+                        namespace: ns,
+                        trees: vec![],
+                        total_trees: 0,
+                        resource_count: 0,
+                        warnings: vec![],
+                        error: Some(e.to_string()),
+                    }
+                }
+            }
+        }
+    });
+
+    let mut results: Vec<NamespaceScanResult> = futures::stream::iter(futs)
+        .buffer_unordered(MAX_NAMESPACE_CONCURRENCY)
+        .collect()
+        .await;
+
+    results.sort_by(|a, b| a.namespace.cmp(&b.namespace));
+
+    if is_tty {
+        eprintln!();
+    }
+
+    let total_resources: usize = results.iter().map(|r| r.resource_count).sum();
+    let total_trees: usize = results.iter().map(|r| r.trees.len()).sum();
+    let scanned_ns: Vec<&str> = results
+        .iter()
+        .filter(|r| r.error.is_none())
+        .map(|r| r.namespace.as_str())
+        .collect();
+    let incomplete_ns: Vec<&str> = results
+        .iter()
+        .filter(|r| r.error.is_some())
+        .map(|r| r.namespace.as_str())
+        .collect();
+    eprintln!(
+        "✅ Cluster-wide scan: {} namespaces, {} resources, {} trees in {:.1}s",
+        scanned_ns.len(),
+        total_resources,
+        total_trees,
+        t0.elapsed().as_secs_f64()
+    );
+    if !incomplete_ns.is_empty() {
+        eprintln!(
+            "⚠ {} namespace{} failed: {}",
+            incomplete_ns.len(),
+            if incomplete_ns.len() == 1 { "" } else { "s" },
+            incomplete_ns.join(", ")
+        );
+    }
+
+    for r in &results {
+        if !r.warnings.is_empty() {
+            eprintln!("\n⚠ Warnings for namespace '{}':", r.namespace);
+            format_scan_warnings(&r.warnings, args.verbose);
+            all_has_warnings = true;
+        }
+    }
+
+    match args.output {
+        OutputFormat::Tree => {
+            for r in &results {
+                if r.trees.is_empty() {
+                    continue;
+                }
+                eprintln!(
+                    "\n📦 Namespace: {} ({} trees, {} resources)\n",
+                    r.namespace,
+                    r.trees.len(),
+                    r.resource_count
+                );
+                for (i, tree) in r.trees.iter().enumerate() {
+                    print_tree(tree, "", true, true, tree_opts);
+                    if i < r.trees.len() - 1 {
+                        println!();
+                    }
+                }
+            }
+        }
+        OutputFormat::Table => {
+            let mut table = comfy_table::Table::new();
+            table.set_header(vec!["Namespace", "Root", "Kind", "Name", "Children"]);
+            for r in &results {
+                for tree in &r.trees {
+                    let total = count_nodes(tree);
+                    table.add_row(vec![
+                        r.namespace.as_str(),
+                        &format!("{}/{}", tree.info.kind, tree.info.name),
+                        tree.info.kind.as_str(),
+                        tree.info.name.as_str(),
+                        &total.to_string(),
+                    ]);
+                }
+            }
+            println!("{table}");
+        }
+        OutputFormat::Json => {
+            let ns_results: Vec<serde_json::Value> = results
+                .iter()
+                .filter(|r| r.error.is_none())
+                .map(|r| {
+                    let mut ns_obj = serde_json::json!({
+                        "namespace": r.namespace,
+                        "totalResources": r.resource_count,
+                        "totalTrees": r.total_trees,
+                        "matchedTrees": r.trees.len(),
+                        "trees": r.trees.iter().map(|t| tree_to_json(t, args.annotations, args.show_spec)).collect::<Vec<_>>(),
+                    });
+                    if !r.warnings.is_empty() {
+                        ns_obj["warnings"] = serde_json::json!(
+                            r.warnings.iter().map(|w| w.to_string()).collect::<Vec<_>>()
+                        );
+                    }
+                    ns_obj
+                })
+                .collect();
+
+            let incomplete: Vec<serde_json::Value> = results
+                .iter()
+                .filter(|r| r.error.is_some())
+                .map(|r| {
+                    serde_json::json!({
+                        "namespace": r.namespace,
+                        "error": r.error,
+                    })
+                })
+                .collect();
+
+            let mut output = serde_json::json!({
+                "scope": "cluster-wide",
+                "totalNamespaces": scanned_ns.len() + incomplete_ns.len(),
+                "scannedNamespaces": scanned_ns.len(),
+                "totalResources": total_resources,
+                "totalTrees": total_trees,
+                "namespaces": ns_results,
+            });
+            if !args.namespace_selector.is_empty() {
+                output["namespaceSelectors"] = serde_json::json!(args.namespace_selector);
+            }
+            if !args.exclude_namespace.is_empty() {
+                output["excludeNamespaces"] = serde_json::json!(args.exclude_namespace);
+            }
+            if args.exclude_system_namespaces {
+                output["excludeSystemNamespaces"] = serde_json::json!(true);
+            }
+            if !incomplete.is_empty() {
+                output["incompleteNamespaces"] = serde_json::json!(incomplete);
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+    }
+
+    if args.strict && (all_has_warnings || !incomplete_ns.is_empty()) {
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
     if !args.filter.is_empty() && (!args.map || args.command.is_some()) {
         bail!("--filter requires --map (without subcommands)");
+    }
+    if args.all_namespaces && args.namespace.is_some() {
+        bail!("-A/--all-namespaces and -n/--namespace are mutually exclusive");
+    }
+    if args.all_namespaces && !args.map {
+        bail!("-A/--all-namespaces requires --map");
+    }
+    if (!args.namespace_selector.is_empty()
+        || !args.exclude_namespace.is_empty()
+        || args.exclude_system_namespaces)
+        && !args.all_namespaces
+    {
+        bail!(
+            "--namespace-selector, --exclude-namespace, and --exclude-system-namespaces require -A"
+        );
+    }
+    for sel in &args.namespace_selector {
+        if !sel.contains('=') || sel.starts_with('=') || sel.ends_with('=') {
+            bail!(
+                "Invalid --namespace-selector '{}': expected key=value format",
+                sel
+            );
+        }
     }
     if args.network && (args.map || args.up_only || args.command.is_some()) {
         bail!("--network is incompatible with --map, --up-only, and subcommands");
@@ -3966,6 +4339,21 @@ async fn main() -> Result<()> {
         let (kind_map, _, gk_map_default, _) =
             build_kind_lookup_cached(&client, &config, args.no_cache).await?;
         eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+        if args.all_namespaces {
+            let ns_result = cluster_wide_map(
+                &client,
+                &kind_map,
+                &gk_map_default,
+                &args,
+                &tree_opts,
+                &map_filters,
+                t0,
+            )
+            .await;
+            return ns_result;
+        }
+
         let (mut index, mut scan_warnings) = scan_namespace(
             &client,
             &namespace,
@@ -5291,6 +5679,162 @@ pub fn can_finish_run(j: &journal::RunJournal) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cluster_wide_map_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn is_system_namespace_matches() {
+        assert!(is_system_namespace("openshift-monitoring"));
+        assert!(is_system_namespace("openshift-dns"));
+        assert!(is_system_namespace("kube-system"));
+        assert!(is_system_namespace("kube-public"));
+        assert!(is_system_namespace("default"));
+        assert!(!is_system_namespace("my-app"));
+        assert!(!is_system_namespace("redhat-ods-applications"));
+    }
+
+    #[test]
+    fn matches_glob_prefix() {
+        assert!(matches_glob("openshift-*", "openshift-monitoring"));
+        assert!(!matches_glob("openshift-*", "kube-system"));
+    }
+
+    #[test]
+    fn matches_glob_suffix() {
+        assert!(matches_glob("*-system", "kube-system"));
+        assert!(!matches_glob("*-system", "kube-public"));
+    }
+
+    #[test]
+    fn matches_glob_exact() {
+        assert!(matches_glob("default", "default"));
+        assert!(!matches_glob("default", "my-default"));
+    }
+
+    fn make_ns(name: &str, labels: Vec<(&str, &str)>) -> (String, HashMap<String, String>) {
+        (
+            name.to_string(),
+            labels
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn filter_namespaces_exclude_system() {
+        let ns = vec![
+            make_ns("my-app", vec![]),
+            make_ns("openshift-monitoring", vec![]),
+            make_ns("kube-system", vec![]),
+            make_ns("default", vec![]),
+        ];
+        let result = filter_namespaces(ns, &[], &[], true);
+        assert_eq!(result, vec!["my-app"]);
+    }
+
+    #[test]
+    fn filter_namespaces_selector_and() {
+        let ns = vec![
+            make_ns("ns-a", vec![("env", "prod"), ("team", "platform")]),
+            make_ns("ns-b", vec![("env", "prod")]),
+            make_ns("ns-c", vec![("env", "dev"), ("team", "platform")]),
+        ];
+        let selectors = vec!["env=prod".to_string(), "team=platform".to_string()];
+        let result = filter_namespaces(ns, &selectors, &[], false);
+        assert_eq!(result, vec!["ns-a"]);
+    }
+
+    #[test]
+    fn filter_namespaces_exclude_pattern() {
+        let ns = vec![
+            make_ns("my-app", vec![]),
+            make_ns("temp-test-1", vec![]),
+            make_ns("temp-test-2", vec![]),
+        ];
+        let excludes = vec!["temp-*".to_string()];
+        let result = filter_namespaces(ns, &[], &excludes, false);
+        assert_eq!(result, vec!["my-app"]);
+    }
+
+    #[test]
+    fn filter_namespaces_all_combined() {
+        let ns = vec![
+            make_ns("my-app", vec![("env", "prod")]),
+            make_ns("openshift-dns", vec![("env", "prod")]),
+            make_ns("temp-test", vec![("env", "prod")]),
+            make_ns("other", vec![("env", "dev")]),
+        ];
+        let selectors = vec!["env=prod".to_string()];
+        let excludes = vec!["temp-*".to_string()];
+        let result = filter_namespaces(ns, &selectors, &excludes, true);
+        assert_eq!(result, vec!["my-app"]);
+    }
+
+    #[test]
+    fn filter_namespaces_no_filters_returns_all() {
+        let ns = vec![
+            make_ns("a", vec![]),
+            make_ns("b", vec![]),
+            make_ns("openshift-x", vec![]),
+        ];
+        let result = filter_namespaces(ns, &[], &[], false);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn max_namespace_concurrency_is_bounded() {
+        let c = MAX_NAMESPACE_CONCURRENCY;
+        assert!(c <= 10, "namespace concurrency should be bounded");
+        assert!(c >= 1, "namespace concurrency must be at least 1");
+    }
+
+    #[test]
+    fn cli_a_and_n_mutually_exclusive() {
+        let result = Args::try_parse_from(["oc-deps", "--map", "-A", "-n", "test"]);
+        // clap doesn't enforce mutual exclusion — we validate in main
+        // This test just confirms both flags parse
+        assert!(result.is_ok());
+        let args = result.unwrap();
+        assert!(args.all_namespaces);
+        assert!(args.namespace.is_some());
+    }
+
+    #[test]
+    fn cli_namespace_selector_repeatable() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "--map",
+            "-A",
+            "--namespace-selector",
+            "env=prod",
+            "--namespace-selector",
+            "team=platform",
+        ]);
+        assert!(result.is_ok());
+        let args = result.unwrap();
+        assert_eq!(args.namespace_selector.len(), 2);
+    }
+
+    #[test]
+    fn cli_exclude_namespace_repeatable() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "--map",
+            "-A",
+            "--exclude-namespace",
+            "temp-*",
+            "--exclude-namespace",
+            "test-*",
+        ]);
+        assert!(result.is_ok());
+        let args = result.unwrap();
+        assert_eq!(args.exclude_namespace.len(), 2);
+    }
 }
 
 #[cfg(test)]
