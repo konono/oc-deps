@@ -629,13 +629,30 @@ pub fn primary_owner(refs: &[OwnerRef]) -> Option<&OwnerRef> {
 }
 
 pub fn dedup_spec_refs(refs: &mut Vec<SpecRef>) {
-    for r in refs.iter_mut() {
+    let sa_name_paths: HashSet<String> = refs
+        .iter()
+        .filter(|r| {
+            r.target_kind == "ServiceAccount" && r.field_path.ends_with(".serviceAccountName")
+        })
+        .map(|r| {
+            r.field_path
+                .strip_suffix(".serviceAccountName")
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    refs.retain(|r| {
         if r.target_kind == "ServiceAccount" && r.field_path.ends_with(".serviceAccount") {
-            r.field_path = r
+            let parent = r
                 .field_path
-                .replace(".serviceAccount", ".serviceAccountName");
+                .strip_suffix(".serviceAccount")
+                .unwrap_or(&r.field_path);
+            !sa_name_paths.contains(parent)
+        } else {
+            true
         }
-    }
+    });
+
     let mut seen = HashSet::new();
     refs.retain(|r| {
         seen.insert((
@@ -1526,7 +1543,7 @@ mod tests {
     }
 
     #[test]
-    fn dedup_canonicalizes_service_account() {
+    fn dedup_sa_both_fields_keeps_service_account_name() {
         let mut refs = vec![
             SpecRef {
                 target_kind: "ServiceAccount".into(),
@@ -1545,13 +1562,64 @@ mod tests {
         assert_eq!(
             refs.len(),
             1,
-            "serviceAccount + serviceAccountName should dedup to 1"
+            "both fields present → keep serviceAccountName only"
         );
         assert!(
             refs[0].field_path.ends_with("serviceAccountName"),
-            "canonical form should be serviceAccountName, got: {}",
+            "should keep serviceAccountName, got: {}",
             refs[0].field_path
         );
+    }
+
+    #[test]
+    fn dedup_sa_only_service_account_preserves_original() {
+        let mut refs = vec![SpecRef {
+            target_kind: "ServiceAccount".into(),
+            target_name: "my-sa".into(),
+            field_path: "spec.serviceAccount".into(),
+            source: SpecRefSource::Typed,
+        }];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].field_path, "spec.serviceAccount",
+            "serviceAccount alone should preserve original field path"
+        );
+    }
+
+    #[test]
+    fn dedup_sa_different_parent_paths_independent() {
+        let mut refs = vec![
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "sa-a".into(),
+                field_path: "spec.template.spec.serviceAccount".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "sa-a".into(),
+                field_path: "spec.template.spec.serviceAccountName".into(),
+                source: SpecRefSource::Typed,
+            },
+            SpecRef {
+                target_kind: "ServiceAccount".into(),
+                target_name: "sa-b".into(),
+                field_path: "spec.serviceAccount".into(),
+                source: SpecRefSource::Typed,
+            },
+        ];
+        dedup_spec_refs(&mut refs);
+        assert_eq!(
+            refs.len(),
+            2,
+            "template pair deduped + standalone preserved"
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.field_path == "spec.template.spec.serviceAccountName")
+        );
+        assert!(refs.iter().any(|r| r.field_path == "spec.serviceAccount"));
     }
 
     #[test]
