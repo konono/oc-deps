@@ -21,7 +21,7 @@ use crate::analyzers::olm::{
     print_crd_origin, print_operators, print_who_manages, who_manages,
 };
 use crate::analyzers::selector::{
-    build_network_inventory, find_network_paths, get_service_selected_pods, network_path_to_json,
+    build_network_inventory, find_network_paths, get_service_selected_pods,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
 use crate::cli::{Args, Command, OutputFormat, TeardownAction};
@@ -194,7 +194,7 @@ fn find_descendant_pods(
         if let Some(info) = index.by_uid.get(&uid)
             && info.kind == "Pod"
         {
-            pods.push((info.name.clone(), uid.clone(), info.labels.clone()));
+            pods.push((info.name.clone(), info.uid.clone(), info.labels.clone()));
         }
         if let Some(children) = index.children_of.get(&uid) {
             stack.extend(children.iter().cloned());
@@ -4998,7 +4998,7 @@ async fn main() -> Result<()> {
     }
 
     if args.network {
-        let pod_entries = if kind == "Pod" {
+        let pod_labels_list = if kind == "Pod" {
             vec![(
                 name.clone(),
                 target_uid.clone(),
@@ -5012,7 +5012,7 @@ async fn main() -> Result<()> {
             find_descendant_pods(&target_uid, &index)
         };
 
-        if pod_entries.is_empty() {
+        if pod_labels_list.is_empty() {
             match args.output {
                 OutputFormat::Json => {
                     extra_json.insert("networkPaths".into(), serde_json::json!([]));
@@ -5022,35 +5022,246 @@ async fn main() -> Result<()> {
         } else {
             let inventory = build_network_inventory(&client, &namespace, &kind_map, &gk_map).await;
 
-            let all_paths = find_network_paths(&pod_entries, &inventory);
+            let all_pod_names: Vec<String> =
+                pod_labels_list.iter().map(|(n, _, _)| n.clone()).collect();
+            let mut all_paths: Vec<(String, _)> = Vec::new();
+            let paths = find_network_paths(&pod_labels_list, &namespace, &inventory);
+            for path in paths {
+                let pod_name = all_pod_names.first().cloned().unwrap_or_default();
+                all_paths.push((pod_name, path));
+            }
 
             match args.output {
                 OutputFormat::Json => {
-                    let json_paths: Vec<_> = all_paths.iter().map(network_path_to_json).collect();
-                    // Merge scan_warnings + inventory.warnings
-                    let mut all_warnings: Vec<String> =
-                        scan_warnings.iter().map(|w| w.to_string()).collect();
-                    all_warnings.extend(inventory.warnings.iter().map(|w| w.to_string()));
+                    let json_paths: Vec<_> = all_paths
+                        .iter()
+                        .map(|(_pod_name, p)| {
+                            let ports: Vec<_> = p
+                                .service
+                                .ports
+                                .iter()
+                                .map(|sp| {
+                                    let mut port_obj = serde_json::json!({
+                                        "port": sp.port,
+                                        "targetPort": sp.target_port,
+                                        "protocol": sp.protocol,
+                                    });
+                                    if let Some(np) = sp.node_port {
+                                        port_obj["nodePort"] = serde_json::json!(np);
+                                    }
+                                    port_obj
+                                })
+                                .collect();
+                            let ingresses: Vec<_> = p
+                                .ingresses
+                                .iter()
+                                .map(|i| {
+                                    let mut obj = serde_json::json!({
+                                        "kind": i.kind,
+                                        "name": i.name,
+                                    });
+                                    if let Some(h) = &i.host {
+                                        obj["host"] = serde_json::json!(h);
+                                    }
+                                    if let Some(pa) = &i.path {
+                                        obj["path"] = serde_json::json!(pa);
+                                    }
+                                    if let Some(t) = &i.tls {
+                                        obj["tls"] = serde_json::json!(t);
+                                    }
+                                    obj
+                                })
+                                .collect();
+
+                            // EndpointSlice JSON
+                            let endpoint_slices_json: Vec<_> = p
+                                .endpoint_slices
+                                .iter()
+                                .map(|es| {
+                                    let eps: Vec<_> = es
+                                        .endpoints
+                                        .iter()
+                                        .map(|ep| {
+                                            let mut obj = serde_json::json!({
+                                                "addresses": ep.addresses,
+                                                "ready": ep.conditions_ready,
+                                                "serving": ep.conditions_serving,
+                                                "terminating": ep.conditions_terminating,
+                                            });
+                                            if let Some(tr) = &ep.target_ref {
+                                                let mut tr_obj = serde_json::Map::new();
+                                                if let Some(v) = &tr.api_version {
+                                                    tr_obj.insert(
+                                                        "apiVersion".into(),
+                                                        serde_json::json!(v),
+                                                    );
+                                                }
+                                                if let Some(v) = &tr.kind {
+                                                    tr_obj.insert(
+                                                        "kind".into(),
+                                                        serde_json::json!(v),
+                                                    );
+                                                }
+                                                if let Some(v) = &tr.name {
+                                                    tr_obj.insert(
+                                                        "name".into(),
+                                                        serde_json::json!(v),
+                                                    );
+                                                }
+                                                if let Some(v) = &tr.namespace {
+                                                    tr_obj.insert(
+                                                        "namespace".into(),
+                                                        serde_json::json!(v),
+                                                    );
+                                                }
+                                                if let Some(v) = &tr.uid {
+                                                    tr_obj
+                                                        .insert("uid".into(), serde_json::json!(v));
+                                                }
+                                                obj["targetRef"] =
+                                                    serde_json::Value::Object(tr_obj);
+                                            }
+                                            if let Some(hints) = &ep.hints {
+                                                obj["hints"] = serde_json::json!(hints);
+                                            }
+                                            obj
+                                        })
+                                        .collect();
+                                    let es_ports: Vec<_> = es
+                                        .ports
+                                        .iter()
+                                        .map(|p| {
+                                            let mut obj = serde_json::json!({
+                                                "port": p.port,
+                                                "protocol": p.protocol,
+                                            });
+                                            if let Some(n) = &p.name {
+                                                obj["name"] = serde_json::json!(n);
+                                            }
+                                            if let Some(ap) = &p.app_protocol {
+                                                obj["appProtocol"] = serde_json::json!(ap);
+                                            }
+                                            obj
+                                        })
+                                        .collect();
+                                    serde_json::json!({
+                                        "name": es.name,
+                                        "addressType": es.address_type,
+                                        "ports": es_ports,
+                                        "endpoints": eps,
+                                    })
+                                })
+                                .collect();
+
+                            let es = &p.endpoint_summary;
+                            let endpoint_summary = serde_json::json!({
+                                "ready": es.ready,
+                                "notReady": es.not_ready,
+                                "unknown": es.unknown,
+                                "effectiveReady": es.effective_ready,
+                                "serving": es.serving,
+                                "terminating": es.terminating,
+                            });
+
+                            let svc = &p.service;
+                            let mut config = serde_json::json!({
+                                "type": svc.svc_type,
+                                "clusterIP": svc.cluster_ip,
+                                "ports": ports,
+                                "selector": svc.selector,
+                                "hasSelector": svc.has_selector,
+                            });
+                            if !svc.external_ips.is_empty() {
+                                config["externalIPs"] = serde_json::json!(svc.external_ips);
+                            }
+                            if !svc.ip_families.is_empty() {
+                                config["ipFamilies"] = serde_json::json!(svc.ip_families);
+                            }
+                            if let Some(v) = &svc.external_traffic_policy {
+                                config["externalTrafficPolicy"] = serde_json::json!(v);
+                            }
+                            if let Some(v) = &svc.internal_traffic_policy {
+                                config["internalTrafficPolicy"] = serde_json::json!(v);
+                            }
+                            if let Some(v) = &svc.ip_family_policy {
+                                config["ipFamilyPolicy"] = serde_json::json!(v);
+                            }
+                            if let Some(v) = svc.health_check_node_port {
+                                config["healthCheckNodePort"] = serde_json::json!(v);
+                            }
+                            if let Some(v) = &svc.load_balancer_class {
+                                config["loadBalancerClass"] = serde_json::json!(v);
+                            }
+                            if let Some(v) = svc.allocate_lb_node_ports {
+                                config["allocateLoadBalancerNodePorts"] = serde_json::json!(v);
+                            }
+
+                            let mut status = serde_json::json!({});
+                            if !svc.lb_ingress.is_empty() {
+                                let lb: Vec<_> = svc
+                                    .lb_ingress
+                                    .iter()
+                                    .map(|lbi| {
+                                        let mut obj = serde_json::Map::new();
+                                        if let Some(ip) = &lbi.ip {
+                                            obj.insert("ip".into(), serde_json::json!(ip));
+                                        }
+                                        if let Some(h) = &lbi.hostname {
+                                            obj.insert("hostname".into(), serde_json::json!(h));
+                                        }
+                                        if let Some(m) = &lbi.ip_mode {
+                                            obj.insert("ipMode".into(), serde_json::json!(m));
+                                        }
+                                        serde_json::Value::Object(obj)
+                                    })
+                                    .collect();
+                                status["loadBalancerIngress"] = serde_json::json!(lb);
+                            }
+
+                            serde_json::json!({
+                                "service": {
+                                    "name": svc.name,
+                                    "config": config,
+                                    "status": status,
+                                },
+                                "ingresses": ingresses,
+                                "endpointSlices": endpoint_slices_json,
+                                "endpointSummary": endpoint_summary,
+                                "selectorMatchedPods": p.selector_matched_pods,
+                                "targetRefMatchedPods": p.target_ref_matched_pods,
+                            })
+                        })
+                        .collect();
                     extra_json.insert("networkPaths".into(), serde_json::json!(json_paths));
-                    extra_json.insert("warnings".into(), serde_json::json!(all_warnings));
+
+                    let mut all_warnings = scan_warnings.clone();
+                    all_warnings.extend(inventory.warnings.iter().cloned());
+                    let json_warnings: Vec<_> = all_warnings
+                        .iter()
+                        .map(|w| {
+                            serde_json::to_value(w).unwrap_or(serde_json::json!(w.to_string()))
+                        })
+                        .collect();
+                    extra_json.insert("warnings".into(), serde_json::json!(json_warnings));
                     extra_json.insert("warningCount".into(), serde_json::json!(all_warnings.len()));
                 }
                 _ => {
                     if all_paths.is_empty() {
-                        println!("\n📎 No Services select Pods under {}/{}", kind, name);
+                        println!(
+                            "\n\u{1f4ce} No Services select Pods under {}/{}",
+                            kind, name
+                        );
                     } else {
-                        println!("\n📎 Network paths for {}/{}:\n", kind, name);
-                        for path in &all_paths {
+                        println!("\n\u{1f4ce} Network paths for {}/{}:\n", kind, name);
+                        let mut seen_svcs = std::collections::HashSet::new();
+                        for (_, path) in &all_paths {
+                            if !seen_svcs.insert(path.service.name.clone()) {
+                                continue;
+                            }
                             let svc = &path.service;
                             println!("  \x1b[1mService/{}\x1b[0m", svc.name);
                             println!("    Type:      {}", svc.svc_type);
                             println!("    ClusterIP: {}", svc.cluster_ip);
-                            if !svc.external_ips.is_empty() {
-                                println!("    ExternalIPs: {}", svc.external_ips.join(", "));
-                            }
-                            if !svc.ip_families.is_empty() {
-                                println!("    IP Families: {}", svc.ip_families.join(", "));
-                            }
                             for sp in &svc.ports {
                                 if let Some(np) = sp.node_port {
                                     println!(
@@ -5064,6 +5275,12 @@ async fn main() -> Result<()> {
                                     );
                                 }
                             }
+                            if !svc.external_ips.is_empty() {
+                                println!("    ExternalIPs: {}", svc.external_ips.join(", "));
+                            }
+                            if !svc.ip_families.is_empty() {
+                                println!("    IPFamilies: {}", svc.ip_families.join(", "));
+                            }
                             let sel = svc
                                 .selector
                                 .iter()
@@ -5071,29 +5288,134 @@ async fn main() -> Result<()> {
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             println!("    Selector:  {}", sel);
-                            if !path.selector_matched_pods.is_empty() {
-                                let pod_names: Vec<_> = path
-                                    .selector_matched_pods
-                                    .iter()
-                                    .map(|n| format!("Pod/{}", n))
-                                    .collect();
-                                println!("    Pods:      {}", pod_names.join(", "));
+
+                            // Extra Service fields
+                            if let Some(v) = &svc.internal_traffic_policy {
+                                println!("    InternalTrafficPolicy: {}", v);
+                            }
+                            if let Some(v) = &svc.external_traffic_policy {
+                                println!("    ExternalTrafficPolicy: {}", v);
+                            }
+                            if let Some(v) = &svc.ip_family_policy {
+                                println!("    IPFamilyPolicy:        {}", v);
+                            }
+                            if let Some(v) = svc.health_check_node_port {
+                                println!("    HealthCheckNodePort:   {}", v);
+                            }
+                            if let Some(v) = &svc.load_balancer_class {
+                                println!("    LoadBalancerClass:     {}", v);
+                            }
+                            if let Some(v) = svc.allocate_lb_node_ports {
+                                println!("    AllocateLBNodePorts:   {}", v);
+                            }
+                            for lbi in &svc.lb_ingress {
+                                let addr =
+                                    lbi.ip.as_deref().or(lbi.hostname.as_deref()).unwrap_or("?");
+                                let mode = lbi
+                                    .ip_mode
+                                    .as_deref()
+                                    .map(|m| format!(" (ipMode: {})", m))
+                                    .unwrap_or_default();
+                                println!("    LB Ingress: {}{}", addr, mode);
                             }
 
-                            // EndpointSlice summary
-                            if !path.endpoint_slices.is_empty() {
-                                let total: usize = path
-                                    .endpoint_slices
-                                    .iter()
-                                    .map(|es| es.endpoints.len())
-                                    .sum();
-                                let ready = path
-                                    .endpoint_slices
-                                    .iter()
-                                    .flat_map(|es| &es.endpoints)
-                                    .filter(|ep| ep.ready == Some(true))
-                                    .count();
-                                println!("    Endpoints: {} ({} ready)", total, ready);
+                            // Selector-matched pods
+                            println!(
+                                "    SelectorPods:  {}",
+                                path.selector_matched_pods.join(", ")
+                            );
+                            if !path.target_ref_matched_pods.is_empty() {
+                                println!(
+                                    "    TargetRefPods: {}",
+                                    path.target_ref_matched_pods.join(", ")
+                                );
+                            }
+
+                            // EndpointSummary
+                            let es = &path.endpoint_summary;
+                            let unknown_note = if es.unknown > 0 {
+                                format!(" ({} unknown)", es.unknown)
+                            } else {
+                                String::new()
+                            };
+                            println!(
+                                "    Endpoints: {} ready{}, {} not-ready, {} terminating, {} serving",
+                                es.effective_ready,
+                                unknown_note,
+                                es.not_ready,
+                                es.terminating,
+                                es.serving
+                            );
+
+                            // EndpointSlice details
+                            for es_info in &path.endpoint_slices {
+                                println!();
+                                println!(
+                                    "    \x1b[1mEndpointSlice/{}\x1b[0m ({})",
+                                    es_info.name, es_info.address_type
+                                );
+                                for ep_port in &es_info.ports {
+                                    let port_str =
+                                        ep_port.port.map(|p| p.to_string()).unwrap_or("?".into());
+                                    let name_str = ep_port.name.as_deref().unwrap_or("");
+                                    let app_proto = ep_port
+                                        .app_protocol
+                                        .as_deref()
+                                        .map(|a| format!(" appProtocol={}", a))
+                                        .unwrap_or_default();
+                                    if name_str.is_empty() {
+                                        println!(
+                                            "      Port: {}/{}{}",
+                                            port_str, ep_port.protocol, app_proto
+                                        );
+                                    } else {
+                                        println!(
+                                            "      Port: {} {}/{}{}",
+                                            name_str, port_str, ep_port.protocol, app_proto
+                                        );
+                                    }
+                                }
+                                for ep in &es_info.endpoints {
+                                    let addrs = ep.addresses.join(", ");
+                                    let ready_str = match ep.conditions_ready {
+                                        Some(true) => "ready",
+                                        Some(false) => "not-ready",
+                                        None => "unknown(ready)",
+                                    };
+                                    let serving_str = match ep.conditions_serving {
+                                        Some(true) => " serving",
+                                        Some(false) => " not-serving",
+                                        None => "",
+                                    };
+                                    let term_str = match ep.conditions_terminating {
+                                        Some(true) => " terminating",
+                                        _ => "",
+                                    };
+                                    let target = ep
+                                        .target_ref
+                                        .as_ref()
+                                        .map(|tr| {
+                                            let kind = tr.kind.as_deref().unwrap_or("?");
+                                            let name = tr.name.as_deref().unwrap_or("?");
+                                            format!(" \u{2192} {}/{}", kind, name)
+                                        })
+                                        .unwrap_or_default();
+                                    let hints_str = ep
+                                        .hints
+                                        .as_ref()
+                                        .map(|h| {
+                                            if h.is_empty() {
+                                                String::new()
+                                            } else {
+                                                format!(" zones={}", h.join(","))
+                                            }
+                                        })
+                                        .unwrap_or_default();
+                                    println!(
+                                        "      {} [{}{}{}]{}{}",
+                                        addrs, ready_str, serving_str, term_str, target, hints_str
+                                    );
+                                }
                             }
 
                             for ing in &path.ingresses {
