@@ -458,11 +458,23 @@ pub struct OwnerRef {
     pub controller: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum SpecRefSource {
+    Typed,
+    Heuristic,
+}
+
 #[derive(Clone)]
 pub struct SpecRef {
     pub target_kind: String,
     pub target_name: String,
     pub field_path: String,
+    pub source: SpecRefSource,
+}
+
+pub struct ChainEntry {
+    pub info: ResourceInfo,
+    pub spec_refs: Vec<SpecRef>,
 }
 
 #[derive(Clone)]

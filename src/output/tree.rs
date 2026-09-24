@@ -1,5 +1,7 @@
 use crate::graph::tree::TreeNode;
-use crate::kube::resource::{ContainerResources, EXCLUDED_ANNOTATION_KEYS, ResourceInfo};
+use crate::kube::resource::{
+    ChainEntry, ContainerResources, EXCLUDED_ANNOTATION_KEYS, ResourceInfo, SpecRefSource,
+};
 
 const MAX_ANNOTATION_VALUE_CHARS: usize = 80;
 
@@ -202,9 +204,13 @@ pub fn print_tree(
     for (i, sref) in node.spec_refs.iter().enumerate() {
         let is_last_item = i == node.spec_refs.len() - 1 && !has_children && !has_incoming;
         let ref_connector = if is_last_item { "└╌ " } else { "├╌ " };
+        let via_label = match sref.source {
+            SpecRefSource::Heuristic => format!("heuristic, via {}", sref.field_path),
+            SpecRefSource::Typed => format!("via {}", sref.field_path),
+        };
         println!(
-            "{}{}\x1b[36m{}/{}\x1b[0m  \x1b[2m(via {})\x1b[0m",
-            child_prefix, ref_connector, sref.target_kind, sref.target_name, sref.field_path
+            "{}{}\x1b[36m{}/{}\x1b[0m  \x1b[2m({})\x1b[0m",
+            child_prefix, ref_connector, sref.target_kind, sref.target_name, via_label
         );
     }
 
@@ -227,8 +233,9 @@ pub fn count_nodes(node: &TreeNode) -> usize {
     1 + node.children.iter().map(count_nodes).sum::<usize>()
 }
 
-pub fn print_chain_tree(chain: &[ResourceInfo], opts: &TreeDisplayOpts) {
-    for (i, info) in chain.iter().enumerate() {
+pub fn print_chain_tree(chain: &[ChainEntry], opts: &TreeDisplayOpts) {
+    for (i, entry) in chain.iter().enumerate() {
+        let info = &entry.info;
         let indent = if i == 0 {
             String::new()
         } else {
@@ -252,6 +259,27 @@ pub fn print_chain_tree(chain: &[ResourceInfo], opts: &TreeDisplayOpts) {
             "   ".repeat(i)
         };
         print_metadata_block(info, &child_prefix, opts);
+
+        for (j, sref) in entry.spec_refs.iter().enumerate() {
+            let is_last = j == entry.spec_refs.len() - 1 && i < chain.len() - 1;
+            let ref_connector = if is_last || i == chain.len() - 1 {
+                "└╌ "
+            } else {
+                "├╌ "
+            };
+            let source_label = match sref.source {
+                SpecRefSource::Heuristic => "  \x1b[2m(heuristic, via {})\x1b[0m",
+                SpecRefSource::Typed => "  \x1b[2m(via {})\x1b[0m",
+            };
+            println!(
+                "{}{}\x1b[36m{}/{}\x1b[0m{}",
+                child_prefix,
+                ref_connector,
+                sref.target_kind,
+                sref.target_name,
+                source_label.replace("{}", &sref.field_path)
+            );
+        }
     }
 }
 

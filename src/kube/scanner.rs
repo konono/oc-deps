@@ -199,6 +199,7 @@ pub(crate) fn resolve_name_matches(
                     target_kind: kind.clone(),
                     target_name: value.clone(),
                     field_path: field_path.clone(),
+                    source: SpecRefSource::Heuristic,
                 });
             }
         }
@@ -666,7 +667,8 @@ pub async fn find_parents_only(
     namespace: &str,
     kind_map: &KindMap,
     show_spec: bool,
-) -> Result<Vec<ResourceInfo>> {
+    refs: bool,
+) -> Result<Vec<ChainEntry>> {
     let mut chain = Vec::new();
     let mut current_kind = kind.to_string();
     let mut current_name = name.to_string();
@@ -676,16 +678,19 @@ pub async fn find_parents_only(
         let info = match kind_map.get(&current_kind) {
             Some(i) => i,
             None => {
-                chain.push(ResourceInfo {
-                    group: String::new(),
-                    kind: current_kind,
-                    name: current_name,
-                    namespace: None,
-                    uid: String::new(),
-                    owner_refs: vec![],
-                    labels: HashMap::new(),
-                    annotations: HashMap::new(),
-                    pod_template: None,
+                chain.push(ChainEntry {
+                    info: ResourceInfo {
+                        group: String::new(),
+                        kind: current_kind,
+                        name: current_name,
+                        namespace: None,
+                        uid: String::new(),
+                        owner_refs: vec![],
+                        labels: HashMap::new(),
+                        annotations: HashMap::new(),
+                        pod_template: None,
+                    },
+                    spec_refs: vec![],
                 });
                 break;
             }
@@ -741,16 +746,27 @@ pub async fn find_parents_only(
                     None
                 };
 
-                chain.push(ResourceInfo {
-                    group: info.group.clone(),
-                    kind: current_kind,
-                    name: current_name,
-                    namespace: obj.metadata.namespace,
-                    uid,
-                    owner_refs,
-                    labels,
-                    annotations,
-                    pod_template,
+                let spec_refs = if refs {
+                    let mut wk = extract_well_known_refs(&obj.data);
+                    dedup_spec_refs(&mut wk);
+                    wk
+                } else {
+                    vec![]
+                };
+
+                chain.push(ChainEntry {
+                    info: ResourceInfo {
+                        group: info.group.clone(),
+                        kind: current_kind,
+                        name: current_name,
+                        namespace: obj.metadata.namespace,
+                        uid,
+                        owner_refs,
+                        labels,
+                        annotations,
+                        pod_template,
+                    },
+                    spec_refs,
                 });
 
                 match next {
@@ -762,16 +778,19 @@ pub async fn find_parents_only(
                 }
             }
             Err(e) => {
-                chain.push(ResourceInfo {
-                    group: String::new(),
-                    kind: current_kind,
-                    name: format!("{} (error: {})", current_name, e),
-                    namespace: None,
-                    uid: String::new(),
-                    owner_refs: vec![],
-                    labels: HashMap::new(),
-                    annotations: HashMap::new(),
-                    pod_template: None,
+                chain.push(ChainEntry {
+                    info: ResourceInfo {
+                        group: String::new(),
+                        kind: current_kind,
+                        name: format!("{} (error: {})", current_name, e),
+                        namespace: None,
+                        uid: String::new(),
+                        owner_refs: vec![],
+                        labels: HashMap::new(),
+                        annotations: HashMap::new(),
+                        pod_template: None,
+                    },
+                    spec_refs: vec![],
                 });
                 break;
             }
@@ -780,4 +799,60 @@ pub async fn find_parents_only(
 
     chain.reverse();
     Ok(chain)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_name_matches_produces_heuristic_source() {
+        let spec_strs = vec![("spec.env.value".to_string(), "my-config".to_string())];
+        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+        by_name.insert("my-config".to_string(), vec!["ConfigMap".to_string()]);
+        let already_found = HashSet::new();
+
+        let refs = resolve_name_matches(&spec_strs, "self-name", &by_name, &already_found);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].target_kind, "ConfigMap");
+        assert_eq!(refs[0].target_name, "my-config");
+        assert_eq!(refs[0].source, SpecRefSource::Heuristic);
+    }
+
+    #[test]
+    fn resolve_name_matches_skips_already_found() {
+        let spec_strs = vec![("spec.env.value".to_string(), "my-secret".to_string())];
+        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+        by_name.insert("my-secret".to_string(), vec!["Secret".to_string()]);
+        let mut already_found = HashSet::new();
+        already_found.insert(("Secret".to_string(), "my-secret".to_string()));
+
+        let refs = resolve_name_matches(&spec_strs, "self-name", &by_name, &already_found);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn resolve_name_matches_skips_self_name() {
+        let spec_strs = vec![("spec.field".to_string(), "my-deploy".to_string())];
+        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+        by_name.insert("my-deploy".to_string(), vec!["Deployment".to_string()]);
+        let already_found = HashSet::new();
+
+        let refs = resolve_name_matches(&spec_strs, "my-deploy", &by_name, &already_found);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn resolve_name_matches_dedup_same_kind_name() {
+        let spec_strs = vec![
+            ("spec.env1".to_string(), "shared".to_string()),
+            ("spec.env2".to_string(), "shared".to_string()),
+        ];
+        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+        by_name.insert("shared".to_string(), vec!["ConfigMap".to_string()]);
+        let already_found = HashSet::new();
+
+        let refs = resolve_name_matches(&spec_strs, "self", &by_name, &already_found);
+        assert_eq!(refs.len(), 1);
+    }
 }

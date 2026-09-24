@@ -1,5 +1,5 @@
 use crate::graph::tree::TreeNode;
-use crate::kube::resource::{ResourceInfo, filter_annotations};
+use crate::kube::resource::{ChainEntry, SpecRefSource, filter_annotations};
 
 pub fn tree_to_json(
     node: &TreeNode,
@@ -32,6 +32,10 @@ pub fn tree_to_json(
                     "kind": r.target_kind,
                     "name": r.target_name,
                     "fieldPath": r.field_path,
+                    "source": match r.source {
+                        SpecRefSource::Typed => "typed",
+                        SpecRefSource::Heuristic => "heuristic",
+                    },
                 }))
                 .collect::<Vec<_>>()
         );
@@ -78,7 +82,7 @@ pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool, s
 }
 
 pub fn print_chain_json(
-    chain: &[ResourceInfo],
+    chain: &[ChainEntry],
     namespace: &str,
     include_annotations: bool,
     show_spec: bool,
@@ -86,7 +90,8 @@ pub fn print_chain_json(
     let items: Vec<_> = chain
         .iter()
         .enumerate()
-        .map(|(i, info)| {
+        .map(|(i, entry)| {
+            let info = &entry.info;
             let mut obj = serde_json::json!({
                 "relation": if i == chain.len() - 1 { "self" } else { "parent" },
                 "kind": info.kind,
@@ -104,12 +109,29 @@ pub fn print_chain_json(
             if show_spec && let Some(pt) = &info.pod_template {
                 obj["podTemplate"] = serde_json::json!(pt);
             }
+            if !entry.spec_refs.is_empty() {
+                obj["specRefs"] = serde_json::json!(
+                    entry
+                        .spec_refs
+                        .iter()
+                        .map(|r| serde_json::json!({
+                            "kind": r.target_kind,
+                            "name": r.target_name,
+                            "fieldPath": r.field_path,
+                            "source": match r.source {
+                                SpecRefSource::Typed => "typed",
+                                SpecRefSource::Heuristic => "heuristic",
+                            },
+                        }))
+                        .collect::<Vec<_>>()
+                );
+            }
             obj
         })
         .collect();
     let output = serde_json::json!({
         "namespace": namespace,
-        "target": chain.last().map(|i| format!("{}/{}", i.kind, i.name)).unwrap_or_default(),
+        "target": chain.last().map(|e| format!("{}/{}", e.info.kind, e.info.name)).unwrap_or_default(),
         "chain": items,
     });
     println!(

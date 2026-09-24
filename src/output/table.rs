@@ -1,7 +1,7 @@
 use comfy_table::Table;
 
 use crate::graph::tree::TreeNode;
-use crate::kube::resource::ResourceInfo;
+use crate::kube::resource::{ChainEntry, ResourceInfo, SpecRefSource};
 use crate::output::tree::format_container_resources;
 
 struct TableRow {
@@ -95,27 +95,35 @@ pub fn print_table(tree: &TreeNode, show_spec: bool) {
     println!("{table}");
 }
 
-pub fn print_chain_table(chain: &[ResourceInfo], show_spec: bool) {
+pub fn print_chain_table(chain: &[ChainEntry], show_spec: bool) {
     let mut table = Table::new();
     if show_spec {
         table.set_header(vec!["Relation", "Kind", "Name", "Containers"]);
-        for (i, info) in chain.iter().enumerate() {
-            let rel = if i == chain.len() - 1 {
-                "Self"
-            } else {
-                "Parent"
-            };
-            table.add_row(vec![rel, &info.kind, &info.name, &format_containers(info)]);
-        }
     } else {
         table.set_header(vec!["Relation", "Kind", "Name"]);
-        for (i, info) in chain.iter().enumerate() {
-            let rel = if i == chain.len() - 1 {
-                "Self"
-            } else {
-                "Parent"
+    }
+    for (i, entry) in chain.iter().enumerate() {
+        let rel = if i == chain.len() - 1 {
+            "Self"
+        } else {
+            "Parent"
+        };
+        if show_spec {
+            table.add_row(vec![
+                rel,
+                &entry.info.kind,
+                &entry.info.name,
+                &format_containers(&entry.info),
+            ]);
+        } else {
+            table.add_row(vec![rel, &entry.info.kind, &entry.info.name]);
+        }
+        for sref in &entry.spec_refs {
+            let source_label = match sref.source {
+                SpecRefSource::Typed => "Ref",
+                SpecRefSource::Heuristic => "Ref~",
             };
-            table.add_row(vec![rel, &info.kind, &info.name]);
+            table.add_row(vec![source_label, &sref.target_kind, &sref.target_name]);
         }
     }
     println!("{table}");

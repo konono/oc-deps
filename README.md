@@ -138,6 +138,29 @@ oc-deps --map --show-spec -o table -n mynamespace
 oc-deps --show-spec --labels deployment/myapp -n mynamespace
 ```
 
+### `--up-only` Spec-Level References
+
+With `--up-only`, oc-deps extracts spec-level references (Secret, ConfigMap, ServiceAccount, PVC) from each parent's GET response — no namespace scan or additional API calls. References are **typed** (from well-known fields like `spec.volumes[].secret.secretName`). Use `--no-refs` to suppress.
+
+```bash
+# Show parent chain with spec refs
+oc-deps --up-only deployment/myapp -n mynamespace
+# Deployment/myapp  ◀ target
+#    ├╌ ServiceAccount/myapp  (via spec.template.spec.serviceAccountName)
+#    └╌ Secret/tls-cert  (via spec.template.spec.volumes.[0].secret.secretName)
+
+# JSON output — specRefs array per chain entry with kind/name/fieldPath/source
+oc-deps --up-only -o json deployment/myapp -n mynamespace
+
+# Suppress refs
+oc-deps --up-only --no-refs deployment/myapp -n mynamespace
+
+# Combine with --show-spec and --labels
+oc-deps --up-only --show-spec --labels deployment/myapp -n mynamespace
+```
+
+**JSON `specRefs` format:** Each chain entry may include `specRefs`, an array of `{"kind", "name", "fieldPath", "source"}`. `source` is `"typed"` (from well-known field paths) or `"heuristic"` (from name matching in full scan mode). Omitted when empty. In `--up-only` mode, only typed refs are produced (no heuristic name matching).
+
 **Root-level options:** `--verbose`, `--strict`, `--labels`, and `--annotations` are root-level flags for commands like `snapshot` and `graph` — they must precede the subcommand name. `--show-spec` is a root-level flag for the default resource/map mode only (not used by subcommands):
 
 ```bash
