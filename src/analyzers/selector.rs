@@ -1612,4 +1612,139 @@ mod tests {
             "should be Timeout with retries=2"
         );
     }
+
+    #[tokio::test]
+    async fn build_network_inventory_one_list_per_api() {
+        use crate::kube::discovery::{KindInfo, KindMap};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let request_paths = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rc = request_count.clone();
+        let rp = request_paths.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Service".into(),
+            KindInfo {
+                group: "".into(),
+                version: "v1".into(),
+                plural: "services".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let mut gk_map = GroupKindMap::new();
+        gk_map.insert(
+            ("networking.k8s.io".into(), "Ingress".into()),
+            KindInfo {
+                group: "networking.k8s.io".into(),
+                version: "v1".into(),
+                plural: "ingresses".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk_map.insert(
+            ("route.openshift.io".into(), "Route".into()),
+            KindInfo {
+                group: "route.openshift.io".into(),
+                version: "v1".into(),
+                plural: "routes".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk_map.insert(
+            ("discovery.k8s.io".into(), "EndpointSlice".into()),
+            KindInfo {
+                group: "discovery.k8s.io".into(),
+                version: "v1".into(),
+                plural: "endpointslices".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Expect exactly 4 LIST requests
+            for _ in 0..4 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, Ordering::Relaxed);
+                rp.lock().unwrap().push(req.uri().path().to_string());
+                // Return a Service list for the first, empty lists for rest
+                let resp = if req.uri().path().contains("/services") {
+                    mock_json_response(serde_json::json!({
+                        "apiVersion": "v1",
+                        "kind": "ServiceList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{
+                            "apiVersion": "v1",
+                            "kind": "Service",
+                            "metadata": {"name": "svc-a"},
+                            "spec": {
+                                "type": "ClusterIP",
+                                "clusterIP": "10.0.0.1",
+                                "selector": {"app": "test"},
+                                "ports": [{"port": 80, "targetPort": 8080, "protocol": "TCP"}]
+                            }
+                        }, {
+                            "apiVersion": "v1",
+                            "kind": "Service",
+                            "metadata": {"name": "svc-b"},
+                            "spec": {
+                                "type": "NodePort",
+                                "clusterIP": "10.0.0.2",
+                                "selector": {"app": "test2"},
+                                "ports": [{"port": 80, "targetPort": 8080, "protocol": "TCP", "nodePort": 30080}]
+                            }
+                        }]
+                    }))
+                } else {
+                    mock_empty_list()
+                };
+                send.send_response(resp);
+            }
+        });
+
+        let inventory = build_network_inventory(&client, "test-ns", &kind_map, &gk_map).await;
+
+        spawned.await.unwrap();
+
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            4,
+            "exactly 4 LIST requests (Service + EndpointSlice + Ingress + Route)"
+        );
+
+        let paths = request_paths.lock().unwrap();
+        assert!(
+            paths.iter().any(|p| p.contains("/services")),
+            "should LIST services"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("/endpointslices")),
+            "should LIST endpointslices"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("/ingresses")),
+            "should LIST ingresses"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("/routes")),
+            "should LIST routes"
+        );
+
+        assert_eq!(inventory.services.len(), 2, "2 services from fixture");
+        assert_eq!(inventory.services[0].name, "svc-a");
+        assert_eq!(inventory.services[1].name, "svc-b");
+        assert!(inventory.warnings.is_empty());
+    }
 }
