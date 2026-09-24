@@ -165,6 +165,68 @@ pub enum Command {
         action: TeardownAction,
     },
 
+    /// Inspect all resources managed by an operator
+    Inspect {
+        /// Operator name (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operator: String,
+
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Discover resources across namespaces via OperatorGroup, owned CRD instances, and label evidence
+        #[arg(long)]
+        cross_namespace: bool,
+
+        /// Show all scan/discovery warnings (default: first 5)
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        /// Exit with code 2 if discovery/scan is incomplete (partial results are still output)
+        #[arg(long)]
+        strict: bool,
+    },
+
+    /// Trace impact radius from a root resource (ownerRef descendants, spec refs, same-operator CRDs, labels)
+    Trace {
+        /// Resource in kind/name format
+        #[arg(value_name = "RESOURCE")]
+        resource: String,
+
+        /// Namespace (default: kubeconfig default)
+        #[arg(short = 'n', long)]
+        namespace: Option<String>,
+
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Max traversal depth
+        #[arg(short = 'd', long, default_value_t = 20)]
+        depth: usize,
+
+        /// Show all scan/discovery warnings (default: first 5)
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        /// Exit with code 2 if discovery/scan is incomplete (partial results are still output)
+        #[arg(long)]
+        strict: bool,
+
+        /// Discover resources across namespaces via OperatorGroup, owned CRD instances, and label evidence
+        #[arg(long)]
+        cross_namespace: bool,
+    },
+
     /// List all OLM-managed operators in the cluster
     Operators {
         /// Output format: tree, table, json
@@ -389,4 +451,127 @@ pub enum OutputFormat {
     Tree,
     Table,
     Json,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_inspect_subcommand_parse() {
+        let args = Args::parse_from(["oc-deps", "inspect", "rhods-operator"]);
+        match args.command {
+            Some(Command::Inspect {
+                operator,
+                cross_namespace,
+                ..
+            }) => {
+                assert_eq!(operator, "rhods-operator");
+                assert!(!cross_namespace);
+            }
+            _ => panic!("Expected Command::Inspect"),
+        }
+    }
+
+    #[test]
+    fn test_inspect_cross_namespace() {
+        let args = Args::parse_from(["oc-deps", "inspect", "rhods-operator", "--cross-namespace"]);
+        match args.command {
+            Some(Command::Inspect {
+                cross_namespace, ..
+            }) => {
+                assert!(cross_namespace);
+            }
+            _ => panic!("Expected Command::Inspect"),
+        }
+    }
+
+    #[test]
+    fn test_trace_subcommand_parse() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "trace",
+            "datasciencecluster/default",
+            "-n",
+            "test-ns",
+        ]);
+        match args.command {
+            Some(Command::Trace {
+                resource,
+                namespace,
+                depth,
+                ..
+            }) => {
+                assert_eq!(resource, "datasciencecluster/default");
+                assert_eq!(namespace, Some("test-ns".to_string()));
+                assert_eq!(depth, 20);
+            }
+            _ => panic!("Expected Command::Trace"),
+        }
+    }
+
+    #[test]
+    fn test_trace_custom_depth() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "trace",
+            "deployment/foo",
+            "-d",
+            "5",
+            "-o",
+            "json",
+        ]);
+        match args.command {
+            Some(Command::Trace { depth, output, .. }) => {
+                assert_eq!(depth, 5);
+                assert!(matches!(output, OutputFormat::Json));
+            }
+            _ => panic!("Expected Command::Trace"),
+        }
+    }
+
+    #[test]
+    fn test_trace_cross_namespace() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "trace",
+            "deployment/foo",
+            "-n",
+            "test-ns",
+            "--cross-namespace",
+            "--strict",
+        ]);
+        match args.command {
+            Some(Command::Trace {
+                cross_namespace,
+                strict,
+                ..
+            }) => {
+                assert!(cross_namespace);
+                assert!(strict);
+            }
+            _ => panic!("Expected Command::Trace"),
+        }
+    }
+
+    #[test]
+    fn test_inspect_verbose_strict() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "inspect",
+            "rhods-operator",
+            "--verbose",
+            "--strict",
+        ]);
+        match args.command {
+            Some(Command::Inspect {
+                verbose, strict, ..
+            }) => {
+                assert!(verbose);
+                assert!(strict);
+            }
+            _ => panic!("Expected Command::Inspect"),
+        }
+    }
 }

@@ -92,6 +92,7 @@ fn find_owner_ref_info(parent_uid: &str, index: &NamespaceIndex) -> Option<Resou
         for oref in &info.owner_refs {
             if oref.uid == parent_uid {
                 return Some(ResourceInfo {
+                    group: String::new(),
                     kind: oref.kind.clone(),
                     name: oref.name.clone(),
                     namespace: None,
@@ -247,6 +248,7 @@ mod tests {
 
     fn make_info_with(kind: &str, name: &str, labels: Vec<(&str, &str)>) -> ResourceInfo {
         ResourceInfo {
+            group: String::new(),
             kind: kind.into(),
             name: name.into(),
             namespace: Some("test".into()),

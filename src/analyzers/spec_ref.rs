@@ -307,6 +307,7 @@ mod tests {
 
         let mut index = NamespaceIndex::new();
         index.insert(ResourceInfo {
+            group: String::new(),
             kind: "Deployment".into(),
             name: "rhods-dashboard".into(),
             namespace: Some("test".into()),
@@ -316,6 +317,7 @@ mod tests {
             annotations: HashMap::new(),
         });
         index.insert(ResourceInfo {
+            group: String::new(),
             kind: "ServiceAccount".into(),
             name: "rhods-dashboard".into(),
             namespace: Some("test".into()),
@@ -325,6 +327,7 @@ mod tests {
             annotations: HashMap::new(),
         });
         index.insert(ResourceInfo {
+            group: String::new(),
             kind: "Service".into(),
             name: "rhods-dashboard".into(),
             namespace: Some("test".into()),
@@ -334,6 +337,7 @@ mod tests {
             annotations: HashMap::new(),
         });
         index.insert(ResourceInfo {
+            group: String::new(),
             kind: "Route".into(),
             name: "rhods-dashboard".into(),
             namespace: Some("test".into()),

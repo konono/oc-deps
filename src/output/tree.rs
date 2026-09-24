@@ -194,6 +194,7 @@ mod tests {
         annotations: HashMap<String, String>,
     ) -> ResourceInfo {
         ResourceInfo {
+            group: String::new(),
             kind: "Deployment".into(),
             name: "test".into(),
             namespace: Some("ns".into()),

@@ -4,7 +4,6 @@ pub mod events;
 pub mod executor;
 pub mod explain;
 pub mod harness;
-pub mod inspect;
 pub mod journal;
 pub mod permit;
 pub mod plan;
