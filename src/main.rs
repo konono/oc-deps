@@ -5200,32 +5200,34 @@ async fn main() -> Result<()> {
                 (result_paths, postures)
             };
 
-            // Resolve MetalLB for each service path
+            // Resolve MetalLB for each service path (events fetched once in inventory)
             let metallb_results: Vec<crate::analyzers::selector::MetalLBResult> = {
                 let mut seen = std::collections::HashSet::new();
-                all_paths
+                let unique_paths: Vec<_> = all_paths
                     .iter()
                     .filter(|(_, p)| seen.insert(p.service.name.clone()))
-                    .map(|(_, p)| {
-                        let endpoint_nodes: Vec<String> = p
-                            .endpoint_slices
-                            .iter()
-                            .flat_map(|es| es.endpoints.iter())
-                            .filter(|ep| ep.conditions_ready == Some(true))
-                            .filter_map(|ep| ep.node_name.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        crate::analyzers::selector::resolve_metallb_for_service(
-                            &p.service,
-                            &namespace,
-                            &inventory.metallb,
-                            &endpoint_nodes,
-                            &inventory.metallb.namespace_labels,
-                            &inventory.metallb.node_labels,
-                        )
-                    })
-                    .collect()
+                    .collect();
+                let mut results = Vec::new();
+                for (_, p) in &unique_paths {
+                    let endpoint_nodes: Vec<String> = p
+                        .endpoint_slices
+                        .iter()
+                        .flat_map(|es| es.endpoints.iter())
+                        .filter(|ep| ep.conditions_ready == Some(true))
+                        .filter_map(|ep| ep.node_name.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    results.push(crate::analyzers::selector::resolve_metallb_for_service(
+                        &p.service,
+                        &namespace,
+                        &inventory.metallb,
+                        &endpoint_nodes,
+                        &inventory.metallb.namespace_labels,
+                        &inventory.metallb.node_labels,
+                    ));
+                }
+                results
             };
 
             // Merge inventory warnings
@@ -5273,6 +5275,10 @@ async fn main() -> Result<()> {
                         "LB Provider",
                         "Pool",
                         "Advertisement",
+                        "Observed",
+                        "Session",
+                        "Events",
+                        "Config",
                         "Ingress/Route",
                         "Warnings",
                     ]);
@@ -5338,6 +5344,36 @@ async fn main() -> Result<()> {
                                 }
                             })
                             .unwrap_or_default();
+                        let observed_str = mlb
+                            .map(|r| r.observation.observed_state.clone())
+                            .unwrap_or_default();
+                        let session_str = mlb
+                            .map(|r| {
+                                if r.observation.session_state.is_empty() {
+                                    "-".to_string()
+                                } else {
+                                    r.observation.session_state.clone()
+                                }
+                            })
+                            .unwrap_or_else(|| "-".to_string());
+                        let events_str = mlb
+                            .map(|r| {
+                                if r.observation.events.is_empty() {
+                                    "-".to_string()
+                                } else {
+                                    format!("{}", r.observation.events.len())
+                                }
+                            })
+                            .unwrap_or_else(|| "-".to_string());
+                        let config_str = mlb
+                            .map(|r| {
+                                r.observation
+                                    .configuration_states
+                                    .first()
+                                    .and_then(|cs| cs.result.clone())
+                                    .unwrap_or_else(|| "-".to_string())
+                            })
+                            .unwrap_or_else(|| "-".to_string());
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
@@ -5347,6 +5383,10 @@ async fn main() -> Result<()> {
                             lb_provider,
                             pool_str,
                             ad_str,
+                            observed_str,
+                            session_str,
+                            events_str,
+                            config_str,
                             ing_str,
                             warn_str,
                         ]);
@@ -5772,6 +5812,122 @@ fn network_paths_to_json(
                     }
                     obj
                 }).collect();
+                let obs = &mlb.observation;
+                let bgp_node_json: Vec<serde_json::Value> = obs
+                    .bgp_advertised_nodes
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "node": n.node,
+                            "peers": n.peers,
+                        })
+                    })
+                    .collect();
+                let peers_json: Vec<serde_json::Value> = obs
+                    .related_peers
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "name": p.name,
+                            "namespace": p.namespace,
+                            "peerAddress": p.peer_address,
+                            "peerASN": p.peer_asn,
+                            "myASN": p.my_asn,
+                            "sourceAddress": p.source_address,
+                            "bfdProfile": p.bfd_profile,
+                            "holdTime": p.hold_time,
+                            "keepaliveTime": p.keepalive_time,
+                            "routerID": p.router_id,
+                            "nodeSelectors": label_selectors_to_json(&p.node_selectors),
+                        })
+                    })
+                    .collect();
+                let bfd_json: Vec<serde_json::Value> = obs
+                    .related_bfd_profiles
+                    .iter()
+                    .map(|b| {
+                        serde_json::json!({
+                            "name": b.name,
+                            "namespace": b.namespace,
+                            "detectMultiplier": b.detect_multiplier,
+                            "receiveInterval": b.receive_interval,
+                            "transmitInterval": b.transmit_interval,
+                            "echoInterval": b.echo_interval,
+                            "minimumTtl": b.minimum_ttl,
+                            "passiveMode": b.passive_mode,
+                        })
+                    })
+                    .collect();
+                let events_json: Vec<serde_json::Value> = obs
+                    .events
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "reason": e.reason,
+                            "message": e.message,
+                            "sourceComponent": e.source_component,
+                            "reportingComponent": e.reporting_component,
+                            "type": e.event_type,
+                            "lastTimestamp": e.last_timestamp,
+                        })
+                    })
+                    .collect();
+                let config_states_json: Vec<serde_json::Value> = obs
+                    .configuration_states
+                    .iter()
+                    .map(|cs| {
+                        let conditions: Vec<serde_json::Value> = cs
+                            .conditions
+                            .iter()
+                            .map(|c| {
+                                serde_json::json!({
+                                    "type": c.condition_type,
+                                    "status": c.status,
+                                    "reason": c.reason,
+                                    "message": c.message,
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "name": cs.name,
+                            "namespace": cs.namespace,
+                            "componentType": cs.component_type,
+                            "nodeName": cs.node_name,
+                            "result": cs.result,
+                            "errorSummary": cs.error_summary,
+                            "conditions": conditions,
+                        })
+                    })
+                    .collect();
+                let avail_str = |a: &crate::analyzers::selector::ApiAvailability| match a {
+                    crate::analyzers::selector::ApiAvailability::Available => "available",
+                    crate::analyzers::selector::ApiAvailability::Absent => "absent",
+                    crate::analyzers::selector::ApiAvailability::Unavailable => "unavailable",
+                };
+                let mut obs_json = serde_json::json!({
+                    "observedState": obs.observed_state,
+                    "l2AdvertisedNodes": obs.l2_advertised_nodes,
+                    "l2Interfaces": obs.l2_interfaces,
+                    "l2StatusResources": obs.l2_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
+                    "bgpNodeStatus": bgp_node_json,
+                    "bgpStatusResources": obs.bgp_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
+                    "relatedPeers": peers_json,
+                    "relatedBfdProfiles": bfd_json,
+                    "configurationStates": config_states_json,
+                    "events": events_json,
+                    "apiAvailability": {
+                        "l2Status": avail_str(&obs.api_availability.l2_status),
+                        "bgpStatus": avail_str(&obs.api_availability.bgp_status),
+                        "bgpPeer": avail_str(&obs.api_availability.bgp_peer),
+                        "bfdProfile": avail_str(&obs.api_availability.bfd_profile),
+                        "events": avail_str(&obs.api_availability.events),
+                        "configurationState": avail_str(&obs.api_availability.configuration_state),
+                    },
+                    "note": "Status represents advertisement intent, not BGP session establishment"
+                });
+                if !obs.session_state.is_empty() {
+                    obs_json["sessionState"] = serde_json::json!(obs.session_state);
+                }
                 result["metallb"] = serde_json::json!({
                     "provider": mlb.provider,
                     "requestedIPs": mlb.requested_ips,
@@ -5779,6 +5935,7 @@ fn network_paths_to_json(
                     "pools": pools_json,
                     "advertisements": ads_json,
                     "warnings": mlb.warnings,
+                    "observation": obs_json
                 });
             }
             result
@@ -5994,6 +6151,77 @@ fn print_network_tree(
                         }
                     );
                 }
+            }
+            // Observed state
+            if !mlb.observation.observed_state.is_empty() {
+                println!("    Observed: {}", mlb.observation.observed_state);
+                if !mlb.observation.l2_advertised_nodes.is_empty() {
+                    println!(
+                        "      L2 nodes: {}",
+                        mlb.observation.l2_advertised_nodes.join(", ")
+                    );
+                }
+                if !mlb.observation.l2_interfaces.is_empty() {
+                    println!(
+                        "      L2 interfaces: {}",
+                        mlb.observation.l2_interfaces.join(", ")
+                    );
+                }
+                for bgp_node in &mlb.observation.bgp_advertised_nodes {
+                    let peers_str = if bgp_node.peers.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" peers: {}", bgp_node.peers.join(", "))
+                    };
+                    println!("      BGP node: {}{}", bgp_node.node, peers_str);
+                }
+                for peer in &mlb.observation.related_peers {
+                    let addr = peer.peer_address.as_deref().unwrap_or("?");
+                    let asn = peer
+                        .peer_asn
+                        .map(|a| format!(" ASN:{}", a))
+                        .unwrap_or_default();
+                    println!("      BGP peer: BGPPeer/{} ({}{})", peer.name, addr, asn);
+                }
+                for event in &mlb.observation.events {
+                    let reason = event.reason.as_deref().unwrap_or("?");
+                    let msg = event.message.as_deref().unwrap_or("");
+                    println!("      Event: {} - {}", reason, msg);
+                }
+                for cs in &mlb.observation.configuration_states {
+                    let result_str = cs.result.as_deref().unwrap_or("?");
+                    let err = cs.error_summary.as_deref().unwrap_or("");
+                    let comp = cs.component_type.as_deref().unwrap_or("");
+                    let node = cs.node_name.as_deref().unwrap_or("");
+                    println!("      ConfigurationState/{}:", cs.name);
+                    println!("        Result: {}", result_str);
+                    if !err.is_empty() {
+                        println!("        Error: {}", err);
+                    }
+                    if !comp.is_empty() {
+                        println!("        Component: {}", comp);
+                    }
+                    if !node.is_empty() {
+                        println!("        Node: {}", node);
+                    }
+                    if result_str != "OK" && result_str != "Success" && !cs.conditions.is_empty() {
+                        println!("        Conditions:");
+                        for c in &cs.conditions {
+                            let reason = c
+                                .reason
+                                .as_deref()
+                                .map(|r| format!(" ({})", r))
+                                .unwrap_or_default();
+                            println!("          {}: {}{}", c.condition_type, c.status, reason);
+                        }
+                    }
+                }
+            }
+            if !mlb.observation.session_state.is_empty() {
+                println!(
+                    "    BGP session: {} (status is advertisement intent, not session state)",
+                    mlb.observation.session_state
+                );
             }
             for w in &mlb.warnings {
                 println!("    [!] {}", w);
