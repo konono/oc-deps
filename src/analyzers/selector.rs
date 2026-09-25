@@ -1754,9 +1754,10 @@ async fn build_metallb_inventory(
                             .filter(|s| !s.is_empty())
                             .map(String::from)
                             .or_else(|| source_component.clone());
-                        let is_metallb = source_component
-                            .as_deref()
-                            .is_some_and(|c| METALLB_COMPONENTS.contains(&c));
+                        let is_metallb = is_metallb_event_component(
+                            source_component.as_deref(),
+                            reporting_component.as_deref(),
+                        );
                         if !is_metallb {
                             return None;
                         }
@@ -3246,6 +3247,14 @@ const METALLB_COMPONENTS: &[&str] = &[
     "MetalLB-controller",
 ];
 
+pub(crate) fn is_metallb_event_component(
+    source_component: Option<&str>,
+    reporting_component: Option<&str>,
+) -> bool {
+    source_component.is_some_and(|c| METALLB_COMPONENTS.contains(&c))
+        || reporting_component.is_some_and(|c| METALLB_COMPONENTS.contains(&c))
+}
+
 /// Fetch MetalLB-related events for a specific service from its namespace.
 #[cfg(test)]
 pub async fn fetch_metallb_service_events(
@@ -3283,7 +3292,10 @@ pub async fn fetch_metallb_service_events(
                         .or_else(|| source_component.clone());
                     let is_metallb = source_component
                         .as_deref()
-                        .is_some_and(|c| METALLB_COMPONENTS.contains(&c));
+                        .is_some_and(|c| METALLB_COMPONENTS.contains(&c))
+                        || reporting_component
+                            .as_deref()
+                            .is_some_and(|c| METALLB_COMPONENTS.contains(&c));
                     if !is_metallb {
                         return None;
                     }
@@ -3453,10 +3465,7 @@ pub fn correlate_metallb_observations(params: &CorrelateParams<'_>) -> Correlate
     let mut configuration_states: Vec<ConfigurationStateInfo> = observation
         .configuration_states
         .iter()
-        .filter(|cs| {
-            params.metallb_namespaces.is_empty()
-                || params.metallb_namespaces.contains(&cs.namespace)
-        })
+        .filter(|cs| params.metallb_namespaces.contains(&cs.namespace))
         .cloned()
         .collect();
     configuration_states.sort_by(|a, b| a.namespace.cmp(&b.namespace).then(a.name.cmp(&b.name)));
@@ -7379,5 +7388,78 @@ mod tests {
         assert!(events.is_empty()); // empty list has no metallb events
         assert_eq!(avail, ApiAvailability::Available);
         assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn is_metallb_event_component_source_only() {
+        assert!(is_metallb_event_component(Some("metallb-speaker"), None));
+        assert!(is_metallb_event_component(Some("metallb-controller"), None));
+        assert!(!is_metallb_event_component(
+            Some("service-controller"),
+            None
+        ));
+        assert!(!is_metallb_event_component(Some("controller"), None));
+    }
+
+    #[test]
+    fn is_metallb_event_component_reporting_only() {
+        assert!(is_metallb_event_component(None, Some("metallb-controller")));
+        assert!(is_metallb_event_component(None, Some("speaker")));
+        assert!(!is_metallb_event_component(
+            None,
+            Some("service-controller")
+        ));
+    }
+
+    #[test]
+    fn is_metallb_event_component_both_empty() {
+        assert!(!is_metallb_event_component(None, None));
+        assert!(!is_metallb_event_component(Some(""), Some("")));
+    }
+
+    #[test]
+    fn is_metallb_event_component_reporting_fallback() {
+        // source is non-metallb but reporting IS metallb → should match
+        assert!(is_metallb_event_component(
+            Some("other"),
+            Some("metallb-speaker")
+        ));
+        // source is metallb, reporting is non-metallb → should match
+        assert!(is_metallb_event_component(
+            Some("metallb-speaker"),
+            Some("other")
+        ));
+    }
+
+    #[test]
+    fn config_state_empty_namespaces_returns_zero() {
+        let obs = MetalLBObservation {
+            configuration_states: vec![ConfigurationStateInfo {
+                name: "cs-1".into(),
+                namespace: "metallb-other".into(),
+                component_type: None,
+                node_name: None,
+                result: Some("OK".into()),
+                error_summary: None,
+                conditions: vec![],
+            }],
+            ..Default::default()
+        };
+        let params = CorrelateParams {
+            svc_name: "web",
+            svc_namespace: "default",
+            svc_uid: "uid-1",
+            observation: &obs,
+            has_advertisements: true,
+            has_bgp_advertisement: false,
+            events: vec![],
+            event_availability: ApiAvailability::Absent,
+            metallb_namespaces: &[], // empty = no pools/ads matched
+        };
+        let result = correlate_metallb_observations(&params);
+        assert!(
+            result.configuration_states.is_empty(),
+            "Empty metallb_namespaces should yield 0 ConfigurationStates"
+        );
     }
 }
