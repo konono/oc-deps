@@ -124,40 +124,23 @@ impl ApplySetEntry {
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum ApplySetDeleteApprovals {
-    Structured(StructuredDeleteApprovals),
-    Legacy(Vec<String>),
-}
-
-impl Default for ApplySetDeleteApprovals {
-    fn default() -> Self {
-        Self::Structured(StructuredDeleteApprovals::default())
-    }
-}
-
-impl ApplySetDeleteApprovals {
-    fn cli_args(&self) -> Vec<String> {
-        match self {
-            Self::Structured(approvals) => approvals
-                .scopes
-                .iter()
-                .map(|scope| scope.cli_arg().to_string())
-                .chain(approvals.resources.iter().cloned())
-                .collect(),
-            Self::Legacy(approvals) => approvals.clone(),
-        }
-    }
-}
-
 #[derive(Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StructuredDeleteApprovals {
+struct ApplySetDeleteApprovals {
     #[serde(default)]
     scopes: Vec<ApplySetApprovalScope>,
     #[serde(default)]
     resources: Vec<String>,
+}
+
+impl ApplySetDeleteApprovals {
+    fn cli_args(&self) -> Vec<String> {
+        self.scopes
+            .iter()
+            .map(|scope| scope.cli_arg().to_string())
+            .chain(self.resources.iter().cloned())
+            .collect()
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -8136,20 +8119,18 @@ mod basis_drift_tests {
     }
 
     #[test]
-    fn legacy_apply_set_approval_array_remains_supported() {
-        let config: ApplySetConfig = serde_json::from_str(
+    fn legacy_apply_set_approval_array_rejected() {
+        let result: Result<ApplySetConfig, _> = serde_json::from_str(
             r#"{
                 "operators": [{
                     "name": "example-operator",
                     "approve_delete": ["all", "Widget/example"]
                 }]
             }"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            config.operators[0].approve_delete.cli_args(),
-            vec!["all", "Widget/example"]
+        );
+        assert!(
+            result.is_err(),
+            "Legacy array form must be rejected (use structured scopes/resources)"
         );
     }
 

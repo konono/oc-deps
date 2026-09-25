@@ -345,18 +345,24 @@ pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<(
             .unwrap_or_default()
             .as_nanos()
     ));
+    struct TempGuard<'a>(&'a std::path::Path);
+    impl Drop for TempGuard<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.0);
+        }
+    }
+
     let json = serde_json::to_string_pretty(plan)?;
+    let guard = TempGuard(&tmp_path);
     {
-        let mut f = std::fs::File::create(&tmp_path)
+        let mut f = std::fs::File::create_new(&tmp_path)
             .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
         f.write_all(json.as_bytes())?;
         f.sync_all()?;
     }
-    if let Err(e) = std::fs::rename(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(e)
-            .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path));
-    }
+    std::fs::rename(&tmp_path, path)
+        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path))?;
+    std::mem::forget(guard); // rename succeeded, don't cleanup
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
@@ -1031,5 +1037,222 @@ mod tests {
         let json = r#"{"package_name":"p","install_namespace":"ns","csv_name_pattern":"csv","extra":"bad"}"#;
         let result: Result<SavedOperatorTarget, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_rejects_expect_with_uid_none() {
+        let mut plan = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Pod",
+                Some("ns"),
+                "p1",
+                Some("uid-x"),
+                ExecutionAction::Expect,
+            )],
+        );
+        plan.phases[0].resources[0].uid = None;
+        let dir = std::env::temp_dir().join(format!("test-expect-none-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("plan.json");
+        save_execution_plan(&plan, p.to_str().unwrap()).unwrap();
+        assert!(load_execution_plan(p.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_wait_with_uid_empty() {
+        let mut plan = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Pod",
+                Some("ns"),
+                "p1",
+                Some("uid-x"),
+                ExecutionAction::Wait,
+            )],
+        );
+        plan.phases[0].resources[0].uid = Some(String::new());
+        let dir = std::env::temp_dir().join(format!("test-wait-empty-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("plan.json");
+        save_execution_plan(&plan, p.to_str().unwrap()).unwrap();
+        assert!(load_execution_plan(p.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_accepts_review_without_uid() {
+        let plan = make_exec_plan(
+            "uid-1",
+            vec![("", "OG", Some("ns"), "og1", None, ExecutionAction::Review)],
+        );
+        let dir = std::env::temp_dir().join(format!("test-review-none-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("plan.json");
+        save_execution_plan(&plan, p.to_str().unwrap()).unwrap();
+        assert!(load_execution_plan(p.to_str().unwrap()).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn drift_phase_number_change() {
+        let saved = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Sub",
+                Some("ns"),
+                "s1",
+                Some("uid-a"),
+                ExecutionAction::Delete,
+            )],
+        );
+        let mut fresh = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Sub",
+                Some("ns"),
+                "s1",
+                Some("uid-a"),
+                ExecutionAction::Delete,
+            )],
+        );
+        fresh.phases[0].phase = 99;
+        let result = validate_execution_plan_against_fresh(&saved, &fresh);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("Phase metadata drift"))
+        );
+    }
+
+    #[test]
+    fn drift_duplicate_count() {
+        let saved = make_exec_plan(
+            "uid-1",
+            vec![
+                (
+                    "",
+                    "Sub",
+                    Some("ns"),
+                    "s1",
+                    Some("uid-a"),
+                    ExecutionAction::Delete,
+                ),
+                (
+                    "",
+                    "Sub",
+                    Some("ns"),
+                    "s1",
+                    Some("uid-a"),
+                    ExecutionAction::Delete,
+                ),
+            ],
+        );
+        let fresh = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Sub",
+                Some("ns"),
+                "s1",
+                Some("uid-a"),
+                ExecutionAction::Delete,
+            )],
+        );
+        let result = validate_execution_plan_against_fresh(&saved, &fresh);
+        assert!(result.is_err(), "Duplicate count change must be detected");
+    }
+
+    #[test]
+    fn drift_table_driven_single_field_changes() {
+        let base = (
+            "",
+            "Sub",
+            Some("ns"),
+            "s1",
+            Some("uid-a"),
+            ExecutionAction::Delete,
+        );
+        #[allow(clippy::type_complexity)]
+        let cases: Vec<(
+            &str,
+            (
+                &str,
+                &str,
+                Option<&str>,
+                &str,
+                Option<&str>,
+                ExecutionAction,
+            ),
+        )> = vec![
+            (
+                "action",
+                (
+                    "",
+                    "Sub",
+                    Some("ns"),
+                    "s1",
+                    Some("uid-a"),
+                    ExecutionAction::Keep,
+                ),
+            ),
+            (
+                "group",
+                (
+                    "apps",
+                    "Sub",
+                    Some("ns"),
+                    "s1",
+                    Some("uid-a"),
+                    ExecutionAction::Delete,
+                ),
+            ),
+            (
+                "kind",
+                (
+                    "",
+                    "Deploy",
+                    Some("ns"),
+                    "s1",
+                    Some("uid-a"),
+                    ExecutionAction::Delete,
+                ),
+            ),
+            (
+                "namespace",
+                (
+                    "",
+                    "Sub",
+                    Some("other"),
+                    "s1",
+                    Some("uid-a"),
+                    ExecutionAction::Delete,
+                ),
+            ),
+            (
+                "name",
+                (
+                    "",
+                    "Sub",
+                    Some("ns"),
+                    "s2",
+                    Some("uid-a"),
+                    ExecutionAction::Delete,
+                ),
+            ),
+        ];
+        for (field, changed) in cases {
+            let saved = make_exec_plan("uid-1", vec![base.clone()]);
+            let fresh = make_exec_plan("uid-1", vec![changed]);
+            let result = validate_execution_plan_against_fresh(&saved, &fresh);
+            assert!(result.is_err(), "{} change must be detected", field);
+        }
     }
 }
