@@ -58,11 +58,11 @@ oc-deps network pod/<pod-name> -n <namespace> -o json
 oc-deps network service/<name> -n <namespace>       # Service target (selectorless OK)
 
 # Which Operator manages this resource?
-oc-deps who-manages deployment/<name> -n <namespace>
+oc-deps operator owner deployment/<name> -n <namespace>
 
 # Inspect all resources managed by an operator
-oc-deps inspect rhods-operator
-oc-deps inspect rhods-operator --cross-namespace
+oc-deps operator resources rhods-operator
+oc-deps operator resources rhods-operator --cross-namespace
 
 # Trace discovered relationships from a resource
 oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications
@@ -368,9 +368,9 @@ The `--up-only` mode skips step 2 entirely and uses targeted API calls to walk t
 ### List operators
 
 ```bash
-oc-deps operators             # tree view
-oc-deps operators -o table    # table view
-oc-deps operators -o json     # JSON output
+oc-deps operator list             # tree view
+oc-deps operator list -o table    # table view
+oc-deps operator list -o json     # JSON output
 ```
 
 ### Inspect an operator
@@ -378,10 +378,10 @@ oc-deps operators -o json     # JSON output
 Show all resources belonging to an operator, classified by Relationship / Evidence / Confidence:
 
 ```bash
-oc-deps inspect rhods-operator              # top-level subcommand
-oc-deps inspect rhods-operator -o json       # JSON output
-oc-deps inspect rhods-operator --cross-namespace  # discover across namespaces
-oc-deps inspect rhods-operator -o table           # tabular output with group/source
+oc-deps operator resources rhods-operator              # top-level subcommand
+oc-deps operator resources rhods-operator -o json       # JSON output
+oc-deps operator resources rhods-operator --cross-namespace  # discover across namespaces
+oc-deps operator resources rhods-operator -o table           # tabular output with group/source
 oc-deps teardown inspect rhods-operator            # also available under teardown
 ```
 
@@ -422,9 +422,9 @@ Each category shows Relationship and Confidence:
 - **Same Operator CRDs** — `same-operator-crd`, Inferred (Low), correlation only, not causation
 - **label matches** — `label-match`, Inferred (Low), correlation only
 
-The managing operator is determined via `who-manages` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
+The managing operator is determined via `operator owner` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
 
-`--scope related` uses the same evidence-based namespace discovery as `inspect`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages, `scanWarningCount` gives the count, and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
+`--scope related` uses the same evidence-based namespace discovery as `operator resources`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages, `scanWarningCount` gives the count, and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
 
 ### Generate a teardown plan
 
@@ -474,15 +474,15 @@ oc-deps teardown apply rhods-operator --force       # suppress advisory warnings
 
 ```bash
 # Single namespace
-oc-deps snapshot -n <namespace> -o snapshot.json
+oc-deps snapshot create -n <namespace> --file snapshot.json
 
 # Cluster-wide (schema v3 with scope metadata)
-oc-deps snapshot -A -o cluster-snapshot.json
-oc-deps snapshot -A --namespace-selector env=prod -o filtered.json
-oc-deps snapshot -A --exclude-system-namespaces --exclude-namespace "temp-*" -o clean.json
-oc-deps snapshot -A --strict -o snap.json  # save then exit 2 on warnings
+oc-deps snapshot create -A --file cluster-snapshot.json
+oc-deps snapshot create -A --namespace-selector env=prod --file filtered.json
+oc-deps snapshot create -A --exclude-system-namespaces --exclude-namespace "temp-*" --file clean.json
+oc-deps snapshot create -A --strict --file snap.json  # save then exit 2 on warnings
 
-oc-deps graph -n <namespace> -o evidence-graph.json
+oc-deps graph -n <namespace> --file evidence-graph.json
 ```
 
 **Cluster-wide snapshot:** Scans all namespaces (or filtered subset) with bounded concurrency (shared global API semaphore, max 50 concurrent LIST requests). Schema v3 adds `scope` with mode (`single-namespace`/`all-namespaces`/`filtered`), requested filters, complete/incomplete namespace lists with typed ScanWarning. Atomic save (temp file + rename) prevents corruption on Ctrl-C (exit 130). Secret values stored as SHA-256 hashes.
@@ -494,9 +494,9 @@ oc-deps graph -n <namespace> -o evidence-graph.json
 Compare two snapshots offline (no cluster connection required):
 
 ```bash
-oc-deps diff before.json after.json                 # tree output (default)
-oc-deps diff before.json after.json --format table   # table output
-oc-deps diff before.json after.json --format json    # JSON output
+oc-deps snapshot diff before.json after.json                 # tree output (default)
+oc-deps snapshot diff before.json after.json -o table        # table output
+oc-deps snapshot diff before.json after.json -o json         # JSON output
 ```
 
 Resources are matched by logical identity (group/kind/namespace/name). UID changes are detected as Recreated. Volatile annotations (`last-applied-configuration`, etc.) are excluded from change detection.

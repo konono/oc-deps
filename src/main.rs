@@ -25,7 +25,10 @@ use crate::analyzers::selector::{
     find_network_paths, get_service_selected_pods,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
-use crate::cli::{Args, Command, Direction, OutputFormat, Scope, ShowField, TeardownAction};
+use crate::cli::{
+    Args, Command, Direction, OperatorAction, OutputFormat, Scope, ShowField, SnapshotAction,
+    TeardownAction,
+};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
     TreeNode, apply_filters, build_child_tree, build_full_tree, build_namespace_map,
@@ -699,16 +702,19 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // ── Offline subcommands (dispatch before client init) ──
-    if let Command::Diff {
-        ref before,
-        ref after,
-        ref format,
+    if let Command::Snapshot {
+        action:
+            SnapshotAction::Diff {
+                ref before,
+                ref after,
+                ref output,
+            },
     } = args.command
     {
         let before_snap = load_snapshot(before)?;
         let after_snap = load_snapshot(after)?;
         let result = diff_snapshots(&before_snap, &after_snap)?;
-        match format {
+        match output {
             OutputFormat::Tree => print_diff_tree(&result),
             OutputFormat::Table => print_diff_table(&result),
             OutputFormat::Json => {
@@ -723,12 +729,15 @@ async fn main() -> Result<()> {
 
     // ── Early validation for Snapshot ──
     if let Command::Snapshot {
-        all_namespaces,
-        ref namespace,
-        ref namespace_selector,
-        ref exclude_namespace,
-        exclude_system_namespaces,
-        ..
+        action:
+            SnapshotAction::Create {
+                all_namespaces,
+                ref namespace,
+                ref namespace_selector,
+                ref exclude_namespace,
+                exclude_system_namespaces,
+                ..
+            },
     } = args.command
     {
         if all_namespaces && namespace.is_some() {
@@ -801,8 +810,10 @@ async fn main() -> Result<()> {
     let resource_arg = match &args.command {
         Command::Tree { resource, .. }
         | Command::Network { resource, .. }
-        | Command::Trace { resource, .. }
-        | Command::WhoManages { resource, .. } => Some(resource.as_str()),
+        | Command::Trace { resource, .. } => Some(resource.as_str()),
+        Command::Operator {
+            action: OperatorAction::Owner { resource, .. },
+        } => Some(resource.as_str()),
         _ => None,
     };
     if let Some(res) = resource_arg
@@ -819,15 +830,18 @@ async fn main() -> Result<()> {
     // ── Subcommand dispatch ──
     match args.command {
         Command::Snapshot {
-            namespace,
-            output_file,
-            include_events,
-            no_cache,
-            all_namespaces,
-            namespace_selector,
-            exclude_namespace,
-            exclude_system_namespaces,
-            strict,
+            action:
+                SnapshotAction::Create {
+                    namespace,
+                    file: output_file,
+                    include_events,
+                    no_cache,
+                    all_namespaces,
+                    namespace_selector,
+                    exclude_namespace,
+                    exclude_system_namespaces,
+                    strict,
+                },
         } => {
             let snapshot_strict = strict;
             let t0 = Instant::now();
@@ -1069,7 +1083,7 @@ async fn main() -> Result<()> {
         }
         Command::Graph {
             namespace,
-            output_file,
+            file: output_file,
             include_events,
             no_cache,
         } => {
@@ -4342,13 +4356,16 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Command::Inspect {
-            operator: operator_query,
-            output,
-            no_cache,
-            cross_namespace,
-            verbose,
-            strict,
+        Command::Operator {
+            action:
+                OperatorAction::Resources {
+                    operator: operator_query,
+                    output,
+                    no_cache,
+                    cross_namespace,
+                    verbose,
+                    strict,
+                },
         } => {
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
@@ -4634,7 +4651,9 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Command::Operators { output, no_cache } => {
+        Command::Operator {
+            action: OperatorAction::List { output, no_cache },
+        } => {
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
             let (kind_map, _, _gk_map, _) =
@@ -4653,11 +4672,14 @@ async fn main() -> Result<()> {
             print_operators(&operators, &deps, &output);
             return Ok(());
         }
-        Command::WhoManages {
-            resource,
-            namespace,
-            output,
-            no_cache,
+        Command::Operator {
+            action:
+                OperatorAction::Owner {
+                    resource,
+                    namespace,
+                    output,
+                    no_cache,
+                },
         } => {
             let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
             let t0 = Instant::now();
@@ -4696,7 +4718,9 @@ async fn main() -> Result<()> {
             print_who_manages(&result, &output);
             return Ok(());
         }
-        Command::Diff { .. } => unreachable!("handled before client init"),
+        Command::Snapshot {
+            action: SnapshotAction::Diff { .. },
+        } => unreachable!("handled before client init"),
 
         // ── Tree subcommand ──
         Command::Tree {
