@@ -35,7 +35,9 @@ use crate::kube::discovery::{
     resolve_kind_with_group,
 };
 use crate::kube::resource::format_scan_warnings;
-use crate::kube::scanner::{find_parents_only, resolve_missing_parents, scan_namespace};
+use crate::kube::scanner::{
+    find_parents_only, resolve_missing_parents, scan_namespace, scan_single_api_into_index,
+};
 use crate::kube::snapshot::{
     build_snapshot, diff_snapshots, load_snapshot, print_diff_table, print_diff_tree, save_snapshot,
 };
@@ -688,109 +690,6 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
         show_labels: show.contains(&ShowField::Labels),
         show_annotations: show.contains(&ShowField::Annotations),
         show_spec: show.contains(&ShowField::PodResources),
-    }
-}
-
-async fn ensure_target_api_scanned(
-    client: &::kube::Client,
-    target_group: &str,
-    target_kind: &str,
-    namespace: &str,
-    kind_map: &crate::kube::discovery::KindMap,
-    gk_map: &crate::kube::discovery::GroupKindMap,
-    index: &mut crate::kube::resource::NamespaceIndex,
-) -> Vec<crate::kube::resource::ScanWarning> {
-    if target_group.is_empty() {
-        return vec![];
-    }
-    if let Some(km_info) = kind_map.get(target_kind)
-        && km_info.group == target_group
-    {
-        return vec![];
-    }
-    let Some(info) = gk_map.get(&(target_group.to_string(), target_kind.to_string())) else {
-        return vec![];
-    };
-    if !info.namespaced {
-        return vec![];
-    }
-    let gvk = ::kube::core::GroupVersion::gv(&info.group, &info.version).with_kind(target_kind);
-    let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-    let api: ::kube::Api<::kube::api::DynamicObject> =
-        ::kube::Api::namespaced_with(client.clone(), namespace, &ar);
-    match api.list(&Default::default()).await {
-        Ok(list) => {
-            for obj in list.items {
-                let res_name = obj.metadata.name.clone().unwrap_or_default();
-                let uid = obj.metadata.uid.clone().unwrap_or_default();
-                if uid.is_empty() {
-                    continue;
-                }
-                let owner_refs: Vec<crate::kube::resource::OwnerRef> = obj
-                    .metadata
-                    .owner_references
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|r| crate::kube::resource::OwnerRef {
-                        api_version: r.api_version.clone(),
-                        kind: r.kind.clone(),
-                        name: r.name.clone(),
-                        uid: r.uid.clone(),
-                        controller: r.controller.unwrap_or(false),
-                    })
-                    .collect();
-                let labels: std::collections::HashMap<String, String> = obj
-                    .metadata
-                    .labels
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                let annotations: std::collections::HashMap<String, String> = obj
-                    .metadata
-                    .annotations
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                let ns = obj.metadata.namespace.clone();
-                let resource_info = crate::kube::resource::ResourceInfo {
-                    group: info.group.clone(),
-                    kind: target_kind.to_string(),
-                    name: res_name.clone(),
-                    namespace: ns.clone(),
-                    uid: uid.clone(),
-                    owner_refs: owner_refs.clone(),
-                    labels,
-                    annotations,
-                    pod_template: None,
-                };
-                index.by_uid.insert(uid.clone(), resource_info);
-                for oref in &owner_refs {
-                    index
-                        .children_of
-                        .entry(oref.uid.clone())
-                        .or_default()
-                        .push(uid.clone());
-                }
-                index.by_kind_name.insert(
-                    (
-                        info.group.to_lowercase(),
-                        target_kind.to_lowercase(),
-                        ns,
-                        res_name,
-                    ),
-                    uid,
-                );
-            }
-            vec![]
-        }
-        Err(e) => {
-            vec![crate::kube::resource::ScanWarning::from_kube_error(
-                &e,
-                &info.group,
-                &info.version,
-                &info.plural,
-            )]
-        }
     }
 }
 
@@ -4830,7 +4729,7 @@ async fn main() -> Result<()> {
 
             // Direction::Parents — fast path, no namespace scan
             if matches!(direction, Direction::Parents) {
-                let chain = find_parents_only(
+                let (chain, parent_warnings) = find_parents_only(
                     &client,
                     &target_group,
                     &kind,
@@ -4842,6 +4741,9 @@ async fn main() -> Result<()> {
                     !no_refs,
                 )
                 .await?;
+                if !parent_warnings.is_empty() {
+                    format_scan_warnings(&parent_warnings, online.verbose);
+                }
                 if chain.is_empty() {
                     println!("No resources found.");
                     return Ok(());
@@ -4852,9 +4754,16 @@ async fn main() -> Result<()> {
                         print_chain_tree(&chain, &tree_opts);
                     }
                     OutputFormat::Table => print_chain_table(&chain, show_spec),
-                    OutputFormat::Json => {
-                        print_chain_json(&chain, &namespace, tree_opts.show_annotations, show_spec)
-                    }
+                    OutputFormat::Json => print_chain_json(
+                        &chain,
+                        &namespace,
+                        tree_opts.show_annotations,
+                        show_spec,
+                        &parent_warnings,
+                    ),
+                }
+                if online.strict && !parent_warnings.is_empty() {
+                    std::process::exit(2);
                 }
                 return Ok(());
             }
@@ -4870,7 +4779,7 @@ async fn main() -> Result<()> {
             )
             .await?;
 
-            let extra_warnings = ensure_target_api_scanned(
+            let extra_warnings = scan_single_api_into_index(
                 &client,
                 &target_group,
                 &kind,
@@ -4878,6 +4787,8 @@ async fn main() -> Result<()> {
                 &kind_map,
                 &gk_map,
                 &mut index,
+                !no_refs,
+                show.contains(&ShowField::PodResources),
             )
             .await;
             scan_warnings.extend(extra_warnings);
@@ -5226,7 +5137,7 @@ async fn main() -> Result<()> {
             let (mut index, mut scan_warnings) =
                 scan_namespace(&client, &namespace, &kind_map, false, true, false).await?;
 
-            let extra_warnings = ensure_target_api_scanned(
+            let extra_warnings = scan_single_api_into_index(
                 &client,
                 &target_group,
                 &kind,
@@ -5234,6 +5145,8 @@ async fn main() -> Result<()> {
                 &kind_map,
                 &gk_map,
                 &mut index,
+                true,
+                false,
             )
             .await;
             scan_warnings.extend(extra_warnings);
@@ -5304,21 +5217,15 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                let path = crate::analyzers::selector::NetworkPath {
-                    service: target_svc.clone(),
-                    ingresses: svc_ingresses,
-                    endpoint_slices: svc_ep_slices,
-                    endpoint_summary: summary,
-                    selector_matched_pods: selector_pods.clone(),
-                    target_ref_matched_pods: target_ref_pods,
-                };
                 let mut pod_labels_list = Vec::new();
+                let mut seen_pod_uids = std::collections::HashSet::new();
                 for pod_str in &selector_pods {
                     let pod_name = pod_str.strip_prefix("Pod/").unwrap_or(pod_str);
                     for info in index.by_uid.values() {
                         if info.kind == "Pod"
                             && info.name == pod_name
                             && info.namespace.as_deref() == Some(&namespace)
+                            && seen_pod_uids.insert(info.uid.clone())
                         {
                             pod_labels_list.push((
                                 info.name.clone(),
@@ -5329,6 +5236,37 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                for es in &svc_ep_slices {
+                    for ep in &es.endpoints {
+                        if let Some(tr) = &ep.target_ref
+                            && tr.kind.as_deref() == Some("Pod")
+                            && let Some(pod_name) = &tr.name
+                        {
+                            for info in index.by_uid.values() {
+                                if info.kind == "Pod"
+                                    && info.name == *pod_name
+                                    && info.namespace.as_deref() == Some(&namespace)
+                                    && seen_pod_uids.insert(info.uid.clone())
+                                {
+                                    pod_labels_list.push((
+                                        info.name.clone(),
+                                        info.uid.clone(),
+                                        info.labels.clone(),
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let path = crate::analyzers::selector::NetworkPath {
+                    service: target_svc.clone(),
+                    ingresses: svc_ingresses,
+                    endpoint_slices: svc_ep_slices,
+                    endpoint_summary: summary,
+                    selector_matched_pods: selector_pods.clone(),
+                    target_ref_matched_pods: target_ref_pods,
+                };
                 let postures = evaluate_network_postures(
                     &pod_labels_list,
                     &inventory.network_policies,

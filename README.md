@@ -55,6 +55,7 @@ oc-deps map -n <namespace> --root-kind Deployment --root-label app=myapp
 # Network diagnostics (Service, EndpointSlice, NetworkPolicy)
 oc-deps network deployment/<name> -n <namespace>
 oc-deps network pod/<pod-name> -n <namespace> -o json
+oc-deps network service/<name> -n <namespace>       # Service target (selectorless OK)
 
 # Which Operator manages this resource?
 oc-deps who-manages deployment/<name> -n <namespace>
@@ -114,6 +115,8 @@ oc-deps tree deployment/<name> -n <namespace> --show pod-resources
 
 The `network` subcommand shows the full network reachability chain for workloads: Pod labels → Service selector → Ingress/Route backends, plus EndpointSlice health and NetworkPolicy posture.
 
+**Service as target:** `network service/<name>` diagnoses a specific Service directly. The Service's config, status, EndpointSlices, and Ingress/Route backends are always shown, even when the Service has no selector or no endpoints. For selectorless Services, `targetRefMatchedPods` from EndpointSlice targetRefs are included in NetworkPolicy posture evaluation.
+
 **Service fields displayed:**
 
 | Field | Description |
@@ -157,7 +160,7 @@ Each entry in `networkPaths[]` contains:
 - `endpointSummary`: `ready`, `notReady`, `unknown`, `effectiveReady`, `serving`, `terminating`
 - `selectorMatchedPods[]`, `targetRefMatchedPods[]`
 - `ingresses[]` with `kind`, `name`, `host`, `path`, `tls`
-- Top-level `warnings[]` (typed ScanWarning array) and `warningCount`
+- Top-level `warnings[]` (typed ScanWarning array) and `scanWarningCount`
 
 **Example tree output:**
 

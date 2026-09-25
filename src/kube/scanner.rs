@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use futures::stream::StreamExt;
 use kube::{
     Client,
@@ -555,6 +555,173 @@ pub async fn scan_namespace_with_semaphore(
     Ok((index, warnings))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn scan_single_api_into_index(
+    client: &Client,
+    group: &str,
+    kind: &str,
+    namespace: &str,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    index: &mut NamespaceIndex,
+    refs: bool,
+    show_spec: bool,
+) -> Vec<ScanWarning> {
+    if group.is_empty() {
+        return vec![];
+    }
+    if let Some(km_info) = kind_map.get(kind)
+        && km_info.group == group
+    {
+        return vec![];
+    }
+    let Some(info) = gk_map.get(&(group.to_string(), kind.to_string())) else {
+        return vec![];
+    };
+    if !info.namespaced {
+        return vec![];
+    }
+    let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(kind);
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+
+    let items = match crate::analyzers::selector::list_with_retry_and_timeout(
+        &api,
+        &info.group,
+        &info.version,
+        &info.plural,
+    )
+    .await
+    {
+        Ok(objects) => {
+            let mut items: Vec<ScanItem> = Vec::new();
+            for obj in objects {
+                let data = obj.data;
+                let metadata = obj.metadata;
+                let Some(uid) = metadata.uid else {
+                    continue;
+                };
+                let Some(res_name) = metadata.name else {
+                    continue;
+                };
+                let ns = metadata.namespace;
+                let owner_refs: Vec<OwnerRef> = metadata
+                    .owner_references
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| OwnerRef {
+                        api_version: r.api_version,
+                        kind: r.kind,
+                        name: r.name,
+                        uid: r.uid,
+                        controller: r.controller.unwrap_or(false),
+                    })
+                    .collect();
+                let (wk_refs, spec_strs) = if refs {
+                    let wk = extract_well_known_refs(&data);
+                    let mut strs = Vec::new();
+                    if let Some(spec) = data.get("spec") {
+                        let mut path = vec!["spec".to_string()];
+                        collect_string_values(spec, &mut path, &mut strs);
+                    }
+                    (wk, strs)
+                } else {
+                    (vec![], vec![])
+                };
+                let labels = metadata.labels.unwrap_or_default().into_iter().collect();
+                let annotations = metadata
+                    .annotations
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let pod_template = if show_spec {
+                    extract_pod_template(kind, &data)
+                } else {
+                    None
+                };
+                items.push((
+                    ResourceInfo {
+                        group: info.group.clone(),
+                        kind: kind.to_string(),
+                        name: res_name,
+                        namespace: ns,
+                        uid,
+                        owner_refs,
+                        labels,
+                        annotations,
+                        pod_template,
+                    },
+                    wk_refs,
+                    spec_strs,
+                ));
+            }
+            items
+        }
+        Err(warning) => return vec![warning],
+    };
+
+    let mut ref_data: Vec<RefData> = Vec::new();
+    for (info, wk_refs, spec_strs) in items {
+        if refs {
+            ref_data.push((info.uid.clone(), info.name.clone(), wk_refs, spec_strs));
+        }
+        index.insert(info);
+    }
+
+    if refs {
+        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+        for info in index.by_uid.values() {
+            by_name
+                .entry(info.name.clone())
+                .or_default()
+                .push(info.kind.clone());
+        }
+        for (uid, self_name, wk_refs, spec_strs) in ref_data {
+            let already_found: HashSet<(String, String)> = wk_refs
+                .iter()
+                .map(|r| (r.target_kind.clone(), r.target_name.clone()))
+                .collect();
+            let heuristic_refs =
+                resolve_name_matches(&spec_strs, &self_name, &by_name, &already_found);
+            let mut all_refs = wk_refs;
+            all_refs.extend(heuristic_refs);
+            if !all_refs.is_empty() {
+                index.refs_from.insert(uid.clone(), all_refs);
+            }
+        }
+        for (source_uid, source_refs) in &index.refs_from {
+            if let Some(source_info) = index.by_uid.get(source_uid) {
+                let source_kind = source_info.kind.clone();
+                let source_name = source_info.name.clone();
+                let source_ns = source_info.namespace.clone();
+                for sref in source_refs {
+                    if let Some(target_uid) = index.lookup_by_kind_name(
+                        None,
+                        &sref.target_kind,
+                        &sref.target_name,
+                        source_ns.as_deref(),
+                    ) {
+                        index
+                            .refs_to
+                            .entry(target_uid.clone())
+                            .or_default()
+                            .push(IncomingRef {
+                                source_kind: source_kind.clone(),
+                                source_name: source_name.clone(),
+                                field_path: sref.field_path.clone(),
+                            });
+                    }
+                }
+            }
+        }
+        for incoming in index.refs_to.values_mut() {
+            let mut seen = HashSet::new();
+            incoming.retain(|r| seen.insert((r.source_kind.clone(), r.source_name.clone())));
+        }
+    }
+    vec![]
+}
+
 pub async fn resolve_missing_parents(
     index: &mut NamespaceIndex,
     start_uid: &str,
@@ -696,7 +863,7 @@ pub async fn resolve_missing_parents(
     warnings
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub async fn find_parents_only(
     client: &Client,
     group: &str,
@@ -707,12 +874,14 @@ pub async fn find_parents_only(
     gk_map: &GroupKindMap,
     show_spec: bool,
     refs: bool,
-) -> Result<Vec<ChainEntry>> {
+) -> Result<(Vec<ChainEntry>, Vec<ScanWarning>)> {
     let mut chain = Vec::new();
+    let mut warnings = Vec::new();
     let mut current_kind = kind.to_string();
     let mut current_name = name.to_string();
     let mut current_group = group.to_string();
     let mut visited = HashSet::new();
+    let mut is_first = true;
 
     loop {
         let info = if !current_group.is_empty() {
@@ -730,20 +899,18 @@ pub async fn find_parents_only(
         let info = match info {
             Some(i) => i,
             None => {
-                chain.push(ChainEntry {
-                    info: ResourceInfo {
-                        group: String::new(),
-                        kind: current_kind,
-                        name: current_name,
-                        namespace: None,
-                        uid: String::new(),
-                        owner_refs: vec![],
-                        labels: HashMap::new(),
-                        annotations: HashMap::new(),
-                        pod_template: None,
-                    },
-                    spec_refs: vec![],
-                });
+                if is_first {
+                    bail!(
+                        "{}/{} not found in API discovery (group: {})",
+                        current_kind,
+                        current_name,
+                        if current_group.is_empty() {
+                            "core"
+                        } else {
+                            &current_group
+                        }
+                    );
+                }
                 break;
             }
         };
@@ -756,7 +923,15 @@ pub async fn find_parents_only(
             Api::all_with(client.clone(), &ar)
         };
 
-        match api.get(&current_name).await {
+        match get_with_retry(
+            &api,
+            &current_name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
             Ok(obj) => {
                 let uid = obj.metadata.uid.unwrap_or_default();
                 if !visited.insert(uid.clone()) {
@@ -834,28 +1009,25 @@ pub async fn find_parents_only(
                     None => break,
                 }
             }
-            Err(e) => {
-                chain.push(ChainEntry {
-                    info: ResourceInfo {
-                        group: String::new(),
-                        kind: current_kind,
-                        name: format!("{} (error: {})", current_name, e),
-                        namespace: None,
-                        uid: String::new(),
-                        owner_refs: vec![],
-                        labels: HashMap::new(),
-                        annotations: HashMap::new(),
-                        pod_template: None,
-                    },
-                    spec_refs: vec![],
-                });
+            Err(w) => {
+                if is_first {
+                    bail!(
+                        "{}/{} not found in namespace '{}': {}",
+                        current_kind,
+                        current_name,
+                        namespace,
+                        w
+                    );
+                }
+                warnings.push(w);
                 break;
             }
         }
+        is_first = false;
     }
 
     chain.reverse();
-    Ok(chain)
+    Ok((chain, warnings))
 }
 
 pub async fn list_namespaces_with_retry(
@@ -1146,7 +1318,7 @@ mod tests {
             .iter()
             .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
             .collect();
-        let chain = find_parents_only(
+        let (chain, _warnings) = find_parents_only(
             &client,
             "",
             "Pod",
@@ -1253,7 +1425,7 @@ mod tests {
             .iter()
             .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
             .collect();
-        let chain = find_parents_only(
+        let (chain, _warnings) = find_parents_only(
             &client,
             "",
             "Pod",
