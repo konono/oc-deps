@@ -246,6 +246,149 @@ pub struct NetworkIngress {
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Gateway API types
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct GatewayListener {
+    pub name: String,
+    pub hostname: Option<String>,
+    pub port: u16,
+    pub protocol: String,
+    pub tls_mode: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct GatewayInfo {
+    pub name: String,
+    pub namespace: String,
+    pub gateway_class: String,
+    pub listeners: Vec<GatewayListener>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HTTPRouteMatch {
+    pub path_type: Option<String>,
+    pub path_value: Option<String>,
+    pub method: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RouteParentRef {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub section_name: Option<String>,
+    pub port: Option<u16>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct RouteBackendRef {
+    pub name: String,
+    pub port: Option<u16>,
+    pub weight: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RouteStatusParent {
+    pub parent_ref: RouteParentRef,
+    pub conditions: Vec<RouteCondition>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RouteCondition {
+    pub condition_type: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GatewayRoute {
+    pub kind: String,
+    pub name: String,
+    pub namespace: String,
+    pub parent_refs: Vec<RouteParentRef>,
+    pub rules: Vec<GatewayRouteRule>,
+    pub status_parents: Vec<RouteStatusParent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GatewayRouteRule {
+    pub matches: Vec<HTTPRouteMatch>,
+    pub backend_refs: Vec<RouteBackendRef>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct ReferenceGrantInfo {
+    pub name: String,
+    pub namespace: String,
+    pub from_grants: Vec<ReferenceGrantFrom>,
+    pub to_grants: Vec<ReferenceGrantTo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReferenceGrantFrom {
+    pub group: String,
+    pub kind: String,
+    pub namespace: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReferenceGrantTo {
+    pub group: String,
+    pub kind: String,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CrossNamespaceStatus {
+    SameNamespace,
+    Allowed,
+    NotAllowed,
+    Unknown,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchedGatewayRoute {
+    pub route_kind: String,
+    pub route_name: String,
+    pub route_namespace: String,
+    pub gateway_name: String,
+    pub gateway_namespace: String,
+    pub listeners: Vec<GatewayListener>,
+    pub matches: Vec<HTTPRouteMatch>,
+    pub cross_namespace: CrossNamespaceStatus,
+    pub status_conditions: Vec<RouteCondition>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GatewayInventory {
+    pub gateways: Vec<GatewayInfo>,
+    pub routes: Vec<GatewayRoute>,
+    pub reference_grants: Vec<ReferenceGrantInfo>,
+    pub reference_grant_availability: ApiAvailability,
+    pub warnings: Vec<ScanWarning>,
+}
+
+impl Default for GatewayInventory {
+    fn default() -> Self {
+        Self {
+            gateways: vec![],
+            routes: vec![],
+            reference_grants: vec![],
+            reference_grant_availability: ApiAvailability::Absent,
+            warnings: vec![],
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 //  EndpointSlice types
 // ──────────────────────────────────────────────────────────────
 
@@ -1456,7 +1599,7 @@ pub async fn build_network_inventory(
     let metallb = build_metallb_inventory(client, namespace, gk_map).await;
     warnings.extend(metallb.warnings.clone());
 
-    let gateway = build_gateway_inventory(client, gk_map).await;
+    let gateway = build_gateway_inventory(client, namespace, gk_map).await;
     warnings.extend(gateway.warnings.clone());
 
     NetworkInventory {
@@ -1469,6 +1612,619 @@ pub async fn build_network_inventory(
         metallb,
         gateway,
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Gateway API inventory building
+// ──────────────────────────────────────────────────────────────
+
+fn parse_gateway(obj: &DynamicObject) -> Option<GatewayInfo> {
+    let name = obj.metadata.name.as_deref()?;
+    let namespace = obj.metadata.namespace.as_deref().unwrap_or("default");
+    let spec = obj.data.get("spec")?;
+    let gateway_class = spec
+        .get("gatewayClassName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let listeners = spec
+        .get("listeners")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|l| {
+                    let lname = l.get("name")?.as_str()?.to_string();
+                    let port = l.get("port")?.as_u64()? as u16;
+                    let protocol = l
+                        .get("protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("HTTP")
+                        .to_string();
+                    let hostname = l.get("hostname").and_then(|v| v.as_str()).map(String::from);
+                    let tls_mode = l
+                        .get("tls")
+                        .and_then(|t| t.get("mode"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    Some(GatewayListener {
+                        name: lname,
+                        hostname,
+                        port,
+                        protocol,
+                        tls_mode,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(GatewayInfo {
+        name: name.to_string(),
+        namespace: namespace.to_string(),
+        gateway_class,
+        listeners,
+    })
+}
+
+fn parse_parent_ref(pr: &serde_json::Value) -> RouteParentRef {
+    RouteParentRef {
+        group: pr
+            .get("group")
+            .and_then(|v| v.as_str())
+            .unwrap_or("gateway.networking.k8s.io")
+            .to_string(),
+        kind: pr
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Gateway")
+            .to_string(),
+        namespace: pr
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        name: pr
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        section_name: pr
+            .get("sectionName")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        port: pr.get("port").and_then(|v| v.as_u64()).map(|v| v as u16),
+    }
+}
+
+fn parse_gateway_route(obj: &DynamicObject, route_kind: &str) -> Option<GatewayRoute> {
+    let name = obj.metadata.name.as_deref()?;
+    let namespace = obj.metadata.namespace.as_deref().unwrap_or("default");
+    let spec = obj.data.get("spec")?;
+
+    let parent_refs = spec
+        .get("parentRefs")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().map(parse_parent_ref).collect())
+        .unwrap_or_default();
+
+    let rules = spec
+        .get("rules")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|rule| {
+                    let matches = rule
+                        .get("matches")
+                        .and_then(|v| v.as_array())
+                        .map(|marr| {
+                            marr.iter()
+                                .map(|m| {
+                                    let (path_type, path_value) = if let Some(p) = m.get("path") {
+                                        (
+                                            p.get("type")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from),
+                                            p.get("value")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from),
+                                        )
+                                    } else {
+                                        (None, None)
+                                    };
+                                    let method =
+                                        m.get("method").and_then(|v| v.as_str()).map(String::from);
+                                    HTTPRouteMatch {
+                                        path_type,
+                                        path_value,
+                                        method,
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let backend_refs = rule
+                        .get("backendRefs")
+                        .and_then(|v| v.as_array())
+                        .map(|barr| {
+                            barr.iter()
+                                .filter_map(|b| {
+                                    let bname = b.get("name")?.as_str()?.to_string();
+                                    let kind =
+                                        b.get("kind").and_then(|v| v.as_str()).unwrap_or("Service");
+                                    if kind != "Service" {
+                                        return None;
+                                    }
+                                    let port =
+                                        b.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                                    let weight = b.get("weight").and_then(|v| v.as_i64());
+                                    Some(RouteBackendRef {
+                                        name: bname,
+                                        port,
+                                        weight,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    GatewayRouteRule {
+                        matches,
+                        backend_refs,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let status_parents = obj
+        .data
+        .get("status")
+        .and_then(|s| s.get("parents"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|sp| {
+                    let pr = sp.get("parentRef")?;
+                    let parent_ref = parse_parent_ref(pr);
+                    let conditions = sp
+                        .get("conditions")
+                        .and_then(|v| v.as_array())
+                        .map(|carr| {
+                            carr.iter()
+                                .filter_map(|c| {
+                                    Some(RouteCondition {
+                                        condition_type: c.get("type")?.as_str()?.to_string(),
+                                        status: c
+                                            .get("status")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("Unknown")
+                                            .to_string(),
+                                        reason: c
+                                            .get("reason")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from),
+                                        message: c
+                                            .get("message")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from),
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(RouteStatusParent {
+                        parent_ref,
+                        conditions,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(GatewayRoute {
+        kind: route_kind.to_string(),
+        name: name.to_string(),
+        namespace: namespace.to_string(),
+        parent_refs,
+        rules,
+        status_parents,
+    })
+}
+
+fn parse_reference_grant(obj: &DynamicObject) -> Option<ReferenceGrantInfo> {
+    let name = obj.metadata.name.as_deref()?;
+    let namespace = obj.metadata.namespace.as_deref().unwrap_or("default");
+    let spec = obj.data.get("spec")?;
+
+    let from_grants = spec
+        .get("from")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| {
+                    Some(ReferenceGrantFrom {
+                        group: f
+                            .get("group")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        kind: f.get("kind")?.as_str()?.to_string(),
+                        namespace: f.get("namespace")?.as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let to_grants = spec
+        .get("to")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    Some(ReferenceGrantTo {
+                        group: t
+                            .get("group")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        kind: t.get("kind")?.as_str()?.to_string(),
+                        name: t.get("name").and_then(|v| v.as_str()).map(String::from),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(ReferenceGrantInfo {
+        name: name.to_string(),
+        namespace: namespace.to_string(),
+        from_grants,
+        to_grants,
+    })
+}
+
+pub async fn build_gateway_inventory(
+    client: &Client,
+    namespace: &str,
+    gk_map: &GroupKindMap,
+) -> GatewayInventory {
+    let gw_group = "gateway.networking.k8s.io";
+
+    // Check if Gateway CRD exists
+    let gw_key = (gw_group.to_string(), "Gateway".to_string());
+    let gw_info = match gk_map.get(&gw_key) {
+        Some(i) => i,
+        None => return GatewayInventory::default(),
+    };
+
+    let mut gateways = Vec::new();
+    let mut routes = Vec::new();
+    let mut reference_grants = Vec::new();
+    let mut warnings = Vec::new();
+    let mut ref_grant_availability = ApiAvailability::Absent;
+
+    // List Gateways (all namespaces to find cross-namespace refs)
+    {
+        let gvk = GroupVersion::gv(&gw_info.group, &gw_info.version).with_kind("Gateway");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &gw_info.plural);
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+        match list_with_retry_and_timeout(&api, &gw_info.group, &gw_info.version, &gw_info.plural)
+            .await
+        {
+            Ok(items) => {
+                gateways = items.iter().filter_map(parse_gateway).collect();
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // List HTTPRoutes in the target namespace
+    let httproute_key = (gw_group.to_string(), "HTTPRoute".to_string());
+    if let Some(info) = gk_map.get(&httproute_key) {
+        let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("HTTPRoute");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+        match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
+            Ok(items) => {
+                for obj in &items {
+                    if let Some(r) = parse_gateway_route(obj, "HTTPRoute") {
+                        routes.push(r);
+                    }
+                }
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // List GRPCRoutes in the target namespace
+    let grpcroute_key = (gw_group.to_string(), "GRPCRoute".to_string());
+    if let Some(info) = gk_map.get(&grpcroute_key) {
+        let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("GRPCRoute");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+        match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
+            Ok(items) => {
+                for obj in &items {
+                    if let Some(r) = parse_gateway_route(obj, "GRPCRoute") {
+                        routes.push(r);
+                    }
+                }
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // List TLSRoutes in the target namespace
+    let tlsroute_key = (gw_group.to_string(), "TLSRoute".to_string());
+    if let Some(info) = gk_map.get(&tlsroute_key) {
+        let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("TLSRoute");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+        match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
+            Ok(items) => {
+                for obj in &items {
+                    if let Some(r) = parse_gateway_route(obj, "TLSRoute") {
+                        routes.push(r);
+                    }
+                }
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // List ReferenceGrants in the service namespace (grants are in the target namespace)
+    let refgrant_key = (gw_group.to_string(), "ReferenceGrant".to_string());
+    if let Some(info) = gk_map.get(&refgrant_key) {
+        let gvk = GroupVersion::gv(&info.group, &info.version).with_kind("ReferenceGrant");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+        match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
+            Ok(items) => {
+                reference_grants = items.iter().filter_map(parse_reference_grant).collect();
+                ref_grant_availability = ApiAvailability::Available;
+            }
+            Err(w) => {
+                warnings.push(w);
+                ref_grant_availability = ApiAvailability::Unavailable;
+            }
+        }
+    }
+    // If CRD key not in gk_map, ref_grant_availability stays Absent
+
+    GatewayInventory {
+        gateways,
+        routes,
+        reference_grants,
+        reference_grant_availability: ref_grant_availability,
+        warnings,
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Gateway API route resolution
+// ──────────────────────────────────────────────────────────────
+
+fn check_cross_namespace(
+    route_kind: &str,
+    route_namespace: &str,
+    target_namespace: &str,
+    target_name: &str,
+    reference_grants: &[ReferenceGrantInfo],
+    ref_grant_availability: &ApiAvailability,
+) -> (CrossNamespaceStatus, Vec<String>) {
+    if route_namespace == target_namespace {
+        return (CrossNamespaceStatus::SameNamespace, vec![]);
+    }
+
+    let mut warnings = Vec::new();
+    match ref_grant_availability {
+        ApiAvailability::Unavailable => {
+            warnings.push("ReferenceGrant availability unknown (LIST failed)".to_string());
+            (CrossNamespaceStatus::Unknown, warnings)
+        }
+        ApiAvailability::Absent | ApiAvailability::Available => {
+            // Check if any ReferenceGrant in the target namespace allows this reference
+            let allowed = reference_grants.iter().any(|rg| {
+                rg.namespace == target_namespace
+                    && rg.from_grants.iter().any(|from| {
+                        from.namespace == route_namespace
+                            && (from.group == "gateway.networking.k8s.io" || from.group.is_empty())
+                            && from.kind == route_kind
+                    })
+                    && rg.to_grants.iter().any(|to| {
+                        to.group.is_empty()
+                            && to.kind == "Service"
+                            && to.name.as_deref().is_none_or(|n| n == target_name)
+                    })
+            });
+            if allowed {
+                (CrossNamespaceStatus::Allowed, warnings)
+            } else {
+                (CrossNamespaceStatus::NotAllowed, warnings)
+            }
+        }
+    }
+}
+
+fn get_status_conditions_for_parent(
+    status_parents: &[RouteStatusParent],
+    parent_ref: &RouteParentRef,
+    route_namespace: &str,
+) -> Vec<RouteCondition> {
+    for sp in status_parents {
+        let sp_group = &sp.parent_ref.group;
+        let sp_kind = &sp.parent_ref.kind;
+
+        if sp_group != &parent_ref.group || sp_kind != &parent_ref.kind {
+            continue;
+        }
+        if sp.parent_ref.name != parent_ref.name {
+            continue;
+        }
+
+        // Namespace comparison: default to route namespace if omitted
+        let sp_ns = sp
+            .parent_ref
+            .namespace
+            .as_deref()
+            .unwrap_or(route_namespace);
+        let pr_ns = parent_ref.namespace.as_deref().unwrap_or(route_namespace);
+        if sp_ns != pr_ns {
+            continue;
+        }
+
+        // sectionName comparison: match if both present and equal, or either absent
+        match (&sp.parent_ref.section_name, &parent_ref.section_name) {
+            (Some(a), Some(b)) if a != b => continue,
+            _ => {}
+        }
+
+        // port comparison
+        match (sp.parent_ref.port, parent_ref.port) {
+            (Some(a), Some(b)) if a != b => continue,
+            _ => {}
+        }
+
+        return sp.conditions.clone();
+    }
+    vec![]
+}
+
+pub fn resolve_gateway_routes_for_service(
+    service_name: &str,
+    service_namespace: &str,
+    inventory: &GatewayInventory,
+) -> Vec<MatchedGatewayRoute> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+
+    for route in &inventory.routes {
+        // Check if any rule's backendRef targets this service
+        let mut service_matches: Vec<&GatewayRouteRule> = Vec::new();
+        for rule in &route.rules {
+            if rule.backend_refs.iter().any(|br| br.name == service_name) {
+                service_matches.push(rule);
+            }
+        }
+        if service_matches.is_empty() {
+            continue;
+        }
+
+        // Collect all matches from rules targeting this service
+        let all_matches: Vec<HTTPRouteMatch> = service_matches
+            .iter()
+            .flat_map(|r| r.matches.clone())
+            .collect();
+
+        for parent_ref in &route.parent_refs {
+            if parent_ref.group != "gateway.networking.k8s.io" || parent_ref.kind != "Gateway" {
+                continue;
+            }
+
+            let gw_ns = parent_ref.namespace.as_deref().unwrap_or(&route.namespace);
+
+            // Find the gateway
+            let gateway = inventory
+                .gateways
+                .iter()
+                .find(|gw| gw.name == parent_ref.name && gw.namespace == gw_ns);
+            let Some(gateway) = gateway else {
+                continue;
+            };
+
+            // Resolve listeners
+            let listeners: Vec<GatewayListener> = match &parent_ref.section_name {
+                Some(section) => {
+                    // Exact match by name
+                    let mut matched: Vec<_> = gateway
+                        .listeners
+                        .iter()
+                        .filter(|l| &l.name == section)
+                        .cloned()
+                        .collect();
+                    // Further filter by port if specified
+                    if let Some(port) = parent_ref.port {
+                        matched.retain(|l| l.port == port);
+                    }
+                    matched
+                }
+                None => {
+                    match parent_ref.port {
+                        Some(port) => {
+                            // Filter by port only
+                            gateway
+                                .listeners
+                                .iter()
+                                .filter(|l| l.port == port)
+                                .cloned()
+                                .collect()
+                        }
+                        None => {
+                            // All listeners
+                            gateway.listeners.clone()
+                        }
+                    }
+                }
+            };
+
+            // Cross-namespace check
+            let (cross_ns, cross_warnings) = check_cross_namespace(
+                &route.kind,
+                &route.namespace,
+                service_namespace,
+                service_name,
+                &inventory.reference_grants,
+                &inventory.reference_grant_availability,
+            );
+
+            // Status conditions
+            let status_conditions = get_status_conditions_for_parent(
+                &route.status_parents,
+                parent_ref,
+                &route.namespace,
+            );
+
+            let dedup_key = (
+                route.kind.clone(),
+                route.namespace.clone(),
+                route.name.clone(),
+                gateway.name.clone(),
+                gateway.namespace.clone(),
+            );
+            if !seen.insert(dedup_key) {
+                continue;
+            }
+
+            results.push(MatchedGatewayRoute {
+                route_kind: route.kind.clone(),
+                route_name: route.name.clone(),
+                route_namespace: route.namespace.clone(),
+                gateway_name: gateway.name.clone(),
+                gateway_namespace: gateway.namespace.clone(),
+                listeners,
+                matches: all_matches.clone(),
+                cross_namespace: cross_ns,
+                status_conditions,
+                warnings: cross_warnings,
+            });
+        }
+    }
+
+    // Sort by kind/ns/name for deterministic output
+    results.sort_by(|a, b| {
+        a.route_kind
+            .cmp(&b.route_kind)
+            .then(a.route_namespace.cmp(&b.route_namespace))
+            .then(a.route_name.cmp(&b.route_name))
+    });
+
+    results
 }
 
 async fn build_metallb_inventory(
@@ -3618,964 +4374,6 @@ fn evaluate_node_selectors(
     } else {
         (matched.clone(), format!("matched {}", matched.len()))
     }
-}
-
-// ──────────────────────────────────────────────────────────────
-//  Gateway API support
-// ──────────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug, Default)]
-pub struct GatewayInventory {
-    pub available: bool,
-    pub gateway_classes: Vec<GatewayClassInfo>,
-    pub gateways: Vec<GatewayInfo>,
-    pub http_routes: Vec<HTTPRouteInfo>,
-    pub grpc_routes: Vec<GRPCRouteInfo>,
-    pub tcp_routes: Vec<TCPRouteInfo>,
-    pub tls_routes: Vec<TLSRouteInfo>,
-    pub udp_routes: Vec<UDPRouteInfo>,
-    pub reference_grants: Vec<ReferenceGrantInfo>,
-    pub warnings: Vec<ScanWarning>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct GatewayClassInfo {
-    pub name: String,
-    pub controller_name: String,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct GatewayInfo {
-    pub name: String,
-    pub namespace: String,
-    pub gateway_class: String,
-    pub listeners: Vec<GatewayListener>,
-    pub addresses: Vec<GatewayAddress>,
-    pub conditions: Vec<GatewayCondition>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct GatewayListener {
-    pub name: String,
-    pub hostname: Option<String>,
-    pub port: i64,
-    pub protocol: String,
-    pub tls_mode: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct GatewayAddress {
-    pub address_type: Option<String>,
-    pub value: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct GatewayCondition {
-    pub condition_type: String,
-    pub status: String,
-    pub reason: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct HTTPRouteInfo {
-    pub name: String,
-    pub namespace: String,
-    pub hostnames: Vec<String>,
-    pub parent_refs: Vec<RouteParentRef>,
-    pub rules: Vec<HTTPRouteRule>,
-    pub status_parents: Vec<RouteParentStatus>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct RouteParentRef {
-    pub group: Option<String>,
-    pub kind: Option<String>,
-    pub namespace: Option<String>,
-    pub name: String,
-    pub section_name: Option<String>,
-    pub port: Option<i64>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct HTTPRouteRule {
-    pub matches: Vec<HTTPRouteMatch>,
-    pub backend_refs: Vec<BackendRef>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct HTTPRouteMatch {
-    pub path_type: Option<String>,
-    pub path_value: Option<String>,
-    pub method: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct BackendRef {
-    pub group: Option<String>,
-    pub kind: Option<String>,
-    pub name: String,
-    pub namespace: Option<String>,
-    pub port: Option<i64>,
-    pub weight: Option<i64>,
-}
-
-#[derive(Clone, Debug)]
-pub struct RouteParentStatus {
-    pub parent_ref: RouteParentRef,
-    pub conditions: Vec<GatewayCondition>,
-}
-
-#[derive(Clone, Debug)]
-pub struct GRPCRouteInfo {
-    pub name: String,
-    pub namespace: String,
-    pub hostnames: Vec<String>,
-    pub parent_refs: Vec<RouteParentRef>,
-    pub backend_refs: Vec<BackendRef>,
-    pub status_parents: Vec<RouteParentStatus>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TCPRouteInfo {
-    pub name: String,
-    pub namespace: String,
-    pub parent_refs: Vec<RouteParentRef>,
-    pub backend_refs: Vec<BackendRef>,
-    pub status_parents: Vec<RouteParentStatus>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TLSRouteInfo {
-    pub name: String,
-    pub namespace: String,
-    pub hostnames: Vec<String>,
-    pub parent_refs: Vec<RouteParentRef>,
-    pub backend_refs: Vec<BackendRef>,
-    pub status_parents: Vec<RouteParentStatus>,
-}
-
-#[derive(Clone, Debug)]
-pub struct UDPRouteInfo {
-    pub name: String,
-    pub namespace: String,
-    pub parent_refs: Vec<RouteParentRef>,
-    pub backend_refs: Vec<BackendRef>,
-    pub status_parents: Vec<RouteParentStatus>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct ReferenceGrantInfo {
-    pub name: String,
-    pub namespace: String,
-    pub from_refs: Vec<ReferenceGrantFrom>,
-    pub to_refs: Vec<ReferenceGrantTo>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ReferenceGrantFrom {
-    pub group: String,
-    pub kind: String,
-    pub namespace: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct ReferenceGrantTo {
-    pub group: String,
-    pub kind: String,
-    pub name: Option<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct GatewayResult {
-    pub routes: Vec<MatchedGatewayRoute>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MatchedGatewayRoute {
-    pub route_kind: String,
-    pub route_name: String,
-    pub route_namespace: String,
-    pub gateway_name: String,
-    pub gateway_namespace: String,
-    pub gateway_class: String,
-    pub listener: Option<GatewayListener>,
-    pub hostnames: Vec<String>,
-    pub backend_port: Option<i64>,
-    pub weight: Option<i64>,
-    pub parent_conditions: Vec<GatewayCondition>,
-    pub cross_namespace: CrossNamespaceStatus,
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub enum CrossNamespaceStatus {
-    SameNamespace,
-    Allowed,
-    NotAllowed,
-    Unknown,
-}
-
-impl std::fmt::Display for CrossNamespaceStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SameNamespace => write!(f, "same-namespace"),
-            Self::Allowed => write!(f, "allowed"),
-            Self::NotAllowed => write!(f, "not-allowed"),
-            Self::Unknown => write!(f, "unknown"),
-        }
-    }
-}
-
-// ── Gateway API parse helpers ──
-
-fn parse_parent_refs(val: Option<&serde_json::Value>) -> Vec<RouteParentRef> {
-    val.and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|pr| {
-                    Some(RouteParentRef {
-                        group: pr.get("group").and_then(|v| v.as_str()).map(String::from),
-                        kind: pr.get("kind").and_then(|v| v.as_str()).map(String::from),
-                        namespace: pr
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        name: pr.get("name")?.as_str()?.to_string(),
-                        section_name: pr
-                            .get("sectionName")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        port: pr.get("port").and_then(|v| v.as_i64()),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_backend_refs(val: Option<&serde_json::Value>) -> Vec<BackendRef> {
-    val.and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|br| {
-                    Some(BackendRef {
-                        group: br.get("group").and_then(|v| v.as_str()).map(String::from),
-                        kind: br.get("kind").and_then(|v| v.as_str()).map(String::from),
-                        name: br.get("name")?.as_str()?.to_string(),
-                        namespace: br
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        port: br.get("port").and_then(|v| v.as_i64()),
-                        weight: br.get("weight").and_then(|v| v.as_i64()),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_gateway_conditions(val: Option<&serde_json::Value>) -> Vec<GatewayCondition> {
-    val.and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|c| {
-                    Some(GatewayCondition {
-                        condition_type: c.get("type")?.as_str()?.to_string(),
-                        status: c.get("status")?.as_str()?.to_string(),
-                        reason: c.get("reason").and_then(|v| v.as_str()).map(String::from),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_status_parents(val: Option<&serde_json::Value>) -> Vec<RouteParentStatus> {
-    val.and_then(|v| v.get("parents"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|sp| {
-                    let pr = sp.get("parentRef")?;
-                    Some(RouteParentStatus {
-                        parent_ref: RouteParentRef {
-                            group: pr.get("group").and_then(|v| v.as_str()).map(String::from),
-                            kind: pr.get("kind").and_then(|v| v.as_str()).map(String::from),
-                            namespace: pr
-                                .get("namespace")
-                                .and_then(|v| v.as_str())
-                                .map(String::from),
-                            name: pr.get("name")?.as_str()?.to_string(),
-                            section_name: pr
-                                .get("sectionName")
-                                .and_then(|v| v.as_str())
-                                .map(String::from),
-                            port: pr.get("port").and_then(|v| v.as_i64()),
-                        },
-                        conditions: parse_gateway_conditions(sp.get("conditions")),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_hostnames(spec: Option<&serde_json::Value>) -> Vec<String> {
-    spec.and_then(|s| s.get("hostnames"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_gateway_class(obj: DynamicObject) -> Option<GatewayClassInfo> {
-    let name = obj.metadata.name?;
-    let spec = obj.data.get("spec")?;
-    let controller_name = spec.get("controllerName")?.as_str()?.to_string();
-    Some(GatewayClassInfo {
-        name,
-        controller_name,
-    })
-}
-
-fn parse_gateway(obj: DynamicObject) -> Option<GatewayInfo> {
-    let name = obj.metadata.name?;
-    let namespace = obj.metadata.namespace.unwrap_or_default();
-    let spec = obj.data.get("spec")?;
-    let gateway_class = spec.get("gatewayClassName")?.as_str()?.to_string();
-    let listeners = spec
-        .get("listeners")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|l| {
-                    Some(GatewayListener {
-                        name: l.get("name")?.as_str()?.to_string(),
-                        hostname: l.get("hostname").and_then(|v| v.as_str()).map(String::from),
-                        port: l.get("port")?.as_i64()?,
-                        protocol: l.get("protocol")?.as_str()?.to_string(),
-                        tls_mode: l
-                            .get("tls")
-                            .and_then(|t| t.get("mode"))
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let addresses = spec
-        .get("addresses")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|a| {
-                    Some(GatewayAddress {
-                        address_type: a.get("type").and_then(|v| v.as_str()).map(String::from),
-                        value: a.get("value")?.as_str()?.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let conditions = obj
-        .data
-        .get("status")
-        .and_then(|s| s.get("conditions"))
-        .map(|c| parse_gateway_conditions(Some(c)))
-        .unwrap_or_default();
-    Some(GatewayInfo {
-        name,
-        namespace,
-        gateway_class,
-        listeners,
-        addresses,
-        conditions,
-    })
-}
-
-fn parse_http_route(obj: DynamicObject) -> Option<HTTPRouteInfo> {
-    let name = obj.metadata.name?;
-    let namespace = obj.metadata.namespace.unwrap_or_default();
-    let spec = obj.data.get("spec")?;
-    let hostnames = parse_hostnames(Some(spec));
-    let parent_refs = parse_parent_refs(spec.get("parentRefs"));
-    let rules = spec
-        .get("rules")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|r| {
-                    let matches = r
-                        .get("matches")
-                        .and_then(|v| v.as_array())
-                        .map(|marr| {
-                            marr.iter()
-                                .map(|m| {
-                                    let (path_type, path_value) = m
-                                        .get("path")
-                                        .map(|p| {
-                                            (
-                                                p.get("type")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from),
-                                                p.get("value")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from),
-                                            )
-                                        })
-                                        .unwrap_or((None, None));
-                                    HTTPRouteMatch {
-                                        path_type,
-                                        path_value,
-                                        method: m
-                                            .get("method")
-                                            .and_then(|v| v.as_str())
-                                            .map(String::from),
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    let backend_refs = parse_backend_refs(r.get("backendRefs"));
-                    HTTPRouteRule {
-                        matches,
-                        backend_refs,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let status_parents = parse_status_parents(obj.data.get("status"));
-    Some(HTTPRouteInfo {
-        name,
-        namespace,
-        hostnames,
-        parent_refs,
-        rules,
-        status_parents,
-    })
-}
-
-fn parse_grpc_route(obj: DynamicObject) -> Option<GRPCRouteInfo> {
-    let name = obj.metadata.name?;
-    let namespace = obj.metadata.namespace.unwrap_or_default();
-    let spec = obj.data.get("spec")?;
-    let hostnames = parse_hostnames(Some(spec));
-    let parent_refs = parse_parent_refs(spec.get("parentRefs"));
-    let backend_refs = spec
-        .get("rules")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .flat_map(|r| parse_backend_refs(r.get("backendRefs")))
-                .collect()
-        })
-        .unwrap_or_default();
-    let status_parents = parse_status_parents(obj.data.get("status"));
-    Some(GRPCRouteInfo {
-        name,
-        namespace,
-        hostnames,
-        parent_refs,
-        backend_refs,
-        status_parents,
-    })
-}
-
-#[allow(clippy::type_complexity)]
-fn parse_simple_route(
-    obj: &DynamicObject,
-) -> Option<(
-    String,
-    String,
-    Vec<RouteParentRef>,
-    Vec<BackendRef>,
-    Vec<RouteParentStatus>,
-)> {
-    let name = obj.metadata.name.clone()?;
-    let namespace = obj.metadata.namespace.clone().unwrap_or_default();
-    let spec = obj.data.get("spec")?;
-    let parent_refs = parse_parent_refs(spec.get("parentRefs"));
-    let backend_refs = spec
-        .get("rules")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .flat_map(|r| parse_backend_refs(r.get("backendRefs")))
-                .collect()
-        })
-        .unwrap_or_default();
-    let status_parents = parse_status_parents(obj.data.get("status"));
-    Some((name, namespace, parent_refs, backend_refs, status_parents))
-}
-
-fn parse_tcp_route(obj: DynamicObject) -> Option<TCPRouteInfo> {
-    let (name, namespace, parent_refs, backend_refs, status_parents) = parse_simple_route(&obj)?;
-    Some(TCPRouteInfo {
-        name,
-        namespace,
-        parent_refs,
-        backend_refs,
-        status_parents,
-    })
-}
-
-fn parse_tls_route(obj: DynamicObject) -> Option<TLSRouteInfo> {
-    let (name, namespace, parent_refs, backend_refs, status_parents) = parse_simple_route(&obj)?;
-    let hostnames = parse_hostnames(obj.data.get("spec"));
-    Some(TLSRouteInfo {
-        name,
-        namespace,
-        hostnames,
-        parent_refs,
-        backend_refs,
-        status_parents,
-    })
-}
-
-fn parse_udp_route(obj: DynamicObject) -> Option<UDPRouteInfo> {
-    let (name, namespace, parent_refs, backend_refs, status_parents) = parse_simple_route(&obj)?;
-    Some(UDPRouteInfo {
-        name,
-        namespace,
-        parent_refs,
-        backend_refs,
-        status_parents,
-    })
-}
-
-fn parse_reference_grant(obj: DynamicObject) -> Option<ReferenceGrantInfo> {
-    let name = obj.metadata.name?;
-    let namespace = obj.metadata.namespace.unwrap_or_default();
-    let spec = obj.data.get("spec")?;
-    let from_refs = spec
-        .get("from")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|f| {
-                    Some(ReferenceGrantFrom {
-                        group: f.get("group")?.as_str()?.to_string(),
-                        kind: f.get("kind")?.as_str()?.to_string(),
-                        namespace: f.get("namespace")?.as_str()?.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let to_refs = spec
-        .get("to")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(ReferenceGrantTo {
-                        group: t.get("group")?.as_str()?.to_string(),
-                        kind: t.get("kind")?.as_str()?.to_string(),
-                        name: t.get("name").and_then(|v| v.as_str()).map(String::from),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(ReferenceGrantInfo {
-        name,
-        namespace,
-        from_refs,
-        to_refs,
-    })
-}
-
-// ── Gateway API inventory building ──
-
-async fn list_gateway_resources<T>(
-    client: &Client,
-    gk_map: &GroupKindMap,
-    group: &str,
-    kind_name: &str,
-    parser: fn(DynamicObject) -> Option<T>,
-    warnings: &mut Vec<ScanWarning>,
-) -> Vec<T> {
-    let key = (group.to_string(), kind_name.to_string());
-    let Some(info) = gk_map.get(&key) else {
-        return vec![];
-    };
-    let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(kind_name);
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-    let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
-    match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
-        Ok(items) => items.into_iter().filter_map(parser).collect(),
-        Err(w) => {
-            warnings.push(w);
-            vec![]
-        }
-    }
-}
-
-pub async fn build_gateway_inventory(client: &Client, gk_map: &GroupKindMap) -> GatewayInventory {
-    let gw_group = "gateway.networking.k8s.io";
-
-    // Check if Gateway CRD exists at all
-    let gw_key = (gw_group.to_string(), "Gateway".to_string());
-    if gk_map.get(&gw_key).is_none() {
-        return GatewayInventory::default();
-    }
-
-    let mut warnings = Vec::new();
-
-    let gateway_classes = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "GatewayClass",
-        parse_gateway_class,
-        &mut warnings,
-    )
-    .await;
-    let gateways = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "Gateway",
-        parse_gateway,
-        &mut warnings,
-    )
-    .await;
-    let http_routes = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "HTTPRoute",
-        parse_http_route,
-        &mut warnings,
-    )
-    .await;
-    let grpc_routes = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "GRPCRoute",
-        parse_grpc_route,
-        &mut warnings,
-    )
-    .await;
-    let tcp_routes = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "TCPRoute",
-        parse_tcp_route,
-        &mut warnings,
-    )
-    .await;
-    let tls_routes = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "TLSRoute",
-        parse_tls_route,
-        &mut warnings,
-    )
-    .await;
-    let udp_routes = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "UDPRoute",
-        parse_udp_route,
-        &mut warnings,
-    )
-    .await;
-    let reference_grants = list_gateway_resources(
-        client,
-        gk_map,
-        gw_group,
-        "ReferenceGrant",
-        parse_reference_grant,
-        &mut warnings,
-    )
-    .await;
-
-    GatewayInventory {
-        available: true,
-        gateway_classes,
-        gateways,
-        http_routes,
-        grpc_routes,
-        tcp_routes,
-        tls_routes,
-        udp_routes,
-        reference_grants,
-        warnings,
-    }
-}
-
-// ── Gateway route resolution ──
-
-fn backend_ref_matches_service(
-    br: &BackendRef,
-    svc_name: &str,
-    svc_namespace: &str,
-    route_namespace: &str,
-) -> bool {
-    // Default kind is "Service", default group is ""
-    let kind = br.kind.as_deref().unwrap_or("Service");
-    let group = br.group.as_deref().unwrap_or("");
-    if kind != "Service" || !group.is_empty() {
-        return false;
-    }
-    let br_ns = br.namespace.as_deref().unwrap_or(route_namespace);
-    br.name == svc_name && br_ns == svc_namespace
-}
-
-fn check_cross_namespace(
-    route_namespace: &str,
-    svc_namespace: &str,
-    route_group: &str,
-    route_kind: &str,
-    svc_name: &str,
-    reference_grants: &[ReferenceGrantInfo],
-) -> CrossNamespaceStatus {
-    if route_namespace == svc_namespace {
-        return CrossNamespaceStatus::SameNamespace;
-    }
-    // Need a ReferenceGrant in the service namespace
-    for grant in reference_grants {
-        if grant.namespace != svc_namespace {
-            continue;
-        }
-        let from_ok = grant.from_refs.iter().any(|f| {
-            f.group == route_group && f.kind == route_kind && f.namespace == route_namespace
-        });
-        if !from_ok {
-            continue;
-        }
-        let to_ok = grant.to_refs.iter().any(|t| {
-            t.group.is_empty()
-                && t.kind == "Service"
-                && (t.name.is_none() || t.name.as_deref() == Some(svc_name))
-        });
-        if to_ok {
-            return CrossNamespaceStatus::Allowed;
-        }
-    }
-    CrossNamespaceStatus::NotAllowed
-}
-
-fn find_gateway_and_class<'a>(
-    parent_ref: &RouteParentRef,
-    route_namespace: &str,
-    inv: &'a GatewayInventory,
-) -> Option<(&'a GatewayInfo, String, Option<GatewayListener>)> {
-    let pr_kind = parent_ref.kind.as_deref().unwrap_or("Gateway");
-    let pr_group = parent_ref
-        .group
-        .as_deref()
-        .unwrap_or("gateway.networking.k8s.io");
-    if pr_kind != "Gateway" || pr_group != "gateway.networking.k8s.io" {
-        return None;
-    }
-    let pr_ns = parent_ref.namespace.as_deref().unwrap_or(route_namespace);
-    let gw = inv
-        .gateways
-        .iter()
-        .find(|g| g.name == parent_ref.name && g.namespace == pr_ns)?;
-    let gw_class = inv
-        .gateway_classes
-        .iter()
-        .find(|gc| gc.name == gw.gateway_class)
-        .map(|gc| gc.name.clone())
-        .unwrap_or_else(|| gw.gateway_class.clone());
-    let listener = parent_ref
-        .section_name
-        .as_deref()
-        .and_then(|sn| gw.listeners.iter().find(|l| l.name == sn))
-        .cloned();
-    Some((gw, gw_class, listener))
-}
-
-fn get_status_conditions_for_parent(
-    status_parents: &[RouteParentStatus],
-    gw_name: &str,
-    gw_namespace: &str,
-) -> Vec<GatewayCondition> {
-    for sp in status_parents {
-        if sp.parent_ref.name == gw_name {
-            let sp_ns = sp.parent_ref.namespace.as_deref().unwrap_or("");
-            if sp_ns == gw_namespace || sp_ns.is_empty() {
-                return sp.conditions.clone();
-            }
-        }
-    }
-    vec![]
-}
-
-/// Resolves which Gateway API routes target a given service.
-pub fn resolve_gateway_routes_for_service(
-    svc_name: &str,
-    svc_namespace: &str,
-    inv: &GatewayInventory,
-) -> GatewayResult {
-    if !inv.available {
-        return GatewayResult::default();
-    }
-
-    let mut routes = Vec::new();
-    let mut warnings = Vec::new();
-
-    // Helper macro to avoid duplication across route types
-    macro_rules! check_routes {
-        ($route_list:expr, $route_kind:expr, $get_backend_refs:expr, $get_hostnames:expr) => {
-            for route in $route_list {
-                let backend_refs_list: &[BackendRef] = &$get_backend_refs(route);
-                let matching: Vec<&BackendRef> = backend_refs_list
-                    .iter()
-                    .filter(|br| {
-                        backend_ref_matches_service(br, svc_name, svc_namespace, &route.namespace)
-                    })
-                    .collect();
-                if matching.is_empty() {
-                    continue;
-                }
-                for br in &matching {
-                    let cross_ns = check_cross_namespace(
-                        &route.namespace,
-                        svc_namespace,
-                        "gateway.networking.k8s.io",
-                        $route_kind,
-                        svc_name,
-                        &inv.reference_grants,
-                    );
-                    if matches!(cross_ns, CrossNamespaceStatus::NotAllowed) {
-                        warnings.push(format!(
-                            "{}/{} in namespace {} references Service/{} in namespace {} without ReferenceGrant",
-                            $route_kind, route.name, route.namespace, svc_name, svc_namespace
-                        ));
-                    }
-                    for pr in &route.parent_refs {
-                        if let Some((gw, gw_class, listener)) =
-                            find_gateway_and_class(pr, &route.namespace, inv)
-                        {
-                            let parent_conditions = get_status_conditions_for_parent(
-                                &route.status_parents,
-                                &gw.name,
-                                &gw.namespace,
-                            );
-                            routes.push(MatchedGatewayRoute {
-                                route_kind: $route_kind.to_string(),
-                                route_name: route.name.clone(),
-                                route_namespace: route.namespace.clone(),
-                                gateway_name: gw.name.clone(),
-                                gateway_namespace: gw.namespace.clone(),
-                                gateway_class: gw_class.clone(),
-                                listener,
-                                hostnames: $get_hostnames(route),
-                                backend_port: br.port,
-                                weight: br.weight,
-                                parent_conditions,
-                                cross_namespace: cross_ns.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-        };
-    }
-
-    // HTTPRoute: backend_refs spread across rules
-    for route in &inv.http_routes {
-        let all_backend_refs: Vec<&BackendRef> = route
-            .rules
-            .iter()
-            .flat_map(|r| r.backend_refs.iter())
-            .filter(|br| backend_ref_matches_service(br, svc_name, svc_namespace, &route.namespace))
-            .collect();
-        if all_backend_refs.is_empty() {
-            continue;
-        }
-        for br in &all_backend_refs {
-            let cross_ns = check_cross_namespace(
-                &route.namespace,
-                svc_namespace,
-                "gateway.networking.k8s.io",
-                "HTTPRoute",
-                svc_name,
-                &inv.reference_grants,
-            );
-            if matches!(cross_ns, CrossNamespaceStatus::NotAllowed) {
-                warnings.push(format!(
-                    "HTTPRoute/{} in namespace {} references Service/{} in namespace {} without ReferenceGrant",
-                    route.name, route.namespace, svc_name, svc_namespace
-                ));
-            }
-            for pr in &route.parent_refs {
-                if let Some((gw, gw_class, listener)) =
-                    find_gateway_and_class(pr, &route.namespace, inv)
-                {
-                    let parent_conditions = get_status_conditions_for_parent(
-                        &route.status_parents,
-                        &gw.name,
-                        &gw.namespace,
-                    );
-                    routes.push(MatchedGatewayRoute {
-                        route_kind: "HTTPRoute".to_string(),
-                        route_name: route.name.clone(),
-                        route_namespace: route.namespace.clone(),
-                        gateway_name: gw.name.clone(),
-                        gateway_namespace: gw.namespace.clone(),
-                        gateway_class: gw_class.clone(),
-                        listener,
-                        hostnames: route.hostnames.clone(),
-                        backend_port: br.port,
-                        weight: br.weight,
-                        parent_conditions,
-                        cross_namespace: cross_ns.clone(),
-                    });
-                }
-            }
-        }
-    }
-
-    check_routes!(
-        &inv.grpc_routes,
-        "GRPCRoute",
-        |r: &GRPCRouteInfo| r.backend_refs.clone(),
-        |r: &GRPCRouteInfo| r.hostnames.clone()
-    );
-    check_routes!(
-        &inv.tcp_routes,
-        "TCPRoute",
-        |r: &TCPRouteInfo| r.backend_refs.clone(),
-        |_r: &TCPRouteInfo| Vec::<String>::new()
-    );
-    check_routes!(
-        &inv.tls_routes,
-        "TLSRoute",
-        |r: &TLSRouteInfo| r.backend_refs.clone(),
-        |r: &TLSRouteInfo| r.hostnames.clone()
-    );
-    check_routes!(
-        &inv.udp_routes,
-        "UDPRoute",
-        |r: &UDPRouteInfo| r.backend_refs.clone(),
-        |_r: &UDPRouteInfo| Vec::<String>::new()
-    );
-
-    GatewayResult { routes, warnings }
 }
 
 #[cfg(test)]
@@ -8432,351 +8230,390 @@ mod tests {
         );
     }
 
-    // ── Gateway API tests ──
+    // ──────────────────────────────────────────────────────────────
+    //  Gateway API tests
+    // ──────────────────────────────────────────────────────────────
 
-    fn make_gateway_inventory(
-        gateway_classes: Vec<GatewayClassInfo>,
-        gateways: Vec<GatewayInfo>,
-        http_routes: Vec<HTTPRouteInfo>,
-        reference_grants: Vec<ReferenceGrantInfo>,
-    ) -> GatewayInventory {
-        GatewayInventory {
-            available: true,
-            gateway_classes,
-            gateways,
-            http_routes,
-            grpc_routes: vec![],
-            tcp_routes: vec![],
-            tls_routes: vec![],
-            udp_routes: vec![],
-            reference_grants,
-            warnings: vec![],
-        }
-    }
-
-    fn make_gateway_class(name: &str, controller: &str) -> GatewayClassInfo {
-        GatewayClassInfo {
-            name: name.to_string(),
-            controller_name: controller.to_string(),
-        }
-    }
-
-    fn make_gateway(name: &str, ns: &str, class: &str) -> GatewayInfo {
+    fn test_gateway(name: &str, ns: &str, listeners: Vec<GatewayListener>) -> GatewayInfo {
         GatewayInfo {
-            name: name.to_string(),
-            namespace: ns.to_string(),
-            gateway_class: class.to_string(),
-            listeners: vec![GatewayListener {
-                name: "http".to_string(),
-                hostname: None,
-                port: 80,
-                protocol: "HTTP".to_string(),
-                tls_mode: None,
-            }],
-            addresses: vec![],
-            conditions: vec![],
+            name: name.into(),
+            namespace: ns.into(),
+            gateway_class: "test-class".into(),
+            listeners,
         }
     }
 
-    fn make_http_route(
+    fn test_listener(name: &str, port: u16, protocol: &str) -> GatewayListener {
+        GatewayListener {
+            name: name.into(),
+            hostname: None,
+            port,
+            protocol: protocol.into(),
+            tls_mode: None,
+        }
+    }
+
+    fn test_route(
+        kind: &str,
         name: &str,
         ns: &str,
-        gw_name: &str,
-        gw_ns: Option<&str>,
-        svc_name: &str,
-        svc_ns: Option<&str>,
-        hostnames: Vec<&str>,
-    ) -> HTTPRouteInfo {
-        HTTPRouteInfo {
-            name: name.to_string(),
-            namespace: ns.to_string(),
-            hostnames: hostnames.into_iter().map(String::from).collect(),
-            parent_refs: vec![RouteParentRef {
-                group: Some("gateway.networking.k8s.io".to_string()),
-                kind: Some("Gateway".to_string()),
-                namespace: gw_ns.map(String::from),
-                name: gw_name.to_string(),
-                section_name: Some("http".to_string()),
-                port: None,
-            }],
-            rules: vec![HTTPRouteRule {
-                matches: vec![],
-                backend_refs: vec![BackendRef {
-                    group: None,
-                    kind: None,
-                    name: svc_name.to_string(),
-                    namespace: svc_ns.map(String::from),
-                    port: Some(8080),
-                    weight: Some(1),
-                }],
-            }],
-            status_parents: vec![RouteParentStatus {
-                parent_ref: RouteParentRef {
-                    group: Some("gateway.networking.k8s.io".to_string()),
-                    kind: Some("Gateway".to_string()),
-                    namespace: gw_ns.map(String::from),
-                    name: gw_name.to_string(),
-                    section_name: Some("http".to_string()),
-                    port: None,
-                },
-                conditions: vec![GatewayCondition {
-                    condition_type: "Accepted".to_string(),
-                    status: "True".to_string(),
-                    reason: None,
-                }],
-            }],
+        parent_refs: Vec<RouteParentRef>,
+        rules: Vec<GatewayRouteRule>,
+    ) -> GatewayRoute {
+        GatewayRoute {
+            kind: kind.into(),
+            name: name.into(),
+            namespace: ns.into(),
+            parent_refs,
+            rules,
+            status_parents: vec![],
+        }
+    }
+
+    fn test_parent_ref(name: &str, section: Option<&str>, port: Option<u16>) -> RouteParentRef {
+        RouteParentRef {
+            group: "gateway.networking.k8s.io".into(),
+            kind: "Gateway".into(),
+            namespace: None,
+            name: name.into(),
+            section_name: section.map(String::from),
+            port,
         }
     }
 
     #[test]
-    fn gateway_resolve_http_route_matches_service() {
-        let inv = make_gateway_inventory(
-            vec![make_gateway_class("istio", "istio.io/gateway-controller")],
-            vec![make_gateway("main-gw", "default", "istio")],
-            vec![make_http_route(
-                "my-route",
-                "default",
-                "main-gw",
-                None,
-                "my-svc",
-                None,
-                vec!["example.com"],
-            )],
-            vec![],
+    fn gateway_reference_grant_unavailable_yields_unknown() {
+        let (status, warnings) = check_cross_namespace(
+            "HTTPRoute",
+            "route-ns",
+            "svc-ns",
+            "my-svc",
+            &[],
+            &ApiAvailability::Unavailable,
         );
-        let result = resolve_gateway_routes_for_service("my-svc", "default", &inv);
-        assert_eq!(result.routes.len(), 1);
-        let r = &result.routes[0];
-        assert_eq!(r.route_kind, "HTTPRoute");
-        assert_eq!(r.route_name, "my-route");
-        assert_eq!(r.gateway_name, "main-gw");
-        assert_eq!(r.gateway_class, "istio");
-        assert_eq!(r.hostnames, vec!["example.com"]);
-        assert_eq!(r.backend_port, Some(8080));
-        assert_eq!(r.weight, Some(1));
-        assert!(matches!(
-            r.cross_namespace,
-            CrossNamespaceStatus::SameNamespace
-        ));
-        assert_eq!(r.parent_conditions.len(), 1);
-        assert_eq!(r.parent_conditions[0].condition_type, "Accepted");
-        assert!(result.warnings.is_empty());
-    }
-
-    #[test]
-    fn gateway_no_match_different_service() {
-        let inv = make_gateway_inventory(
-            vec![make_gateway_class("istio", "istio.io/gateway-controller")],
-            vec![make_gateway("main-gw", "default", "istio")],
-            vec![make_http_route(
-                "my-route",
-                "default",
-                "main-gw",
-                None,
-                "other-svc",
-                None,
-                vec![],
-            )],
-            vec![],
+        assert_eq!(status, CrossNamespaceStatus::Unknown);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("ReferenceGrant availability unknown")),
+            "Expected warning about ReferenceGrant availability"
         );
-        let result = resolve_gateway_routes_for_service("my-svc", "default", &inv);
-        assert!(result.routes.is_empty());
     }
 
     #[test]
-    fn gateway_not_available_returns_empty() {
-        let inv = GatewayInventory::default(); // available: false
-        let result = resolve_gateway_routes_for_service("my-svc", "default", &inv);
-        assert!(result.routes.is_empty());
-        assert!(result.warnings.is_empty());
-    }
-
-    #[test]
-    fn gateway_cross_namespace_without_grant_not_allowed() {
-        let inv = make_gateway_inventory(
-            vec![make_gateway_class("istio", "istio.io/gateway-controller")],
-            vec![make_gateway("main-gw", "gateway-ns", "istio")],
-            vec![make_http_route(
-                "cross-route",
-                "route-ns",
-                "main-gw",
-                Some("gateway-ns"),
-                "target-svc",
-                Some("svc-ns"),
-                vec![],
-            )],
-            vec![], // no ReferenceGrant
+    fn gateway_reference_grant_available_no_match_yields_not_allowed() {
+        let (status, _) = check_cross_namespace(
+            "HTTPRoute",
+            "route-ns",
+            "svc-ns",
+            "my-svc",
+            &[],
+            &ApiAvailability::Available,
         );
-        let result = resolve_gateway_routes_for_service("target-svc", "svc-ns", &inv);
-        assert_eq!(result.routes.len(), 1);
-        assert!(matches!(
-            result.routes[0].cross_namespace,
-            CrossNamespaceStatus::NotAllowed
-        ));
-        assert!(!result.warnings.is_empty());
+        assert_eq!(status, CrossNamespaceStatus::NotAllowed);
     }
 
     #[test]
-    fn gateway_cross_namespace_with_grant_allowed() {
-        let inv = make_gateway_inventory(
-            vec![make_gateway_class("istio", "istio.io/gateway-controller")],
-            vec![make_gateway("main-gw", "gateway-ns", "istio")],
-            vec![make_http_route(
-                "cross-route",
-                "route-ns",
-                "main-gw",
-                Some("gateway-ns"),
-                "target-svc",
-                Some("svc-ns"),
-                vec![],
-            )],
-            vec![ReferenceGrantInfo {
-                name: "allow-route-ns".to_string(),
-                namespace: "svc-ns".to_string(),
-                from_refs: vec![ReferenceGrantFrom {
-                    group: "gateway.networking.k8s.io".to_string(),
-                    kind: "HTTPRoute".to_string(),
-                    namespace: "route-ns".to_string(),
-                }],
-                to_refs: vec![ReferenceGrantTo {
-                    group: String::new(),
-                    kind: "Service".to_string(),
-                    name: None,
+    fn gateway_reference_grant_absent_yields_not_allowed() {
+        let (status, _) = check_cross_namespace(
+            "HTTPRoute",
+            "route-ns",
+            "svc-ns",
+            "my-svc",
+            &[],
+            &ApiAvailability::Absent,
+        );
+        assert_eq!(status, CrossNamespaceStatus::NotAllowed);
+    }
+
+    #[test]
+    fn gateway_reference_grant_matching_yields_allowed() {
+        let grants = vec![ReferenceGrantInfo {
+            name: "allow-route".into(),
+            namespace: "svc-ns".into(),
+            from_grants: vec![ReferenceGrantFrom {
+                group: "gateway.networking.k8s.io".into(),
+                kind: "HTTPRoute".into(),
+                namespace: "route-ns".into(),
+            }],
+            to_grants: vec![ReferenceGrantTo {
+                group: String::new(),
+                kind: "Service".into(),
+                name: None,
+            }],
+        }];
+        let (status, _) = check_cross_namespace(
+            "HTTPRoute",
+            "route-ns",
+            "svc-ns",
+            "my-svc",
+            &grants,
+            &ApiAvailability::Available,
+        );
+        assert_eq!(status, CrossNamespaceStatus::Allowed);
+    }
+
+    #[test]
+    fn gateway_same_namespace_yields_same() {
+        let (status, _) = check_cross_namespace(
+            "HTTPRoute",
+            "same-ns",
+            "same-ns",
+            "my-svc",
+            &[],
+            &ApiAvailability::Available,
+        );
+        assert_eq!(status, CrossNamespaceStatus::SameNamespace);
+    }
+
+    #[test]
+    fn gateway_listener_section_name_omitted_includes_all() {
+        let gateway = test_gateway(
+            "gw",
+            "default",
+            vec![
+                test_listener("http", 80, "HTTP"),
+                test_listener("https", 443, "HTTPS"),
+            ],
+        );
+        let route = test_route(
+            "HTTPRoute",
+            "my-route",
+            "default",
+            vec![test_parent_ref("gw", None, None)],
+            vec![GatewayRouteRule {
+                matches: vec![],
+                backend_refs: vec![RouteBackendRef {
+                    name: "my-svc".into(),
+                    port: Some(80),
+                    weight: None,
                 }],
             }],
         );
-        let result = resolve_gateway_routes_for_service("target-svc", "svc-ns", &inv);
-        assert_eq!(result.routes.len(), 1);
-        assert!(matches!(
-            result.routes[0].cross_namespace,
-            CrossNamespaceStatus::Allowed
-        ));
-        assert!(result.warnings.is_empty());
-    }
-
-    #[test]
-    fn gateway_class_resolution() {
-        let inv = make_gateway_inventory(
-            vec![
-                make_gateway_class("istio", "istio.io/gateway-controller"),
-                make_gateway_class("nginx", "nginx.org/gateway-controller"),
-            ],
-            vec![make_gateway("gw-1", "default", "nginx")],
-            vec![make_http_route(
-                "route-1",
-                "default",
-                "gw-1",
-                None,
-                "my-svc",
-                None,
-                vec![],
-            )],
-            vec![],
+        let inv = GatewayInventory {
+            gateways: vec![gateway],
+            routes: vec![route],
+            reference_grants: vec![],
+            reference_grant_availability: ApiAvailability::Available,
+            warnings: vec![],
+        };
+        let results = resolve_gateway_routes_for_service("my-svc", "default", &inv);
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].listeners.len(),
+            2,
+            "All listeners should be included when sectionName is omitted"
         );
-        let result = resolve_gateway_routes_for_service("my-svc", "default", &inv);
-        assert_eq!(result.routes.len(), 1);
-        assert_eq!(result.routes[0].gateway_class, "nginx");
     }
 
     #[test]
-    fn gateway_parse_gateway_class() {
-        let obj = DynamicObject {
-            metadata: kube::api::ObjectMeta {
-                name: Some("istio".to_string()),
-                ..Default::default()
-            },
-            types: None,
-            data: serde_json::json!({
-                "spec": {
-                    "controllerName": "istio.io/gateway-controller"
-                }
-            }),
+    fn gateway_listener_section_name_specified_exact_match() {
+        let gateway = test_gateway(
+            "gw",
+            "default",
+            vec![
+                test_listener("http", 80, "HTTP"),
+                test_listener("https", 443, "HTTPS"),
+            ],
+        );
+        let route = test_route(
+            "HTTPRoute",
+            "my-route",
+            "default",
+            vec![test_parent_ref("gw", Some("https"), None)],
+            vec![GatewayRouteRule {
+                matches: vec![],
+                backend_refs: vec![RouteBackendRef {
+                    name: "my-svc".into(),
+                    port: Some(443),
+                    weight: None,
+                }],
+            }],
+        );
+        let inv = GatewayInventory {
+            gateways: vec![gateway],
+            routes: vec![route],
+            reference_grants: vec![],
+            reference_grant_availability: ApiAvailability::Available,
+            warnings: vec![],
         };
-        let gc = parse_gateway_class(obj).unwrap();
-        assert_eq!(gc.name, "istio");
-        assert_eq!(gc.controller_name, "istio.io/gateway-controller");
+        let results = resolve_gateway_routes_for_service("my-svc", "default", &inv);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].listeners.len(), 1);
+        assert_eq!(results[0].listeners[0].name, "https");
     }
 
     #[test]
-    fn gateway_parse_http_route() {
-        let obj = DynamicObject {
-            metadata: kube::api::ObjectMeta {
-                name: Some("my-route".to_string()),
-                namespace: Some("default".to_string()),
-                ..Default::default()
-            },
-            types: None,
-            data: serde_json::json!({
-                "spec": {
-                    "hostnames": ["example.com"],
-                    "parentRefs": [{
-                        "name": "my-gw",
-                        "sectionName": "http"
-                    }],
-                    "rules": [{
-                        "matches": [{
-                            "path": {"type": "PathPrefix", "value": "/api"}
-                        }],
-                        "backendRefs": [{
-                            "name": "my-svc",
-                            "port": 8080,
-                            "weight": 1
-                        }]
-                    }]
+    fn gateway_httproute_matches_in_output() {
+        let gateway = test_gateway("gw", "default", vec![test_listener("http", 80, "HTTP")]);
+        let route = test_route(
+            "HTTPRoute",
+            "catalog-route",
+            "default",
+            vec![test_parent_ref("gw", None, None)],
+            vec![GatewayRouteRule {
+                matches: vec![
+                    HTTPRouteMatch {
+                        path_type: Some("PathPrefix".into()),
+                        path_value: Some("/catalog/".into()),
+                        method: None,
+                    },
+                    HTTPRouteMatch {
+                        path_type: Some("Exact".into()),
+                        path_value: Some("/api/v1".into()),
+                        method: Some("GET".into()),
+                    },
+                ],
+                backend_refs: vec![RouteBackendRef {
+                    name: "catalog-svc".into(),
+                    port: Some(80),
+                    weight: None,
+                }],
+            }],
+        );
+        let inv = GatewayInventory {
+            gateways: vec![gateway],
+            routes: vec![route],
+            reference_grants: vec![],
+            reference_grant_availability: ApiAvailability::Available,
+            warnings: vec![],
+        };
+        let results = resolve_gateway_routes_for_service("catalog-svc", "default", &inv);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].matches.len(), 2);
+        assert_eq!(
+            results[0].matches[0].path_value.as_deref(),
+            Some("/catalog/")
+        );
+        assert_eq!(results[0].matches[1].method.as_deref(), Some("GET"));
+    }
+
+    #[test]
+    fn gateway_status_parents_matching_with_section_name() {
+        let gateway = test_gateway(
+            "gw",
+            "default",
+            vec![
+                test_listener("http", 80, "HTTP"),
+                test_listener("https", 443, "HTTPS"),
+            ],
+        );
+        let mut route = test_route(
+            "HTTPRoute",
+            "my-route",
+            "default",
+            vec![
+                test_parent_ref("gw", Some("http"), None),
+                test_parent_ref("gw", Some("https"), None),
+            ],
+            vec![GatewayRouteRule {
+                matches: vec![],
+                backend_refs: vec![RouteBackendRef {
+                    name: "my-svc".into(),
+                    port: Some(80),
+                    weight: None,
+                }],
+            }],
+        );
+        route.status_parents = vec![
+            RouteStatusParent {
+                parent_ref: RouteParentRef {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    namespace: None,
+                    name: "gw".into(),
+                    section_name: Some("http".into()),
+                    port: None,
                 },
-                "status": {
-                    "parents": [{
-                        "parentRef": {"name": "my-gw"},
-                        "conditions": [{
-                            "type": "Accepted",
-                            "status": "True",
-                            "reason": "Accepted"
-                        }]
-                    }]
-                }
-            }),
+                conditions: vec![RouteCondition {
+                    condition_type: "Accepted".into(),
+                    status: "True".into(),
+                    reason: Some("Accepted".into()),
+                    message: None,
+                }],
+            },
+            RouteStatusParent {
+                parent_ref: RouteParentRef {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    namespace: None,
+                    name: "gw".into(),
+                    section_name: Some("https".into()),
+                    port: None,
+                },
+                conditions: vec![RouteCondition {
+                    condition_type: "Accepted".into(),
+                    status: "False".into(),
+                    reason: Some("NotAllowed".into()),
+                    message: Some("listener not allowed".into()),
+                }],
+            },
+        ];
+        let inv = GatewayInventory {
+            gateways: vec![gateway],
+            routes: vec![route],
+            reference_grants: vec![],
+            reference_grant_availability: ApiAvailability::Available,
+            warnings: vec![],
         };
-        let route = parse_http_route(obj).unwrap();
-        assert_eq!(route.name, "my-route");
-        assert_eq!(route.hostnames, vec!["example.com"]);
-        assert_eq!(route.parent_refs.len(), 1);
-        assert_eq!(route.parent_refs[0].name, "my-gw");
-        assert_eq!(route.rules.len(), 1);
-        assert_eq!(route.rules[0].backend_refs.len(), 1);
-        assert_eq!(route.rules[0].backend_refs[0].name, "my-svc");
-        assert_eq!(route.status_parents.len(), 1);
+        // The route has two parent refs (http and https), so we get
+        // two results deduplicated by (kind, ns, name, gw_name, gw_ns).
+        // But since both parent refs point to the same gateway, only one result
+        // appears due to dedup.
+        let results = resolve_gateway_routes_for_service("my-svc", "default", &inv);
+        // We get 1 because both parentRefs go to same gateway and dedup key is the same
+        assert_eq!(results.len(), 1);
+        // The first parentRef's status is used (http -> Accepted=True)
+        assert!(
+            results[0]
+                .status_conditions
+                .iter()
+                .any(|c| c.condition_type == "Accepted" && c.status == "True"),
+            "Should have Accepted=True from the http parentRef"
+        );
     }
 
     #[test]
-    fn gateway_parse_reference_grant() {
-        let obj = DynamicObject {
-            metadata: kube::api::ObjectMeta {
-                name: Some("allow-routes".to_string()),
-                namespace: Some("svc-ns".to_string()),
-                ..Default::default()
-            },
-            types: None,
-            data: serde_json::json!({
-                "spec": {
-                    "from": [{
-                        "group": "gateway.networking.k8s.io",
-                        "kind": "HTTPRoute",
-                        "namespace": "route-ns"
-                    }],
-                    "to": [{
-                        "group": "",
-                        "kind": "Service"
-                    }]
-                }
-            }),
+    fn gateway_routes_sorted_and_deduped() {
+        let gateway = test_gateway("gw", "default", vec![test_listener("http", 80, "HTTP")]);
+        let route_b = test_route(
+            "HTTPRoute",
+            "route-b",
+            "default",
+            vec![test_parent_ref("gw", None, None)],
+            vec![GatewayRouteRule {
+                matches: vec![],
+                backend_refs: vec![RouteBackendRef {
+                    name: "svc".into(),
+                    port: None,
+                    weight: None,
+                }],
+            }],
+        );
+        let route_a = test_route(
+            "HTTPRoute",
+            "route-a",
+            "default",
+            vec![test_parent_ref("gw", None, None)],
+            vec![GatewayRouteRule {
+                matches: vec![],
+                backend_refs: vec![RouteBackendRef {
+                    name: "svc".into(),
+                    port: None,
+                    weight: None,
+                }],
+            }],
+        );
+        let inv = GatewayInventory {
+            gateways: vec![gateway],
+            routes: vec![route_b, route_a],
+            reference_grants: vec![],
+            reference_grant_availability: ApiAvailability::Available,
+            warnings: vec![],
         };
-        let grant = parse_reference_grant(obj).unwrap();
-        assert_eq!(grant.name, "allow-routes");
-        assert_eq!(grant.namespace, "svc-ns");
-        assert_eq!(grant.from_refs.len(), 1);
-        assert_eq!(grant.from_refs[0].namespace, "route-ns");
-        assert_eq!(grant.to_refs.len(), 1);
-        assert_eq!(grant.to_refs[0].kind, "Service");
-        assert!(grant.to_refs[0].name.is_none());
+        let results = resolve_gateway_routes_for_service("svc", "default", &inv);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].route_name, "route-a", "Should be sorted by name");
+        assert_eq!(results[1].route_name, "route-b");
     }
 }
