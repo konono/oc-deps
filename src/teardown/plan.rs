@@ -332,37 +332,48 @@ pub struct ExecutionResource {
     pub action: ExecutionAction,
 }
 
+static SAVE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let parent = std::path::Path::new(path)
         .parent()
         .ok_or_else(|| anyhow::anyhow!("No parent directory for {}", path))?;
-    let tmp_path = parent.join(format!(
-        ".tmp_exec_plan_{}_{:x}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    struct TempGuard<'a>(&'a std::path::Path);
-    impl Drop for TempGuard<'_> {
+
+    struct TempGuard {
+        path: std::path::PathBuf,
+        armed: bool,
+    }
+    impl TempGuard {
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+    }
+    impl Drop for TempGuard {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(self.0);
+            if self.armed {
+                let _ = std::fs::remove_file(&self.path);
+            }
         }
     }
 
+    let seq = SAVE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_path = parent.join(format!(".tmp_exec_plan_{}_{}", std::process::id(), seq));
+
     let json = serde_json::to_string_pretty(plan)?;
-    let guard = TempGuard(&tmp_path);
     {
         let mut f = std::fs::File::create_new(&tmp_path)
             .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
         f.write_all(json.as_bytes())?;
         f.sync_all()?;
     }
+    let mut guard = TempGuard {
+        path: tmp_path.clone(),
+        armed: true,
+    };
     std::fs::rename(&tmp_path, path)
         .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path))?;
-    std::mem::forget(guard); // rename succeeded, don't cleanup
+    guard.disarm();
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
@@ -1254,5 +1265,71 @@ mod tests {
             let result = validate_execution_plan_against_fresh(&saved, &fresh);
             assert!(result.is_err(), "{} change must be detected", field);
         }
+    }
+
+    #[test]
+    fn concurrent_save_no_collision() {
+        let dir = std::env::temp_dir().join(format!("test-concurrent-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let plan = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Sub",
+                Some("ns"),
+                "s1",
+                Some("uid-a"),
+                ExecutionAction::Delete,
+            )],
+        );
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let p = plan.clone();
+                let d = dir.clone();
+                std::thread::spawn(move || {
+                    let path = d.join(format!("plan-{}.json", i));
+                    save_execution_plan(&p, path.to_str().unwrap()).unwrap();
+                    let loaded = load_execution_plan(path.to_str().unwrap()).unwrap();
+                    assert_eq!(loaded.phases.len(), 1);
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let tmps: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with(".tmp_"))
+            })
+            .collect();
+        assert_eq!(tmps.len(), 0, "No temp files should remain");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_nonexistent_dir_fails_no_temp() {
+        let plan = make_exec_plan("uid-1", vec![]);
+        let result = save_execution_plan(&plan, "/nonexistent/dir/plan.json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn csv_exact_match_rejects_substring() {
+        let saved_pattern = "rhbk-operator.v26.6.7-opr.1";
+        let live_csv = "rhbk-operator.v26.6.7-opr.1";
+        assert_eq!(saved_pattern, live_csv, "exact match should pass");
+
+        let tampered_pattern = "rhbk";
+        assert_ne!(tampered_pattern, live_csv, "substring must not match exact");
+
+        let upgraded_csv = "rhbk-operator.v27.0.0";
+        assert_ne!(
+            saved_pattern, upgraded_csv,
+            "version upgrade must not match"
+        );
     }
 }
