@@ -171,7 +171,7 @@ EndpointSlices are the modern replacement for Endpoints. Each slice contains a l
 
 This prevents false matches when Services share names across namespaces.
 
-**GatewayClass:** GatewayClass resources are fetched (cluster-scoped) and the controller name is resolved from the Gateway's `spec.gatewayClassName`. Displayed in tree output and `gatewayClass` field in JSON.
+**GatewayClass:** GatewayClass resources are fetched (cluster-scoped) and the controller name is resolved from the Gateway's `spec.gatewayClassName`. Displayed as separate `gatewayClassName` and `gatewayClassController` fields in JSON, and `GatewayClass/<name> (controller: <ctrl>)` in tree.
 
 **Hostnames:** Route-level `spec.hostnames` are captured and displayed.
 
@@ -203,7 +203,7 @@ Each entry in `networkPaths[]` contains:
 - `endpointSummary`: `ready`, `notReady`, `unknown`, `effectiveReady`, `serving`, `terminating`
 - `selectorMatchedPods[]`, `targetRefMatchedPods[]`
 - `ingresses[]` with `kind`, `name`, `host`, `path`, `tls`
-- `gatewayRoutes[]` — always present (empty array when no routes). Each entry: `kind`, `name`, `namespace`, `gatewayName`, `gatewayNamespace`, `gatewayClass` (controller name), `listeners[]` (with `name`, `port`, `protocol`, `hostname`, `tlsMode`), `matches[]` (with `pathType`, `pathValue`, `method`), `hostnames[]`, `backendPort`, `backendWeight`, `sectionName`, `parentPort`, `crossNamespace`, `statusConditions[]`
+- `gatewayRoutes[]` — always present (empty array when no routes). Each entry: `kind`, `name`, `namespace`, `gatewayName`, `gatewayNamespace`, `gatewayClassName`, `gatewayClassController`, `listeners[]` (with `name`, `port`, `protocol`, `hostname`, `tlsMode`), `matchedBackends[]` (with `port`, `weight`, `ruleMatches[]` containing `pathType`/`pathValue`/`method`), `hostnames[]`, `sectionName`, `parentPort`, `crossNamespace`, `statusConditions[]`
 - `gatewayWarnings[]` — always present (empty array). Cross-namespace and availability warnings
 - Top-level `warnings[]` (typed ScanWarning array) and `scanWarningCount`
 

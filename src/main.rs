@@ -8942,4 +8942,110 @@ mod basis_drift_tests {
             "gatewayWarnings should be empty array when no warnings"
         );
     }
+
+    #[test]
+    fn network_json_gateway_route_fields() {
+        use crate::analyzers::selector::{
+            CrossNamespaceStatus, EndpointSummary, GatewayListener, HTTPRouteMatch, MatchedBackend,
+            MatchedGatewayRoute, NetworkPath, NetworkService, RouteCondition,
+        };
+        use std::collections::BTreeMap;
+
+        let svc = NetworkService {
+            name: "web".into(),
+            uid: "uid-w".into(),
+            selector: BTreeMap::new(),
+            has_selector: false,
+            cluster_ip: "10.0.0.1".into(),
+            svc_type: "ClusterIP".into(),
+            ports: vec![],
+            health_check_node_port: None,
+            internal_traffic_policy: None,
+            ip_family_policy: None,
+            load_balancer_class: None,
+            allocate_lb_node_ports: None,
+            external_traffic_policy: None,
+            external_ips: vec![],
+            ip_families: vec![],
+            lb_ingress: vec![],
+            annotations: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            load_balancer_ip: None,
+        };
+        let path = NetworkPath {
+            service: svc,
+            ingresses: vec![],
+            endpoint_slices: vec![],
+            endpoint_summary: EndpointSummary::default(),
+            selector_matched_pods: vec![],
+            target_ref_matched_pods: vec![],
+        };
+        let route = MatchedGatewayRoute {
+            route_kind: "HTTPRoute".into(),
+            route_name: "my-route".into(),
+            route_namespace: "default".into(),
+            hostnames: vec!["example.com".into()],
+            gateway_name: "main-gw".into(),
+            gateway_namespace: "gw-ns".into(),
+            gateway_class_name: Some("my-class".into()),
+            gateway_class_controller: Some("example.com/ctrl".into()),
+            listeners: vec![GatewayListener {
+                name: "https".into(),
+                hostname: Some("example.com".into()),
+                port: 443,
+                protocol: "HTTPS".into(),
+                tls_mode: Some("Terminate".into()),
+            }],
+            matched_backends: vec![
+                MatchedBackend {
+                    port: Some(8080),
+                    weight: Some(1),
+                    rule_matches: vec![HTTPRouteMatch {
+                        path_type: Some("PathPrefix".into()),
+                        path_value: Some("/api".into()),
+                        method: None,
+                    }],
+                },
+                MatchedBackend {
+                    port: Some(8443),
+                    weight: Some(2),
+                    rule_matches: vec![HTTPRouteMatch {
+                        path_type: Some("Exact".into()),
+                        path_value: Some("/admin".into()),
+                        method: Some("GET".into()),
+                    }],
+                },
+            ],
+            section_name: Some("https".into()),
+            parent_port: Some(443),
+            cross_namespace: CrossNamespaceStatus::SameNamespace,
+            status_conditions: vec![RouteCondition {
+                condition_type: "Accepted".into(),
+                status: "True".into(),
+                reason: Some("Accepted".into()),
+                message: None,
+            }],
+            warnings: vec![],
+        };
+        let paths = vec![("".into(), path)];
+        let gateway_results = vec![vec![route]];
+        let json = network_paths_to_json(&paths, &[], &gateway_results);
+        let entry = &json[0];
+        let gw_routes = entry["gatewayRoutes"].as_array().unwrap();
+        assert_eq!(gw_routes.len(), 1);
+        let r = &gw_routes[0];
+        assert_eq!(r["gatewayClassName"], "my-class");
+        assert_eq!(r["gatewayClassController"], "example.com/ctrl");
+        let backends = r["matchedBackends"].as_array().unwrap();
+        assert_eq!(backends.len(), 2);
+        assert_eq!(backends[0]["port"], 8080);
+        assert_eq!(backends[0]["weight"], 1);
+        let matches0 = backends[0]["ruleMatches"].as_array().unwrap();
+        assert_eq!(matches0[0]["pathType"], "PathPrefix");
+        assert_eq!(matches0[0]["pathValue"], "/api");
+        assert_eq!(backends[1]["port"], 8443);
+        assert_eq!(backends[1]["weight"], 2);
+        let matches1 = backends[1]["ruleMatches"].as_array().unwrap();
+        assert_eq!(matches1[0]["method"], "GET");
+    }
 }

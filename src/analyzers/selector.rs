@@ -9181,32 +9181,52 @@ mod tests {
             }
         });
 
-        // Mock handles requests: GatewayClass LIST, Gateway LIST,
-        // HTTPRoute LIST, GRPCRoute LIST, TLSRoute LIST, TCPRoute LIST, UDPRoute LIST,
-        // ReferenceGrant LIST
+        let request_paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rp = request_paths.clone();
+
         let spawned = tokio::spawn(async move {
             let mut handle = pin!(handle);
-            // 1. GatewayClass LIST
-            let (_req, send) = handle.next_request().await.unwrap();
+            // 1. GatewayClass LIST (cluster-scoped)
+            let (req, send) = handle.next_request().await.unwrap();
+            rp.lock().unwrap().push(req.uri().path().to_string());
             send.send_response(mock_list_response(vec![gateway_class]));
-            // 2. Gateway LIST
-            let (_req, send) = handle.next_request().await.unwrap();
+            // 2. Gateway LIST (cluster-wide, not namespaced)
+            let (req, send) = handle.next_request().await.unwrap();
+            rp.lock().unwrap().push(req.uri().path().to_string());
             send.send_response(mock_list_response(vec![gateway]));
-            // 3. HTTPRoute LIST
-            let (_req, send) = handle.next_request().await.unwrap();
+            // 3. HTTPRoute LIST (cluster-wide, not namespaced)
+            let (req, send) = handle.next_request().await.unwrap();
+            rp.lock().unwrap().push(req.uri().path().to_string());
             send.send_response(mock_list_response(vec![http_route]));
-            // 4-7. GRPCRoute, TLSRoute, TCPRoute, UDPRoute LIST (empty)
+            // 4-7. GRPCRoute, TLSRoute, TCPRoute, UDPRoute LIST (empty, cluster-wide)
             for _ in 0..4 {
-                let (_req, send) = handle.next_request().await.unwrap();
+                let (req, send) = handle.next_request().await.unwrap();
+                rp.lock().unwrap().push(req.uri().path().to_string());
                 send.send_response(mock_empty_list());
             }
-            // 8. ReferenceGrant LIST
-            let (_req, send) = handle.next_request().await.unwrap();
+            // 8. ReferenceGrant LIST (cluster-wide)
+            let (req, send) = handle.next_request().await.unwrap();
+            rp.lock().unwrap().push(req.uri().path().to_string());
             send.send_response(mock_list_response(vec![ref_grant]));
         });
 
-        let inv = build_gateway_inventory(&client, "ns-a", &gk).await;
+        // Pass ns-b (target Service namespace), NOT ns-a (Route namespace)
+        let inv = build_gateway_inventory(&client, "ns-b", &gk).await;
         spawned.await.unwrap();
+
+        // Verify cluster-wide LIST URIs (no /namespaces/ns-b/ in route paths)
+        let paths = request_paths.lock().unwrap();
+        for path in paths.iter() {
+            assert!(
+                !path.contains("/namespaces/ns-b/"),
+                "Route LIST must be cluster-wide, not namespaced to ns-b: {}",
+                path
+            );
+        }
+        assert!(
+            paths.iter().any(|p| p.contains("/httproutes")),
+            "Should LIST httproutes"
+        );
 
         assert_eq!(inv.gateways.len(), 1);
         assert_eq!(inv.routes.len(), 1);
