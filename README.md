@@ -117,7 +117,13 @@ The `network` subcommand shows the full network reachability chain for workloads
 
 **Service as target:** `network service/<name>` diagnoses a specific Service directly. The Service's config, status, EndpointSlices, and Ingress/Route backends are always shown, even when the Service has no selector or no endpoints. For selectorless Services, `targetRefMatchedPods` from EndpointSlice targetRefs are included in NetworkPolicy posture evaluation.
 
-**MetalLB integration:** When MetalLB CRDs exist on the cluster, `network` automatically detects LoadBalancer Services' advertisement path: Service → IPAddressPool → L2Advertisement/BGPAdvertisement. Pool matching uses assigned IP ranges, `metallb.io/address-pool` and `metallb.io/loadBalancerIPs` annotations. Warnings are generated for missing IP assignment, unmatched pools, missing advertisements, and `externalTrafficPolicy: Local` without ready endpoints. MetalLB CRD absence is handled gracefully — standard Service/EndpointSlice/NetworkPolicy output is preserved. JSON includes a `loadBalancer` object per service path with `provider`, `ipAssigned`, `pool`, `advertisements`, and `warnings`.
+**MetalLB integration:** When MetalLB CRDs exist on the cluster, `network` diagnoses LoadBalancer Services' advertisement path. Provider detection is per-service evidence-based: MetalLB annotations (`metallb.io/address-pool`, `metallb.io/loadBalancerIPs`, legacy `metallb.universe.tf/*`), `loadBalancerClass` containing "metallb", or assigned IP matching a MetalLB pool range. Services without MetalLB evidence show `provider: null`.
+
+Pool resolution evaluates: assigned IPs, requested IPs (from `metallb.io/loadBalancerIPs` comma-separated, `spec.loadBalancerIP`), requested pool name, IP range matching (IPv4/IPv6 CIDR and dash-range), `autoAssign`, and `serviceAllocation` constraints (namespaces, namespaceSelectors, serviceSelectors, priority). Allocation selector mismatches produce warnings while still showing the range match.
+
+Advertisement resolution evaluates pool selectors (`ipAddressPools` direct name OR `ipAddressPoolSelectors` label match against pool labels) and service selectors against Service labels. L2 interfaces and BGP details (aggregationLength/V6, localPref, communities, peers) are displayed. `externalTrafficPolicy: Local` checks ready endpoint node names against advertisement node selectors. Node labels are not available via standard API — node selector evaluation is noted as "present, requires node labels". Pool and advertisement are matched within the same namespace.
+
+MetalLB CRD absence is handled gracefully. JSON includes a `metallb` object per service path with `provider`, `requestedIPs`, `requestedPool`, `pools[]` (with `allocationMatch`), `advertisements[]`, and `warnings[]`.
 
 **Service fields displayed:**
 
