@@ -412,16 +412,9 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
             EXECUTION_PLAN_SCHEMA_VERSION
         );
     }
-    // Validate targets have non-empty package_name
+    // Validate targets have valid package_name
     for target in &plan.targets {
-        if target.package_name.trim().is_empty()
-            || target.package_name != target.package_name.trim()
-        {
-            anyhow::bail!(
-                "Execution plan target has empty package_name (csv: {}). Plan is invalid.",
-                target.csv_name_pattern
-            );
-        }
+        validate_package_name(Some(&target.package_name), &target.csv_name_pattern)?;
     }
     // Validate approve_resources contain no scope tokens
     const SCOPE_TOKENS: &[&str] = &["root", "independent", "label-only", "operator-group", "all"];

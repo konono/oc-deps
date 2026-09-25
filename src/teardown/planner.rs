@@ -6206,8 +6206,8 @@ mod tests {
             "Empty package_name must be rejected on load"
         );
         assert!(
-            format!("{}", result.unwrap_err()).contains("empty package_name"),
-            "Error should mention empty package"
+            format!("{}", result.unwrap_err()).contains("invalid package_name"),
+            "Error should mention invalid package"
         );
     }
 
