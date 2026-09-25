@@ -691,6 +691,87 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
     }
 }
 
+fn build_execution_plan_from_teardown(
+    plan: &crate::teardown::planner::TeardownPlan,
+    target_operators: &[&crate::analyzers::olm::OperatorInstance],
+    cluster_identity: &crate::teardown::plan::ClusterIdentity,
+    prune_crds: bool,
+    approve_scope: &[crate::cli::ApprovalScope],
+    approve_resource: &[String],
+    keep_resource: &[String],
+) -> crate::teardown::plan::ExecutionPlan {
+    use crate::teardown::plan::{
+        ApprovalScopeValue, EXECUTION_PLAN_SCHEMA_VERSION, ExecutionAction, ExecutionPhase,
+        ExecutionResource,
+    };
+    use crate::teardown::planner::Action;
+
+    let exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> = target_operators
+        .iter()
+        .map(|op| crate::teardown::plan::SavedOperatorTarget {
+            package_name: op.package_name.clone().unwrap_or_default(),
+            install_namespace: op.install_namespace.clone(),
+            csv_name_pattern: op.csv.name.clone(),
+        })
+        .collect();
+
+    let exec_phases: Vec<ExecutionPhase> = plan
+        .phases
+        .iter()
+        .enumerate()
+        .map(|(i, phase)| {
+            let resources = phase
+                .actions
+                .iter()
+                .map(|action| {
+                    let (rid, act) = match action {
+                        Action::Delete { resource, .. } => (resource, ExecutionAction::Delete),
+                        Action::ExpectGone { resource, .. } => (resource, ExecutionAction::Expect),
+                        Action::WaitGone { resource } => (resource, ExecutionAction::Wait),
+                        Action::Keep { resource, .. } => (resource, ExecutionAction::Keep),
+                        Action::Review { resource, .. } => (resource, ExecutionAction::Review),
+                    };
+                    ExecutionResource {
+                        group: rid.group.clone(),
+                        kind: rid.kind.clone(),
+                        namespace: rid.namespace.clone(),
+                        name: rid.name.clone(),
+                        uid: rid.uid.clone(),
+                        action: act,
+                    }
+                })
+                .collect();
+            ExecutionPhase {
+                phase: (i + 1) as u32,
+                name: phase.name.clone(),
+                resources,
+            }
+        })
+        .collect();
+
+    let scopes: Vec<ApprovalScopeValue> = approve_scope
+        .iter()
+        .map(|s| match s {
+            crate::cli::ApprovalScope::Root => ApprovalScopeValue::Root,
+            crate::cli::ApprovalScope::Independent => ApprovalScopeValue::Independent,
+            crate::cli::ApprovalScope::LabelOnly => ApprovalScopeValue::LabelOnly,
+            crate::cli::ApprovalScope::OperatorGroup => ApprovalScopeValue::OperatorGroup,
+        })
+        .collect();
+
+    crate::teardown::plan::ExecutionPlan {
+        schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+        cluster_identity: cluster_identity.clone(),
+        created_at: plan.snapshot_taken_at.clone(),
+        targets: exec_targets,
+        prune_crds,
+        approve_scopes: scopes,
+        approve_resources: approve_resource.to_vec(),
+        keep_resources: keep_resource.to_vec(),
+        phases: exec_phases,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -1164,82 +1245,18 @@ async fn main() -> Result<()> {
 
                     // Build and save ExecutionPlan
                     if let Some(ref save_path) = save_plan_path {
-                        let cluster_id = config.cluster_url.to_string();
-                        let exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> =
-                            target_operators
-                                .iter()
-                                .map(|op| crate::teardown::plan::SavedOperatorTarget {
-                                    package_name: op.package_name.clone().unwrap_or_default(),
-                                    install_namespace: op.install_namespace.clone(),
-                                    csv_name_pattern: op.csv.name.clone(),
-                                })
-                                .collect();
-                        let exec_phases: Vec<crate::teardown::plan::ExecutionPhase> = plan
-                            .phases
-                            .iter()
-                            .enumerate()
-                            .map(|(i, phase)| {
-                                let resources = phase
-                                    .actions
-                                    .iter()
-                                    .map(|action| {
-                                        use crate::teardown::planner::Action;
-                                        let (rid, act_str, reason) = match action {
-                                            Action::Delete { resource, reason } => {
-                                                (resource, "DELETE", reason.as_str())
-                                            }
-                                            Action::ExpectGone { resource, reason } => {
-                                                (resource, "EXPECT", reason.as_str())
-                                            }
-                                            Action::WaitGone { resource } => (resource, "WAIT", ""),
-                                            Action::Keep { resource, reason } => {
-                                                (resource, "KEEP", reason.as_str())
-                                            }
-                                            Action::Review {
-                                                resource, reason, ..
-                                            } => (resource, "REVIEW", reason.as_str()),
-                                        };
-                                        crate::teardown::plan::ExecutionResource {
-                                            group: rid.group.clone(),
-                                            kind: rid.kind.clone(),
-                                            namespace: rid.namespace.clone(),
-                                            name: rid.name.clone(),
-                                            uid: rid.uid.clone(),
-                                            action: act_str.to_string(),
-                                            approval: None,
-                                            basis: if reason.is_empty() {
-                                                None
-                                            } else {
-                                                Some(reason.to_string())
-                                            },
-                                        }
-                                    })
-                                    .collect();
-                                crate::teardown::plan::ExecutionPhase {
-                                    phase: (i + 1) as u32,
-                                    name: phase.name.clone(),
-                                    resources,
-                                }
-                            })
-                            .collect();
-                        let exec_plan = crate::teardown::plan::ExecutionPlan {
-                            schema_version: crate::teardown::plan::EXECUTION_PLAN_SCHEMA_VERSION,
-                            cluster_id,
-                            created_at: plan.snapshot_taken_at.clone(),
-                            targets: exec_targets,
+                        let cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                        let exec_plan = build_execution_plan_from_teardown(
+                            &plan,
+                            &target_operators,
+                            &cluster_identity,
                             prune_crds,
-                            approve_scopes: approve_scope
-                                .iter()
-                                .map(|s| s.cli_arg().to_string())
-                                .collect(),
-                            approve_resources: approve_resource,
-                            keep_resources: keep_resource,
-                            phases: exec_phases,
-                        };
-                        match crate::teardown::plan::save_execution_plan(&exec_plan, save_path) {
-                            Ok(()) => eprintln!("📄 Execution plan saved to {}", save_path),
-                            Err(e) => eprintln!("⚠ Could not save execution plan: {}", e),
-                        }
+                            &approve_scope,
+                            &approve_resource,
+                            &keep_resource,
+                        );
+                        crate::teardown::plan::save_execution_plan(&exec_plan, save_path)?;
+                        eprintln!("📄 Execution plan saved to {}", save_path);
                     }
 
                     eprintln!(
@@ -1266,18 +1283,16 @@ async fn main() -> Result<()> {
                     let exec_plan = crate::teardown::plan::load_execution_plan(&plan_file)?;
                     eprintln!("📄 Loaded execution plan from {}", plan_file);
 
-                    // Validate cluster identity
-                    let current_cluster = config.cluster_url.to_string();
-                    if exec_plan.cluster_id != current_cluster {
-                        let msg = format!(
-                            "Execution plan was created for cluster '{}' but current cluster is '{}'",
-                            exec_plan.cluster_id, current_cluster
+                    // P0: Validate cluster identity via kube-system UID (hard fail)
+                    let current_cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                    if !current_cluster_identity.matches(&exec_plan.cluster_identity) {
+                        bail!(
+                            "Cluster identity mismatch: execution plan kube-system UID '{}' \
+                             does not match current cluster '{}'. \
+                             This plan was created for a different cluster.",
+                            exec_plan.cluster_identity.kube_system_uid,
+                            current_cluster_identity.kube_system_uid,
                         );
-                        if non_interactive {
-                            bail!("{}", msg);
-                        } else {
-                            eprintln!("⚠ {}", msg);
-                        }
                     }
 
                     let t0 = Instant::now();
@@ -1290,7 +1305,10 @@ async fn main() -> Result<()> {
                     let all_operators = discover_operators(&client, &kind_map).await?;
                     eprintln!(" found {} operators", all_operators.len());
 
-                    // Resolve targets from execution plan
+                    // P1: Resolve targets with package_name + install_namespace validation
+                    if exec_plan.targets.is_empty() {
+                        bail!("Execution plan has no operator targets");
+                    }
                     let operator_queries: Vec<String> = exec_plan
                         .targets
                         .iter()
@@ -1298,16 +1316,84 @@ async fn main() -> Result<()> {
                         .filter(|s| !s.is_empty())
                         .collect();
                     if operator_queries.is_empty() {
-                        bail!("Execution plan has no valid operator targets");
+                        bail!(
+                            "Execution plan has no valid operator targets (all package_names empty)"
+                        );
                     }
                     let target_indices =
                         resolve_operator_targets(&operator_queries, &all_operators)?;
 
-                    let target_operators: Vec<&_> =
-                        target_indices.iter().map(|&i| &all_operators[i]).collect();
+                    // Filter by install_namespace and validate csv_name_pattern
+                    let mut validated_indices = Vec::new();
+                    for target in &exec_plan.targets {
+                        if target.package_name.is_empty() {
+                            continue;
+                        }
+                        let ns_matched: Vec<usize> = target_indices
+                            .iter()
+                            .copied()
+                            .filter(|&i| {
+                                all_operators[i].install_namespace == target.install_namespace
+                            })
+                            .collect();
+                        if ns_matched.is_empty() {
+                            bail!(
+                                "Execution plan target {}/{} not found in current cluster",
+                                target.package_name,
+                                target.install_namespace
+                            );
+                        }
+                        // Validate csv_name_pattern matches
+                        let csv_matched: Vec<usize> = ns_matched
+                            .iter()
+                            .copied()
+                            .filter(|&i| {
+                                all_operators[i].csv.name.contains(&target.csv_name_pattern)
+                                    || target.csv_name_pattern.contains(&all_operators[i].csv.name)
+                                    || all_operators[i].csv.name == target.csv_name_pattern
+                            })
+                            .collect();
+                        if csv_matched.is_empty() {
+                            bail!(
+                                "Execution plan target {}/{}: csv_name_pattern '{}' \
+                                 does not match any CSV in namespace '{}'",
+                                target.package_name,
+                                target.install_namespace,
+                                target.csv_name_pattern,
+                                target.install_namespace,
+                            );
+                        }
+                        for idx in csv_matched {
+                            if !validated_indices.contains(&idx) {
+                                validated_indices.push(idx);
+                            }
+                        }
+                    }
+                    if validated_indices.len()
+                        != exec_plan
+                            .targets
+                            .iter()
+                            .filter(|t| !t.package_name.is_empty())
+                            .count()
+                    {
+                        bail!(
+                            "Target count mismatch: execution plan has {} targets, resolved {}",
+                            exec_plan.targets.len(),
+                            validated_indices.len()
+                        );
+                    }
+
+                    let target_operators: Vec<&_> = validated_indices
+                        .iter()
+                        .map(|&i| &all_operators[i])
+                        .collect();
 
                     // Reconstruct approval policy from execution plan
-                    let mut approve_delete: Vec<String> = exec_plan.approve_scopes.clone();
+                    let mut approve_delete: Vec<String> = exec_plan
+                        .approve_scopes
+                        .iter()
+                        .map(|s| s.cli_arg().to_string())
+                        .collect();
                     approve_delete.extend(exec_plan.approve_resources.iter().cloned());
                     let preserve = exec_plan.keep_resources.clone();
                     let prune_crds = exec_plan.prune_crds;
@@ -1326,13 +1412,51 @@ async fn main() -> Result<()> {
                     )
                     .await?;
 
-                    // Drift detection: compare phase counts
-                    if plan.phases.len() != exec_plan.phases.len() {
-                        eprintln!(
-                            "⚠ Phase count drift: execution plan has {} phases, fresh plan has {}",
-                            exec_plan.phases.len(),
-                            plan.phases.len()
+                    // P0: Drift detection — build fresh ExecutionPlan and compare
+                    {
+                        let approve_scope_values: Vec<crate::cli::ApprovalScope> = exec_plan
+                            .approve_scopes
+                            .iter()
+                            .map(|s| match s {
+                                crate::teardown::plan::ApprovalScopeValue::Root => {
+                                    crate::cli::ApprovalScope::Root
+                                }
+                                crate::teardown::plan::ApprovalScopeValue::Independent => {
+                                    crate::cli::ApprovalScope::Independent
+                                }
+                                crate::teardown::plan::ApprovalScopeValue::LabelOnly => {
+                                    crate::cli::ApprovalScope::LabelOnly
+                                }
+                                crate::teardown::plan::ApprovalScopeValue::OperatorGroup => {
+                                    crate::cli::ApprovalScope::OperatorGroup
+                                }
+                            })
+                            .collect();
+                        let fresh_exec = build_execution_plan_from_teardown(
+                            &plan,
+                            &target_operators,
+                            &current_cluster_identity,
+                            prune_crds,
+                            &approve_scope_values,
+                            &exec_plan.approve_resources,
+                            &exec_plan.keep_resources,
                         );
+                        if let Err(drift_errors) =
+                            crate::teardown::plan::validate_execution_plan_against_fresh(
+                                &exec_plan,
+                                &fresh_exec,
+                            )
+                        {
+                            eprintln!("\n⛔ Execution plan drift detected:");
+                            for err in &drift_errors {
+                                eprintln!("  - {}", err);
+                            }
+                            bail!(
+                                "{} drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.",
+                                drift_errors.len()
+                            );
+                        }
+                        eprintln!("✅ Execution plan validated — no drift detected");
                     }
 
                     #[allow(unused)]
@@ -4046,6 +4170,22 @@ async fn main() -> Result<()> {
                     let exe = std::env::current_exe()
                         .context("Cannot determine current executable path")?;
 
+                    // Create temp directory for batch plans (cleaned up on exit)
+                    let batch_dir =
+                        std::env::temp_dir().join(format!("oc-deps-batch-{}", std::process::id()));
+                    std::fs::create_dir_all(&batch_dir).with_context(|| {
+                        format!("Failed to create batch dir: {}", batch_dir.display())
+                    })?;
+
+                    // Drop guard for cleanup
+                    struct BatchDirGuard(std::path::PathBuf);
+                    impl Drop for BatchDirGuard {
+                        fn drop(&mut self) {
+                            let _ = std::fs::remove_dir_all(&self.0);
+                        }
+                    }
+                    let _batch_guard = BatchDirGuard(batch_dir.clone());
+
                     let mut results: Vec<(String, i32)> = Vec::new();
 
                     let entry_count = entries.len();
@@ -4062,71 +4202,102 @@ async fn main() -> Result<()> {
                             "=".repeat(60),
                         );
 
-                        let mut cmd = std::process::Command::new(&exe);
-                        cmd.arg("teardown").arg("apply").arg(op_name);
+                        // Step 1: Run `teardown plan` to generate execution plan
+                        let plan_file = batch_dir.join(format!("{}-{}.json", i, op_name));
+                        let plan_path = plan_file.to_string_lossy().to_string();
+                        {
+                            let mut cmd = std::process::Command::new(&exe);
+                            cmd.arg("teardown").arg("plan").arg(op_name);
 
-                        if apply_set_child_bypasses_cache(no_cache, i) {
-                            cmd.arg("--refresh-discovery");
-                        }
-                        if no_cache {
-                            cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
-                        }
-                        if dry_run {
-                            cmd.arg("--dry-run");
-                        }
-                        if options.non_interactive {
-                            cmd.arg("--non-interactive");
-                        }
-                        for approval in &options.approve_delete {
-                            // Classify: known scopes go to --approve-scope, rest to --approve-resource
-                            match approval.as_str() {
-                                "root" | "independent" | "label-only" | "operator-group" => {
-                                    cmd.arg("--approve-scope").arg(approval);
-                                }
-                                _ => {
-                                    cmd.arg("--approve-resource").arg(approval);
+                            // Only refresh discovery for the first entry
+                            if apply_set_child_bypasses_cache(no_cache, i) {
+                                cmd.arg("--refresh-discovery");
+                            }
+                            if no_cache {
+                                cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
+                            }
+
+                            for approval in &options.approve_delete {
+                                match approval.as_str() {
+                                    "root" | "independent" | "label-only" | "operator-group" => {
+                                        cmd.arg("--approve-scope").arg(approval);
+                                    }
+                                    _ => {
+                                        cmd.arg("--approve-resource").arg(approval);
+                                    }
                                 }
                             }
+                            for p in &options.preserve {
+                                cmd.arg("--keep-resource").arg(p);
+                            }
+                            cmd.arg("--file").arg(&plan_path);
+
+                            cmd.stdout(std::process::Stdio::inherit());
+                            cmd.stderr(std::process::Stdio::inherit());
+
+                            if let Ok(kc) = std::env::var("KUBECONFIG") {
+                                cmd.env("KUBECONFIG", kc);
+                            }
+
+                            let status = cmd
+                                .status()
+                                .with_context(|| format!("Failed to spawn plan for {}", op_name))?;
+                            if !status.success() {
+                                let exit_code = status.code().unwrap_or(1);
+                                results.push((op_name.to_string(), exit_code));
+                                eprintln!(
+                                    "\n⛔ {} plan failed (exit {}). Stopping batch.",
+                                    op_name, exit_code
+                                );
+                                break;
+                            }
                         }
-                        for p in &options.preserve {
-                            cmd.arg("--keep-resource").arg(p);
+
+                        // Step 2: Run `teardown apply` with the plan file
+                        {
+                            let mut cmd = std::process::Command::new(&exe);
+                            cmd.arg("teardown").arg("apply").arg(&plan_path);
+
+                            if dry_run {
+                                cmd.arg("--dry-run");
+                            }
+                            if options.non_interactive {
+                                cmd.arg("--non-interactive");
+                            }
+
+                            cmd.stdin(std::process::Stdio::piped());
+                            cmd.stdout(std::process::Stdio::inherit());
+                            cmd.stderr(std::process::Stdio::inherit());
+
+                            if let Ok(kc) = std::env::var("KUBECONFIG") {
+                                cmd.env("KUBECONFIG", kc);
+                            }
+
+                            let mut child = cmd.spawn().with_context(|| {
+                                format!("Failed to spawn apply for {}", op_name)
+                            })?;
+
+                            if let Some(mut stdin) = child.stdin.take() {
+                                use std::io::Write;
+                                let _ = stdin.write_all(b"y\n");
+                            }
+
+                            let status = child.wait().with_context(|| {
+                                format!("Failed to wait for apply of {}", op_name)
+                            })?;
+
+                            let exit_code = status.code().unwrap_or(1);
+                            results.push((op_name.to_string(), exit_code));
+
+                            if exit_code != 0 {
+                                eprintln!(
+                                    "\n⛔ {} apply failed (exit {}). Stopping batch.",
+                                    op_name, exit_code
+                                );
+                                break;
+                            }
+                            eprintln!("  ✅ {} completed", op_name);
                         }
-
-                        // Pipe "y" to stdin for confirmation prompt
-                        cmd.stdin(std::process::Stdio::piped());
-                        cmd.stdout(std::process::Stdio::inherit());
-                        cmd.stderr(std::process::Stdio::inherit());
-
-                        // Forward KUBECONFIG
-                        if let Ok(kc) = std::env::var("KUBECONFIG") {
-                            cmd.env("KUBECONFIG", kc);
-                        }
-
-                        let mut child = cmd
-                            .spawn()
-                            .with_context(|| format!("Failed to spawn teardown for {}", op_name))?;
-
-                        // Write "y\n" to stdin for confirmation
-                        if let Some(mut stdin) = child.stdin.take() {
-                            use std::io::Write;
-                            let _ = stdin.write_all(b"y\n");
-                        }
-
-                        let status = child.wait().with_context(|| {
-                            format!("Failed to wait for teardown of {}", op_name)
-                        })?;
-
-                        let exit_code = status.code().unwrap_or(1);
-                        results.push((op_name.to_string(), exit_code));
-
-                        if exit_code != 0 {
-                            eprintln!(
-                                "\n⛔ {} failed (exit {}). Stopping batch.",
-                                op_name, exit_code
-                            );
-                            break;
-                        }
-                        eprintln!("  ✅ {} completed", op_name);
                     }
 
                     // Summary

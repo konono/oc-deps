@@ -96,14 +96,15 @@ uv run ansible-playbook playbooks/verify.yml -i inventory/aws-sno-disconnected
 RHOAI operator の teardown → Ansible 復旧 → verify の1サイクル。
 
 ```bash
-# 1. teardown
+# 1. teardown (plan then apply)
 cargo build --release
-echo "y" | ./target/release/oc-deps teardown apply rhods-operator.3.5.0 \
+./target/release/oc-deps teardown plan rhods-operator.3.5.0 \
   --approve-scope root --approve-scope independent \
   --approve-scope label-only --approve-scope operator-group \
   --approve-resource maas.opendatahub.io/Config/-/default \
   --approve-resource MLflow/mlflow \
-  --refresh-discovery
+  --refresh-discovery --file /tmp/rhoai-plan.json
+echo "y" | ./target/release/oc-deps teardown apply /tmp/rhoai-plan.json
 
 # 2. ログ検証（自動化する場合）
 #   - EXPECT に RE-DELETE が 0 件であること
@@ -133,30 +134,33 @@ Ansible デプロイ前の状態に戻ることを検証する。RHOAI → Keycl
 cargo build --release
 OC_DEPS=./target/release/oc-deps
 
-# Step 1: RHOAI
-echo "y" | $OC_DEPS teardown apply rhods-operator.3.5.0 \
+# Step 1: RHOAI (plan then apply)
+$OC_DEPS teardown plan rhods-operator.3.5.0 \
   --approve-scope root --approve-scope independent \
   --approve-scope label-only --approve-scope operator-group \
   --approve-resource maas.opendatahub.io/Config/-/default \
   --approve-resource MLflow/mlflow \
-  --refresh-discovery
+  --refresh-discovery --file /tmp/rhoai-plan.json
+echo "y" | $OC_DEPS teardown apply /tmp/rhoai-plan.json
 
-# Step 2: Keycloak
-echo "y" | $OC_DEPS teardown apply rhbk-operator \
+# Step 2: Keycloak (plan then apply)
+$OC_DEPS teardown plan rhbk-operator \
   --approve-scope root --approve-scope independent \
   --approve-scope label-only --approve-scope operator-group \
-  --refresh-discovery
+  --refresh-discovery --file /tmp/keycloak-plan.json
+echo "y" | $OC_DEPS teardown apply /tmp/keycloak-plan.json
 
-# Step 3: 依存 operator（順序は問わない）
+# Step 3: 依存 operator（順序は問わない、plan→apply フロー）
 for op in leader-worker-set job-set kueue-operator servicemeshoperator3 \
           nfd gpu-operator-certified cert-manager-operator \
           rhcl-operator authorino-operator dns-operator limitador-operator \
           cluster-observability-operator opentelemetry-product; do
   echo "--- $op ---"
-  echo "y" | $OC_DEPS teardown apply "$op" \
+  $OC_DEPS teardown plan "$op" \
     --approve-scope root --approve-scope independent \
     --approve-scope label-only --approve-scope operator-group \
-    --refresh-discovery
+    --refresh-discovery --file "/tmp/${op}-plan.json"
+  echo "y" | $OC_DEPS teardown apply "/tmp/${op}-plan.json"
 done
 
 # Step 4: 残留リソース確認
