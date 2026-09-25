@@ -5813,19 +5813,36 @@ fn network_paths_to_json(
                             obj
                         })
                         .collect();
-                    let matches_json: Vec<serde_json::Value> = gr
-                        .matches
+                    let matched_backends_json: Vec<serde_json::Value> = gr
+                        .matched_backends
                         .iter()
-                        .map(|m| {
+                        .map(|mb| {
+                            let rule_matches: Vec<serde_json::Value> = mb
+                                .rule_matches
+                                .iter()
+                                .map(|m| {
+                                    let mut obj = serde_json::Map::new();
+                                    if let Some(pt) = &m.path_type {
+                                        obj.insert("pathType".into(), serde_json::json!(pt));
+                                    }
+                                    if let Some(pv) = &m.path_value {
+                                        obj.insert("pathValue".into(), serde_json::json!(pv));
+                                    }
+                                    if let Some(method) = &m.method {
+                                        obj.insert("method".into(), serde_json::json!(method));
+                                    }
+                                    serde_json::Value::Object(obj)
+                                })
+                                .collect();
                             let mut obj = serde_json::Map::new();
-                            if let Some(pt) = &m.path_type {
-                                obj.insert("pathType".into(), serde_json::json!(pt));
+                            if let Some(p) = mb.port {
+                                obj.insert("port".into(), serde_json::json!(p));
                             }
-                            if let Some(pv) = &m.path_value {
-                                obj.insert("pathValue".into(), serde_json::json!(pv));
+                            if let Some(w) = mb.weight {
+                                obj.insert("weight".into(), serde_json::json!(w));
                             }
-                            if let Some(method) = &m.method {
-                                obj.insert("method".into(), serde_json::json!(method));
+                            if !rule_matches.is_empty() {
+                                obj.insert("ruleMatches".into(), serde_json::json!(rule_matches));
                             }
                             serde_json::Value::Object(obj)
                         })
@@ -5864,21 +5881,18 @@ fn network_paths_to_json(
                         "gatewayName": gr.gateway_name,
                         "gatewayNamespace": gr.gateway_namespace,
                         "listeners": listeners_json,
-                        "matches": matches_json,
+                        "matchedBackends": matched_backends_json,
                         "crossNamespace": cross_ns_str,
                         "statusConditions": conditions_json,
                     });
                     if !gr.hostnames.is_empty() {
                         route_json["hostnames"] = serde_json::json!(gr.hostnames);
                     }
-                    if let Some(gc) = &gr.gateway_class {
-                        route_json["gatewayClass"] = serde_json::json!(gc);
+                    if let Some(gc) = &gr.gateway_class_name {
+                        route_json["gatewayClassName"] = serde_json::json!(gc);
                     }
-                    if let Some(p) = gr.backend_port {
-                        route_json["backendPort"] = serde_json::json!(p);
-                    }
-                    if let Some(w) = gr.backend_weight {
-                        route_json["backendWeight"] = serde_json::json!(w);
+                    if let Some(gc) = &gr.gateway_class_controller {
+                        route_json["gatewayClassController"] = serde_json::json!(gc);
                     }
                     if let Some(sn) = &gr.section_name {
                         route_json["sectionName"] = serde_json::json!(sn);
@@ -6540,11 +6554,14 @@ fn print_network_tree(
                         " [cross-ns: unknown]"
                     }
                 };
-                let gw_class_str = gr
-                    .gateway_class
-                    .as_deref()
-                    .map(|gc| format!(" (class: {})", gc))
-                    .unwrap_or_default();
+                let gw_class_str = match (&gr.gateway_class_name, &gr.gateway_class_controller) {
+                    (Some(name), Some(ctrl)) => {
+                        format!(" (GatewayClass/{}, controller: {})", name, ctrl)
+                    }
+                    (Some(name), None) => format!(" (GatewayClass/{})", name),
+                    (None, Some(ctrl)) => format!(" (controller: {})", ctrl),
+                    (None, None) => String::new(),
+                };
                 let section_str = gr
                     .section_name
                     .as_deref()
@@ -6576,16 +6593,6 @@ fn print_network_tree(
                 if !gr.hostnames.is_empty() {
                     println!("      Hostnames: {}", gr.hostnames.join(", "));
                 }
-                let mut backend_info = Vec::new();
-                if let Some(p) = gr.backend_port {
-                    backend_info.push(format!("port={}", p));
-                }
-                if let Some(w) = gr.backend_weight {
-                    backend_info.push(format!("weight={}", w));
-                }
-                if !backend_info.is_empty() {
-                    println!("      Backend: {}", backend_info.join(" "));
-                }
                 for listener in &gr.listeners {
                     let hostname = listener
                         .hostname
@@ -6602,18 +6609,30 @@ fn print_network_tree(
                         listener.name, listener.port, listener.protocol, hostname, tls
                     );
                 }
-                for m in &gr.matches {
-                    let path_str = match (&m.path_type, &m.path_value) {
-                        (Some(pt), Some(pv)) => format!("{} {}", pt, pv),
-                        (None, Some(pv)) => pv.clone(),
-                        _ => continue,
-                    };
-                    let method_str = m
-                        .method
-                        .as_deref()
-                        .map(|m| format!(" method={}", m))
-                        .unwrap_or_default();
-                    println!("        Match: {}{}", path_str, method_str);
+                for mb in &gr.matched_backends {
+                    let mut backend_info = Vec::new();
+                    if let Some(p) = mb.port {
+                        backend_info.push(format!("port {}", p));
+                    }
+                    if let Some(w) = mb.weight {
+                        backend_info.push(format!("weight {}", w));
+                    }
+                    if !backend_info.is_empty() {
+                        println!("      Backend: {}", backend_info.join(", "));
+                    }
+                    for m in &mb.rule_matches {
+                        let path_str = match (&m.path_type, &m.path_value) {
+                            (Some(pt), Some(pv)) => format!("{} {}", pt, pv),
+                            (None, Some(pv)) => pv.clone(),
+                            _ => continue,
+                        };
+                        let method_str = m
+                            .method
+                            .as_deref()
+                            .map(|meth| format!(" method={}", meth))
+                            .unwrap_or_default();
+                        println!("        Match: {}{}", path_str, method_str);
+                    }
                 }
                 for c in &gr.status_conditions {
                     let reason = c
