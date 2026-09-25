@@ -5221,6 +5221,8 @@ async fn main() -> Result<()> {
                             &namespace,
                             &inventory.metallb,
                             &endpoint_nodes,
+                            &inventory.metallb.namespace_labels,
+                            &inventory.metallb.node_labels,
                         )
                     })
                     .collect()
@@ -5629,6 +5631,7 @@ fn network_paths_to_json(
                 let pools_json: Vec<_> = mlb.pools.iter().map(|mp| {
                     let mut obj = serde_json::json!({
                         "name": mp.pool.name,
+                        "namespace": mp.pool.namespace,
                         "addresses": mp.pool.addresses,
                         "matchReason": mp.match_reason,
                         "autoAssign": mp.pool.auto_assign,
@@ -5636,14 +5639,48 @@ fn network_paths_to_json(
                     if let Some(am) = &mp.allocation_match {
                         obj["allocationMatch"] = serde_json::json!(am);
                     }
+                    if let Some(sa) = &mp.pool.service_allocation {
+                        obj["serviceAllocation"] = serde_json::json!({
+                            "priority": sa.priority,
+                            "namespaces": sa.namespaces,
+                            "namespaceSelectors": sa.namespace_selectors.len(),
+                            "serviceSelectors": sa.service_selectors.len(),
+                        });
+                    }
+                    if let Some(avail) = mp.pool.status_available {
+                        obj["statusAvailable"] = serde_json::json!(avail);
+                    }
+                    if let Some(assigned) = mp.pool.status_assigned {
+                        obj["statusAssigned"] = serde_json::json!(assigned);
+                    }
+                    if !mp.pool.labels.is_empty() {
+                        obj["labels"] = serde_json::json!(mp.pool.labels);
+                    }
                     obj
                 }).collect();
                 let ads_json: Vec<_> = mlb.advertisements.iter().map(|a| {
                     let mut obj = serde_json::json!({
                         "kind": a.kind,
                         "name": a.name,
+                        "namespace": a.namespace,
                         "matchReason": a.match_reason,
+                        "nodeSelectorStatus": a.node_selector_status,
                     });
+                    if !a.node_selectors.is_empty() {
+                        obj["nodeSelectors"] = serde_json::json!(a.node_selectors.len());
+                    }
+                    if !a.candidate_nodes.is_empty() {
+                        obj["candidateNodes"] = serde_json::json!(a.candidate_nodes);
+                    }
+                    if !a.service_selectors.is_empty() {
+                        obj["serviceSelectors"] = serde_json::json!(a.service_selectors.len());
+                    }
+                    if !a.interfaces.is_empty() {
+                        obj["interfaces"] = serde_json::json!(a.interfaces);
+                    }
+                    if !a.peers.is_empty() {
+                        obj["peers"] = serde_json::json!(a.peers);
+                    }
                     if let Some(al) = a.aggregation_length {
                         obj["aggregationLength"] = serde_json::json!(al);
                     }
@@ -5847,8 +5884,22 @@ fn print_network_tree(
             }
             for ad in &mlb.advertisements {
                 println!("    {}/{} ({})", ad.kind, ad.name, ad.match_reason);
+                if !ad.interfaces.is_empty() {
+                    println!("      interfaces: {}", ad.interfaces.join(", "));
+                }
+                if !ad.peers.is_empty() {
+                    println!("      peers: {}", ad.peers.join(", "));
+                }
                 if !ad.node_selectors.is_empty() {
-                    println!("      node selector: present, evaluation requires node labels");
+                    println!(
+                        "      node selector: {} ({})",
+                        ad.node_selector_status,
+                        if ad.candidate_nodes.is_empty() {
+                            "no matching nodes".to_string()
+                        } else {
+                            ad.candidate_nodes.join(", ")
+                        }
+                    );
                 }
             }
             for w in &mlb.warnings {
