@@ -337,7 +337,14 @@ pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<(
     let parent = std::path::Path::new(path)
         .parent()
         .ok_or_else(|| anyhow::anyhow!("No parent directory for {}", path))?;
-    let tmp_path = parent.join(format!(".tmp_exec_plan_{}", std::process::id()));
+    let tmp_path = parent.join(format!(
+        ".tmp_exec_plan_{}_{:x}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
     let json = serde_json::to_string_pretty(plan)?;
     {
         let mut f = std::fs::File::create(&tmp_path)
@@ -345,8 +352,11 @@ pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<(
         f.write_all(json.as_bytes())?;
         f.sync_all()?;
     }
-    std::fs::rename(&tmp_path, path)
-        .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path))?;
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e)
+            .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path));
+    }
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
@@ -388,7 +398,7 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
             if matches!(
                 res.action,
                 ExecutionAction::Delete | ExecutionAction::Expect | ExecutionAction::Wait
-            ) && res.uid.is_none()
+            ) && (res.uid.is_none() || res.uid.as_deref() == Some(""))
             {
                 anyhow::bail!(
                     "Resource {}/{} in phase {} has action {} but no UID — plan may be tampered",
@@ -420,7 +430,40 @@ pub fn validate_execution_plan_against_fresh(
         ));
     }
 
-    type FullTuple = (u32, String, String, String, String, String, String, String);
+    // Compare phase metadata (number, name) in order — catches empty-phase drift
+    let saved_phase_meta: Vec<(u32, &str)> = saved
+        .phases
+        .iter()
+        .map(|p| (p.phase, p.name.as_str()))
+        .collect();
+    let fresh_phase_meta: Vec<(u32, &str)> = fresh
+        .phases
+        .iter()
+        .map(|p| (p.phase, p.name.as_str()))
+        .collect();
+    for (i, (s, f)) in saved_phase_meta
+        .iter()
+        .zip(fresh_phase_meta.iter())
+        .enumerate()
+    {
+        if s != f {
+            errors.push(format!(
+                "Phase metadata drift at index {}: saved ({}, {:?}) vs fresh ({}, {:?})",
+                i, s.0, s.1, f.0, f.1
+            ));
+        }
+    }
+
+    type FullTuple = (
+        u32,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+    );
 
     let build_sorted = |plan: &ExecutionPlan| -> Vec<FullTuple> {
         let mut tuples: Vec<FullTuple> = plan
@@ -434,9 +477,9 @@ pub fn validate_execution_plan_against_fresh(
                         r.action.to_string(),
                         r.group.clone(),
                         r.kind.clone(),
-                        r.namespace.clone().unwrap_or_default(),
+                        r.namespace.clone(),
                         r.name.clone(),
-                        r.uid.clone().unwrap_or_default(),
+                        r.uid.clone(),
                     )
                 })
             })
@@ -450,49 +493,78 @@ pub fn validate_execution_plan_against_fresh(
 
     if saved_tuples.len() != fresh_tuples.len() {
         errors.push(format!(
-            "Phase count drift: saved {} resources, fresh {}",
+            "Resource count drift: saved {}, fresh {}",
             saved_tuples.len(),
             fresh_tuples.len()
         ));
     }
 
-    for (i, (s, f)) in saved_tuples.iter().zip(fresh_tuples.iter()).enumerate() {
-        if s.7 != f.7
-            && s.0 == f.0
-            && s.2 == f.2
-            && s.3 == f.3
-            && s.4 == f.4
-            && s.5 == f.5
-            && s.6 == f.6
-        {
+    // Use multiset-style comparison: count occurrences and compare
+    use std::collections::HashMap;
+    let mut saved_counts: HashMap<&FullTuple, usize> = HashMap::new();
+    for t in &saved_tuples {
+        *saved_counts.entry(t).or_default() += 1;
+    }
+    let mut fresh_counts: HashMap<&FullTuple, usize> = HashMap::new();
+    for t in &fresh_tuples {
+        *fresh_counts.entry(t).or_default() += 1;
+    }
+
+    for (t, &sc) in &saved_counts {
+        let fc = fresh_counts.get(t).copied().unwrap_or(0);
+        if fc < sc {
             errors.push(format!(
-                "UID changed for {}/{} in {:?}: saved {} → fresh {}",
-                s.4,
-                s.6,
-                if s.5.is_empty() { None } else { Some(&s.5) },
-                s.7,
-                f.7
+                "Resource missing from cluster: phase {}/{} {} {}/{} uid={:?} (×{})",
+                t.0,
+                t.1,
+                t.2,
+                t.4,
+                t.6,
+                t.7,
+                sc - fc
             ));
-        } else if s != f {
+        }
+    }
+    for (t, &fc) in &fresh_counts {
+        let sc = saved_counts.get(t).copied().unwrap_or(0);
+        if fc > sc {
             errors.push(format!(
-                "Drift at position {}: phase {}/{} {} {}/{} → phase {}/{} {} {}/{}",
-                i, s.0, s.1, s.2, s.4, s.6, f.0, f.1, f.2, f.4, f.6
+                "Resource added since plan: phase {}/{} {} {}/{} uid={:?} (×{})",
+                t.0,
+                t.1,
+                t.2,
+                t.4,
+                t.6,
+                t.7,
+                fc - sc
             ));
         }
     }
 
-    if saved_tuples.len() > fresh_tuples.len() {
-        for s in &saved_tuples[fresh_tuples.len()..] {
+    // UID changes: same identity (phase, action, group, kind, ns, name) but different UID
+    type IdKey = (u32, String, String, String, Option<String>, String);
+    let id_key = |t: &FullTuple| -> IdKey {
+        (
+            t.0,
+            t.2.clone(),
+            t.3.clone(),
+            t.4.clone(),
+            t.5.clone(),
+            t.6.clone(),
+        )
+    };
+    let mut saved_uids: HashMap<IdKey, Option<String>> = HashMap::new();
+    for t in &saved_tuples {
+        saved_uids.insert(id_key(t), t.7.clone());
+    }
+    for t in &fresh_tuples {
+        let key = id_key(t);
+        if let Some(saved_uid) = saved_uids.get(&key)
+            && saved_uid != &t.7
+        {
             errors.push(format!(
-                "Resource missing from cluster: phase {}/{} {} {}/{}",
-                s.0, s.1, s.2, s.4, s.6
-            ));
-        }
-    } else if fresh_tuples.len() > saved_tuples.len() {
-        for f in &fresh_tuples[saved_tuples.len()..] {
-            errors.push(format!(
-                "Resource added since plan: phase {}/{} {} {}/{}",
-                f.0, f.1, f.2, f.4, f.6
+                "UID changed for {}/{} in {:?}: saved {:?} → fresh {:?}",
+                t.4, t.6, t.5, saved_uid, t.7
             ));
         }
     }
@@ -817,5 +889,147 @@ mod tests {
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.contains("Phase count drift")));
+    }
+
+    #[test]
+    fn load_rejects_delete_with_uid_none() {
+        let mut plan = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Sub",
+                Some("ns"),
+                "sub1",
+                Some("uid-a"),
+                ExecutionAction::Delete,
+            )],
+        );
+        plan.phases[0].resources[0].uid = None;
+        let dir = std::env::temp_dir().join(format!("test-uid-none-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("no UID"));
+    }
+
+    #[test]
+    fn load_rejects_delete_with_uid_empty() {
+        let mut plan = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Sub",
+                Some("ns"),
+                "sub1",
+                Some("uid-a"),
+                ExecutionAction::Delete,
+            )],
+        );
+        plan.phases[0].resources[0].uid = Some(String::new());
+        let dir = std::env::temp_dir().join(format!("test-uid-empty-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_accepts_keep_without_uid() {
+        let mut plan = make_exec_plan(
+            "uid-1",
+            vec![("", "NS", Some("ns"), "ns1", None, ExecutionAction::Keep)],
+        );
+        plan.phases[0].resources[0].uid = None;
+        let dir = std::env::temp_dir().join(format!("test-keep-none-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn drift_empty_phase_name_change() {
+        let mut saved = make_exec_plan("uid-1", vec![]);
+        saved.phases[0].name = "Original".into();
+        let mut fresh = make_exec_plan("uid-1", vec![]);
+        fresh.phases[0].name = "Tampered".into();
+        let result = validate_execution_plan_against_fresh(&saved, &fresh);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("Phase metadata drift"))
+        );
+    }
+
+    #[test]
+    fn drift_uid_none_vs_some() {
+        let saved = make_exec_plan(
+            "uid-1",
+            vec![("", "Svc", Some("ns"), "svc1", None, ExecutionAction::Keep)],
+        );
+        let fresh = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "Svc",
+                Some("ns"),
+                "svc1",
+                Some("new-uid"),
+                ExecutionAction::Keep,
+            )],
+        );
+        let result = validate_execution_plan_against_fresh(&saved, &fresh);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn drift_namespace_none_vs_empty() {
+        let saved = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "CRD",
+                None,
+                "crd1",
+                Some("uid-c"),
+                ExecutionAction::Keep,
+            )],
+        );
+        let fresh = make_exec_plan(
+            "uid-1",
+            vec![(
+                "",
+                "CRD",
+                Some(""),
+                "crd1",
+                Some("uid-c"),
+                ExecutionAction::Keep,
+            )],
+        );
+        let result = validate_execution_plan_against_fresh(&saved, &fresh);
+        assert!(result.is_err(), "None and Some('') namespace must differ");
+    }
+
+    #[test]
+    fn nested_unknown_cluster_identity() {
+        let json = r#"{"api_server":"url","kube_system_uid":"uid","extra":"bad"}"#;
+        let result: Result<ClusterIdentity, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn nested_unknown_saved_operator_target() {
+        let json = r#"{"package_name":"p","install_namespace":"ns","csv_name_pattern":"csv","extra":"bad"}"#;
+        let result: Result<SavedOperatorTarget, _> = serde_json::from_str(json);
+        assert!(result.is_err());
     }
 }

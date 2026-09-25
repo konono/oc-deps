@@ -575,9 +575,8 @@ exceptions:
 
 Each scope is opt-in. If a scope is omitted, matching REVIEW resources remain preserved. The
 structured form intentionally has no `all` scope; use `root` and `independent` explicitly.
-Operator-level approvals and preserves are added to the defaults. Operator-level `force` and
-`non_interactive` values override their defaults. `resources` contains exact approvals only. The
-original array form remains accepted for existing configs.
+Operator-level approvals and keeps are added to the defaults. Operator-level
+`non_interactive` values override their defaults. `resources` contains exact approvals only.
 
 ## Build
 
