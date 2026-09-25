@@ -99,10 +99,11 @@ RHOAI operator の teardown → Ansible 復旧 → verify の1サイクル。
 # 1. teardown
 cargo build --release
 echo "y" | ./target/release/oc-deps teardown apply rhods-operator.3.5.0 \
-  --approve-delete all \
-  --approve-delete maas.opendatahub.io/Config/-/default \
-  --approve-delete MLflow/mlflow \
-  --force --strip-finalizers --no-cache
+  --approve-scope root --approve-scope independent \
+  --approve-scope label-only --approve-scope operator-group \
+  --approve-resource maas.opendatahub.io/Config/-/default \
+  --approve-resource MLflow/mlflow \
+  --refresh-discovery
 
 # 2. ログ検証（自動化する場合）
 #   - EXPECT に RE-DELETE が 0 件であること
@@ -134,14 +135,17 @@ OC_DEPS=./target/release/oc-deps
 
 # Step 1: RHOAI
 echo "y" | $OC_DEPS teardown apply rhods-operator.3.5.0 \
-  --approve-delete all \
-  --approve-delete maas.opendatahub.io/Config/-/default \
-  --approve-delete MLflow/mlflow \
-  --force --strip-finalizers --no-cache
+  --approve-scope root --approve-scope independent \
+  --approve-scope label-only --approve-scope operator-group \
+  --approve-resource maas.opendatahub.io/Config/-/default \
+  --approve-resource MLflow/mlflow \
+  --refresh-discovery
 
 # Step 2: Keycloak
 echo "y" | $OC_DEPS teardown apply rhbk-operator \
-  --approve-delete all --force --strip-finalizers --no-cache
+  --approve-scope root --approve-scope independent \
+  --approve-scope label-only --approve-scope operator-group \
+  --refresh-discovery
 
 # Step 3: 依存 operator（順序は問わない）
 for op in leader-worker-set job-set kueue-operator servicemeshoperator3 \
@@ -150,7 +154,9 @@ for op in leader-worker-set job-set kueue-operator servicemeshoperator3 \
           cluster-observability-operator opentelemetry-product; do
   echo "--- $op ---"
   echo "y" | $OC_DEPS teardown apply "$op" \
-    --approve-delete all --force --strip-finalizers --no-cache
+    --approve-scope root --approve-scope independent \
+    --approve-scope label-only --approve-scope operator-group \
+    --refresh-discovery
 done
 
 # Step 4: 残留リソース確認
@@ -176,7 +182,7 @@ Full テスト後に残るリソース:
 - **redhat-ods-applications の maas-postgres, nemo-guardrails, ogx-server**: REVIEW label-only の workload
 - **NooBaa CR**: ODF 依存 operator (mcg-operator) の operand
 - **Namespaces**: 設計通り KEEP
-- **CRDs**: `--prune-apis` 未指定時は KEEP
+- **CRDs**: `--prune-crds` 未指定時は KEEP
 
 ### 復旧時の注意
 

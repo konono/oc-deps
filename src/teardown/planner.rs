@@ -208,7 +208,7 @@ pub fn resolve_decisions<'a>(
                 .map(|rc| canonical_key(rc.resource))
                 .collect();
             errors.push(format!(
-                "ambiguous --approve-delete {}: matches {} REVIEW resources. Use qualified form:\n  {}",
+                "ambiguous --approve-resource {}: matches {} REVIEW resources. Use qualified form:\n  {}",
                 spec,
                 matching.len(),
                 qualified.join("\n  ")
@@ -217,7 +217,7 @@ pub fn resolve_decisions<'a>(
         }
         if matching.is_empty() {
             errors.push(format!(
-                "--approve-delete {}: no matching REVIEW resource found",
+                "--approve-resource {}: no matching REVIEW resource found",
                 spec
             ));
             continue;
@@ -225,7 +225,7 @@ pub fn resolve_decisions<'a>(
         let rc = matching[0];
         if !rc.exact_approvable {
             errors.push(format!(
-                "--approve-delete {}: resource exists but cannot be approved for deletion",
+                "--approve-resource {}: resource exists but cannot be approved for deletion",
                 spec
             ));
             continue;
@@ -236,7 +236,7 @@ pub fn resolve_decisions<'a>(
             .is_some_and(|d| matches!(d, ResolvedDecision::Keep { .. }))
         {
             errors.push(format!(
-                "--approve-delete {} conflicts with --preserve for the same resource",
+                "--approve-resource {} conflicts with --keep-resource for the same resource",
                 spec
             ));
             continue;
@@ -309,16 +309,16 @@ pub fn resolve_decisions<'a>(
         let bulk_matches = standard_bulk_matches || label_only_matches || operator_group_matches;
         if bulk_matches {
             let reason = if label_only_matches {
-                "label-related CR approved via --approve-delete label-only"
+                "label-related CR approved via --approve-scope label-only"
             } else if operator_group_matches {
-                "operator group approved via --approve-delete operator-group"
+                "operator group approved via --approve-scope operator-group"
             } else {
                 match rc.category {
                     ReviewCategory::Operand(GraphPosition::Root) => {
-                        "root CR approved via --approve-delete root/all"
+                        "root CR approved via --approve-scope root"
                     }
                     ReviewCategory::Operand(GraphPosition::Independent) => {
-                        "independent CR approved via --approve-delete independent/all"
+                        "independent CR approved via --approve-scope independent"
                     }
                     _ => "approved via bulk approval",
                 }
@@ -1931,7 +1931,7 @@ pub async fn generate_teardown_plan(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     gvk_map: &GvkMap,
-    prune_apis: bool,
+    prune_crds: bool,
     policy: &DecisionPolicy,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
@@ -2904,7 +2904,7 @@ pub async fn generate_teardown_plan(
                     blockers.push(Blocker {
                         resource: resource.clone(),
                         reason: format!(
-                            "root operand requires explicit deletion approval: {} — use --approve-delete {}",
+                            "root operand requires explicit deletion approval: {} — use --approve-resource {}",
                             reason,
                             canonical_key(resource)
                         ),
@@ -3051,9 +3051,9 @@ pub async fn generate_teardown_plan(
 
     let mut seen_crds = HashSet::new();
 
-    // For --prune-apis DELETE actions, GET current UIDs NOW (at evidence time).
+    // For --prune-crds DELETE actions, GET current UIDs NOW (at evidence time).
     // This prevents UID migration between evidence→user confirmation→execution.
-    let prune_crd_uids: HashMap<String, BindResult> = if prune_apis {
+    let prune_crd_uids: HashMap<String, BindResult> = if prune_crds {
         let prune_candidates: Vec<String> = target_crds
             .iter()
             .filter(|name| {
@@ -3118,7 +3118,7 @@ pub async fn generate_teardown_plan(
                 resource: crd_id,
                 reason: "also owned by another operator".to_string(),
             });
-        } else if prune_apis {
+        } else if prune_crds {
             // UID must be bound at evidence time for DELETE authority
             match prune_crd_uids.get(crd_name) {
                 Some(BindResult::Bound(uid)) => {
@@ -3163,50 +3163,14 @@ pub async fn generate_teardown_plan(
         } else {
             phase4_actions.push(Action::Keep {
                 resource: crd_id,
-                reason: "eligible for prune (use --prune-apis to remove)".to_string(),
+                reason: "eligible for prune (use --prune-crds to remove)".to_string(),
             });
         }
     }
 
-    // APIService actions — dedup by (group, version) since one APIService serves multiple kinds
+    // APIService actions — dedup by (group, version) since one APIService serves multiple kinds.
+    // --prune-crds only removes CRDs; APIServices are always kept (future --prune-api-services).
     let mut seen_api_services = HashSet::new();
-
-    // Pre-fetch APIService UIDs for prune DELETE actions
-    let prune_apisvc_candidates: Vec<String> = if prune_apis {
-        target_operators
-            .iter()
-            .flat_map(|op| op.owned_api_service_defs.iter())
-            .map(|def| def.api_service_object_name())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter(|name| !blocked_crds.contains(name.as_str()))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty() {
-        let apisvc_gvk =
-            kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1").with_kind("APIService");
-        let apisvc_ar = kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
-        let apisvc_api: kube::api::Api<kube::api::DynamicObject> =
-            kube::api::Api::all_with(client.clone(), &apisvc_ar);
-
-        let futs = prune_apisvc_candidates.iter().map(|name| {
-            let api = apisvc_api.clone();
-            let name = name.clone();
-            async move {
-                let result = probe_uid(&api, &name).await;
-                (name, result)
-            }
-        });
-        futures::stream::iter(futs)
-            .buffer_unordered(16)
-            .collect()
-            .await
-    } else {
-        HashMap::new()
-    };
 
     for def in target_operators
         .iter()
@@ -3236,62 +3200,20 @@ pub async fn generate_teardown_plan(
                 resource: api_svc_id,
                 reason: format!("required by unselected operator {}", blocker_op),
             });
-        } else if prune_apis {
-            match prune_apisvc_uids.get(&obj_name) {
-                Some(BindResult::Bound(uid)) => {
-                    phase4_actions.push(Action::Delete {
-                        resource: ResourceId {
-                            uid: Some(uid.clone()),
-                            ..api_svc_id
-                        },
-                        reason: "aggregated API owned by target operator".to_string(),
-                    });
-                }
-                Some(BindResult::Absent) => {
-                    phase4_actions.push(Action::Keep {
-                        resource: api_svc_id,
-                        reason: "already absent (confirmed via endpoint verification)".to_string(),
-                    });
-                }
-                Some(BindResult::Failed(reason)) => {
-                    blockers.push(Blocker {
-                        resource: api_svc_id.clone(),
-                        reason: format!("Cannot bind APIService UID: {}", reason),
-                        external_dependency: None,
-                    });
-                    phase4_actions.push(Action::Keep {
-                        resource: api_svc_id,
-                        reason: format!("UID binding failed: {}", reason),
-                    });
-                }
-                None => {
-                    blockers.push(Blocker {
-                        resource: api_svc_id.clone(),
-                        reason: "APIService not in binding candidates".to_string(),
-                        external_dependency: None,
-                    });
-                    phase4_actions.push(Action::Keep {
-                        resource: api_svc_id,
-                        reason: "UID binding not attempted".to_string(),
-                    });
-                }
-            }
         } else {
             phase4_actions.push(Action::Keep {
                 resource: api_svc_id,
-                reason: "eligible for prune (use --prune-apis to remove)".to_string(),
+                reason: "APIService kept (use --prune-api-services to remove)".to_string(),
             });
         }
     }
 
     let phase4 = PlanPhase {
         name: "APIs".to_string(),
-        description: if prune_apis {
-            "Delete CRDs/APIServices with no remaining instances and no external dependencies"
-                .to_string()
+        description: if prune_crds {
+            "Delete CRDs with no remaining instances and no external dependencies".to_string()
         } else {
-            "CRDs/APIServices kept by default — use --prune-apis for complete API removal"
-                .to_string()
+            "CRDs kept by default — use --prune-crds to remove".to_string()
         },
         actions: phase4_actions,
         barrier: None,
@@ -3325,7 +3247,7 @@ pub async fn generate_teardown_plan(
         barrier: None,
     };
 
-    if !prune_apis {
+    if !prune_crds {
         let eligible = phase4
             .actions
             .iter()
@@ -3336,7 +3258,7 @@ pub async fn generate_teardown_plan(
         if eligible > 0 {
             warnings.push(Warning {
                 message: format!(
-                    "{} CRDs eligible for removal but kept by default (use --prune-apis)",
+                    "{} CRDs eligible for removal but kept by default (use --prune-crds)",
                     eligible
                 ),
                 resource: None,
@@ -3355,7 +3277,7 @@ pub async fn generate_teardown_plan(
     phases.push(phase5);
 
     // UID binding: bind current UIDs to all DELETE/EXPECT actions that lack them
-    // (e.g., --prune-apis CRDs). This happens at plan generation time so the plan
+    // (e.g., --prune-crds CRDs). This happens at plan generation time so the plan
     // presented to the user for confirmation includes the actual resource identities.
     // Binding failure → blocker (no mutation allowed).
     {
@@ -3693,6 +3615,7 @@ fn build_decision_basis(
 }
 
 /// Load a SavedTeardownPlan from file with schema validation.
+#[allow(dead_code)]
 pub fn load_saved_plan(path: &str) -> Result<crate::teardown::plan::SavedTeardownPlan> {
     let data = std::fs::read_to_string(path)?;
     let saved: crate::teardown::plan::SavedTeardownPlan = serde_json::from_str(&data)?;
@@ -3710,6 +3633,7 @@ pub fn load_saved_plan(path: &str) -> Result<crate::teardown::plan::SavedTeardow
 /// Compares saved provenance/category/discovery_source/labels against fresh ReviewMetadata.
 /// Returns exact approval specs for DecisionPolicy on success,
 /// or list of errors if any decision cannot be safely replayed.
+#[allow(dead_code)]
 pub fn validate_saved_decisions(
     plan: &TeardownPlan,
     saved: &crate::teardown::plan::SavedTeardownPlan,
@@ -3801,6 +3725,7 @@ pub fn validate_saved_decisions(
     }
 }
 
+#[allow(dead_code)]
 fn check_basis_drift(
     saved: &crate::teardown::plan::DecisionBasis,
     fresh: &crate::teardown::plan::ReviewMetadata,
@@ -4098,7 +4023,7 @@ fn print_plan_tree(plan: &TeardownPlan) {
         plan.warnings.len()
     );
     // Blocker reasons are shown individually above — no additional summary needed.
-    // Each blocker's reason text includes the exact --approve-delete command.
+    // Each blocker's reason text includes the exact --approve-resource command.
 }
 
 fn print_plan_json(plan: &TeardownPlan) {

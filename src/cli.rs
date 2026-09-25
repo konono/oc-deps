@@ -1,5 +1,26 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+/// Typed bulk approval scopes for --approve-scope.
+/// `All` is intentionally excluded — use explicit scopes.
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ApprovalScope {
+    Root,
+    Independent,
+    LabelOnly,
+    OperatorGroup,
+}
+
+impl ApprovalScope {
+    pub fn cli_arg(&self) -> &'static str {
+        match self {
+            Self::Root => "root",
+            Self::Independent => "independent",
+            Self::LabelOnly => "label-only",
+            Self::OperatorGroup => "operator-group",
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "oc-deps",
@@ -219,29 +240,29 @@ pub enum TeardownAction {
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
-        /// Refresh API discovery cache
+        /// Skip discovery cache
         #[arg(long)]
-        refresh_discovery: bool,
+        no_cache: bool,
 
-        /// Remove CRDs after teardown (default: keep)
+        /// Include CRD deletion in plan (default: keep)
         #[arg(long)]
         prune_crds: bool,
 
-        /// Approve bulk deletion scope: root, independent, all, label-only, operator-group (repeatable)
-        #[arg(long = "approve-scope", value_name = "SCOPE")]
-        approve_scope: Vec<String>,
+        /// Approve deletion scope (repeatable)
+        #[arg(long = "approve-scope", value_enum)]
+        approve_scope: Vec<ApprovalScope>,
 
-        /// Approve deletion of a specific resource: Kind/name or group/Kind/ns/name (repeatable)
+        /// Approve deletion of specific resource (Kind/name or group/Kind/ns/name, repeatable)
         #[arg(long = "approve-resource", value_name = "SPEC")]
         approve_resource: Vec<String>,
 
-        /// Keep a REVIEW resource (preserve instead of delete). Kind/name or group/Kind/ns/name (repeatable)
+        /// Keep a resource (Kind/name or group/Kind/ns/name, repeatable)
         #[arg(long = "keep-resource", value_name = "SPEC")]
         keep_resource: Vec<String>,
 
-        /// Save the plan as a SavedTeardownPlan to the specified path
-        #[arg(long = "save-plan", value_name = "PATH")]
-        save_plan_path: Option<String>,
+        /// Save the plan to file
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
     },
 
     /// Check current status of resources in a teardown plan
@@ -250,20 +271,20 @@ pub enum TeardownAction {
         #[arg(required_unless_present = "plan_file")]
         operators: Vec<String>,
 
-        /// Refresh API discovery cache
+        /// Skip discovery cache
         #[arg(long)]
-        refresh_discovery: bool,
+        no_cache: bool,
 
         /// Load plan from a saved JSON file instead of re-generating
         #[arg(long = "plan-file", value_name = "PATH")]
         plan_file: Option<String>,
     },
 
-    /// Execute a teardown plan from a saved plan file
+    /// Execute a teardown plan
     Apply {
-        /// Path to saved plan JSON file
+        /// Operator names (subscription or CSV name, partial match OK)
         #[arg(required = true)]
-        plan: String,
+        operators: Vec<String>,
 
         /// Refresh API discovery cache
         #[arg(long)]
@@ -273,24 +294,37 @@ pub enum TeardownAction {
         #[arg(long)]
         dry_run: bool,
 
-        /// Non-interactive mode: unresolved REVIEW, drift, audit incomplete,
-        /// ExplicitUnattributed → nonzero exit before mutation.
+        /// Include CRD deletion in plan (default: keep)
+        #[arg(long)]
+        prune_crds: bool,
+
+        /// Approve deletion scope (repeatable)
+        #[arg(long = "approve-scope", value_enum)]
+        approve_scope: Vec<ApprovalScope>,
+
+        /// Approve deletion of specific resource (Kind/name or group/Kind/ns/name, repeatable)
+        #[arg(long = "approve-resource", value_name = "SPEC")]
+        approve_resource: Vec<String>,
+
+        /// Keep a resource (Kind/name or group/Kind/ns/name, repeatable)
+        #[arg(long = "keep-resource", value_name = "SPEC")]
+        keep_resource: Vec<String>,
+
+        /// Non-interactive mode
         #[arg(long)]
         non_interactive: bool,
 
-        /// Headless mode: read JSON commands from script file, output JSON state traces.
-        /// Uses same AppState + executor as interactive mode.
+        /// Headless script mode
         #[arg(long, value_name = "PATH")]
         script: Option<String>,
 
-        /// Enable ratatui TUI mode for interactive Plan Review + Execution + Residual Cleanup.
-        /// Uses the same AppState + core executor as CLI and --script modes.
+        /// Enable TUI mode
         #[arg(long)]
         tui: bool,
 
-        /// Save the final plan (with residual decisions) as a SavedTeardownPlan
-        #[arg(long = "save-plan", value_name = "PATH")]
-        save_plan_path: Option<String>,
+        /// Save the final plan to file
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
     },
 
     /// Show plan coverage: COVERED BY PLAN / INTENTIONALLY PRESERVED / NOT COVERED
@@ -303,9 +337,24 @@ pub enum TeardownAction {
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
-        /// Refresh API discovery cache
+        /// Skip discovery cache
         #[arg(long)]
-        refresh_discovery: bool,
+        no_cache: bool,
+    },
+
+    /// Inspect all resources belonging to an operator
+    Inspect {
+        /// Operator name (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operator: String,
+
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Skip discovery cache
+        #[arg(long)]
+        no_cache: bool,
     },
 
     /// Explain why a resource is scheduled at its position in the plan
@@ -318,9 +367,9 @@ pub enum TeardownAction {
         #[arg(long)]
         resource: String,
 
-        /// Refresh API discovery cache
+        /// Skip discovery cache
         #[arg(long)]
-        refresh_discovery: bool,
+        no_cache: bool,
     },
 
     /// Resume a paused or interrupted teardown run
@@ -332,9 +381,9 @@ pub enum TeardownAction {
         #[arg(long)]
         run: Option<String>,
 
-        /// Refresh API discovery cache
+        /// Skip discovery cache
         #[arg(long)]
-        refresh_discovery: bool,
+        no_cache: bool,
     },
 
     /// List all teardown runs for the current cluster
@@ -346,9 +395,9 @@ pub enum TeardownAction {
         #[arg(required = true)]
         config: String,
 
-        /// Refresh API discovery cache
+        /// Refresh API discovery once, then reuse within this batch
         #[arg(long)]
-        refresh_discovery: bool,
+        no_cache: bool,
 
         /// Dry run — validate config and show plan without executing
         #[arg(long)]
@@ -1052,75 +1101,134 @@ mod tests {
         assert!(result.is_err(), "graph -o should be rejected (use --file)");
     }
 
-    // ── teardown CLI v2 phase 4 tests ──
+    // ── teardown CLI tests ──
 
     #[test]
-    fn test_teardown_plan_new_flags() {
+    fn test_teardown_apply_with_approve_scope_parses() {
         let args = Args::parse_from([
             "oc-deps",
             "teardown",
-            "plan",
+            "apply",
             "rhods-operator",
             "--approve-scope",
             "root",
-            "--approve-resource",
-            "Config/default",
             "--prune-crds",
+            "--dry-run",
         ]);
         match args.command {
             Command::Teardown {
                 action:
-                    TeardownAction::Plan {
+                    TeardownAction::Apply {
                         operators,
                         prune_crds,
                         approve_scope,
-                        approve_resource,
+                        dry_run,
                         ..
                     },
             } => {
                 assert_eq!(operators, vec!["rhods-operator"]);
                 assert!(prune_crds);
-                assert_eq!(approve_scope, vec!["root"]);
-                assert_eq!(approve_resource, vec!["Config/default"]);
-            }
-            _ => panic!("Expected TeardownAction::Plan"),
-        }
-    }
-
-    #[test]
-    fn test_teardown_apply_plan_file() {
-        let args = Args::parse_from(["oc-deps", "teardown", "apply", "plan.json", "--dry-run"]);
-        match args.command {
-            Command::Teardown {
-                action: TeardownAction::Apply { plan, dry_run, .. },
-            } => {
-                assert_eq!(plan, "plan.json");
                 assert!(dry_run);
+                assert_eq!(approve_scope.len(), 1);
+                assert_eq!(approve_scope[0].cli_arg(), "root");
             }
-            _ => panic!("Expected TeardownAction::Apply"),
+            _ => panic!("Expected Command::Teardown Apply"),
         }
     }
 
     #[test]
-    fn test_teardown_batch() {
-        let args = Args::parse_from(["oc-deps", "teardown", "batch", "config.json"]);
+    fn test_teardown_apply_approve_scope_invalid_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "op",
+            "--approve-scope",
+            "invalid-value",
+        ]);
+        assert!(
+            result.is_err(),
+            "--approve-scope invalid-value should be rejected by ValueEnum"
+        );
+    }
+
+    #[test]
+    fn test_teardown_apply_approve_scope_all_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "op",
+            "--approve-scope",
+            "all",
+        ]);
+        assert!(
+            result.is_err(),
+            "--approve-scope all should be rejected (not in enum)"
+        );
+    }
+
+    #[test]
+    fn test_teardown_apply_approve_resource_accepts_any_string() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "op",
+            "--approve-resource",
+            "root",
+            "--approve-resource",
+            "Widget/example",
+        ]);
         match args.command {
             Command::Teardown {
-                action: TeardownAction::Batch { config, .. },
+                action:
+                    TeardownAction::Apply {
+                        approve_resource, ..
+                    },
             } => {
-                assert_eq!(config, "config.json");
+                assert_eq!(approve_resource, vec!["root", "Widget/example"]);
             }
-            _ => panic!("Expected TeardownAction::Batch"),
+            _ => panic!("Expected Command::Teardown Apply"),
         }
     }
 
     #[test]
-    fn test_teardown_old_approve_delete_rejected() {
+    fn test_teardown_plan_old_save_plan_rejected() {
         let result = Args::try_parse_from([
             "oc-deps",
             "teardown",
             "plan",
-            "rhods-operator",
+            "op",
+            "--save-plan",
+            "out.json",
+        ]);
+        assert!(
+            result.is_err(),
+            "--save-plan should be rejected (use --file)"
+        );
+    }
+
+    #[test]
+    fn test_teardown_plan_file_parses() {
+        let args = Args::parse_from(["oc-deps", "teardown", "plan", "op", "--file", "out.json"]);
+        match args.command {
+            Command::Teardown {
+                action: TeardownAction::Plan { file, .. },
+            } => {
+                assert_eq!(file, Some("out.json".to_string()));
+            }
+            _ => panic!("Expected Command::Teardown Plan"),
+        }
+    }
+
+    #[test]
+    fn test_teardown_apply_old_approve_delete_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "op",
             "--approve-delete",
             "all",
         ]);
@@ -1128,41 +1236,11 @@ mod tests {
     }
 
     #[test]
-    fn test_teardown_old_prune_apis_rejected() {
-        let result = Args::try_parse_from([
-            "oc-deps",
-            "teardown",
-            "plan",
-            "rhods-operator",
-            "--prune-apis",
-        ]);
-        assert!(result.is_err(), "--prune-apis should be rejected");
-    }
-
-    #[test]
-    fn test_teardown_old_force_rejected() {
-        let result = Args::try_parse_from(["oc-deps", "teardown", "apply", "plan.json", "--force"]);
-        assert!(result.is_err(), "--force should be rejected");
-    }
-
-    #[test]
-    fn test_teardown_old_apply_set_rejected() {
-        let result = Args::try_parse_from(["oc-deps", "teardown", "apply-set", "config.json"]);
-        assert!(result.is_err(), "apply-set should be rejected (use batch)");
-    }
-
-    #[test]
-    fn test_teardown_old_inspect_rejected() {
-        let result = Args::try_parse_from(["oc-deps", "teardown", "inspect", "rhods-operator"]);
-        assert!(result.is_err(), "teardown inspect should be rejected");
-    }
-
-    #[test]
-    fn test_teardown_apply_without_plan_file_rejected() {
-        let result = Args::try_parse_from(["oc-deps", "teardown", "apply"]);
+    fn test_teardown_apply_old_prune_apis_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "teardown", "apply", "op", "--prune-apis"]);
         assert!(
             result.is_err(),
-            "teardown apply without plan file should fail"
+            "--prune-apis should be rejected (use --prune-crds)"
         );
     }
 }
