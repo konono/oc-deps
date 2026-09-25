@@ -117,6 +117,8 @@ The `network` subcommand shows the full network reachability chain for workloads
 
 **Service as target:** `network service/<name>` diagnoses a specific Service directly. The Service's config, status, EndpointSlices, and Ingress/Route backends are always shown, even when the Service has no selector or no endpoints. For selectorless Services, `targetRefMatchedPods` from EndpointSlice targetRefs are included in NetworkPolicy posture evaluation.
 
+**MetalLB integration:** When MetalLB CRDs exist on the cluster, `network` automatically detects LoadBalancer Services' advertisement path: Service → IPAddressPool → L2Advertisement/BGPAdvertisement. Pool matching uses assigned IP ranges, `metallb.io/address-pool` and `metallb.io/loadBalancerIPs` annotations. Warnings are generated for missing IP assignment, unmatched pools, missing advertisements, and `externalTrafficPolicy: Local` without ready endpoints. MetalLB CRD absence is handled gracefully — standard Service/EndpointSlice/NetworkPolicy output is preserved. JSON includes a `loadBalancer` object per service path with `provider`, `ipAssigned`, `pool`, `advertisements`, and `warnings`.
+
 **Service fields displayed:**
 
 | Field | Description |

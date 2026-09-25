@@ -22,7 +22,7 @@ use crate::analyzers::olm::{
 };
 use crate::analyzers::selector::{
     build_network_inventory, build_service_network_path, evaluate_network_postures,
-    find_network_paths, get_service_selected_pods,
+    find_network_paths, get_service_selected_pods, resolve_metallb_for_service,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
 use crate::cli::{Args, Command, Direction, OutputFormat, Scope, ShowField, TeardownAction};
@@ -5211,7 +5211,7 @@ async fn main() -> Result<()> {
 
             match online.output {
                 OutputFormat::Json => {
-                    let json_paths = network_paths_to_json(&all_paths);
+                    let json_paths = network_paths_to_json(&all_paths, &inventory.metallb);
                     let json_postures = network_postures_to_json(&postures);
                     let json_warnings: Vec<serde_json::Value> = scan_warnings
                         .iter()
@@ -5235,15 +5235,20 @@ async fn main() -> Result<()> {
                     );
                 }
                 OutputFormat::Table => {
+                    let has_metallb = inventory.metallb.available;
                     let mut table = comfy_table::Table::new();
-                    table.set_header(vec![
+                    let mut header = vec![
                         "Service",
                         "Type",
                         "ClusterIP",
                         "Ports",
                         "Endpoints",
                         "Ingress/Route",
-                    ]);
+                    ];
+                    if has_metallb {
+                        header.push("LB Provider");
+                    }
+                    table.set_header(header);
                     let mut seen_svcs = std::collections::HashSet::new();
                     for (_, path) in &all_paths {
                         if !seen_svcs.insert(path.service.name.clone()) {
@@ -5271,14 +5276,28 @@ async fn main() -> Result<()> {
                             .map(|i| format!("{}/{}", i.kind, i.name))
                             .collect::<Vec<_>>()
                             .join(", ");
-                        table.add_row(vec![
+                        let mut row = vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
                             svc.cluster_ip.clone(),
                             ports_str,
                             eps_str,
                             ing_str,
-                        ]);
+                        ];
+                        if has_metallb {
+                            let mr = resolve_metallb_for_service(svc, &inventory.metallb);
+                            let lb_str = if mr.provider_detected {
+                                if let Some(ref mp) = mr.matched_pool {
+                                    format!("MetalLB ({})", mp.pool.name)
+                                } else {
+                                    "MetalLB".into()
+                                }
+                            } else {
+                                String::new()
+                            };
+                            row.push(lb_str);
+                        }
+                        table.add_row(row);
                     }
                     println!("{table}");
 
@@ -5304,7 +5323,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 OutputFormat::Tree => {
-                    print_network_tree(&kind, &name, &all_paths, &postures);
+                    print_network_tree(&kind, &name, &all_paths, &postures, &inventory.metallb);
                 }
             }
 
@@ -5413,6 +5432,7 @@ fn format_policy_ports(ports: &[crate::analyzers::selector::NetworkPolicyPort]) 
 
 fn network_paths_to_json(
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
+    metallb: &crate::analyzers::selector::MetalLBInventory,
 ) -> Vec<serde_json::Value> {
     let mut seen_svcs = std::collections::HashSet::new();
     paths
@@ -5577,6 +5597,52 @@ fn network_paths_to_json(
                     .collect();
                 status["loadBalancerIngress"] = serde_json::json!(lb);
             }
+            let metallb_result = resolve_metallb_for_service(svc, metallb);
+            let lb_json = if metallb_result.provider_detected {
+                let pool_json = metallb_result.matched_pool.as_ref().map(|mp| {
+                    serde_json::json!({
+                        "name": mp.pool.name,
+                        "addresses": mp.pool.addresses,
+                        "matchReason": mp.match_reason,
+                    })
+                });
+                let ads: Vec<_> = metallb_result
+                    .advertisements
+                    .iter()
+                    .map(|a| {
+                        let mut obj = serde_json::json!({
+                            "protocol": a.protocol,
+                            "name": a.name,
+                            "poolMatch": a.pool_match,
+                        });
+                        if !a.interfaces.is_empty() {
+                            obj["interfaces"] = serde_json::json!(a.interfaces);
+                        }
+                        if let Some(v) = a.aggregation_length {
+                            obj["aggregationLength"] = serde_json::json!(v);
+                        }
+                        if let Some(v) = a.local_pref {
+                            obj["localPref"] = serde_json::json!(v);
+                        }
+                        if !a.communities.is_empty() {
+                            obj["communities"] = serde_json::json!(a.communities);
+                        }
+                        if !a.peers.is_empty() {
+                            obj["peers"] = serde_json::json!(a.peers);
+                        }
+                        obj
+                    })
+                    .collect();
+                serde_json::json!({
+                    "provider": "MetalLB",
+                    "ipAssigned": !svc.lb_ingress.is_empty(),
+                    "pool": pool_json,
+                    "advertisements": ads,
+                    "warnings": metallb_result.warnings,
+                })
+            } else {
+                serde_json::json!(null)
+            };
             serde_json::json!({
                 "service": {"name": svc.name, "config": config, "status": status},
                 "ingresses": ingresses,
@@ -5584,6 +5650,7 @@ fn network_paths_to_json(
                 "endpointSummary": {"ready": es.ready, "notReady": es.not_ready, "unknown": es.unknown, "effectiveReady": es.effective_ready, "serving": es.serving, "terminating": es.terminating},
                 "selectorMatchedPods": p.selector_matched_pods,
                 "targetRefMatchedPods": p.target_ref_matched_pods,
+                "loadBalancer": lb_json,
             })
         })
         .collect()
@@ -5654,6 +5721,7 @@ fn print_network_tree(
     name: &str,
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
     postures: &[crate::analyzers::selector::PodNetworkPosture],
+    metallb: &crate::analyzers::selector::MetalLBInventory,
 ) {
     let stdout_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if paths.is_empty() {
@@ -5737,6 +5805,47 @@ fn print_network_tree(
                 .map(|m| format!(" (ipMode: {})", m))
                 .unwrap_or_default();
             println!("    LB Ingress: {}{}", addr, mode);
+        }
+        // MetalLB section
+        let metallb_result = resolve_metallb_for_service(svc, metallb);
+        if metallb_result.provider_detected {
+            println!("    LoadBalancer provider: MetalLB");
+            if let Some(ref mp) = metallb_result.matched_pool {
+                if stdout_tty {
+                    println!("    \x1b[1mIPAddressPool/{}\x1b[0m:", mp.pool.name);
+                } else {
+                    println!("    IPAddressPool/{}:", mp.pool.name);
+                }
+                println!("      Addresses: {}", mp.pool.addresses.join(", "));
+                println!("      Match:     {}", mp.match_reason);
+            }
+            for ad in &metallb_result.advertisements {
+                if stdout_tty {
+                    println!("    \x1b[1m{}Advertisement/{}\x1b[0m", ad.protocol, ad.name);
+                } else {
+                    println!("    {}Advertisement/{}", ad.protocol, ad.name);
+                }
+                println!("      Protocol:  {}", ad.protocol);
+                println!("      PoolMatch: {}", ad.pool_match);
+                if !ad.interfaces.is_empty() {
+                    println!("      Interfaces: {}", ad.interfaces.join(", "));
+                }
+                if let Some(v) = ad.aggregation_length {
+                    println!("      AggregationLength: {}", v);
+                }
+                if let Some(v) = ad.local_pref {
+                    println!("      LocalPref: {}", v);
+                }
+                if !ad.communities.is_empty() {
+                    println!("      Communities: {}", ad.communities.join(", "));
+                }
+                if !ad.peers.is_empty() {
+                    println!("      Peers: {}", ad.peers.join(", "));
+                }
+            }
+            for w in &metallb_result.warnings {
+                println!("    Warning: {}", w);
+            }
         }
         println!(
             "    SelectorPods:  {}",
