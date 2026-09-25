@@ -424,7 +424,7 @@ Each category shows Relationship and Confidence:
 
 The managing operator is determined via `operator owner` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
 
-`--scope related` uses the same evidence-based namespace discovery as `inspect`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages, `scanWarningCount` gives the count, and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
+`--scope related` uses the same evidence-based namespace discovery as `operator resources --scope related`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages, `scanWarningCount` gives the count, and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
 
 ### Generate a teardown plan
 
@@ -494,7 +494,7 @@ oc-deps graph -n <namespace> --file evidence-graph.json
 Compare two snapshots offline (no cluster connection required):
 
 ```bash
-oc-deps diff before.json after.json                 # tree output (default)
+oc-deps snapshot diff before.json after.json         # tree output (default)
 oc-deps snapshot diff before.json after.json -o table   # table output
 oc-deps snapshot diff before.json after.json -o json    # JSON output
 ```
