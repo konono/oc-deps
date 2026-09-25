@@ -58,11 +58,11 @@ oc-deps network pod/<pod-name> -n <namespace> -o json
 oc-deps network service/<name> -n <namespace>       # Service target (selectorless OK)
 
 # Which Operator manages this resource?
-oc-deps who-manages deployment/<name> -n <namespace>
+oc-deps operator owner deployment/<name> -n <namespace>
 
 # Inspect all resources managed by an operator
-oc-deps inspect rhods-operator
-oc-deps inspect rhods-operator --cross-namespace
+oc-deps operator resources rhods-operator
+oc-deps operator resources rhods-operator --scope related
 
 # Trace discovered relationships from a resource
 oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications
@@ -368,9 +368,9 @@ The `--up-only` mode skips step 2 entirely and uses targeted API calls to walk t
 ### List operators
 
 ```bash
-oc-deps operators             # tree view
-oc-deps operators -o table    # table view
-oc-deps operators -o json     # JSON output
+oc-deps operator list             # tree view
+oc-deps operator list -o table    # table view
+oc-deps operator list -o json     # JSON output
 ```
 
 ### Inspect an operator
@@ -378,11 +378,11 @@ oc-deps operators -o json     # JSON output
 Show all resources belonging to an operator, classified by Relationship / Evidence / Confidence:
 
 ```bash
-oc-deps inspect rhods-operator              # top-level subcommand
-oc-deps inspect rhods-operator -o json       # JSON output
-oc-deps inspect rhods-operator --cross-namespace  # discover across namespaces
-oc-deps inspect rhods-operator -o table           # tabular output with group/source
-oc-deps teardown inspect rhods-operator            # also available under teardown
+oc-deps operator resources rhods-operator              # top-level subcommand
+oc-deps operator resources rhods-operator -o json       # JSON output
+oc-deps operator resources rhods-operator --scope related  # discover across namespaces
+oc-deps operator resources rhods-operator -o table         # tabular output with group/source
+oc-deps teardown inspect rhods-operator                    # also available under teardown
 ```
 
 Resources are grouped into categories with **Relationship**, **Evidence**, and **Confidence**:
@@ -393,7 +393,7 @@ Resources are grouped into categories with **Relationship**, **Evidence**, and *
 
 Each resource may have a **`source_id`** indicating the relationship edge source. For ownerRef edges, this is the parent resource; for label-match edges, this is the attributed Operator CSV. In tree output this appears as `← group/Kind/name ns:xxx`. In JSON, `source_id` is a full ResourceId with `group/kind/namespace/name/uid`; when absent the field is omitted (not null). AllNamespaces scope messages appear in `scope_warnings` (not `warnings`).
 
-**`--cross-namespace`** discovers candidate namespaces from:
+**`--scope related`** discovers candidate namespaces from:
 1. Install namespace (always included)
 2. OperatorGroup `status.namespaces` / `spec.targetNamespaces`
 3. Owned CRD instances' actual namespaces
@@ -422,7 +422,7 @@ Each category shows Relationship and Confidence:
 - **Same Operator CRDs** — `same-operator-crd`, Inferred (Low), correlation only, not causation
 - **label matches** — `label-match`, Inferred (Low), correlation only
 
-The managing operator is determined via `who-manages` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
+The managing operator is determined via `operator owner` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
 
 `--scope related` uses the same evidence-based namespace discovery as `inspect`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages, `scanWarningCount` gives the count, and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
 

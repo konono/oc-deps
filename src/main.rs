@@ -25,7 +25,10 @@ use crate::analyzers::selector::{
     find_network_paths, get_service_selected_pods,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
-use crate::cli::{Args, Command, Direction, OutputFormat, Scope, ShowField, TeardownAction};
+use crate::cli::{
+    Args, Command, Direction, OperatorAction, OutputFormat, Scope, ShowField, SnapshotAction,
+    TeardownAction,
+};
 use crate::graph::evidence::build_evidence_graph;
 use crate::graph::tree::{
     TreeNode, apply_filters, build_child_tree, build_full_tree, build_namespace_map,
@@ -699,10 +702,13 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // ── Offline subcommands (dispatch before client init) ──
-    if let Command::Diff {
-        ref before,
-        ref after,
-        ref format,
+    if let Command::Snapshot {
+        action:
+            SnapshotAction::Diff {
+                ref before,
+                ref after,
+                ref format,
+            },
     } = args.command
     {
         let before_snap = load_snapshot(before)?;
@@ -721,28 +727,17 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // ── Early validation for Snapshot ──
+    // ── Early validation for Snapshot Create ──
     if let Command::Snapshot {
-        all_namespaces,
-        ref namespace,
-        ref namespace_selector,
-        ref exclude_namespace,
-        exclude_system_namespaces,
-        ..
+        action:
+            SnapshotAction::Create {
+                ref namespace_selector,
+                ref exclude_namespace,
+                ..
+            },
     } = args.command
     {
-        if all_namespaces && namespace.is_some() {
-            bail!("-A/--all-namespaces and -n/--namespace are mutually exclusive");
-        }
-        if (!namespace_selector.is_empty()
-            || !exclude_namespace.is_empty()
-            || exclude_system_namespaces)
-            && !all_namespaces
-        {
-            bail!(
-                "--namespace-selector, --exclude-namespace, and --exclude-system-namespaces require -A"
-            );
-        }
+        // -A/-n conflict and requires are handled by clap at parse time
         for sel in namespace_selector {
             if !sel.contains('=') || sel.starts_with('=') || sel.ends_with('=') {
                 bail!(
@@ -801,8 +796,10 @@ async fn main() -> Result<()> {
     let resource_arg = match &args.command {
         Command::Tree { resource, .. }
         | Command::Network { resource, .. }
-        | Command::Trace { resource, .. }
-        | Command::WhoManages { resource, .. } => Some(resource.as_str()),
+        | Command::Trace { resource, .. } => Some(resource.as_str()),
+        Command::Operator {
+            action: OperatorAction::Owner { resource, .. },
+        } => Some(resource.as_str()),
         _ => None,
     };
     if let Some(res) = resource_arg
@@ -819,17 +816,21 @@ async fn main() -> Result<()> {
     // ── Subcommand dispatch ──
     match args.command {
         Command::Snapshot {
-            namespace,
-            output_file,
-            include_events,
-            no_cache,
-            all_namespaces,
-            namespace_selector,
-            exclude_namespace,
-            exclude_system_namespaces,
-            strict,
+            action:
+                SnapshotAction::Create {
+                    namespace,
+                    output_file,
+                    include_events,
+                    refresh_discovery,
+                    verbose: snapshot_verbose,
+                    all_namespaces,
+                    namespace_selector,
+                    exclude_namespace,
+                    exclude_system_namespaces,
+                    strict,
+                },
         } => {
-            let snapshot_strict = strict;
+            let no_cache = refresh_discovery;
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
             let (kind_map, _, _gk_map, _) =
@@ -1027,7 +1028,7 @@ async fn main() -> Result<()> {
                 };
 
                 let resource_count = snapshot.resources.len();
-                format_scan_warnings(&snapshot.scan_warnings, false);
+                format_scan_warnings(&snapshot.scan_warnings, snapshot_verbose);
                 save_snapshot(&snapshot, &output_file)?;
 
                 let scope = snapshot.scope.as_ref().unwrap();
@@ -1039,7 +1040,7 @@ async fn main() -> Result<()> {
                     scope.complete_namespaces.len(),
                     scope.incomplete_namespaces.len(),
                 );
-                if snapshot_strict
+                if strict
                     && (!scope.incomplete_namespaces.is_empty()
                         || !snapshot.scan_warnings.is_empty())
                 {
@@ -1052,7 +1053,7 @@ async fn main() -> Result<()> {
                     build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
 
                 let resource_count = snapshot.resources.len();
-                format_scan_warnings(&snapshot.scan_warnings, false);
+                format_scan_warnings(&snapshot.scan_warnings, snapshot_verbose);
                 save_snapshot(&snapshot, &output_file)?;
 
                 eprintln!(
@@ -1061,7 +1062,7 @@ async fn main() -> Result<()> {
                     resource_count,
                     snapshot.scan_warnings.len()
                 );
-                if snapshot_strict && !snapshot.scan_warnings.is_empty() {
+                if strict && !snapshot.scan_warnings.is_empty() {
                     std::process::exit(2);
                 }
             }
@@ -1071,19 +1072,21 @@ async fn main() -> Result<()> {
             namespace,
             output_file,
             include_events,
-            no_cache,
+            refresh_discovery,
+            verbose: graph_verbose,
+            strict: graph_strict,
         } => {
             let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
             let (kind_map, _, _gk_map, _) =
-                build_kind_lookup_cached(&client, &config, no_cache).await?;
+                build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
             let snapshot =
                 build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
 
-            format_scan_warnings(&snapshot.scan_warnings, false);
+            format_scan_warnings(&snapshot.scan_warnings, graph_verbose);
 
             eprint!("🔍 Discovering operators...");
             let operators = discover_operators(&client, &kind_map).await?;
@@ -1100,6 +1103,9 @@ async fn main() -> Result<()> {
                 output_file,
                 graph.edges.len()
             );
+            if graph_strict && !snapshot.scan_warnings.is_empty() {
+                std::process::exit(2);
+            }
             return Ok(());
         }
         Command::Teardown { action } => {
@@ -4342,18 +4348,22 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Command::Inspect {
-            operator: operator_query,
-            output,
-            no_cache,
-            cross_namespace,
-            verbose,
-            strict,
+        Command::Operator {
+            action:
+                OperatorAction::Resources {
+                    operator: operator_query,
+                    output,
+                    refresh_discovery,
+                    scope,
+                    verbose,
+                    strict,
+                },
         } => {
+            let cross_namespace = matches!(scope, Scope::Related);
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
             let (kind_map, gvr_map, gk_map, _) =
-                build_kind_lookup_cached(&client, &config, no_cache).await?;
+                build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
             eprint!("🔍 Discovering operators...");
@@ -4634,11 +4644,17 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Command::Operators { output, no_cache } => {
+        Command::Operator {
+            action:
+                OperatorAction::List {
+                    output,
+                    refresh_discovery,
+                },
+        } => {
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
             let (kind_map, _, _gk_map, _) =
-                build_kind_lookup_cached(&client, &config, no_cache).await?;
+                build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
             eprint!("🔍 Discovering operators...");
@@ -4653,17 +4669,22 @@ async fn main() -> Result<()> {
             print_operators(&operators, &deps, &output);
             return Ok(());
         }
-        Command::WhoManages {
-            resource,
-            namespace,
-            output,
-            no_cache,
+        Command::Operator {
+            action:
+                OperatorAction::Owner {
+                    resource,
+                    namespace,
+                    output,
+                    refresh_discovery,
+                    verbose: _owner_verbose,
+                    strict: owner_strict,
+                },
         } => {
             let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
             let (kind_map, gvr_map, gk_map_wm, _) =
-                build_kind_lookup_cached(&client, &config, no_cache).await?;
+                build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
             let (kind_input, name) = if let Some((k, n)) = resource.split_once('/') {
@@ -4694,9 +4715,14 @@ async fn main() -> Result<()> {
             eprintln!(" done\n");
 
             print_who_manages(&result, &output);
+            if owner_strict && !result.scan_failures.is_empty() {
+                std::process::exit(2);
+            }
             return Ok(());
         }
-        Command::Diff { .. } => unreachable!("handled before client init"),
+        Command::Snapshot {
+            action: SnapshotAction::Diff { .. },
+        } => unreachable!("handled before client init"),
 
         // ── Tree subcommand ──
         Command::Tree {

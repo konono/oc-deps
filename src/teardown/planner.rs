@@ -549,7 +549,7 @@ pub fn resolve_operator_targets(
         match found.len() {
             0 => {
                 bail!(
-                    "Operator '{}' not found. Use `oc-deps operators` to list available operators.",
+                    "Operator '{}' not found. Use `oc-deps operator list` to list available operators.",
                     query
                 );
             }
