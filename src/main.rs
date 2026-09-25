@@ -1347,11 +1347,7 @@ async fn main() -> Result<()> {
                         let csv_matched: Vec<usize> = ns_matched
                             .iter()
                             .copied()
-                            .filter(|&i| {
-                                all_operators[i].csv.name.contains(&target.csv_name_pattern)
-                                    || target.csv_name_pattern.contains(&all_operators[i].csv.name)
-                                    || all_operators[i].csv.name == target.csv_name_pattern
-                            })
+                            .filter(|&i| all_operators[i].csv.name == target.csv_name_pattern)
                             .collect();
                         if csv_matched.is_empty() {
                             bail!(

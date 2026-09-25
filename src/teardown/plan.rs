@@ -55,6 +55,7 @@ pub struct OperatorIdentitySnapshot {
 // ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClusterIdentity {
     /// Diagnostic / secondary check
     pub api_server: String,
@@ -85,6 +86,7 @@ pub struct SavedTeardownPlan {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 pub struct SavedOperatorTarget {
     pub package_name: String,
@@ -381,108 +383,117 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
             );
         }
     }
+    for phase in &plan.phases {
+        for res in &phase.resources {
+            if matches!(
+                res.action,
+                ExecutionAction::Delete | ExecutionAction::Expect | ExecutionAction::Wait
+            ) && res.uid.is_none()
+            {
+                anyhow::bail!(
+                    "Resource {}/{} in phase {} has action {} but no UID — plan may be tampered",
+                    res.kind,
+                    res.name,
+                    phase.phase,
+                    res.action
+                );
+            }
+        }
+    }
     Ok(plan)
 }
 
 /// Validate an execution plan against a freshly generated plan.
-/// Detects resource additions, removals, and UID changes.
+/// Uses sorted Vec of full tuples (phase, name, action, group, kind, ns, name, uid)
+/// to detect additions, removals, UID changes, phase moves, and duplicates.
 pub fn validate_execution_plan_against_fresh(
     saved: &ExecutionPlan,
     fresh: &ExecutionPlan,
 ) -> Result<(), Vec<String>> {
-    use std::collections::BTreeSet;
-
     let mut errors = Vec::new();
 
-    // Phase count
     if saved.phases.len() != fresh.phases.len() {
         errors.push(format!(
-            "Phase count drift: saved {}, fresh {}",
+            "Phase count drift: saved {} phases, fresh {} phases",
             saved.phases.len(),
             fresh.phases.len()
         ));
     }
 
-    // Build sets: (phase, action, group, kind, namespace, name)
-    type ResourceKey = (u32, String, String, String, Option<String>, String);
+    type FullTuple = (u32, String, String, String, String, String, String, String);
 
-    let build_set = |plan: &ExecutionPlan| -> BTreeSet<ResourceKey> {
-        plan.phases
+    let build_sorted = |plan: &ExecutionPlan| -> Vec<FullTuple> {
+        let mut tuples: Vec<FullTuple> = plan
+            .phases
             .iter()
             .flat_map(|p| {
                 p.resources.iter().map(move |r| {
                     (
                         p.phase,
+                        p.name.clone(),
                         r.action.to_string(),
                         r.group.clone(),
                         r.kind.clone(),
-                        r.namespace.clone(),
+                        r.namespace.clone().unwrap_or_default(),
                         r.name.clone(),
+                        r.uid.clone().unwrap_or_default(),
                     )
                 })
             })
-            .collect()
+            .collect();
+        tuples.sort();
+        tuples
     };
 
-    let saved_set = build_set(saved);
-    let fresh_set = build_set(fresh);
+    let saved_tuples = build_sorted(saved);
+    let fresh_tuples = build_sorted(fresh);
 
-    // Added in fresh (not in saved)
-    for item in fresh_set.difference(&saved_set) {
+    if saved_tuples.len() != fresh_tuples.len() {
         errors.push(format!(
-            "Resource added since plan: phase {}, {} {}/{} in {:?}",
-            item.0, item.1, item.3, item.5, item.4
+            "Phase count drift: saved {} resources, fresh {}",
+            saved_tuples.len(),
+            fresh_tuples.len()
         ));
     }
 
-    // Removed from fresh (was in saved)
-    for item in saved_set.difference(&fresh_set) {
-        errors.push(format!(
-            "Resource missing from cluster: phase {}, {} {}/{} in {:?}",
-            item.0, item.1, item.3, item.5, item.4
-        ));
+    for (i, (s, f)) in saved_tuples.iter().zip(fresh_tuples.iter()).enumerate() {
+        if s.7 != f.7
+            && s.0 == f.0
+            && s.2 == f.2
+            && s.3 == f.3
+            && s.4 == f.4
+            && s.5 == f.5
+            && s.6 == f.6
+        {
+            errors.push(format!(
+                "UID changed for {}/{} in {:?}: saved {} → fresh {}",
+                s.4,
+                s.6,
+                if s.5.is_empty() { None } else { Some(&s.5) },
+                s.7,
+                f.7
+            ));
+        } else if s != f {
+            errors.push(format!(
+                "Drift at position {}: phase {}/{} {} {}/{} → phase {}/{} {} {}/{}",
+                i, s.0, s.1, s.2, s.4, s.6, f.0, f.1, f.2, f.4, f.6
+            ));
+        }
     }
 
-    // UID changes for matching resources
-    let saved_uid_map: std::collections::HashMap<
-        (String, String, Option<String>, String),
-        Option<String>,
-    > = saved
-        .phases
-        .iter()
-        .flat_map(|p| {
-            p.resources.iter().map(|r| {
-                (
-                    (
-                        r.group.clone(),
-                        r.kind.clone(),
-                        r.namespace.clone(),
-                        r.name.clone(),
-                    ),
-                    r.uid.clone(),
-                )
-            })
-        })
-        .collect();
-
-    for phase in &fresh.phases {
-        for r in &phase.resources {
-            let key = (
-                r.group.clone(),
-                r.kind.clone(),
-                r.namespace.clone(),
-                r.name.clone(),
-            );
-            if let Some(saved_uid) = saved_uid_map.get(&key)
-                && saved_uid.is_some()
-                && r.uid.is_some()
-                && saved_uid != &r.uid
-            {
-                errors.push(format!(
-                    "UID changed for {}/{} in {:?}: saved {:?}, fresh {:?}",
-                    r.kind, r.name, r.namespace, saved_uid, r.uid
-                ));
-            }
+    if saved_tuples.len() > fresh_tuples.len() {
+        for s in &saved_tuples[fresh_tuples.len()..] {
+            errors.push(format!(
+                "Resource missing from cluster: phase {}/{} {} {}/{}",
+                s.0, s.1, s.2, s.4, s.6
+            ));
+        }
+    } else if fresh_tuples.len() > saved_tuples.len() {
+        for f in &fresh_tuples[saved_tuples.len()..] {
+            errors.push(format!(
+                "Resource added since plan: phase {}/{} {} {}/{}",
+                f.0, f.1, f.2, f.4, f.6
+            ));
         }
     }
 
