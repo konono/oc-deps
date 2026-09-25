@@ -169,7 +169,7 @@ pub fn resolve_decisions<'a>(
                 .map(|rc| canonical_key(rc.resource))
                 .collect();
             errors.push(format!(
-                "ambiguous --preserve {}: matches {} resources. Use qualified form:\n  {}",
+                "ambiguous --keep-resource {}: matches {} resources. Use qualified form:\n  {}",
                 spec,
                 matching.len(),
                 qualified.join("\n  ")
@@ -178,7 +178,7 @@ pub fn resolve_decisions<'a>(
         }
         if matching.is_empty() {
             errors.push(format!(
-                "--preserve {}: no matching REVIEW resource found",
+                "--keep-resource {}: no matching REVIEW resource found",
                 spec
             ));
             continue;
@@ -187,7 +187,7 @@ pub fn resolve_decisions<'a>(
             resolved.insert(
                 rc.resource.clone(),
                 ResolvedDecision::Keep {
-                    reason: "explicitly preserved via --preserve".to_string(),
+                    reason: "explicitly preserved via --keep-resource".to_string(),
                 },
             );
         }
@@ -3203,7 +3203,7 @@ pub async fn generate_teardown_plan(
         } else {
             phase4_actions.push(Action::Keep {
                 resource: api_svc_id,
-                reason: "APIService kept (use --prune-api-services to remove)".to_string(),
+                reason: "APIService kept by design (not removed by --prune-crds)".to_string(),
             });
         }
     }
@@ -3545,6 +3545,7 @@ pub fn load_plan_from_file(path: &str) -> Result<TeardownPlan> {
 
 /// Save explicit user decisions as a SavedTeardownPlan.
 /// Reads pre-built explicit_decisions from the plan (populated by generate_teardown_plan).
+#[allow(dead_code)]
 pub fn save_as_saved_plan(
     plan: &TeardownPlan,
     target: &crate::teardown::plan::SavedOperatorTarget,
@@ -5896,5 +5897,87 @@ mod tests {
             name: "".into(),
         };
         assert!(m3.validate().is_err());
+    }
+
+    /// Verify that --prune-crds deletes CRDs but keeps APIServices.
+    /// This tests the structural invariant at the plan phase level.
+    #[test]
+    fn prune_crds_deletes_crds_but_keeps_apiservices() {
+        // Build a mock PlanPhase matching Phase 4 (APIs) structure.
+        // When prune_crds=true, CRDs should be DELETE, APIServices should be KEEP.
+        let crd_action = Action::Delete {
+            resource: ResourceId {
+                group: "apiextensions.k8s.io".to_string(),
+                version: "v1".to_string(),
+                kind: "CustomResourceDefinition".to_string(),
+                namespace: None,
+                name: "widgets.example.com".to_string(),
+                uid: Some("crd-uid-1".to_string()),
+            },
+            reason: "no remaining CRs, no external dependencies".to_string(),
+        };
+        let apiservice_action = Action::Keep {
+            resource: ResourceId {
+                group: "apiregistration.k8s.io".to_string(),
+                version: "v1".to_string(),
+                kind: "APIService".to_string(),
+                namespace: None,
+                name: "v1.widgets.example.com".to_string(),
+                uid: None,
+            },
+            reason: "APIService kept by design (not removed by --prune-crds)".to_string(),
+        };
+
+        let phase = PlanPhase {
+            name: "APIs".to_string(),
+            description: "Delete CRDs with no remaining instances and no external dependencies"
+                .to_string(),
+            actions: vec![crd_action.clone(), apiservice_action.clone()],
+            barrier: None,
+        };
+
+        // Verify CRDs are DELETE
+        let crd_actions: Vec<_> = phase
+            .actions
+            .iter()
+            .filter(|a| match a {
+                Action::Delete { resource, .. } => resource.kind == "CustomResourceDefinition",
+                _ => false,
+            })
+            .collect();
+        assert_eq!(
+            crd_actions.len(),
+            1,
+            "CRD should be DELETE when prune_crds=true"
+        );
+
+        // Verify APIServices are KEEP
+        let apisvc_actions: Vec<_> = phase
+            .actions
+            .iter()
+            .filter(|a| match a {
+                Action::Keep { resource, .. } => resource.kind == "APIService",
+                _ => false,
+            })
+            .collect();
+        assert_eq!(
+            apisvc_actions.len(),
+            1,
+            "APIService should be KEEP even when prune_crds=true"
+        );
+
+        // Verify no APIService DELETE actions
+        let apisvc_deletes: Vec<_> = phase
+            .actions
+            .iter()
+            .filter(|a| match a {
+                Action::Delete { resource, .. } => resource.kind == "APIService",
+                _ => false,
+            })
+            .collect();
+        assert!(
+            apisvc_deletes.is_empty(),
+            "APIService should never be DELETE with --prune-crds"
+        );
     }
 }

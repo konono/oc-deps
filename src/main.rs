@@ -57,7 +57,7 @@ use crate::teardown::journal::{
 use crate::teardown::permit::MutationGate;
 use crate::teardown::planner::{
     DecisionPolicy, generate_teardown_plan, load_plan_from_file, print_teardown_plan,
-    resolve_operator_targets, save_as_saved_plan, save_plan_to_file,
+    resolve_operator_targets, save_plan_to_file,
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
 
@@ -1107,19 +1107,20 @@ async fn main() -> Result<()> {
                 TeardownAction::Plan {
                     operators: operator_queries,
                     output,
-                    no_cache,
+                    refresh_discovery,
                     prune_crds,
                     approve_scope,
                     approve_resource,
                     keep_resource,
                     file: save_plan_path,
                 } => {
+                    let no_cache = refresh_discovery;
                     let mut approve_delete: Vec<String> = approve_scope
                         .iter()
                         .map(|s| s.cli_arg().to_string())
                         .collect();
                     approve_delete.extend(approve_resource.iter().cloned());
-                    let preserve = keep_resource;
+                    let preserve = keep_resource.clone();
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -1161,30 +1162,83 @@ async fn main() -> Result<()> {
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                     }
 
-                    // Save as SavedTeardownPlan (for --plan replay)
-                    if !target_operators.is_empty() {
-                        let pkg_name = match &target_operators[0].package_name {
-                            Some(n) => n.clone(),
-                            None => {
-                                if save_plan_path.is_some() {
-                                    bail!(
-                                        "Cannot save plan: operator has no package_name (Subscription required)"
-                                    );
+                    // Build and save ExecutionPlan
+                    if let Some(ref save_path) = save_plan_path {
+                        let cluster_id = config.cluster_url.to_string();
+                        let exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> =
+                            target_operators
+                                .iter()
+                                .map(|op| crate::teardown::plan::SavedOperatorTarget {
+                                    package_name: op.package_name.clone().unwrap_or_default(),
+                                    install_namespace: op.install_namespace.clone(),
+                                    csv_name_pattern: op.csv.name.clone(),
+                                })
+                                .collect();
+                        let exec_phases: Vec<crate::teardown::plan::ExecutionPhase> = plan
+                            .phases
+                            .iter()
+                            .enumerate()
+                            .map(|(i, phase)| {
+                                let resources = phase
+                                    .actions
+                                    .iter()
+                                    .map(|action| {
+                                        use crate::teardown::planner::Action;
+                                        let (rid, act_str, reason) = match action {
+                                            Action::Delete { resource, reason } => {
+                                                (resource, "DELETE", reason.as_str())
+                                            }
+                                            Action::ExpectGone { resource, reason } => {
+                                                (resource, "EXPECT", reason.as_str())
+                                            }
+                                            Action::WaitGone { resource } => (resource, "WAIT", ""),
+                                            Action::Keep { resource, reason } => {
+                                                (resource, "KEEP", reason.as_str())
+                                            }
+                                            Action::Review {
+                                                resource, reason, ..
+                                            } => (resource, "REVIEW", reason.as_str()),
+                                        };
+                                        crate::teardown::plan::ExecutionResource {
+                                            group: rid.group.clone(),
+                                            kind: rid.kind.clone(),
+                                            namespace: rid.namespace.clone(),
+                                            name: rid.name.clone(),
+                                            uid: rid.uid.clone(),
+                                            action: act_str.to_string(),
+                                            approval: None,
+                                            basis: if reason.is_empty() {
+                                                None
+                                            } else {
+                                                Some(reason.to_string())
+                                            },
+                                        }
+                                    })
+                                    .collect();
+                                crate::teardown::plan::ExecutionPhase {
+                                    phase: (i + 1) as u32,
+                                    name: phase.name.clone(),
+                                    resources,
                                 }
-                                eprintln!("⚠ Cannot save replay plan: no package_name");
-                                String::new()
-                            }
+                            })
+                            .collect();
+                        let exec_plan = crate::teardown::plan::ExecutionPlan {
+                            schema_version: crate::teardown::plan::EXECUTION_PLAN_SCHEMA_VERSION,
+                            cluster_id,
+                            created_at: plan.snapshot_taken_at.clone(),
+                            targets: exec_targets,
+                            prune_crds,
+                            approve_scopes: approve_scope
+                                .iter()
+                                .map(|s| s.cli_arg().to_string())
+                                .collect(),
+                            approve_resources: approve_resource,
+                            keep_resources: keep_resource,
+                            phases: exec_phases,
                         };
-                        if !pkg_name.is_empty() {
-                            let target = crate::teardown::plan::SavedOperatorTarget {
-                                package_name: pkg_name.to_string(),
-                                install_namespace: target_operators[0].install_namespace.clone(),
-                                csv_name_pattern: target_operators[0].csv.name.clone(),
-                            };
-                            match save_as_saved_plan(&plan, &target, save_plan_path.as_deref()) {
-                                Ok(path) => eprintln!("📄 Saved plan for replay: {}", path),
-                                Err(e) => eprintln!("⚠ Could not save replay plan: {}", e),
-                            }
+                        match crate::teardown::plan::save_execution_plan(&exec_plan, save_path) {
+                            Ok(()) => eprintln!("📄 Execution plan saved to {}", save_path),
+                            Err(e) => eprintln!("⚠ Could not save execution plan: {}", e),
                         }
                     }
 
@@ -1197,27 +1251,34 @@ async fn main() -> Result<()> {
                     );
                 }
                 TeardownAction::Apply {
-                    operators: operator_queries,
+                    plan: plan_file,
                     refresh_discovery,
                     dry_run,
-                    prune_crds,
-                    approve_scope,
-                    approve_resource,
-                    keep_resource,
                     non_interactive,
                     script,
                     tui: use_tui,
-                    file: save_plan_path,
                 } => {
-                    let mut approve_delete: Vec<String> = approve_scope
-                        .iter()
-                        .map(|s| s.cli_arg().to_string())
-                        .collect();
-                    approve_delete.extend(approve_resource.iter().cloned());
-                    let preserve = keep_resource;
                     let force = false; // advisory warnings always shown
                     let approve_finalizer_recovery = true; // always enabled
                     let no_cache = refresh_discovery;
+
+                    // Load execution plan
+                    let exec_plan = crate::teardown::plan::load_execution_plan(&plan_file)?;
+                    eprintln!("📄 Loaded execution plan from {}", plan_file);
+
+                    // Validate cluster identity
+                    let current_cluster = config.cluster_url.to_string();
+                    if exec_plan.cluster_id != current_cluster {
+                        let msg = format!(
+                            "Execution plan was created for cluster '{}' but current cluster is '{}'",
+                            exec_plan.cluster_id, current_cluster
+                        );
+                        if non_interactive {
+                            bail!("{}", msg);
+                        } else {
+                            eprintln!("⚠ {}", msg);
+                        }
+                    }
 
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
@@ -1229,11 +1290,27 @@ async fn main() -> Result<()> {
                     let all_operators = discover_operators(&client, &kind_map).await?;
                     eprintln!(" found {} operators", all_operators.len());
 
+                    // Resolve targets from execution plan
+                    let operator_queries: Vec<String> = exec_plan
+                        .targets
+                        .iter()
+                        .map(|t| t.package_name.clone())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if operator_queries.is_empty() {
+                        bail!("Execution plan has no valid operator targets");
+                    }
                     let target_indices =
                         resolve_operator_targets(&operator_queries, &all_operators)?;
 
                     let target_operators: Vec<&_> =
                         target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+                    // Reconstruct approval policy from execution plan
+                    let mut approve_delete: Vec<String> = exec_plan.approve_scopes.clone();
+                    approve_delete.extend(exec_plan.approve_resources.iter().cloned());
+                    let preserve = exec_plan.keep_resources.clone();
+                    let prune_crds = exec_plan.prune_crds;
 
                     let policy = DecisionPolicy::from_args(&approve_delete, &preserve);
                     let plan = generate_teardown_plan(
@@ -1248,6 +1325,16 @@ async fn main() -> Result<()> {
                         &policy,
                     )
                     .await?;
+
+                    // Drift detection: compare phase counts
+                    if plan.phases.len() != exec_plan.phases.len() {
+                        eprintln!(
+                            "⚠ Phase count drift: execution plan has {} phases, fresh plan has {}",
+                            exec_plan.phases.len(),
+                            plan.phases.len()
+                        );
+                    }
+
                     #[allow(unused)]
                     let _saved_plan: Option<
                         crate::teardown::plan::SavedTeardownPlan,
@@ -2354,91 +2441,7 @@ async fn main() -> Result<()> {
                                 }
                             }
 
-                            // Save plan with residual decisions if --file provided
-                            if let Some(ref save_path) = save_plan_path
-                                && final_state == RunState::ApplyCompleted
-                                && !target_operators.is_empty()
-                                && let Some(store) = &journal_store
-                            {
-                                let j = store.read().await;
-                                let mut residual_decisions = Vec::new();
-                                // Build from cleanup_decisions + last_residual_audit
-                                let mut seen_residual = std::collections::HashSet::new();
-                                for cd in &j.cleanup_decisions {
-                                    let dedup_key = (
-                                        cd.resource.group.clone(),
-                                        cd.resource.kind.clone(),
-                                        cd.resource.namespace.clone(),
-                                        cd.resource.name.clone(),
-                                    );
-                                    if !seen_residual.insert(dedup_key) {
-                                        continue;
-                                    }
-                                    let evidence = build_residual_evidence(
-                                        &cd.resource,
-                                        &j.last_residual_audit,
-                                    );
-                                    let approval = if evidence.is_empty() {
-                                        crate::teardown::plan::ApprovalKind::ExplicitUnattributed
-                                    } else {
-                                        crate::teardown::plan::ApprovalKind::Explicit
-                                    };
-                                    residual_decisions.push(crate::teardown::plan::SavedDecision {
-                                        match_spec:
-                                            crate::teardown::plan::ResourceMatch::from_resource_id(
-                                                &cd.resource,
-                                            ),
-                                        action: crate::teardown::plan::SavedAction::Delete,
-                                        approval,
-                                        basis: crate::teardown::plan::DecisionBasis {
-                                            provenance: None,
-                                            review_category: None,
-                                            discovery_source: None,
-                                            decisive_evidence: evidence,
-                                        },
-                                    });
-                                }
-                                drop(j);
-
-                                let pkg_name =
-                                    target_operators[0].package_name.as_deref().unwrap_or("");
-                                if !pkg_name.is_empty() {
-                                    let target = crate::teardown::plan::SavedOperatorTarget {
-                                        package_name: pkg_name.to_string(),
-                                        install_namespace: target_operators[0]
-                                            .install_namespace
-                                            .clone(),
-                                        csv_name_pattern: target_operators[0].csv.name.clone(),
-                                    };
-                                    let saved_plan = plan.clone();
-                                    // Merge residual decisions from cleanup into saved plan
-                                    match save_as_saved_plan(&saved_plan, &target, Some(save_path))
-                                    {
-                                        Ok(path) => {
-                                            if !residual_decisions.is_empty()
-                                                && let Ok(data) = std::fs::read_to_string(&path)
-                                                && let Ok(mut sp) = serde_json::from_str::<
-                                                    crate::teardown::plan::SavedTeardownPlan,
-                                                >(
-                                                    &data
-                                                )
-                                            {
-                                                sp.residual_decisions = residual_decisions;
-                                                let _ = std::fs::write(
-                                                    &path,
-                                                    serde_json::to_string_pretty(&sp)
-                                                        .unwrap_or_default(),
-                                                );
-                                            }
-                                            eprintln!(
-                                                "📄 Saved plan with residual decisions: {}",
-                                                path
-                                            );
-                                        }
-                                        Err(e) => eprintln!("⚠ Could not save plan: {}", e),
-                                    }
-                                }
-                            }
+                            // (Execution plan saving is done by `teardown plan --file`)
 
                             // Non-zero exit for non-ApplyCompleted states
                             match final_state {
@@ -2498,9 +2501,10 @@ async fn main() -> Result<()> {
                 }
                 TeardownAction::Status {
                     operators: operator_queries,
-                    no_cache,
+                    refresh_discovery,
                     plan_file,
                 } => {
+                    let no_cache = refresh_discovery;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, _gvr_map, gk_map, _gvk_map) =
@@ -2543,8 +2547,9 @@ async fn main() -> Result<()> {
                 TeardownAction::Coverage {
                     operators: operator_queries,
                     output,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let (kind_map, gvr_map, gk_map, gvk_map) =
                         build_kind_lookup_cached(&client, &config, no_cache).await?;
                     let all_operators = discover_operators(&client, &kind_map).await?;
@@ -2631,37 +2636,12 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                TeardownAction::Inspect {
-                    operator: operator_query,
-                    output,
-                    no_cache,
-                } => {
-                    let t0 = Instant::now();
-                    eprintln!("🔍 Discovering API resources...");
-                    let (kind_map, gvr_map, gk_map, _) =
-                        build_kind_lookup_cached(&client, &config, no_cache).await?;
-                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
-
-                    eprint!("🔍 Discovering operators...");
-                    let all_operators = discover_operators(&client, &kind_map).await?;
-                    eprintln!(" found {} operators", all_operators.len());
-
-                    let target_indices =
-                        resolve_operator_targets(&[operator_query], &all_operators)?;
-                    let target_op = &all_operators[target_indices[0]];
-
-                    let inspection = inspect_operator_with_options(
-                        &client, target_op, &kind_map, &gvr_map, &gk_map, false,
-                    )
-                    .await?;
-
-                    print_inspection_top(&inspection, &output, false);
-                }
                 TeardownAction::Explain {
                     operators: operator_queries,
                     resource,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -2707,8 +2687,9 @@ async fn main() -> Result<()> {
                 TeardownAction::Resume {
                     operator,
                     run,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let cluster_id = journal::fetch_cluster_identity(&client).await?;
 
                     let found = if let Some(run_id) = run {
@@ -4033,9 +4014,10 @@ async fn main() -> Result<()> {
                 }
                 TeardownAction::Batch {
                     config,
-                    no_cache,
+                    refresh_discovery,
                     dry_run,
                 } => {
+                    let no_cache = refresh_discovery;
                     let config_content = std::fs::read_to_string(&config)
                         .with_context(|| format!("Failed to read config: {}", config))?;
                     let parsed: ApplySetConfig = serde_json::from_str(&config_content)
@@ -6676,6 +6658,7 @@ fn print_network_tree(
     }
 }
 
+#[allow(dead_code)]
 fn build_residual_evidence(
     rid: &crate::kube::resource::ResourceId,
     audit: &Option<crate::teardown::audit::ResidualAudit>,

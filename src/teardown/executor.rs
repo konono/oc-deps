@@ -259,7 +259,7 @@ pub async fn execute_plan_with_store(
         for name in &critical_failures {
             eprintln!("  {}", name);
         }
-        bail!("Critical preflight checks failed. Cannot override with --force.");
+        bail!("Critical preflight checks failed. Cannot override.");
     }
 
     let non_critical_failures: Vec<&str> = plan
@@ -431,7 +431,7 @@ pub async fn execute_plan_with_store(
         // Pre-controller guard: if THIS phase deletes a CSV, check all REVIEW
         // resources for finalizers first. Placed here (phase entry, after gate
         // acquire, after empty-skip) so it runs on resume and across empty phases.
-        // --force does NOT bypass this check.
+        // This check cannot be bypassed.
         if !dry_run {
             let this_phase_deletes_csv = phase.actions.iter().any(|a| {
                 matches!(a, Action::Delete { resource, .. } if resource.kind == "ClusterServiceVersion")

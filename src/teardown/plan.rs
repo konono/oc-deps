@@ -242,6 +242,63 @@ pub enum DiscoverySourceSer {
 }
 
 // ──────────────────────────────────────────────────────────────
+//  ExecutionPlan — cluster-bound plan with UIDs for safe replay
+// ──────────────────────────────────────────────────────────────
+
+pub const EXECUTION_PLAN_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExecutionPlan {
+    pub schema_version: u32,
+    pub cluster_id: String,
+    pub created_at: String,
+    pub targets: Vec<SavedOperatorTarget>,
+    pub prune_crds: bool,
+    pub approve_scopes: Vec<String>,
+    pub approve_resources: Vec<String>,
+    pub keep_resources: Vec<String>,
+    pub phases: Vec<ExecutionPhase>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExecutionPhase {
+    pub phase: u32,
+    pub name: String,
+    pub resources: Vec<ExecutionResource>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExecutionResource {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub uid: Option<String>,
+    pub action: String,
+    pub approval: Option<String>,
+    pub basis: Option<String>,
+}
+
+pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<()> {
+    let json = serde_json::to_string_pretty(plan)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
+    let data = std::fs::read_to_string(path)?;
+    let plan: ExecutionPlan = serde_json::from_str(&data)?;
+    if plan.schema_version != EXECUTION_PLAN_SCHEMA_VERSION {
+        anyhow::bail!(
+            "Execution plan schema version {} is not supported (expected {})",
+            plan.schema_version,
+            EXECUTION_PLAN_SCHEMA_VERSION
+        );
+    }
+    Ok(plan)
+}
+
+// ──────────────────────────────────────────────────────────────
 //  PlannedPreserved — for ExecutionResult kept/reviewed tracking
 // ──────────────────────────────────────────────────────────────
 
