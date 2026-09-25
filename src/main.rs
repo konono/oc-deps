@@ -5273,6 +5273,7 @@ async fn main() -> Result<()> {
                         "LB Provider",
                         "Pool",
                         "Advertisement",
+                        "Observed",
                         "Ingress/Route",
                         "Warnings",
                     ]);
@@ -5338,6 +5339,9 @@ async fn main() -> Result<()> {
                                 }
                             })
                             .unwrap_or_default();
+                        let observed_str = mlb
+                            .map(|r| r.observation.observed_state.clone())
+                            .unwrap_or_default();
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
@@ -5347,6 +5351,7 @@ async fn main() -> Result<()> {
                             lb_provider,
                             pool_str,
                             ad_str,
+                            observed_str,
                             ing_str,
                             warn_str,
                         ]);
@@ -5772,6 +5777,57 @@ fn network_paths_to_json(
                     }
                     obj
                 }).collect();
+                let obs = &mlb.observation;
+                let bgp_node_json: Vec<serde_json::Value> = obs
+                    .bgp_advertised_nodes
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "node": n.node,
+                            "peerAddress": n.peer_address,
+                            "advertisedPrefixes": n.advertised_prefixes,
+                        })
+                    })
+                    .collect();
+                let peers_json: Vec<serde_json::Value> = obs
+                    .related_peers
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "name": p.name,
+                            "namespace": p.namespace,
+                            "peerAddress": p.peer_address,
+                            "peerASN": p.peer_asn,
+                            "myASN": p.my_asn,
+                            "sourceAddress": p.source_address,
+                            "bfdProfile": p.bfd_profile,
+                            "holdTime": p.hold_time,
+                            "keepaliveTime": p.keepalive_time,
+                            "routerID": p.router_id,
+                            "nodeSelectors": p.node_selectors.iter().map(|s| {
+                                serde_json::json!({
+                                    "matchLabels": s.match_labels,
+                                })
+                            }).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+                let bfd_json: Vec<serde_json::Value> = obs
+                    .related_bfd_profiles
+                    .iter()
+                    .map(|b| {
+                        serde_json::json!({
+                            "name": b.name,
+                            "namespace": b.namespace,
+                            "detectMultiplier": b.detect_multiplier,
+                            "receiveInterval": b.receive_interval,
+                            "transmitInterval": b.transmit_interval,
+                            "echoInterval": b.echo_interval,
+                            "minimumTtl": b.minimum_ttl,
+                            "passiveMode": b.passive_mode,
+                        })
+                    })
+                    .collect();
                 result["metallb"] = serde_json::json!({
                     "provider": mlb.provider,
                     "requestedIPs": mlb.requested_ips,
@@ -5779,6 +5835,16 @@ fn network_paths_to_json(
                     "pools": pools_json,
                     "advertisements": ads_json,
                     "warnings": mlb.warnings,
+                    "observation": {
+                        "observedState": obs.observed_state,
+                        "l2AdvertisedNodes": obs.l2_advertised_nodes,
+                        "l2StatusResources": obs.l2_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
+                        "bgpNodeStatus": bgp_node_json,
+                        "bgpStatusResources": obs.bgp_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
+                        "relatedPeers": peers_json,
+                        "relatedBfdProfiles": bfd_json,
+                        "note": "Status represents advertisement intent, not BGP session establishment"
+                    }
                 });
             }
             result
@@ -5992,6 +6058,48 @@ fn print_network_tree(
                         } else {
                             ad.candidate_nodes.join(", ")
                         }
+                    );
+                }
+            }
+            // Observed state
+            if !mlb.observation.observed_state.is_empty() {
+                println!("    Observed: {}", mlb.observation.observed_state);
+                if !mlb.observation.l2_advertised_nodes.is_empty() {
+                    println!(
+                        "      L2 nodes: {}",
+                        mlb.observation.l2_advertised_nodes.join(", ")
+                    );
+                }
+                for bgp_node in &mlb.observation.bgp_advertised_nodes {
+                    let peer = bgp_node
+                        .peer_address
+                        .as_deref()
+                        .map(|a| format!(" -> {}", a))
+                        .unwrap_or_default();
+                    println!("      BGP node: {}{}", bgp_node.node, peer);
+                    if !bgp_node.advertised_prefixes.is_empty() {
+                        println!(
+                            "        prefixes: {}",
+                            bgp_node.advertised_prefixes.join(", ")
+                        );
+                    }
+                }
+                for peer in &mlb.observation.related_peers {
+                    let addr = peer.peer_address.as_deref().unwrap_or("?");
+                    let asn = peer
+                        .peer_asn
+                        .map(|a| format!(" ASN:{}", a))
+                        .unwrap_or_default();
+                    println!("      BGP peer: BGPPeer/{} ({}{})", peer.name, addr, asn);
+                }
+                if mlb.observation.bgp_advertised_nodes.is_empty()
+                    && mlb
+                        .advertisements
+                        .iter()
+                        .any(|a| a.kind == "BGPAdvertisement")
+                {
+                    println!(
+                        "    BGP session: unknown (status is advertisement intent, not session state)"
                     );
                 }
             }
