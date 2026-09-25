@@ -102,10 +102,16 @@ impl DecisionPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ApprovalOrigin {
+    BulkLabelOnly,
+    Other,
+}
+
 pub enum ResolvedDecision {
     Delete {
         reason: String,
+        approval_origin: ApprovalOrigin,
     },
     Keep {
         reason: String,
@@ -263,6 +269,7 @@ pub fn resolve_decisions<'a>(
             rc.resource.clone(),
             ResolvedDecision::Delete {
                 reason: reason.to_string(),
+                approval_origin: ApprovalOrigin::Other,
             },
         );
     }
@@ -323,10 +330,16 @@ pub fn resolve_decisions<'a>(
                     _ => "approved via bulk approval",
                 }
             };
+            let origin = if label_only_matches {
+                ApprovalOrigin::BulkLabelOnly
+            } else {
+                ApprovalOrigin::Other
+            };
             resolved.insert(
                 rc.resource.clone(),
                 ResolvedDecision::Delete {
                     reason: reason.to_string(),
+                    approval_origin: origin,
                 },
             );
         }
@@ -2491,7 +2504,7 @@ pub async fn generate_teardown_plan(
         // Check pre-resolved decision
         if let Some(decision) = resolved.get(&cr.id) {
             match decision {
-                ResolvedDecision::Delete { reason } => {
+                ResolvedDecision::Delete { reason, .. } => {
                     return Action::Delete {
                         resource: cr.id.clone(),
                         reason: reason.clone(),
@@ -2722,27 +2735,51 @@ pub async fn generate_teardown_plan(
     };
 
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
+    let mut deferred_remaining_actions: Vec<Action> = Vec::new();
+
+    // Helper: check if a CR's resolved decision is bulk label-only
+    let is_label_only_delete = |cr: &CrInstance| -> bool {
+        resolved_decisions.get(&cr.id).is_some_and(|d| {
+            matches!(
+                d,
+                ResolvedDecision::Delete {
+                    approval_origin: ApprovalOrigin::BulkLabelOnly,
+                    ..
+                }
+            )
+        })
+    };
 
     if layers.len() <= 1 {
-        let mut phase_actions: Vec<Action> = Vec::new();
+        let mut trigger_actions: Vec<Action> = Vec::new();
+        let mut remaining_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
+            let action = cr_to_action(cr, GraphPosition::Root, &resolved_decisions);
+            if is_label_only_delete(cr) {
+                remaining_actions.push(action);
+            } else {
+                trigger_actions.push(action);
+            }
         }
         for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Descendant,
-                &resolved_decisions,
-            ));
+            let action = cr_to_action(cr, GraphPosition::Descendant, &resolved_decisions);
+            if is_label_only_delete(cr) {
+                remaining_actions.push(action);
+            } else {
+                trigger_actions.push(action);
+            }
         }
         for cr in &independent_crs {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Independent,
-                &resolved_decisions,
-            ));
+            let action = cr_to_action(cr, GraphPosition::Independent, &resolved_decisions);
+            if is_label_only_delete(cr) {
+                remaining_actions.push(action);
+            } else {
+                trigger_actions.push(action);
+            }
         }
+
+        let phase_actions = trigger_actions;
 
         let conds: Vec<String> = phase_actions
             .iter()
@@ -2764,6 +2801,7 @@ pub async fn generate_teardown_plan(
                 conditions: conds,
             }),
         });
+        deferred_remaining_actions = remaining_actions;
     } else {
         // Multiple layers — split operands by owning operator's layer
         for (layer_idx, layer) in layers.iter().enumerate() {
@@ -2950,11 +2988,12 @@ pub async fn generate_teardown_plan(
 
     enforce_expect_delete_invariant(&mut operand_phases, &uid_to_owner_uids);
 
-    // Remaining cleanup phase (empty catch-all)
+    // Remaining cleanup phase — includes deferred label-only bulk DELETEs
     let phase_remaining = PlanPhase {
         name: "Remaining cleanup".to_string(),
-        description: "Delete any CRs that were not cleaned up by controller".to_string(),
-        actions: vec![],
+        description: "Delete label-only approved CRs after controller cleanup completes"
+            .to_string(),
+        actions: deferred_remaining_actions,
         barrier: None,
     };
 
@@ -3009,7 +3048,7 @@ pub async fn generate_teardown_plan(
                 && let Some(decision) = resolved_decisions.get(resource)
             {
                 return match decision {
-                    ResolvedDecision::Delete { reason } => Action::Delete {
+                    ResolvedDecision::Delete { reason, .. } => Action::Delete {
                         resource: resource.clone(),
                         reason: reason.clone(),
                     },
