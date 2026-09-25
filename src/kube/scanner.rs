@@ -269,9 +269,9 @@ pub async fn scan_namespace_with_extra_apis(
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let mut extra = Vec::new();
     if !target_group.is_empty()
-        && !kind_map
+        && kind_map
             .get(target_kind)
-            .is_some_and(|ki| ki.group == target_group)
+            .is_none_or(|ki| ki.group != target_group)
         && let Some(info) = gk_map.get(&(target_group.to_string(), target_kind.to_string()))
         && info.namespaced
         && info.listable
@@ -603,172 +603,8 @@ pub async fn scan_namespace_with_semaphore(
     Ok((index, warnings))
 }
 
-#[allow(clippy::too_many_arguments, dead_code)]
-pub async fn scan_single_api_into_index(
-    client: &Client,
-    group: &str,
-    kind: &str,
-    namespace: &str,
-    kind_map: &KindMap,
-    gk_map: &GroupKindMap,
-    index: &mut NamespaceIndex,
-    refs: bool,
-    show_spec: bool,
-) -> Vec<ScanWarning> {
-    if group.is_empty() {
-        return vec![];
-    }
-    if let Some(km_info) = kind_map.get(kind)
-        && km_info.group == group
-    {
-        return vec![];
-    }
-    let Some(info) = gk_map.get(&(group.to_string(), kind.to_string())) else {
-        return vec![];
-    };
-    if !info.namespaced {
-        return vec![];
-    }
-    let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(kind);
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
-
-    let items = match crate::analyzers::selector::list_with_retry_and_timeout(
-        &api,
-        &info.group,
-        &info.version,
-        &info.plural,
-    )
-    .await
-    {
-        Ok(objects) => {
-            let mut items: Vec<ScanItem> = Vec::new();
-            for obj in objects {
-                let data = obj.data;
-                let metadata = obj.metadata;
-                let Some(uid) = metadata.uid else {
-                    continue;
-                };
-                let Some(res_name) = metadata.name else {
-                    continue;
-                };
-                let ns = metadata.namespace;
-                let owner_refs: Vec<OwnerRef> = metadata
-                    .owner_references
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|r| OwnerRef {
-                        api_version: r.api_version,
-                        kind: r.kind,
-                        name: r.name,
-                        uid: r.uid,
-                        controller: r.controller.unwrap_or(false),
-                    })
-                    .collect();
-                let (wk_refs, spec_strs) = if refs {
-                    let wk = extract_well_known_refs(&data);
-                    let mut strs = Vec::new();
-                    if let Some(spec) = data.get("spec") {
-                        let mut path = vec!["spec".to_string()];
-                        collect_string_values(spec, &mut path, &mut strs);
-                    }
-                    (wk, strs)
-                } else {
-                    (vec![], vec![])
-                };
-                let labels = metadata.labels.unwrap_or_default().into_iter().collect();
-                let annotations = metadata
-                    .annotations
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                let pod_template = if show_spec {
-                    extract_pod_template(kind, &data)
-                } else {
-                    None
-                };
-                items.push((
-                    ResourceInfo {
-                        group: info.group.clone(),
-                        kind: kind.to_string(),
-                        name: res_name,
-                        namespace: ns,
-                        uid,
-                        owner_refs,
-                        labels,
-                        annotations,
-                        pod_template,
-                    },
-                    wk_refs,
-                    spec_strs,
-                ));
-            }
-            items
-        }
-        Err(warning) => return vec![warning],
-    };
-
-    let mut ref_data: Vec<RefData> = Vec::new();
-    for (info, wk_refs, spec_strs) in items {
-        if refs {
-            ref_data.push((info.uid.clone(), info.name.clone(), wk_refs, spec_strs));
-        }
-        index.insert(info);
-    }
-
-    if refs {
-        let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
-        for info in index.by_uid.values() {
-            by_name
-                .entry(info.name.clone())
-                .or_default()
-                .push(info.kind.clone());
-        }
-        for (uid, self_name, wk_refs, spec_strs) in ref_data {
-            let already_found: HashSet<(String, String)> = wk_refs
-                .iter()
-                .map(|r| (r.target_kind.clone(), r.target_name.clone()))
-                .collect();
-            let heuristic_refs =
-                resolve_name_matches(&spec_strs, &self_name, &by_name, &already_found);
-            let mut all_refs = wk_refs;
-            all_refs.extend(heuristic_refs);
-            if !all_refs.is_empty() {
-                index.refs_from.insert(uid.clone(), all_refs);
-            }
-        }
-        for (source_uid, source_refs) in &index.refs_from {
-            if let Some(source_info) = index.by_uid.get(source_uid) {
-                let source_kind = source_info.kind.clone();
-                let source_name = source_info.name.clone();
-                let source_ns = source_info.namespace.clone();
-                for sref in source_refs {
-                    if let Some(target_uid) = index.lookup_by_kind_name(
-                        None,
-                        &sref.target_kind,
-                        &sref.target_name,
-                        source_ns.as_deref(),
-                    ) {
-                        index
-                            .refs_to
-                            .entry(target_uid.clone())
-                            .or_default()
-                            .push(IncomingRef {
-                                source_kind: source_kind.clone(),
-                                source_name: source_name.clone(),
-                                field_path: sref.field_path.clone(),
-                            });
-                    }
-                }
-            }
-        }
-        for incoming in index.refs_to.values_mut() {
-            let mut seen = HashSet::new();
-            incoming.retain(|r| seen.insert((r.source_kind.clone(), r.source_name.clone())));
-        }
-    }
-    vec![]
-}
+// scan_single_api_into_index removed — replaced by scan_namespace_with_extra_apis
+// which integrates extra APIs into the initial scan_targets before parallel LIST.
 
 pub async fn resolve_missing_parents(
     index: &mut NamespaceIndex,

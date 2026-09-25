@@ -21,8 +21,8 @@ use crate::analyzers::olm::{
     print_who_manages, who_manages,
 };
 use crate::analyzers::selector::{
-    build_network_inventory, evaluate_network_postures, find_network_paths,
-    get_service_selected_pods,
+    build_network_inventory, build_service_network_path, evaluate_network_postures,
+    find_network_paths, get_service_selected_pods,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
 use crate::cli::{Args, Command, Direction, OutputFormat, Scope, ShowField, TeardownAction};
@@ -5141,118 +5141,14 @@ async fn main() -> Result<()> {
 
             let group_for_lookup = Some(target_group.as_str()).filter(|g| !g.is_empty());
 
-            // For Service target: build path directly from inventory
+            // For Service target: build path directly from inventory using pure helper
             let (all_paths, postures): (Vec<(String, _)>, Vec<_>) = if kind == "Service" {
                 let target_svc = inventory.services.iter().find(|s| s.name == name);
                 let Some(target_svc) = target_svc else {
                     bail!("Service/{} not found in namespace '{}'", name, namespace);
                 };
-                let svc_ep_slices: Vec<_> = inventory
-                    .endpoint_slices
-                    .iter()
-                    .filter(|es| es.service_name.as_deref() == Some(&name))
-                    .cloned()
-                    .collect();
-                let svc_ingresses: Vec<_> = inventory
-                    .ingresses
-                    .iter()
-                    .filter(|i| i.backend_service == name)
-                    .cloned()
-                    .collect();
-                let mut summary = crate::analyzers::selector::EndpointSummary::default();
-                for es in &svc_ep_slices {
-                    for ep in &es.endpoints {
-                        match ep.conditions_ready {
-                            Some(true) => summary.ready += 1,
-                            Some(false) => summary.not_ready += 1,
-                            None => summary.unknown += 1,
-                        }
-                        if ep.conditions_serving == Some(true) {
-                            summary.serving += 1;
-                        }
-                        if ep.conditions_terminating == Some(true) {
-                            summary.terminating += 1;
-                        }
-                    }
-                }
-                summary.effective_ready = summary.ready + summary.unknown;
-                let mut selector_pods = Vec::new();
-                let mut target_ref_pods = Vec::new();
-                if target_svc.has_selector {
-                    for info in index.by_uid.values() {
-                        if info.kind == "Pod"
-                            && info.namespace.as_deref() == Some(&namespace)
-                            && target_svc
-                                .selector
-                                .iter()
-                                .all(|(k, v)| info.labels.get(k) == Some(v))
-                        {
-                            selector_pods.push(format!("Pod/{}", info.name));
-                        }
-                    }
-                }
-                let mut pod_labels_list = Vec::new();
-                let mut seen_pod_uids = std::collections::HashSet::new();
-                for pod_str in &selector_pods {
-                    let pod_name = pod_str.strip_prefix("Pod/").unwrap_or(pod_str);
-                    for info in index.by_uid.values() {
-                        if info.kind == "Pod"
-                            && info.name == pod_name
-                            && info.namespace.as_deref() == Some(&namespace)
-                            && seen_pod_uids.insert(info.uid.clone())
-                        {
-                            pod_labels_list.push((
-                                info.name.clone(),
-                                info.uid.clone(),
-                                info.labels.clone(),
-                            ));
-                            break;
-                        }
-                    }
-                }
-                for es in &svc_ep_slices {
-                    for ep in &es.endpoints {
-                        if let Some(tr) = &ep.target_ref
-                            && tr.kind.as_deref() == Some("Pod")
-                            && let Some(pod_name) = &tr.name
-                        {
-                            let tr_ns = tr.namespace.as_deref().unwrap_or(&namespace);
-                            for info in index.by_uid.values() {
-                                if info.kind == "Pod"
-                                    && info.name == *pod_name
-                                    && info.namespace.as_deref() == Some(tr_ns)
-                                {
-                                    let uid_valid = match &tr.uid {
-                                        Some(tr_uid) => *tr_uid == info.uid,
-                                        None => false,
-                                    };
-                                    if uid_valid {
-                                        let pod_ref = format!("Pod/{}", pod_name);
-                                        if !target_ref_pods.contains(&pod_ref) {
-                                            target_ref_pods.push(pod_ref);
-                                        }
-                                        if seen_pod_uids.insert(info.uid.clone()) {
-                                            pod_labels_list.push((
-                                                info.name.clone(),
-                                                info.uid.clone(),
-                                                info.labels.clone(),
-                                            ));
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                let path = crate::analyzers::selector::NetworkPath {
-                    service: target_svc.clone(),
-                    ingresses: svc_ingresses,
-                    endpoint_slices: svc_ep_slices,
-                    endpoint_summary: summary,
-                    selector_matched_pods: selector_pods.clone(),
-                    target_ref_matched_pods: target_ref_pods,
-                };
+                let (path, pod_labels_list) =
+                    build_service_network_path(target_svc, &inventory, &index.by_uid, &namespace);
                 let postures = evaluate_network_postures(
                     &pod_labels_list,
                     &inventory.network_policies,
@@ -8187,40 +8083,6 @@ mod basis_drift_tests {
     }
 
     #[test]
-    fn network_service_direct_path_shows_endpoint_less_service() {
-        use crate::analyzers::selector::*;
-        let target_svc = NetworkService {
-            name: "empty-svc".into(),
-            selector: std::collections::BTreeMap::new(),
-            has_selector: false,
-            cluster_ip: "None".into(),
-            svc_type: "ClusterIP".into(),
-            ports: vec![],
-            health_check_node_port: None,
-            internal_traffic_policy: None,
-            ip_family_policy: None,
-            load_balancer_class: None,
-            allocate_lb_node_ports: None,
-            external_traffic_policy: None,
-            external_ips: vec![],
-            ip_families: vec![],
-            lb_ingress: vec![],
-        };
-        let path = NetworkPath {
-            service: target_svc,
-            ingresses: vec![],
-            endpoint_slices: vec![],
-            endpoint_summary: EndpointSummary::default(),
-            selector_matched_pods: vec![],
-            target_ref_matched_pods: vec![],
-        };
-        assert_eq!(path.service.name, "empty-svc");
-        assert_eq!(path.endpoint_summary.ready, 0);
-        assert!(path.selector_matched_pods.is_empty());
-        assert!(path.target_ref_matched_pods.is_empty());
-    }
-
-    #[test]
     fn network_json_has_typed_warnings() {
         use crate::kube::resource::ScanWarning;
         let w = ScanWarning::Forbidden {
@@ -8231,31 +8093,5 @@ mod basis_drift_tests {
         assert_eq!(json["type"], "Forbidden");
         assert_eq!(json["gvr"], "v1/pods");
         assert_eq!(json["status"], 403);
-    }
-
-    #[test]
-    fn network_posture_uid_validation() {
-        let live_uid = "live-uid-123";
-        let stale_uid = "stale-uid-000";
-        let tr_uid = Some(stale_uid.to_string());
-        let uid_valid = match &tr_uid {
-            Some(tr_uid) => *tr_uid == live_uid,
-            None => false,
-        };
-        assert!(!uid_valid, "Stale UID should not match live UID");
-
-        let tr_uid_correct = Some(live_uid.to_string());
-        let uid_valid2 = match &tr_uid_correct {
-            Some(tr_uid) => *tr_uid == live_uid,
-            None => false,
-        };
-        assert!(uid_valid2, "Matching UID should be valid");
-
-        let tr_uid_none: Option<String> = None;
-        let uid_valid3 = match &tr_uid_none {
-            Some(tr_uid) => *tr_uid == live_uid,
-            None => false,
-        };
-        assert!(!uid_valid3, "Missing UID should not be valid for posture");
     }
 }
