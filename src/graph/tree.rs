@@ -417,4 +417,42 @@ mod tests {
         assert_eq!(result[0].children.len(), 1);
         assert_eq!(result[0].children[0].info.kind, "ReplicaSet");
     }
+
+    #[test]
+    fn apply_filters_multiple_kinds_or() {
+        let trees = vec![
+            make_tree("Deployment", "app1", vec![]),
+            make_tree("StatefulSet", "db1", vec![]),
+            make_tree("Service", "svc1", vec![]),
+        ];
+        let filters = vec![
+            MapFilter::Kind("Deployment".into()),
+            MapFilter::Kind("StatefulSet".into()),
+        ];
+        let result = apply_filters(trees, &filters);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].info.kind, "Deployment");
+        assert_eq!(result[1].info.kind, "StatefulSet");
+    }
+
+    #[test]
+    fn apply_filters_kind_or_with_label_and() {
+        let trees = vec![
+            make_tree("Deployment", "app1", vec![("app", "web")]),
+            make_tree("Deployment", "app2", vec![("app", "api")]),
+            make_tree("StatefulSet", "db1", vec![("app", "web")]),
+        ];
+        let filters = vec![
+            MapFilter::Kind("Deployment".into()),
+            MapFilter::Kind("StatefulSet".into()),
+            MapFilter::Label {
+                key: "app".into(),
+                value: "web".into(),
+            },
+        ];
+        let result = apply_filters(trees, &filters);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].info.name, "app1");
+        assert_eq!(result[1].info.name, "db1");
+    }
 }

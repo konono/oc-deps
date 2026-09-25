@@ -36,7 +36,7 @@ use crate::kube::discovery::{
 };
 use crate::kube::resource::format_scan_warnings;
 use crate::kube::scanner::{
-    find_parents_only, resolve_missing_parents, scan_namespace, scan_single_api_into_index,
+    find_parents_only, resolve_missing_parents, scan_namespace, scan_namespace_with_extra_apis,
 };
 use crate::kube::snapshot::{
     build_snapshot, diff_snapshots, load_snapshot, print_diff_table, print_diff_tree, save_snapshot,
@@ -359,6 +359,7 @@ async fn cluster_wide_map(
                 refs,
                 show_spec,
                 Some(sem),
+                &[],
             )
             .await;
 
@@ -4768,30 +4769,19 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            // Full scan path
-            let (mut index, mut scan_warnings) = scan_namespace(
+            // Full scan path (includes extra API if target group differs from KindMap)
+            let (mut index, mut scan_warnings) = scan_namespace_with_extra_apis(
                 &client,
                 &namespace,
                 &kind_map,
+                &gk_map,
+                &target_group,
+                &kind,
                 include_events,
                 !no_refs,
                 show_spec,
             )
             .await?;
-
-            let extra_warnings = scan_single_api_into_index(
-                &client,
-                &target_group,
-                &kind,
-                &namespace,
-                &kind_map,
-                &gk_map,
-                &mut index,
-                !no_refs,
-                show.contains(&ShowField::PodResources),
-            )
-            .await;
-            scan_warnings.extend(extra_warnings);
 
             format_scan_warnings(&scan_warnings, online.verbose);
 
@@ -5134,22 +5124,18 @@ async fn main() -> Result<()> {
                 );
             }
 
-            let (mut index, mut scan_warnings) =
-                scan_namespace(&client, &namespace, &kind_map, false, true, false).await?;
-
-            let extra_warnings = scan_single_api_into_index(
+            let (index, mut scan_warnings) = scan_namespace_with_extra_apis(
                 &client,
-                &target_group,
-                &kind,
                 &namespace,
                 &kind_map,
                 &gk_map,
-                &mut index,
+                &target_group,
+                &kind,
+                false,
                 true,
                 false,
             )
-            .await;
-            scan_warnings.extend(extra_warnings);
+            .await?;
 
             let inventory = build_network_inventory(&client, &namespace, &kind_map, &gk_map).await;
 
@@ -5205,18 +5191,6 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                for es in &svc_ep_slices {
-                    for ep in &es.endpoints {
-                        if let Some(tr) = &ep.target_ref
-                            && let (Some(k), Some(n)) = (&tr.kind, &tr.name)
-                        {
-                            let pod_ref = format!("{}/{}", k, n);
-                            if !target_ref_pods.contains(&pod_ref) {
-                                target_ref_pods.push(pod_ref);
-                            }
-                        }
-                    }
-                }
                 let mut pod_labels_list = Vec::new();
                 let mut seen_pod_uids = std::collections::HashSet::new();
                 for pod_str in &selector_pods {
@@ -5242,17 +5216,29 @@ async fn main() -> Result<()> {
                             && tr.kind.as_deref() == Some("Pod")
                             && let Some(pod_name) = &tr.name
                         {
+                            let tr_ns = tr.namespace.as_deref().unwrap_or(&namespace);
                             for info in index.by_uid.values() {
                                 if info.kind == "Pod"
                                     && info.name == *pod_name
-                                    && info.namespace.as_deref() == Some(&namespace)
-                                    && seen_pod_uids.insert(info.uid.clone())
+                                    && info.namespace.as_deref() == Some(tr_ns)
                                 {
-                                    pod_labels_list.push((
-                                        info.name.clone(),
-                                        info.uid.clone(),
-                                        info.labels.clone(),
-                                    ));
+                                    let uid_valid = match &tr.uid {
+                                        Some(tr_uid) => *tr_uid == info.uid,
+                                        None => false,
+                                    };
+                                    if uid_valid {
+                                        let pod_ref = format!("Pod/{}", pod_name);
+                                        if !target_ref_pods.contains(&pod_ref) {
+                                            target_ref_pods.push(pod_ref);
+                                        }
+                                        if seen_pod_uids.insert(info.uid.clone()) {
+                                            pod_labels_list.push((
+                                                info.name.clone(),
+                                                info.uid.clone(),
+                                                info.labels.clone(),
+                                            ));
+                                        }
+                                    }
                                     break;
                                 }
                             }
@@ -8198,5 +8184,78 @@ mod basis_drift_tests {
             result.unwrap_err().contains("pending"),
             "Error must mention pending"
         );
+    }
+
+    #[test]
+    fn network_service_direct_path_shows_endpoint_less_service() {
+        use crate::analyzers::selector::*;
+        let target_svc = NetworkService {
+            name: "empty-svc".into(),
+            selector: std::collections::BTreeMap::new(),
+            has_selector: false,
+            cluster_ip: "None".into(),
+            svc_type: "ClusterIP".into(),
+            ports: vec![],
+            health_check_node_port: None,
+            internal_traffic_policy: None,
+            ip_family_policy: None,
+            load_balancer_class: None,
+            allocate_lb_node_ports: None,
+            external_traffic_policy: None,
+            external_ips: vec![],
+            ip_families: vec![],
+            lb_ingress: vec![],
+        };
+        let path = NetworkPath {
+            service: target_svc,
+            ingresses: vec![],
+            endpoint_slices: vec![],
+            endpoint_summary: EndpointSummary::default(),
+            selector_matched_pods: vec![],
+            target_ref_matched_pods: vec![],
+        };
+        assert_eq!(path.service.name, "empty-svc");
+        assert_eq!(path.endpoint_summary.ready, 0);
+        assert!(path.selector_matched_pods.is_empty());
+        assert!(path.target_ref_matched_pods.is_empty());
+    }
+
+    #[test]
+    fn network_json_has_typed_warnings() {
+        use crate::kube::resource::ScanWarning;
+        let w = ScanWarning::Forbidden {
+            gvr: "v1/pods".into(),
+            status: 403,
+        };
+        let json = serde_json::to_value(&w).unwrap();
+        assert_eq!(json["type"], "Forbidden");
+        assert_eq!(json["gvr"], "v1/pods");
+        assert_eq!(json["status"], 403);
+    }
+
+    #[test]
+    fn network_posture_uid_validation() {
+        let live_uid = "live-uid-123";
+        let stale_uid = "stale-uid-000";
+        let tr_uid = Some(stale_uid.to_string());
+        let uid_valid = match &tr_uid {
+            Some(tr_uid) => *tr_uid == live_uid,
+            None => false,
+        };
+        assert!(!uid_valid, "Stale UID should not match live UID");
+
+        let tr_uid_correct = Some(live_uid.to_string());
+        let uid_valid2 = match &tr_uid_correct {
+            Some(tr_uid) => *tr_uid == live_uid,
+            None => false,
+        };
+        assert!(uid_valid2, "Matching UID should be valid");
+
+        let tr_uid_none: Option<String> = None;
+        let uid_valid3 = match &tr_uid_none {
+            Some(tr_uid) => *tr_uid == live_uid,
+            None => false,
+        };
+        assert!(!uid_valid3, "Missing UID should not be valid for posture");
     }
 }
