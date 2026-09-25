@@ -265,6 +265,7 @@ pub fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
                 if let Some(pkg_info) = pkg_value
                     && let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
                     && !name.trim().is_empty()
+                    && name == name.trim()
                     && !packages.contains(&name.to_string())
                 {
                     packages.push(name.to_string());
@@ -515,9 +516,10 @@ pub async fn discover_operators(
 
             if matched_csvs.len() == 1 {
                 // Verify annotation evidence doesn't contradict label link
-                let csv_obj = csv_items
-                    .iter()
-                    .find(|c| c.metadata.name.as_deref() == Some(&matched_csvs[0]));
+                let csv_obj = csv_items.iter().find(|c| {
+                    c.metadata.name.as_deref() == Some(&matched_csvs[0])
+                        && c.metadata.namespace.as_deref() == Some(sub_ns)
+                });
                 if let Some(csv_obj) = csv_obj
                     && !csv_package_evidence_is_exclusive(csv_obj, pkg, sub_ns)
                 {

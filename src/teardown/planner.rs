@@ -1935,6 +1935,21 @@ fn enforce_expect_delete_invariant(
     }
 }
 
+pub(crate) fn is_bulk_label_only_decision(
+    id: &ResourceId,
+    resolved: &HashMap<ResourceId, ResolvedDecision>,
+) -> bool {
+    resolved.get(id).is_some_and(|d| {
+        matches!(
+            d,
+            ResolvedDecision::Delete {
+                approval_origin: ApprovalOrigin::BulkLabelOnly,
+                ..
+            }
+        )
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
@@ -2737,18 +2752,8 @@ pub async fn generate_teardown_plan(
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
     let mut deferred_remaining_actions: Vec<Action> = Vec::new();
 
-    // Helper: check if a CR's resolved decision is bulk label-only
-    let is_label_only_delete = |cr: &CrInstance| -> bool {
-        resolved_decisions.get(&cr.id).is_some_and(|d| {
-            matches!(
-                d,
-                ResolvedDecision::Delete {
-                    approval_origin: ApprovalOrigin::BulkLabelOnly,
-                    ..
-                }
-            )
-        })
-    };
+    let is_label_only_delete =
+        |cr: &CrInstance| -> bool { is_bulk_label_only_decision(&cr.id, &resolved_decisions) };
 
     if layers.len() <= 1 {
         let mut trigger_actions: Vec<Action> = Vec::new();
@@ -6228,6 +6233,203 @@ mod tests {
         assert!(
             pkgs.is_empty(),
             "Whitespace-only packageName must be excluded"
+        );
+    }
+
+    #[test]
+    fn extract_annotation_leading_trailing_whitespace_rejected() {
+        use crate::analyzers::olm::extract_annotation_packages;
+        let mut obj = kube::api::DynamicObject::new(
+            "csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        obj.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\" pkg \"}"}]"#.to_string(),
+        )]));
+        let pkgs = extract_annotation_packages(&obj);
+        assert!(
+            pkgs.is_empty(),
+            "Leading/trailing whitespace in packageName must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_leading_whitespace_package() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01T00:00:00Z".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: " rhods-operator".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "csv.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-lead-ws-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Leading whitespace package must be rejected"
+        );
+    }
+
+    // ── Phase assignment: is_bulk_label_only_decision ──
+
+    #[test]
+    fn is_bulk_label_only_decision_detects_label_only() {
+        let id = make_res("LLMConfig", "cfg-1", "uid-1");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            id.clone(),
+            ResolvedDecision::Delete {
+                reason: "label-only approved".into(),
+                approval_origin: ApprovalOrigin::BulkLabelOnly,
+            },
+        );
+        assert!(is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    #[test]
+    fn is_bulk_label_only_decision_rejects_other() {
+        let id = make_res("DSC", "default", "uid-d");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            id.clone(),
+            ResolvedDecision::Delete {
+                reason: "root approved".into(),
+                approval_origin: ApprovalOrigin::Other,
+            },
+        );
+        assert!(!is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    #[test]
+    fn is_bulk_label_only_decision_missing_returns_false() {
+        let id = make_res("Unknown", "x", "uid-x");
+        let resolved = HashMap::new();
+        assert!(!is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    #[test]
+    fn is_bulk_label_only_decision_keep_returns_false() {
+        let id = make_res("NS", "ns1", "uid-ns");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            id.clone(),
+            ResolvedDecision::Keep {
+                reason: "preserved".into(),
+            },
+        );
+        assert!(!is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    // ── resolve_decisions + is_bulk_label_only: end-to-end phase routing ──
+
+    #[test]
+    fn phase_routing_label_only_deferred_root_and_exact_stay() {
+        // Setup: 3 CRs — root-approved, label-only-approved, exact-approved
+        let root_res = make_res("DSC", "default-dsc", "uid-dsc");
+        let label_res = make_res("LLMConfig", "llm-cfg", "uid-llm");
+        let exact_res = make_res("Config", "default", "uid-cfg");
+
+        let mut root_cr = make_cr_instance(
+            "DSC",
+            "default-dsc",
+            "uid-dsc",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        root_cr.provenance = Provenance::Unknown;
+        root_cr.discovery_source = DiscoverySource::Direct;
+
+        let mut label_cr = make_cr_instance(
+            "LLMConfig",
+            "llm-cfg",
+            "uid-llm",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        label_cr.provenance = Provenance::Unknown;
+        label_cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+
+        let mut exact_cr = make_cr_instance(
+            "Config",
+            "default",
+            "uid-cfg",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        exact_cr.provenance = Provenance::Unknown;
+        exact_cr.discovery_source = DiscoverySource::Direct;
+
+        let candidates = vec![
+            ReviewCandidate {
+                resource: &root_res,
+                category: ReviewCategory::Operand(GraphPosition::Root),
+                approval_class: DeleteApprovalClass::Standard,
+                exact_approvable: true,
+                is_label_only_eligible: false,
+            },
+            ReviewCandidate {
+                resource: &label_res,
+                category: ReviewCategory::Operand(GraphPosition::Root),
+                approval_class: compute_approval_class(&label_cr, GraphPosition::Root),
+                exact_approvable: true,
+                is_label_only_eligible: is_label_only_bulk_eligible(&label_cr),
+            },
+            ReviewCandidate {
+                resource: &exact_res,
+                category: ReviewCategory::Operand(GraphPosition::Root),
+                approval_class: DeleteApprovalClass::ExplicitOnly,
+                exact_approvable: true,
+                is_label_only_eligible: false,
+            },
+        ];
+
+        let policy = DecisionPolicy {
+            approvals: vec![
+                DeleteApproval::Bulk(BulkScope::Root),
+                DeleteApproval::Bulk(BulkScope::LabelOnly),
+                DeleteApproval::Exact("Config/default".to_string()),
+            ],
+            preserves: vec![],
+        };
+
+        let resolved = resolve_decisions(&policy, &candidates).unwrap();
+
+        // root DSC → Other origin → stays in trigger phase
+        assert!(!is_bulk_label_only_decision(&root_res, &resolved));
+        // label LLMConfig → BulkLabelOnly → deferred to remaining
+        assert!(is_bulk_label_only_decision(&label_res, &resolved));
+        // exact Config → Other → stays in trigger phase
+        assert!(!is_bulk_label_only_decision(&exact_res, &resolved));
+    }
+
+    #[test]
+    fn phase_routing_expect_descendant_not_deferred() {
+        // EXPECT descendants should NOT be deferred regardless of label-only
+        let desc_res = make_res("Pod", "managed-pod", "uid-pod");
+        let resolved = HashMap::new(); // descendants not in resolved_decisions
+        assert!(
+            !is_bulk_label_only_decision(&desc_res, &resolved),
+            "Managed descendants should not be deferred"
         );
     }
 }
