@@ -55,7 +55,7 @@ pub struct TraceResultJson {
     pub descendant_count: usize,
     pub descendants: Vec<TracedResource>,
     pub categories: Vec<TraceCategory>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<serde_json::Value>,
     #[serde(rename = "scanWarningCount")]
     pub scan_warning_count: usize,
 }
@@ -445,7 +445,7 @@ fn print_trace_json(result: &TraceResult, scope: &str) {
         warnings: result
             .scan_failures
             .iter()
-            .map(|w| format!("{}", w))
+            .map(|w| serde_json::to_value(w).unwrap_or_else(|_| serde_json::json!(w.to_string())))
             .collect(),
         scan_warning_count: warning_count,
     };

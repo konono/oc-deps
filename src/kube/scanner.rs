@@ -704,6 +704,7 @@ pub async fn find_parents_only(
     name: &str,
     namespace: &str,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
     show_spec: bool,
     refs: bool,
 ) -> Result<Vec<ChainEntry>> {
@@ -715,11 +716,14 @@ pub async fn find_parents_only(
 
     loop {
         let info = if !current_group.is_empty() {
-            kind_map
-                .iter()
-                .find(|(k, ki)| *k == &current_kind && ki.group == current_group)
-                .map(|(_, ki)| ki)
-                .or_else(|| kind_map.get(&current_kind))
+            gk_map
+                .get(&(current_group.clone(), current_kind.clone()))
+                .or_else(|| {
+                    kind_map
+                        .iter()
+                        .find(|(k, ki)| *k == &current_kind && ki.group == current_group)
+                        .map(|(_, ki)| ki)
+                })
         } else {
             kind_map.get(&current_kind)
         };
@@ -1138,6 +1142,10 @@ mod tests {
             send.send_response(json_response(mock_deployment_obj()));
         });
 
+        let gk_map: GroupKindMap = kind_map
+            .iter()
+            .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+            .collect();
         let chain = find_parents_only(
             &client,
             "",
@@ -1145,6 +1153,7 @@ mod tests {
             "myapp-abc-xyz",
             "test-ns",
             &kind_map,
+            &gk_map,
             false,
             true,
         )
@@ -1240,6 +1249,10 @@ mod tests {
             send.send_response(json_response(mock_deployment_obj()));
         });
 
+        let gk_map2: GroupKindMap = kind_map
+            .iter()
+            .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+            .collect();
         let chain = find_parents_only(
             &client,
             "",
@@ -1247,6 +1260,7 @@ mod tests {
             "myapp-abc-xyz",
             "test-ns",
             &kind_map,
+            &gk_map2,
             false,
             false,
         )

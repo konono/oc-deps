@@ -691,6 +691,109 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
     }
 }
 
+async fn ensure_target_api_scanned(
+    client: &::kube::Client,
+    target_group: &str,
+    target_kind: &str,
+    namespace: &str,
+    kind_map: &crate::kube::discovery::KindMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+    index: &mut crate::kube::resource::NamespaceIndex,
+) -> Vec<crate::kube::resource::ScanWarning> {
+    if target_group.is_empty() {
+        return vec![];
+    }
+    if let Some(km_info) = kind_map.get(target_kind)
+        && km_info.group == target_group
+    {
+        return vec![];
+    }
+    let Some(info) = gk_map.get(&(target_group.to_string(), target_kind.to_string())) else {
+        return vec![];
+    };
+    if !info.namespaced {
+        return vec![];
+    }
+    let gvk = ::kube::core::GroupVersion::gv(&info.group, &info.version).with_kind(target_kind);
+    let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+    let api: ::kube::Api<::kube::api::DynamicObject> =
+        ::kube::Api::namespaced_with(client.clone(), namespace, &ar);
+    match api.list(&Default::default()).await {
+        Ok(list) => {
+            for obj in list.items {
+                let res_name = obj.metadata.name.clone().unwrap_or_default();
+                let uid = obj.metadata.uid.clone().unwrap_or_default();
+                if uid.is_empty() {
+                    continue;
+                }
+                let owner_refs: Vec<crate::kube::resource::OwnerRef> = obj
+                    .metadata
+                    .owner_references
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|r| crate::kube::resource::OwnerRef {
+                        api_version: r.api_version.clone(),
+                        kind: r.kind.clone(),
+                        name: r.name.clone(),
+                        uid: r.uid.clone(),
+                        controller: r.controller.unwrap_or(false),
+                    })
+                    .collect();
+                let labels: std::collections::HashMap<String, String> = obj
+                    .metadata
+                    .labels
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let annotations: std::collections::HashMap<String, String> = obj
+                    .metadata
+                    .annotations
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                let ns = obj.metadata.namespace.clone();
+                let resource_info = crate::kube::resource::ResourceInfo {
+                    group: info.group.clone(),
+                    kind: target_kind.to_string(),
+                    name: res_name.clone(),
+                    namespace: ns.clone(),
+                    uid: uid.clone(),
+                    owner_refs: owner_refs.clone(),
+                    labels,
+                    annotations,
+                    pod_template: None,
+                };
+                index.by_uid.insert(uid.clone(), resource_info);
+                for oref in &owner_refs {
+                    index
+                        .children_of
+                        .entry(oref.uid.clone())
+                        .or_default()
+                        .push(uid.clone());
+                }
+                index.by_kind_name.insert(
+                    (
+                        info.group.to_lowercase(),
+                        target_kind.to_lowercase(),
+                        ns,
+                        res_name,
+                    ),
+                    uid,
+                );
+            }
+            vec![]
+        }
+        Err(e) => {
+            vec![crate::kube::resource::ScanWarning::from_kube_error(
+                &e,
+                &info.group,
+                &info.version,
+                &info.plural,
+            )]
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -4734,6 +4837,7 @@ async fn main() -> Result<()> {
                     &name,
                     &namespace,
                     &kind_map,
+                    &gk_map,
                     show_spec,
                     !no_refs,
                 )
@@ -4765,6 +4869,18 @@ async fn main() -> Result<()> {
                 show_spec,
             )
             .await?;
+
+            let extra_warnings = ensure_target_api_scanned(
+                &client,
+                &target_group,
+                &kind,
+                &namespace,
+                &kind_map,
+                &gk_map,
+                &mut index,
+            )
+            .await;
+            scan_warnings.extend(extra_warnings);
 
             format_scan_warnings(&scan_warnings, online.verbose);
 
@@ -4827,14 +4943,19 @@ async fn main() -> Result<()> {
                 Some(t) => {
                     if matches!(online.output, OutputFormat::Json) {
                         let target = format!("{}/{}", kind, name);
-                        let warning_strs: Vec<String> =
-                            scan_warnings.iter().map(|w| format!("{}", w)).collect();
+                        let json_warnings: Vec<serde_json::Value> = scan_warnings
+                            .iter()
+                            .map(|w| {
+                                serde_json::to_value(w)
+                                    .unwrap_or_else(|_| serde_json::json!(w.to_string()))
+                            })
+                            .collect();
                         let mut output = serde_json::json!({
                             "namespace": namespace,
                             "target": target,
                             "scope": "namespace",
                             "tree": tree_to_json(&t, tree_opts.show_annotations, show_spec),
-                            "warnings": warning_strs,
+                            "warnings": json_warnings,
                             "scanWarningCount": scan_warnings.len(),
                         });
                         for (k, v) in extra_json {
@@ -4973,14 +5094,14 @@ async fn main() -> Result<()> {
             match online.output {
                 OutputFormat::Tree => {
                     if map_filters.is_empty() {
-                        eprintln!(
+                        println!(
                             "\n📦 Namespace: {} ({} trees, {} resources)\n",
                             namespace,
                             trees.len(),
                             index.by_uid.len()
                         );
                     } else {
-                        eprintln!(
+                        println!(
                             "\n📦 Namespace: {} ({}/{} trees matched, {} resources scanned)\n",
                             namespace,
                             trees.len(),
@@ -5036,15 +5157,20 @@ async fn main() -> Result<()> {
                     println!("{table}");
                 }
                 OutputFormat::Json => {
-                    let warning_strs: Vec<String> =
-                        scan_warnings.iter().map(|w| format!("{}", w)).collect();
+                    let json_warnings: Vec<serde_json::Value> = scan_warnings
+                        .iter()
+                        .map(|w| {
+                            serde_json::to_value(w)
+                                .unwrap_or_else(|_| serde_json::json!(w.to_string()))
+                        })
+                        .collect();
                     let mut output = serde_json::json!({
                         "namespace": namespace,
                         "scope": "namespace",
                         "totalResources": index.by_uid.len(),
                         "matchedTrees": trees.len(),
                         "trees": trees.iter().map(|t| tree_to_json(t, show_annotations, show_spec)).collect::<Vec<_>>(),
-                        "warnings": warning_strs,
+                        "warnings": json_warnings,
                         "scanWarningCount": scan_warnings.len(),
                     });
                     if !map_filters.is_empty() {
@@ -5097,65 +5223,118 @@ async fn main() -> Result<()> {
                 );
             }
 
-            let (index, mut scan_warnings) =
+            let (mut index, mut scan_warnings) =
                 scan_namespace(&client, &namespace, &kind_map, false, true, false).await?;
 
-            format_scan_warnings(&scan_warnings, online.verbose);
+            let extra_warnings = ensure_target_api_scanned(
+                &client,
+                &target_group,
+                &kind,
+                &namespace,
+                &kind_map,
+                &gk_map,
+                &mut index,
+            )
+            .await;
+            scan_warnings.extend(extra_warnings);
 
             let inventory = build_network_inventory(&client, &namespace, &kind_map, &gk_map).await;
 
             let group_for_lookup = Some(target_group.as_str()).filter(|g| !g.is_empty());
 
-            // For Service target: find the service directly in inventory
+            // For Service target: build path directly from inventory
             let (all_paths, postures): (Vec<(String, _)>, Vec<_>) = if kind == "Service" {
-                let svc_paths: Vec<_> = inventory
-                    .services
+                let target_svc = inventory.services.iter().find(|s| s.name == name);
+                let Some(target_svc) = target_svc else {
+                    bail!("Service/{} not found in namespace '{}'", name, namespace);
+                };
+                let svc_ep_slices: Vec<_> = inventory
+                    .endpoint_slices
                     .iter()
-                    .filter(|s| s.name == name)
+                    .filter(|es| es.service_name.as_deref() == Some(&name))
                     .cloned()
                     .collect();
-                if svc_paths.is_empty() {
-                    bail!("Service/{} not found in namespace '{}'", name, namespace);
+                let svc_ingresses: Vec<_> = inventory
+                    .ingresses
+                    .iter()
+                    .filter(|i| i.backend_service == name)
+                    .cloned()
+                    .collect();
+                let mut summary = crate::analyzers::selector::EndpointSummary::default();
+                for es in &svc_ep_slices {
+                    for ep in &es.endpoints {
+                        match ep.conditions_ready {
+                            Some(true) => summary.ready += 1,
+                            Some(false) => summary.not_ready += 1,
+                            None => summary.unknown += 1,
+                        }
+                        if ep.conditions_serving == Some(true) {
+                            summary.serving += 1;
+                        }
+                        if ep.conditions_terminating == Some(true) {
+                            summary.terminating += 1;
+                        }
+                    }
                 }
-                let mut actual_pod_labels = Vec::new();
-                for svc in &svc_paths {
-                    if svc.has_selector {
-                        for ep_slice in &inventory.endpoint_slices {
-                            if ep_slice.service_name.as_deref() == Some(&name) {
-                                for ep in &ep_slice.endpoints {
-                                    if let Some(tr) = &ep.target_ref
-                                        && let Some(pod_name) = &tr.name
-                                        && tr.kind.as_deref() == Some("Pod")
-                                        && let Some(uid) = index.lookup_by_kind_name(
-                                            Some(""),
-                                            "Pod",
-                                            pod_name,
-                                            Some(&namespace),
-                                        )
-                                        && let Some(info) = index.by_uid.get(uid)
-                                    {
-                                        actual_pod_labels.push((
-                                            pod_name.clone(),
-                                            uid.clone(),
-                                            info.labels.clone(),
-                                        ));
-                                    }
-                                }
+                summary.effective_ready = summary.ready + summary.unknown;
+                let mut selector_pods = Vec::new();
+                let mut target_ref_pods = Vec::new();
+                if target_svc.has_selector {
+                    for info in index.by_uid.values() {
+                        if info.kind == "Pod"
+                            && info.namespace.as_deref() == Some(&namespace)
+                            && target_svc
+                                .selector
+                                .iter()
+                                .all(|(k, v)| info.labels.get(k) == Some(v))
+                        {
+                            selector_pods.push(format!("Pod/{}", info.name));
+                        }
+                    }
+                }
+                for es in &svc_ep_slices {
+                    for ep in &es.endpoints {
+                        if let Some(tr) = &ep.target_ref
+                            && let (Some(k), Some(n)) = (&tr.kind, &tr.name)
+                        {
+                            let pod_ref = format!("{}/{}", k, n);
+                            if !target_ref_pods.contains(&pod_ref) {
+                                target_ref_pods.push(pod_ref);
                             }
                         }
                     }
                 }
-                let actual_paths = find_network_paths(&actual_pod_labels, &namespace, &inventory);
-                let actual_postures = evaluate_network_postures(
-                    &actual_pod_labels,
+                let path = crate::analyzers::selector::NetworkPath {
+                    service: target_svc.clone(),
+                    ingresses: svc_ingresses,
+                    endpoint_slices: svc_ep_slices,
+                    endpoint_summary: summary,
+                    selector_matched_pods: selector_pods.clone(),
+                    target_ref_matched_pods: target_ref_pods,
+                };
+                let mut pod_labels_list = Vec::new();
+                for pod_str in &selector_pods {
+                    let pod_name = pod_str.strip_prefix("Pod/").unwrap_or(pod_str);
+                    for info in index.by_uid.values() {
+                        if info.kind == "Pod"
+                            && info.name == pod_name
+                            && info.namespace.as_deref() == Some(&namespace)
+                        {
+                            pod_labels_list.push((
+                                info.name.clone(),
+                                info.uid.clone(),
+                                info.labels.clone(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+                let postures = evaluate_network_postures(
+                    &pod_labels_list,
                     &inventory.network_policies,
                     &inventory.np_availability,
                 );
-                let result_paths: Vec<_> = actual_paths
-                    .into_iter()
-                    .map(|p| (String::new(), p))
-                    .collect();
-                (result_paths, actual_postures)
+                (vec![(String::new(), path)], postures)
             } else {
                 // For workload targets: find target uid and descendant pods
                 let target_uid = match index.lookup_by_kind_name(
@@ -5214,15 +5393,20 @@ async fn main() -> Result<()> {
                 OutputFormat::Json => {
                     let json_paths = network_paths_to_json(&all_paths);
                     let json_postures = network_postures_to_json(&postures);
-                    let warning_strs: Vec<String> =
-                        scan_warnings.iter().map(|w| format!("{}", w)).collect();
+                    let json_warnings: Vec<serde_json::Value> = scan_warnings
+                        .iter()
+                        .map(|w| {
+                            serde_json::to_value(w)
+                                .unwrap_or_else(|_| serde_json::json!(w.to_string()))
+                        })
+                        .collect();
                     let output = serde_json::json!({
                         "namespace": namespace,
                         "target": format!("{}/{}", kind, name),
                         "scope": "namespace",
                         "networkPaths": json_paths,
                         "networkPolicyPostures": json_postures,
-                        "warnings": warning_strs,
+                        "warnings": json_warnings,
                         "scanWarningCount": scan_warnings.len(),
                     });
                     println!(
