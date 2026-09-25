@@ -83,6 +83,7 @@ struct ApplySetDefaults {
     #[serde(default)]
     preserve: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     force: bool,
     #[serde(default)]
     non_interactive: bool,
@@ -97,6 +98,7 @@ struct ApplySetEntry {
     #[serde(default)]
     preserve: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     force: Option<bool>,
     #[serde(default)]
     non_interactive: Option<bool>,
@@ -105,7 +107,6 @@ struct ApplySetEntry {
 struct EffectiveApplySetOptions {
     approve_delete: Vec<String>,
     preserve: Vec<String>,
-    force: bool,
     non_interactive: bool,
 }
 
@@ -124,7 +125,6 @@ impl ApplySetEntry {
         EffectiveApplySetOptions {
             approve_delete,
             preserve,
-            force: self.force.unwrap_or(defaults.force),
             non_interactive: self.non_interactive.unwrap_or(defaults.non_interactive),
         }
     }
@@ -1113,12 +1113,18 @@ async fn main() -> Result<()> {
                 TeardownAction::Plan {
                     operators: operator_queries,
                     output,
-                    no_cache,
-                    prune_apis,
-                    approve_delete,
-                    preserve,
+                    refresh_discovery,
+                    prune_crds,
+                    approve_scope,
+                    approve_resource,
+                    keep_resource,
                     save_plan_path,
                 } => {
+                    let no_cache = refresh_discovery;
+                    let prune_apis = prune_crds;
+                    let mut approve_delete = approve_scope;
+                    approve_delete.extend(approve_resource.into_iter());
+                    let preserve = keep_resource;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -1196,27 +1202,19 @@ async fn main() -> Result<()> {
                     );
                 }
                 TeardownAction::Apply {
-                    operators: operator_queries,
                     plan: plan_file,
-                    no_cache,
+                    refresh_discovery,
                     dry_run,
-                    prune_apis,
-                    force,
-                    approve_delete,
-                    preserve,
-                    approve_finalizer_recovery,
                     non_interactive,
                     script,
                     tui: use_tui,
                     save_plan_path,
                 } => {
-                    // Validate: --plan and positional operators are mutually exclusive
-                    if plan_file.is_some() && !operator_queries.is_empty() {
-                        bail!(
-                            "--plan and positional operator arguments cannot be combined. \
-                                 Use --plan alone to replay a saved plan."
-                        );
-                    }
+                    let no_cache = refresh_discovery;
+                    let force = false;
+                    let approve_finalizer_recovery = true;
+                    let approve_delete: Vec<String> = vec![];
+                    let preserve: Vec<String> = vec![];
 
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
@@ -1228,45 +1226,42 @@ async fn main() -> Result<()> {
                     let all_operators = discover_operators(&client, &kind_map).await?;
                     eprintln!(" found {} operators", all_operators.len());
 
-                    // Resolve targets: from --plan or from positional args
-                    let (target_indices, _saved_plan) = if let Some(ref pf) = plan_file {
-                        let saved = crate::teardown::planner::load_saved_plan(pf)?;
-                        eprintln!("📄 Loaded saved plan from {}", pf);
-                        // Resolve via package_name + install_namespace (both required)
-                        let target_query = saved.target.package_name.clone();
-                        let indices = resolve_operator_targets(&[target_query], &all_operators)?;
-                        // Filter by install_namespace
-                        let ns_filtered: Vec<usize> = indices
-                            .iter()
-                            .copied()
-                            .filter(|&i| {
-                                all_operators[i].install_namespace == saved.target.install_namespace
-                            })
-                            .collect();
-                        if ns_filtered.is_empty() {
-                            bail!(
-                                "Saved plan target {}/{} not found in current cluster",
-                                saved.target.package_name,
-                                saved.target.install_namespace
-                            );
-                        }
-                        if ns_filtered.len() > 1 {
-                            bail!(
-                                "Saved plan target {}/{} matches {} operators — ambiguous",
-                                saved.target.package_name,
-                                saved.target.install_namespace,
-                                ns_filtered.len()
-                            );
-                        }
-                        (ns_filtered, Some(saved))
-                    } else {
-                        let indices = resolve_operator_targets(&operator_queries, &all_operators)?;
-                        (indices, None)
-                    };
+                    // Always load from plan file
+                    let saved = crate::teardown::planner::load_saved_plan(&plan_file)?;
+                    eprintln!("📄 Loaded saved plan from {}", plan_file);
+                    // Resolve via package_name + install_namespace (both required)
+                    let target_query = saved.target.package_name.clone();
+                    let indices = resolve_operator_targets(&[target_query], &all_operators)?;
+                    // Filter by install_namespace
+                    let ns_filtered: Vec<usize> = indices
+                        .iter()
+                        .copied()
+                        .filter(|&i| {
+                            all_operators[i].install_namespace == saved.target.install_namespace
+                        })
+                        .collect();
+                    if ns_filtered.is_empty() {
+                        bail!(
+                            "Saved plan target {}/{} not found in current cluster",
+                            saved.target.package_name,
+                            saved.target.install_namespace
+                        );
+                    }
+                    if ns_filtered.len() > 1 {
+                        bail!(
+                            "Saved plan target {}/{} matches {} operators — ambiguous",
+                            saved.target.package_name,
+                            saved.target.install_namespace,
+                            ns_filtered.len()
+                        );
+                    }
+                    let target_indices = ns_filtered;
+                    let _saved_plan = Some(saved);
 
                     let target_operators: Vec<&_> =
                         target_indices.iter().map(|&i| &all_operators[i]).collect();
 
+                    let prune_apis = false; // CRD decisions are baked into the saved plan
                     let policy = DecisionPolicy::from_args(&approve_delete, &preserve);
                     let mut plan = generate_teardown_plan(
                         &client,
@@ -2568,9 +2563,10 @@ async fn main() -> Result<()> {
                 }
                 TeardownAction::Status {
                     operators: operator_queries,
-                    no_cache,
+                    refresh_discovery,
                     plan_file,
                 } => {
+                    let no_cache = refresh_discovery;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, _gvr_map, gk_map, _gvk_map) =
@@ -2613,8 +2609,9 @@ async fn main() -> Result<()> {
                 TeardownAction::Coverage {
                     operators: operator_queries,
                     output,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let (kind_map, gvr_map, gk_map, gvk_map) =
                         build_kind_lookup_cached(&client, &config, no_cache).await?;
                     let all_operators = discover_operators(&client, &kind_map).await?;
@@ -2701,37 +2698,12 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                TeardownAction::Inspect {
-                    operator: operator_query,
-                    output,
-                    no_cache,
-                } => {
-                    let t0 = Instant::now();
-                    eprintln!("🔍 Discovering API resources...");
-                    let (kind_map, gvr_map, gk_map, _) =
-                        build_kind_lookup_cached(&client, &config, no_cache).await?;
-                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
-
-                    eprint!("🔍 Discovering operators...");
-                    let all_operators = discover_operators(&client, &kind_map).await?;
-                    eprintln!(" found {} operators", all_operators.len());
-
-                    let target_indices =
-                        resolve_operator_targets(&[operator_query], &all_operators)?;
-                    let target_op = &all_operators[target_indices[0]];
-
-                    let inspection = inspect_operator_with_options(
-                        &client, target_op, &kind_map, &gvr_map, &gk_map, false,
-                    )
-                    .await?;
-
-                    print_inspection_top(&inspection, &output, false);
-                }
                 TeardownAction::Explain {
                     operators: operator_queries,
                     resource,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -2777,8 +2749,9 @@ async fn main() -> Result<()> {
                 TeardownAction::Resume {
                     operator,
                     run,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let cluster_id = journal::fetch_cluster_identity(&client).await?;
 
                     let found = if let Some(run_id) = run {
@@ -4101,11 +4074,12 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                TeardownAction::ApplySet {
+                TeardownAction::Batch {
                     config,
-                    no_cache,
+                    refresh_discovery,
                     dry_run,
                 } => {
+                    let no_cache = refresh_discovery;
                     let config_content = std::fs::read_to_string(&config)
                         .with_context(|| format!("Failed to read config: {}", config))?;
                     let parsed: ApplySetConfig = serde_json::from_str(&config_content)
@@ -4122,19 +4096,13 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    eprintln!(
-                        "📋 Apply-set: {} operator(s) from {}",
-                        entries.len(),
-                        config
-                    );
+                    eprintln!("📋 Batch: {} operator(s) from {}", entries.len(), config);
                     for (i, entry) in entries.iter().enumerate() {
                         eprintln!("  {}: {}", i + 1, entry.name);
                     }
                     eprintln!();
                     if no_cache {
-                        eprintln!(
-                            "🔄 API discovery: refresh once, then reuse within this apply-set\n"
-                        );
+                        eprintln!("🔄 API discovery: refresh once, then reuse within this batch\n");
                     }
 
                     let exe = std::env::current_exe()
@@ -4156,11 +4124,62 @@ async fn main() -> Result<()> {
                             "=".repeat(60),
                         );
 
-                        let mut cmd = std::process::Command::new(&exe);
-                        cmd.arg("teardown").arg("apply").arg(op_name);
+                        // Step 1: Generate plan file
+                        let plan_path = format!("/tmp/oc-deps-batch-{}-{}.json", i, op_name);
+                        let mut plan_cmd = std::process::Command::new(&exe);
+                        plan_cmd.arg("teardown").arg("plan").arg(op_name);
+                        plan_cmd.arg("--save-plan").arg(&plan_path);
 
                         if apply_set_child_bypasses_cache(no_cache, i) {
-                            cmd.arg("--no-cache");
+                            plan_cmd.arg("--refresh-discovery");
+                        }
+                        if no_cache {
+                            plan_cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
+                        }
+                        for approval in &options.approve_delete {
+                            // Determine if it's a scope or resource spec
+                            match approval.as_str() {
+                                "root" | "independent" | "all" | "label-only"
+                                | "operator-group" => {
+                                    plan_cmd.arg("--approve-scope").arg(approval);
+                                }
+                                _ => {
+                                    plan_cmd.arg("--approve-resource").arg(approval);
+                                }
+                            }
+                        }
+                        for p in &options.preserve {
+                            plan_cmd.arg("--keep-resource").arg(p);
+                        }
+
+                        plan_cmd.stdout(std::process::Stdio::inherit());
+                        plan_cmd.stderr(std::process::Stdio::inherit());
+                        if let Ok(kc) = std::env::var("KUBECONFIG") {
+                            plan_cmd.env("KUBECONFIG", &kc);
+                        }
+
+                        let plan_status = plan_cmd
+                            .spawn()
+                            .with_context(|| format!("Failed to spawn plan for {}", op_name))?
+                            .wait()
+                            .with_context(|| format!("Failed to wait for plan of {}", op_name))?;
+
+                        if !plan_status.success() {
+                            let exit_code = plan_status.code().unwrap_or(1);
+                            results.push((op_name.to_string(), exit_code));
+                            eprintln!(
+                                "\n⛔ {} plan failed (exit {}). Stopping batch.",
+                                op_name, exit_code
+                            );
+                            break;
+                        }
+
+                        // Step 2: Apply the generated plan
+                        let mut cmd = std::process::Command::new(&exe);
+                        cmd.arg("teardown").arg("apply").arg(&plan_path);
+
+                        if apply_set_child_bypasses_cache(no_cache, i) {
+                            cmd.arg("--refresh-discovery");
                         }
                         if no_cache {
                             cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
@@ -4168,17 +4187,8 @@ async fn main() -> Result<()> {
                         if dry_run {
                             cmd.arg("--dry-run");
                         }
-                        if options.force {
-                            cmd.arg("--force");
-                        }
                         if options.non_interactive {
                             cmd.arg("--non-interactive");
-                        }
-                        for approval in options.approve_delete {
-                            cmd.arg("--approve-delete").arg(approval);
-                        }
-                        for p in options.preserve {
-                            cmd.arg("--preserve").arg(p);
                         }
 
                         // Pipe "y" to stdin for confirmation prompt
@@ -4205,12 +4215,15 @@ async fn main() -> Result<()> {
                             format!("Failed to wait for teardown of {}", op_name)
                         })?;
 
+                        // Clean up plan file
+                        let _ = std::fs::remove_file(&plan_path);
+
                         let exit_code = status.code().unwrap_or(1);
                         results.push((op_name.to_string(), exit_code));
 
                         if exit_code != 0 {
                             eprintln!(
-                                "\n⛔ {} failed (exit {}). Stopping apply-set.",
+                                "\n⛔ {} failed (exit {}). Stopping batch.",
                                 op_name, exit_code
                             );
                             break;
@@ -4219,7 +4232,7 @@ async fn main() -> Result<()> {
                     }
 
                     // Summary
-                    eprintln!("\n📊 Apply-set results:");
+                    eprintln!("\n📊 Batch results:");
                     let mut any_failed = false;
                     for (name, code) in &results {
                         let status = if *code == 0 { "✅" } else { "⛔" };
@@ -8028,7 +8041,6 @@ mod basis_drift_tests {
                 "example.io/Widget/ns/example",
             ]
         );
-        assert!(!options.force, "operator value must override the default");
         assert!(!options.non_interactive);
     }
 
