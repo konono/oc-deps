@@ -143,77 +143,16 @@ pub enum Command {
         online: OnlineOpts,
     },
 
-    /// Show which Operator manages a resource (ownerRef chain → CSV → Subscription)
-    WhoManages {
-        /// Resource in kind/name format
-        #[arg(value_name = "RESOURCE")]
-        resource: String,
-
-        /// Namespace (default: kubeconfig default)
-        #[arg(short = 'n', long)]
-        namespace: Option<String>,
-
-        /// Output format: tree, json
-        #[arg(short = 'o', long, value_enum, default_value = "tree")]
-        output: OutputFormat,
-
-        /// Skip discovery cache
-        #[arg(long)]
-        no_cache: bool,
+    /// Operator inspection commands (list, owner, resources)
+    Operator {
+        #[command(subcommand)]
+        action: OperatorAction,
     },
 
-    /// Take a cluster snapshot and save to JSON
+    /// Snapshot commands (create, diff)
     Snapshot {
-        /// Namespace to snapshot
-        #[arg(short = 'n', long)]
-        namespace: Option<String>,
-
-        /// Output file path
-        #[arg(short = 'o', long, default_value = "snapshot.json")]
-        output_file: String,
-
-        /// Include Event resources in scan (default: skip)
-        #[arg(long)]
-        include_events: bool,
-
-        /// Skip discovery cache (force fresh API discovery)
-        #[arg(long)]
-        no_cache: bool,
-
-        /// Scan all namespaces
-        #[arg(short = 'A', long = "all-namespaces")]
-        all_namespaces: bool,
-
-        /// Select namespaces by label (repeatable, AND). Requires -A
-        #[arg(long, value_name = "KEY=VALUE")]
-        namespace_selector: Vec<String>,
-
-        /// Exclude namespaces matching glob pattern (repeatable). Requires -A
-        #[arg(long, value_name = "PATTERN")]
-        exclude_namespace: Vec<String>,
-
-        /// Exclude system namespaces (openshift-*, kube-*, default). Requires -A
-        #[arg(long)]
-        exclude_system_namespaces: bool,
-
-        /// Exit with code 2 if any API types were skipped during scan
-        #[arg(long)]
-        strict: bool,
-    },
-
-    /// Compare two snapshot files (offline, no cluster connection required)
-    Diff {
-        /// Path to the "before" snapshot JSON
-        #[arg(value_name = "BEFORE")]
-        before: String,
-
-        /// Path to the "after" snapshot JSON
-        #[arg(value_name = "AFTER")]
-        after: String,
-
-        /// Output format: tree (default), json, table
-        #[arg(long, value_enum, default_value = "tree")]
-        format: OutputFormat,
+        #[command(subcommand)]
+        action: SnapshotAction,
     },
 
     /// Build and export the evidence graph for a namespace
@@ -222,50 +161,31 @@ pub enum Command {
         #[arg(short = 'n', long)]
         namespace: Option<String>,
 
-        /// Output file path
-        #[arg(short = 'o', long, default_value = "evidence-graph.json")]
-        output_file: String,
+        /// Save to file path
+        #[arg(long, default_value = "evidence-graph.json")]
+        file: String,
 
         /// Include Event resources in scan (default: skip)
         #[arg(long)]
         include_events: bool,
 
-        /// Skip discovery cache (force fresh API discovery)
+        /// Refresh API discovery cache
         #[arg(long)]
-        no_cache: bool,
+        refresh_discovery: bool,
+
+        /// Show detailed scan warnings
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        /// Exit with code 2 if scan is incomplete (partial results are output/saved first)
+        #[arg(long)]
+        strict: bool,
     },
 
     /// Teardown planning for OLM operators
     Teardown {
         #[command(subcommand)]
         action: TeardownAction,
-    },
-
-    /// Inspect all resources managed by an operator
-    Inspect {
-        /// Operator name (subscription or CSV name, partial match OK)
-        #[arg(required = true)]
-        operator: String,
-
-        /// Output format: tree, table, json
-        #[arg(short = 'o', long, value_enum, default_value = "tree")]
-        output: OutputFormat,
-
-        /// Skip discovery cache
-        #[arg(long)]
-        no_cache: bool,
-
-        /// Discover resources across namespaces via OperatorGroup, owned CRD instances, and label evidence
-        #[arg(long)]
-        cross_namespace: bool,
-
-        /// Show all scan/discovery warnings (default: first 5)
-        #[arg(short = 'v', long)]
-        verbose: bool,
-
-        /// Exit with code 2 if discovery/scan is incomplete (partial results are still output)
-        #[arg(long)]
-        strict: bool,
     },
 
     /// Trace discovered relationships from a resource, including ownerRef descendants, spec references, same-operator resources, and label correlations
@@ -285,17 +205,6 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "namespace")]
         scope: Scope,
     },
-
-    /// List all OLM-managed operators in the cluster
-    Operators {
-        /// Output format: tree, table, json
-        #[arg(short = 'o', long, value_enum, default_value = "tree")]
-        output: OutputFormat,
-
-        /// Skip discovery cache (force fresh API discovery)
-        #[arg(long)]
-        no_cache: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -306,7 +215,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         operators: Vec<String>,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -419,7 +328,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         operators: Vec<String>,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -434,7 +343,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         operator: String,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -502,6 +411,135 @@ pub enum TeardownAction {
         /// Skip live residual audit
         #[arg(long)]
         no_audit: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OperatorAction {
+    /// List all OLM-managed operators in the cluster
+    List {
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Refresh API discovery cache
+        #[arg(long)]
+        refresh_discovery: bool,
+    },
+
+    /// Show which Operator manages a resource (ownerRef chain → CSV → Subscription)
+    Owner {
+        /// Resource in kind/name format
+        #[arg(value_name = "RESOURCE")]
+        resource: String,
+
+        /// Namespace (default: kubeconfig default)
+        #[arg(short = 'n', long)]
+        namespace: Option<String>,
+
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Refresh API discovery cache
+        #[arg(long)]
+        refresh_discovery: bool,
+
+        /// Show detailed scan warnings
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        /// Exit with code 2 if scan is incomplete (partial results are output/saved first)
+        #[arg(long)]
+        strict: bool,
+    },
+
+    /// Inspect all resources managed by an operator
+    Resources {
+        /// Operator name (subscription or CSV name, partial match OK)
+        #[arg(required = true)]
+        operator: String,
+
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+
+        /// Refresh API discovery cache
+        #[arg(long)]
+        refresh_discovery: bool,
+
+        /// Scope: namespace (default) or related (cross-namespace via OperatorGroup, owned CRD instances, label evidence)
+        #[arg(long, value_enum, default_value = "namespace")]
+        scope: Scope,
+
+        /// Show all scan/discovery warnings (default: first 5)
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        /// Exit with code 2 if discovery/scan is incomplete (partial results are still output)
+        #[arg(long)]
+        strict: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SnapshotAction {
+    /// Take a cluster snapshot and save to JSON
+    Create {
+        /// Namespace to snapshot
+        #[arg(short = 'n', long)]
+        namespace: Option<String>,
+
+        /// Save to file path
+        #[arg(long, default_value = "snapshot.json")]
+        file: String,
+
+        /// Include Event resources in scan (default: skip)
+        #[arg(long)]
+        include_events: bool,
+
+        /// Refresh API discovery cache
+        #[arg(long)]
+        refresh_discovery: bool,
+
+        /// Show detailed scan warnings
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        /// Scan all namespaces
+        #[arg(short = 'A', long = "all-namespaces", conflicts_with = "namespace")]
+        all_namespaces: bool,
+
+        /// Select namespaces by label (repeatable, AND). Requires -A
+        #[arg(long, value_name = "KEY=VALUE", requires = "all_namespaces")]
+        namespace_selector: Vec<String>,
+
+        /// Exclude namespaces matching glob pattern (repeatable). Requires -A
+        #[arg(long, value_name = "PATTERN", requires = "all_namespaces")]
+        exclude_namespace: Vec<String>,
+
+        /// Exclude system namespaces (openshift-*, kube-*, default). Requires -A
+        #[arg(long, requires = "all_namespaces")]
+        exclude_system_namespaces: bool,
+
+        /// Exit with code 2 if any API types were skipped during scan
+        #[arg(long)]
+        strict: bool,
+    },
+
+    /// Compare two snapshot files (offline, no cluster connection required)
+    Diff {
+        /// Path to the "before" snapshot JSON
+        #[arg(value_name = "BEFORE")]
+        before: String,
+
+        /// Path to the "after" snapshot JSON
+        #[arg(value_name = "AFTER")]
+        after: String,
+
+        /// Output format: tree (default), json, table
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
     },
 }
 
@@ -761,95 +799,229 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_inspect_subcommand_parse() {
-        let args = Args::parse_from(["oc-deps", "inspect", "rhods-operator"]);
-        match args.command {
-            Command::Inspect {
-                operator,
-                cross_namespace,
-                ..
-            } => {
-                assert_eq!(operator, "rhods-operator");
-                assert!(!cross_namespace);
-            }
-            _ => panic!("Expected Command::Inspect"),
-        }
-    }
+    // ── operator subcommand tests ──
 
     #[test]
-    fn test_inspect_cross_namespace() {
-        let args = Args::parse_from(["oc-deps", "inspect", "rhods-operator", "--cross-namespace"]);
+    fn test_operator_list_parses() {
+        let args = Args::parse_from(["oc-deps", "operator", "list", "-o", "json"]);
         match args.command {
-            Command::Inspect {
-                cross_namespace, ..
+            Command::Operator {
+                action: OperatorAction::List { output, .. },
             } => {
-                assert!(cross_namespace);
-            }
-            _ => panic!("Expected Command::Inspect"),
-        }
-    }
-
-    #[test]
-    fn test_snapshot_all_namespaces_parse() {
-        let args = Args::parse_from(["oc-deps", "snapshot", "-A", "-o", "out.json"]);
-        match args.command {
-            Command::Snapshot {
-                all_namespaces,
-                output_file,
-                namespace,
-                ..
-            } => {
-                assert!(all_namespaces);
-                assert_eq!(output_file, "out.json");
-                assert!(namespace.is_none());
-            }
-            _ => panic!("Expected Command::Snapshot"),
-        }
-    }
-
-    #[test]
-    fn test_operators_subcommand() {
-        let args = Args::parse_from(["oc-deps", "operators", "-o", "json"]);
-        match args.command {
-            Command::Operators { output, .. } => {
                 assert!(matches!(output, OutputFormat::Json));
             }
-            _ => panic!("Expected Command::Operators"),
+            _ => panic!("Expected Command::Operator List"),
         }
     }
 
     #[test]
-    fn test_who_manages_subcommand() {
+    fn test_operator_list_refresh_discovery() {
+        let args = Args::parse_from(["oc-deps", "operator", "list", "--refresh-discovery"]);
+        match args.command {
+            Command::Operator {
+                action:
+                    OperatorAction::List {
+                        refresh_discovery, ..
+                    },
+            } => {
+                assert!(refresh_discovery);
+            }
+            _ => panic!("Expected Command::Operator List"),
+        }
+    }
+
+    #[test]
+    fn test_operator_owner_parses() {
         let args = Args::parse_from([
             "oc-deps",
-            "who-manages",
+            "operator",
+            "owner",
             "deployment/nginx",
             "-n",
             "default",
         ]);
         match args.command {
-            Command::WhoManages {
-                resource,
-                namespace,
-                ..
+            Command::Operator {
+                action:
+                    OperatorAction::Owner {
+                        resource,
+                        namespace,
+                        ..
+                    },
             } => {
                 assert_eq!(resource, "deployment/nginx");
                 assert_eq!(namespace, Some("default".to_string()));
             }
-            _ => panic!("Expected Command::WhoManages"),
+            _ => panic!("Expected Command::Operator Owner"),
         }
     }
 
     #[test]
-    fn test_diff_subcommand() {
-        let args = Args::parse_from(["oc-deps", "diff", "before.json", "after.json"]);
+    fn test_operator_resources_scope_related() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "operator",
+            "resources",
+            "rhods-operator",
+            "--scope",
+            "related",
+        ]);
         match args.command {
-            Command::Diff { before, after, .. } => {
+            Command::Operator {
+                action:
+                    OperatorAction::Resources {
+                        operator, scope, ..
+                    },
+            } => {
+                assert_eq!(operator, "rhods-operator");
+                assert!(matches!(scope, Scope::Related));
+            }
+            _ => panic!("Expected Command::Operator Resources"),
+        }
+    }
+
+    #[test]
+    fn test_operator_resources_default_scope() {
+        let args = Args::parse_from(["oc-deps", "operator", "resources", "rhods-operator"]);
+        match args.command {
+            Command::Operator {
+                action: OperatorAction::Resources { scope, .. },
+            } => {
+                assert!(matches!(scope, Scope::Namespace));
+            }
+            _ => panic!("Expected Command::Operator Resources"),
+        }
+    }
+
+    // ── snapshot subcommand tests ──
+
+    #[test]
+    fn test_snapshot_create_parses() {
+        let args = Args::parse_from(["oc-deps", "snapshot", "create", "-n", "myns"]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Create { namespace, .. },
+            } => {
+                assert_eq!(namespace, Some("myns".to_string()));
+            }
+            _ => panic!("Expected Command::Snapshot Create"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_create_all_namespaces() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "snapshot",
+            "create",
+            "-A",
+            "--namespace-selector",
+            "env=prod",
+            "--exclude-namespace",
+            "temp-*",
+            "--exclude-system-namespaces",
+        ]);
+        match args.command {
+            Command::Snapshot {
+                action:
+                    SnapshotAction::Create {
+                        all_namespaces,
+                        namespace_selector,
+                        exclude_namespace,
+                        exclude_system_namespaces,
+                        ..
+                    },
+            } => {
+                assert!(all_namespaces);
+                assert_eq!(namespace_selector, vec!["env=prod"]);
+                assert_eq!(exclude_namespace, vec!["temp-*"]);
+                assert!(exclude_system_namespaces);
+            }
+            _ => panic!("Expected Command::Snapshot Create"),
+        }
+    }
+
+    #[test]
+    fn snapshot_create_n_and_a_conflict() {
+        let result = Args::try_parse_from(["oc-deps", "snapshot", "create", "-n", "ns", "-A"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn snapshot_create_ns_selector_requires_a() {
+        // --namespace-selector without -A should fail
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "snapshot",
+            "create",
+            "--namespace-selector",
+            "env=prod",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn snapshot_create_exclude_ns_requires_a() {
+        // --exclude-namespace without -A should fail
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "snapshot",
+            "create",
+            "--exclude-namespace",
+            "temp-*",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn snapshot_create_exclude_system_requires_a() {
+        // --exclude-system-namespaces without -A should fail
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "snapshot",
+            "create",
+            "--exclude-system-namespaces",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_snapshot_diff_parses() {
+        let args = Args::parse_from(["oc-deps", "snapshot", "diff", "before.json", "after.json"]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Diff { before, after, .. },
+            } => {
                 assert_eq!(before, "before.json");
                 assert_eq!(after, "after.json");
             }
-            _ => panic!("Expected Command::Diff"),
+            _ => panic!("Expected Command::Snapshot Diff"),
+        }
+    }
+
+    // ── graph subcommand tests ──
+
+    #[test]
+    fn test_graph_strict_parses() {
+        let args = Args::parse_from(["oc-deps", "graph", "-n", "myns", "--strict"]);
+        match args.command {
+            Command::Graph { strict, .. } => {
+                assert!(strict);
+            }
+            _ => panic!("Expected Command::Graph"),
+        }
+    }
+
+    #[test]
+    fn test_graph_refresh_discovery() {
+        let args = Args::parse_from(["oc-deps", "graph", "-n", "myns", "--refresh-discovery"]);
+        match args.command {
+            Command::Graph {
+                refresh_discovery, ..
+            } => {
+                assert!(refresh_discovery);
+            }
+            _ => panic!("Expected Command::Graph"),
         }
     }
 
@@ -857,5 +1029,70 @@ mod tests {
     fn test_subcommand_required() {
         let result = Args::try_parse_from(["oc-deps"]);
         assert!(result.is_err(), "Expected error when no subcommand given");
+    }
+
+    #[test]
+    fn test_snapshot_create_file_succeeds() {
+        let args = Args::parse_from([
+            "oc-deps", "snapshot", "create", "-n", "demo", "--file", "out.json",
+        ]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Create { file, .. },
+            } => {
+                assert_eq!(file, "out.json");
+            }
+            _ => panic!("Expected snapshot create"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_create_dash_o_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "snapshot", "create", "-o", "out.json"]);
+        assert!(
+            result.is_err(),
+            "snapshot create -o should be rejected (use --file)"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_diff_dash_o_succeeds() {
+        let args = Args::parse_from([
+            "oc-deps", "snapshot", "diff", "a.json", "b.json", "-o", "json",
+        ]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Diff { output, .. },
+            } => {
+                assert!(matches!(output, OutputFormat::Json));
+            }
+            _ => panic!("Expected snapshot diff"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_diff_format_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps", "snapshot", "diff", "a.json", "b.json", "--format", "json",
+        ]);
+        assert!(
+            result.is_err(),
+            "snapshot diff --format should be rejected (use -o)"
+        );
+    }
+
+    #[test]
+    fn test_graph_file_succeeds() {
+        let args = Args::parse_from(["oc-deps", "graph", "-n", "demo", "--file", "g.json"]);
+        match args.command {
+            Command::Graph { file, .. } => assert_eq!(file, "g.json"),
+            _ => panic!("Expected graph"),
+        }
+    }
+
+    #[test]
+    fn test_graph_dash_o_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "graph", "-o", "g.json"]);
+        assert!(result.is_err(), "graph -o should be rejected (use --file)");
     }
 }
