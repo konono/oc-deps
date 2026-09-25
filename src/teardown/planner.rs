@@ -1950,6 +1950,20 @@ pub(crate) fn is_bulk_label_only_decision(
     })
 }
 
+pub(crate) fn route_operand_action(
+    cr_id: &ResourceId,
+    action: Action,
+    resolved: &HashMap<ResourceId, ResolvedDecision>,
+    current_phase: &mut Vec<Action>,
+    deferred: &mut Vec<Action>,
+) {
+    if is_bulk_label_only_decision(cr_id, resolved) {
+        deferred.push(action);
+    } else {
+        current_phase.push(action);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
@@ -2752,36 +2766,39 @@ pub async fn generate_teardown_plan(
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
     let mut deferred_remaining_actions: Vec<Action> = Vec::new();
 
-    let is_label_only_delete =
-        |cr: &CrInstance| -> bool { is_bulk_label_only_decision(&cr.id, &resolved_decisions) };
-
     if layers.len() <= 1 {
         let mut trigger_actions: Vec<Action> = Vec::new();
         let mut remaining_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
             let action = cr_to_action(cr, GraphPosition::Root, &resolved_decisions);
-            if is_label_only_delete(cr) {
-                remaining_actions.push(action);
-            } else {
-                trigger_actions.push(action);
-            }
+            route_operand_action(
+                &cr.id,
+                action,
+                &resolved_decisions,
+                &mut trigger_actions,
+                &mut remaining_actions,
+            );
         }
         for cr in &managed_descendants {
             let action = cr_to_action(cr, GraphPosition::Descendant, &resolved_decisions);
-            if is_label_only_delete(cr) {
-                remaining_actions.push(action);
-            } else {
-                trigger_actions.push(action);
-            }
+            route_operand_action(
+                &cr.id,
+                action,
+                &resolved_decisions,
+                &mut trigger_actions,
+                &mut remaining_actions,
+            );
         }
         for cr in &independent_crs {
             let action = cr_to_action(cr, GraphPosition::Independent, &resolved_decisions);
-            if is_label_only_delete(cr) {
-                remaining_actions.push(action);
-            } else {
-                trigger_actions.push(action);
-            }
+            route_operand_action(
+                &cr.id,
+                action,
+                &resolved_decisions,
+                &mut trigger_actions,
+                &mut remaining_actions,
+            );
         }
 
         let phase_actions = trigger_actions;
@@ -2832,11 +2849,13 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    if is_label_only_delete(cr) {
-                        deferred_remaining_actions.push(action);
-                    } else {
-                        phase_actions.push(action);
-                    }
+                    route_operand_action(
+                        &cr.id,
+                        action,
+                        &resolved_decisions,
+                        &mut phase_actions,
+                        &mut deferred_remaining_actions,
+                    );
                 }
             }
             for cr in &managed_descendants {
@@ -2864,11 +2883,13 @@ pub async fn generate_teardown_plan(
                     || (layer_idx == 0 && op_idx.is_none())
                 {
                     let action = cr_to_action(cr, GraphPosition::Descendant, &resolved_decisions);
-                    if is_label_only_delete(cr) {
-                        deferred_remaining_actions.push(action);
-                    } else {
-                        phase_actions.push(action);
-                    }
+                    route_operand_action(
+                        &cr.id,
+                        action,
+                        &resolved_decisions,
+                        &mut phase_actions,
+                        &mut deferred_remaining_actions,
+                    );
                 }
             }
             for cr in &independent_crs {
@@ -2888,11 +2909,13 @@ pub async fn generate_teardown_plan(
                     || (layer_idx == 0 && op_idx.is_none())
                 {
                     let action = cr_to_action(cr, GraphPosition::Independent, &resolved_decisions);
-                    if is_label_only_delete(cr) {
-                        deferred_remaining_actions.push(action);
-                    } else {
-                        phase_actions.push(action);
-                    }
+                    route_operand_action(
+                        &cr.id,
+                        action,
+                        &resolved_decisions,
+                        &mut phase_actions,
+                        &mut deferred_remaining_actions,
+                    );
                 }
             }
 
@@ -6340,96 +6363,124 @@ mod tests {
     // ── resolve_decisions + is_bulk_label_only: end-to-end phase routing ──
 
     #[test]
-    fn phase_routing_label_only_deferred_root_and_exact_stay() {
-        // Setup: 3 CRs — root-approved, label-only-approved, exact-approved
-        let root_res = make_res("DSC", "default-dsc", "uid-dsc");
+    fn route_operand_action_routes_label_only_to_deferred() {
         let label_res = make_res("LLMConfig", "llm-cfg", "uid-llm");
-        let exact_res = make_res("Config", "default", "uid-cfg");
+        let root_res = make_res("DSC", "default-dsc", "uid-dsc");
+        let expect_res = make_res("Pod", "managed-pod", "uid-pod");
 
-        let mut root_cr = make_cr_instance(
-            "DSC",
-            "default-dsc",
-            "uid-dsc",
-            vec![],
-            HashMap::new(),
-            vec![],
-        );
-        root_cr.provenance = Provenance::Unknown;
-        root_cr.discovery_source = DiscoverySource::Direct;
-
-        let mut label_cr = make_cr_instance(
-            "LLMConfig",
-            "llm-cfg",
-            "uid-llm",
-            vec![],
-            HashMap::new(),
-            vec![],
-        );
-        label_cr.provenance = Provenance::Unknown;
-        label_cr.discovery_source = DiscoverySource::RelatedLabelOnly;
-
-        let mut exact_cr = make_cr_instance(
-            "Config",
-            "default",
-            "uid-cfg",
-            vec![],
-            HashMap::new(),
-            vec![],
-        );
-        exact_cr.provenance = Provenance::Unknown;
-        exact_cr.discovery_source = DiscoverySource::Direct;
-
-        let candidates = vec![
-            ReviewCandidate {
-                resource: &root_res,
-                category: ReviewCategory::Operand(GraphPosition::Root),
-                approval_class: DeleteApprovalClass::Standard,
-                exact_approvable: true,
-                is_label_only_eligible: false,
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            label_res.clone(),
+            ResolvedDecision::Delete {
+                reason: "label-only".into(),
+                approval_origin: ApprovalOrigin::BulkLabelOnly,
             },
-            ReviewCandidate {
-                resource: &label_res,
-                category: ReviewCategory::Operand(GraphPosition::Root),
-                approval_class: compute_approval_class(&label_cr, GraphPosition::Root),
-                exact_approvable: true,
-                is_label_only_eligible: is_label_only_bulk_eligible(&label_cr),
+        );
+        resolved.insert(
+            root_res.clone(),
+            ResolvedDecision::Delete {
+                reason: "root approved".into(),
+                approval_origin: ApprovalOrigin::Other,
             },
-            ReviewCandidate {
-                resource: &exact_res,
-                category: ReviewCategory::Operand(GraphPosition::Root),
-                approval_class: DeleteApprovalClass::ExplicitOnly,
-                exact_approvable: true,
-                is_label_only_eligible: false,
-            },
-        ];
+        );
 
-        let policy = DecisionPolicy {
-            approvals: vec![
-                DeleteApproval::Bulk(BulkScope::Root),
-                DeleteApproval::Bulk(BulkScope::LabelOnly),
-                DeleteApproval::Exact("Config/default".to_string()),
-            ],
-            preserves: vec![],
+        let label_action = Action::Delete {
+            resource: label_res.clone(),
+            reason: "label-only approved".into(),
+        };
+        let root_action = Action::Delete {
+            resource: root_res.clone(),
+            reason: "root CR approved".into(),
+        };
+        let expect_action = Action::ExpectGone {
+            resource: expect_res.clone(),
+            reason: "managed descendant".into(),
         };
 
-        let resolved = resolve_decisions(&policy, &candidates).unwrap();
+        let mut current = Vec::new();
+        let mut deferred = Vec::new();
 
-        // root DSC → Other origin → stays in trigger phase
-        assert!(!is_bulk_label_only_decision(&root_res, &resolved));
-        // label LLMConfig → BulkLabelOnly → deferred to remaining
-        assert!(is_bulk_label_only_decision(&label_res, &resolved));
-        // exact Config → Other → stays in trigger phase
-        assert!(!is_bulk_label_only_decision(&exact_res, &resolved));
+        // Route all 3 actions through the production helper
+        route_operand_action(
+            &label_res,
+            label_action,
+            &resolved,
+            &mut current,
+            &mut deferred,
+        );
+        route_operand_action(
+            &root_res,
+            root_action,
+            &resolved,
+            &mut current,
+            &mut deferred,
+        );
+        route_operand_action(
+            &expect_res,
+            expect_action,
+            &resolved,
+            &mut current,
+            &mut deferred,
+        );
+
+        // label-only → deferred
+        assert_eq!(deferred.len(), 1, "label-only DELETE should be deferred");
+        assert!(
+            matches!(&deferred[0], Action::Delete { resource, .. } if resource.kind == "LLMConfig")
+        );
+
+        // root DELETE and EXPECT → current phase
+        assert_eq!(
+            current.len(),
+            2,
+            "root DELETE and EXPECT should stay in current phase"
+        );
+        assert!(
+            current
+                .iter()
+                .any(|a| matches!(a, Action::Delete { resource, .. } if resource.kind == "DSC"))
+        );
+        assert!(
+            current.iter().any(
+                |a| matches!(a, Action::ExpectGone { resource, .. } if resource.kind == "Pod")
+            )
+        );
     }
 
     #[test]
-    fn phase_routing_expect_descendant_not_deferred() {
-        // EXPECT descendants should NOT be deferred regardless of label-only
-        let desc_res = make_res("Pod", "managed-pod", "uid-pod");
-        let resolved = HashMap::new(); // descendants not in resolved_decisions
-        assert!(
-            !is_bulk_label_only_decision(&desc_res, &resolved),
-            "Managed descendants should not be deferred"
+    fn route_operand_action_review_stays_in_current() {
+        let res = make_res("OG", "og-1", "uid-og");
+        let resolved = HashMap::new(); // not in resolved → not label-only
+        let action = Action::Review {
+            resource: res.clone(),
+            reason: "verify before deleting".into(),
+            metadata: None,
+        };
+        let mut current = Vec::new();
+        let mut deferred = Vec::new();
+        route_operand_action(&res, action, &resolved, &mut current, &mut deferred);
+        assert_eq!(current.len(), 1);
+        assert!(deferred.is_empty());
+    }
+
+    #[test]
+    fn route_operand_action_keep_stays_in_current() {
+        let res = make_res("NS", "ns-1", "uid-ns");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            res.clone(),
+            ResolvedDecision::Keep {
+                reason: "preserved".into(),
+            },
         );
+        let action = Action::Keep {
+            resource: res.clone(),
+            reason: "preserved".into(),
+        };
+        let mut current = Vec::new();
+        let mut deferred = Vec::new();
+        route_operand_action(&res, action, &resolved, &mut current, &mut deferred);
+        assert_eq!(current.len(), 1);
+        assert!(deferred.is_empty(), "KEEP should never be deferred");
     }
 }

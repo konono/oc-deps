@@ -691,7 +691,11 @@ fn build_execution_plan_from_teardown(
 
     let mut exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> = Vec::new();
     for op in target_operators {
-        let Some(pkg) = op.package_name.clone().filter(|p| !p.trim().is_empty()) else {
+        let Some(pkg) = op
+            .package_name
+            .clone()
+            .filter(|p| !p.trim().is_empty() && *p == p.trim())
+        else {
             bail!(
                 "Operator {} has no package_name (no Subscription and CSV annotation evidence empty or ambiguous). Cannot create execution plan.",
                 op.csv.name
