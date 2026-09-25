@@ -1952,4 +1952,182 @@ mod tests {
         let pkgs = extract_annotation_packages(&obj);
         assert!(pkgs.is_empty());
     }
+
+    // ── discover_operators tower_test mock tests ──
+
+    use http::Response;
+    use kube::Client;
+    use std::pin::pin;
+    use tower_test::mock::Handle;
+
+    fn mock_list_response_olm(items: Vec<serde_json::Value>) -> Response<kube::client::Body> {
+        let body = serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "List",
+            "metadata": {"resourceVersion": "1"},
+            "items": items,
+        });
+        Response::builder()
+            .status(200)
+            .body(kube::client::Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn make_csv_json(
+        name: &str,
+        ns: &str,
+        annotation_pkg: Option<&str>,
+        labels: Vec<(&str, &str)>,
+    ) -> serde_json::Value {
+        let mut label_map = serde_json::Map::new();
+        for (k, v) in labels {
+            label_map.insert(k.to_string(), serde_json::json!(v));
+        }
+        let mut annotations = serde_json::Map::new();
+        if let Some(pkg) = annotation_pkg {
+            let inner = serde_json::json!([{
+                "type": "olm.package",
+                "value": serde_json::json!({"packageName": pkg}).to_string()
+            }]);
+            annotations.insert(
+                "operatorframework.io/properties".to_string(),
+                serde_json::Value::String(inner.to_string()),
+            );
+        }
+        serde_json::json!({
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "metadata": {
+                "name": name,
+                "namespace": ns,
+                "uid": format!("uid-{}-{}", name, ns),
+                "labels": label_map,
+                "annotations": annotations,
+            },
+            "status": {"phase": "Succeeded"},
+            "spec": {"customresourcedefinitions": {"owned": []}, "install": {"spec": {"deployments": []}}}
+        })
+    }
+
+    #[allow(dead_code)]
+    fn make_sub_json(name: &str, ns: &str, pkg: &str, csv: &str) -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {"name": name, "namespace": ns, "uid": format!("uid-sub-{}", name)},
+            "spec": {"name": pkg, "channel": "stable", "source": "redhat-operators", "sourceNamespace": "openshift-marketplace"},
+            "status": {"installedCSV": csv, "currentCSV": csv}
+        })
+    }
+
+    fn olm_kind_map() -> KindMap {
+        let mut km = KindMap::new();
+        km.insert(
+            "ClusterServiceVersion".into(),
+            crate::kube::discovery::KindInfo {
+                group: "operators.coreos.com".into(),
+                version: "v1alpha1".into(),
+                plural: "clusterserviceversions".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        km
+    }
+
+    async fn handle_discover_requests(
+        handle: Handle<http::Request<kube::client::Body>, Response<kube::client::Body>>,
+        csv_items: Vec<serde_json::Value>,
+        sub_items: Vec<serde_json::Value>,
+        request_paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let mut handle = pin!(handle);
+        // tokio::join sends 2 requests concurrently — order is not guaranteed
+        for _ in 0..2 {
+            let (req, send) = handle.next_request().await.expect("expected request");
+            let path = req.uri().path().to_string();
+            request_paths.lock().unwrap().push(path.clone());
+            if path.contains("/clusterserviceversions") {
+                send.send_response(mock_list_response_olm(csv_items.clone()));
+            } else if path.contains("/subscriptions") {
+                send.send_response(mock_list_response_olm(sub_items.clone()));
+            } else {
+                panic!("Unexpected request path: {}", path);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn discover_orphan_csv_single_annotation_package() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = paths.clone();
+
+        let csv = make_csv_json("my-op.v1.0", "ns-a", Some("my-operator"), vec![]);
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], rp));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].package_name, Some("my-operator".to_string()));
+        assert!(ops[0].subscription.is_none());
+        let p = paths.lock().unwrap();
+        assert_eq!(p.len(), 2, "Exactly 2 LIST requests (CSV + Subscription)");
+    }
+
+    #[tokio::test]
+    async fn discover_annotation_no_package_gives_none() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = paths.clone();
+
+        // CSV with no annotation
+        let csv = make_csv_json("orphan.v1", "ns-a", None, vec![]);
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], rp));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].package_name, None, "No annotation → package None");
+    }
+
+    #[tokio::test]
+    async fn discover_annotation_multiple_packages_gives_none() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = paths.clone();
+
+        // CSV with 2 distinct packages in annotation
+        let mut csv = make_csv_json("multi.v1", "ns-a", None, vec![]);
+        csv["metadata"]["annotations"]["operatorframework.io/properties"] = serde_json::json!(
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"pkg-a\"}"},{"type":"olm.package","value":"{\"packageName\":\"pkg-b\"}"}]"#
+        );
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], rp));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(
+            ops[0].package_name, None,
+            "Multiple packages → None (ambiguous)"
+        );
+    }
 }

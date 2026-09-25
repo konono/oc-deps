@@ -248,6 +248,23 @@ pub enum DiscoverySourceSer {
 //  ExecutionPlan — cluster-bound plan with UIDs for safe replay
 // ──────────────────────────────────────────────────────────────
 
+pub fn validate_package_name(pkg: Option<&str>, csv_name: &str) -> anyhow::Result<String> {
+    let Some(p) = pkg else {
+        anyhow::bail!(
+            "Operator {} has no package_name (no Subscription and CSV annotation evidence empty or ambiguous)",
+            csv_name
+        );
+    };
+    if p.trim().is_empty() || p != p.trim() {
+        anyhow::bail!(
+            "Operator {} has invalid package_name '{}' (empty or whitespace)",
+            csv_name,
+            p
+        );
+    }
+    Ok(p.to_string())
+}
+
 pub const EXECUTION_PLAN_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

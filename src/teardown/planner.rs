@@ -6483,4 +6483,44 @@ mod tests {
         assert_eq!(current.len(), 1);
         assert!(deferred.is_empty(), "KEEP should never be deferred");
     }
+
+    // ── validate_package_name boundary tests ──
+
+    #[test]
+    fn validate_package_valid() {
+        use crate::teardown::plan::validate_package_name;
+        let r = validate_package_name(Some("rhods-operator"), "csv.v1");
+        assert!(r.is_ok());
+        assert_eq!(r.unwrap(), "rhods-operator");
+    }
+
+    #[test]
+    fn validate_package_none_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(None, "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_empty_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some(""), "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_whitespace_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some("   "), "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_leading_space_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some(" rhods-operator"), "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_trailing_space_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some("rhods-operator "), "csv.v1").is_err());
+    }
 }
