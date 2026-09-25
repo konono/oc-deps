@@ -161,9 +161,9 @@ pub enum Command {
         #[arg(short = 'n', long)]
         namespace: Option<String>,
 
-        /// Output file path
-        #[arg(short = 'o', long, default_value = "evidence-graph.json")]
-        output_file: String,
+        /// Save to file path
+        #[arg(long, default_value = "evidence-graph.json")]
+        file: String,
 
         /// Include Event resources in scan (default: skip)
         #[arg(long)]
@@ -215,7 +215,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         operators: Vec<String>,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -328,7 +328,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         operators: Vec<String>,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -343,7 +343,7 @@ pub enum TeardownAction {
         #[arg(required = true)]
         operator: String,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -437,7 +437,7 @@ pub enum OperatorAction {
         #[arg(short = 'n', long)]
         namespace: Option<String>,
 
-        /// Output format: tree, json
+        /// Output format: tree, table, json
         #[arg(short = 'o', long, value_enum, default_value = "tree")]
         output: OutputFormat,
 
@@ -490,9 +490,9 @@ pub enum SnapshotAction {
         #[arg(short = 'n', long)]
         namespace: Option<String>,
 
-        /// Output file path
-        #[arg(short = 'o', long, default_value = "snapshot.json")]
-        output_file: String,
+        /// Save to file path
+        #[arg(long, default_value = "snapshot.json")]
+        file: String,
 
         /// Include Event resources in scan (default: skip)
         #[arg(long)]
@@ -538,8 +538,8 @@ pub enum SnapshotAction {
         after: String,
 
         /// Output format: tree (default), json, table
-        #[arg(long, value_enum, default_value = "tree")]
-        format: OutputFormat,
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
     },
 }
 
@@ -1029,5 +1029,70 @@ mod tests {
     fn test_subcommand_required() {
         let result = Args::try_parse_from(["oc-deps"]);
         assert!(result.is_err(), "Expected error when no subcommand given");
+    }
+
+    #[test]
+    fn test_snapshot_create_file_succeeds() {
+        let args = Args::parse_from([
+            "oc-deps", "snapshot", "create", "-n", "demo", "--file", "out.json",
+        ]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Create { file, .. },
+            } => {
+                assert_eq!(file, "out.json");
+            }
+            _ => panic!("Expected snapshot create"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_create_dash_o_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "snapshot", "create", "-o", "out.json"]);
+        assert!(
+            result.is_err(),
+            "snapshot create -o should be rejected (use --file)"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_diff_dash_o_succeeds() {
+        let args = Args::parse_from([
+            "oc-deps", "snapshot", "diff", "a.json", "b.json", "-o", "json",
+        ]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Diff { output, .. },
+            } => {
+                assert!(matches!(output, OutputFormat::Json));
+            }
+            _ => panic!("Expected snapshot diff"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_diff_format_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps", "snapshot", "diff", "a.json", "b.json", "--format", "json",
+        ]);
+        assert!(
+            result.is_err(),
+            "snapshot diff --format should be rejected (use -o)"
+        );
+    }
+
+    #[test]
+    fn test_graph_file_succeeds() {
+        let args = Args::parse_from(["oc-deps", "graph", "-n", "demo", "--file", "g.json"]);
+        match args.command {
+            Command::Graph { file, .. } => assert_eq!(file, "g.json"),
+            _ => panic!("Expected graph"),
+        }
+    }
+
+    #[test]
+    fn test_graph_dash_o_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "graph", "-o", "g.json"]);
+        assert!(result.is_err(), "graph -o should be rejected (use --file)");
     }
 }

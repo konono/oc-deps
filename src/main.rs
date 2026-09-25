@@ -707,14 +707,14 @@ async fn main() -> Result<()> {
             SnapshotAction::Diff {
                 ref before,
                 ref after,
-                ref format,
+                ref output,
             },
     } = args.command
     {
         let before_snap = load_snapshot(before)?;
         let after_snap = load_snapshot(after)?;
         let result = diff_snapshots(&before_snap, &after_snap)?;
-        match format {
+        match output {
             OutputFormat::Tree => print_diff_tree(&result),
             OutputFormat::Table => print_diff_table(&result),
             OutputFormat::Json => {
@@ -819,7 +819,7 @@ async fn main() -> Result<()> {
             action:
                 SnapshotAction::Create {
                     namespace,
-                    output_file,
+                    file,
                     include_events,
                     refresh_discovery,
                     verbose: snapshot_verbose,
@@ -867,7 +867,7 @@ async fn main() -> Result<()> {
                 let scanned_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let cancel_token = tokio_util::sync::CancellationToken::new();
                 let cancel_for_handler = cancel_token.clone();
-                let tmp_path = format!("{}.{}.tmp", output_file, std::process::id());
+                let tmp_path = format!("{}.{}.tmp", file, std::process::id());
                 let tmp_path_cleanup = tmp_path.clone();
 
                 // Ctrl-C handler
@@ -1029,12 +1029,12 @@ async fn main() -> Result<()> {
 
                 let resource_count = snapshot.resources.len();
                 format_scan_warnings(&snapshot.scan_warnings, snapshot_verbose);
-                save_snapshot(&snapshot, &output_file)?;
+                save_snapshot(&snapshot, &file)?;
 
                 let scope = snapshot.scope.as_ref().unwrap();
                 eprintln!(
                     "✅ Snapshot saved to {} ({} resources, {} requested, {} complete, {} incomplete)",
-                    output_file,
+                    file,
                     resource_count,
                     scope.requested_namespaces.len(),
                     scope.complete_namespaces.len(),
@@ -1054,11 +1054,11 @@ async fn main() -> Result<()> {
 
                 let resource_count = snapshot.resources.len();
                 format_scan_warnings(&snapshot.scan_warnings, snapshot_verbose);
-                save_snapshot(&snapshot, &output_file)?;
+                save_snapshot(&snapshot, &file)?;
 
                 eprintln!(
                     "✅ Snapshot saved to {} ({} resources, {} scan warnings)",
-                    output_file,
+                    file,
                     resource_count,
                     snapshot.scan_warnings.len()
                 );
@@ -1070,7 +1070,7 @@ async fn main() -> Result<()> {
         }
         Command::Graph {
             namespace,
-            output_file,
+            file,
             include_events,
             refresh_discovery,
             verbose: graph_verbose,
@@ -1097,10 +1097,10 @@ async fn main() -> Result<()> {
             eprintln!(" {} edges", graph.edges.len());
 
             let json = serde_json::to_string_pretty(&graph)?;
-            std::fs::write(&output_file, json)?;
+            std::fs::write(&file, json)?;
             eprintln!(
                 "✅ Evidence graph saved to {} ({} edges)",
-                output_file,
+                file,
                 graph.edges.len()
             );
             if graph_strict && !snapshot.scan_warnings.is_empty() {
@@ -4554,7 +4554,7 @@ async fn main() -> Result<()> {
                     } else {
                         scan_warnings.push(crate::kube::resource::ScanWarning::Other {
                             gvr: format!("{}/{}", kind, name),
-                            message: format!("who-manages failed: {}", e.message),
+                            message: format!("operator owner resolution failed: {}", e.message),
                         });
                     }
                 }
@@ -4676,7 +4676,7 @@ async fn main() -> Result<()> {
                     namespace,
                     output,
                     refresh_discovery,
-                    verbose: _owner_verbose,
+                    verbose: owner_verbose,
                     strict: owner_strict,
                 },
         } => {
@@ -4714,6 +4714,9 @@ async fn main() -> Result<()> {
             };
             eprintln!(" done\n");
 
+            if !result.scan_failures.is_empty() {
+                format_scan_warnings(&result.scan_failures, owner_verbose);
+            }
             print_who_manages(&result, &output);
             if owner_strict && !result.scan_failures.is_empty() {
                 std::process::exit(2);

@@ -474,15 +474,15 @@ oc-deps teardown apply rhods-operator --force       # suppress advisory warnings
 
 ```bash
 # Single namespace
-oc-deps snapshot -n <namespace> -o snapshot.json
+oc-deps snapshot create -n <namespace> --file snapshot.json
 
 # Cluster-wide (schema v3 with scope metadata)
-oc-deps snapshot -A -o cluster-snapshot.json
-oc-deps snapshot -A --namespace-selector env=prod -o filtered.json
-oc-deps snapshot -A --exclude-system-namespaces --exclude-namespace "temp-*" -o clean.json
-oc-deps snapshot -A --strict -o snap.json  # save then exit 2 on warnings
+oc-deps snapshot create -A --file cluster-snapshot.json
+oc-deps snapshot create -A --namespace-selector env=prod --file filtered.json
+oc-deps snapshot create -A --exclude-system-namespaces --exclude-namespace "temp-*" --file clean.json
+oc-deps snapshot create -A --strict --file snap.json  # save then exit 2 on warnings
 
-oc-deps graph -n <namespace> -o evidence-graph.json
+oc-deps graph -n <namespace> --file evidence-graph.json
 ```
 
 **Cluster-wide snapshot:** Scans all namespaces (or filtered subset) with bounded concurrency (shared global API semaphore, max 50 concurrent LIST requests). Schema v3 adds `scope` with mode (`single-namespace`/`all-namespaces`/`filtered`), requested filters, complete/incomplete namespace lists with typed ScanWarning. Atomic save (temp file + rename) prevents corruption on Ctrl-C (exit 130). Secret values stored as SHA-256 hashes.
@@ -495,8 +495,8 @@ Compare two snapshots offline (no cluster connection required):
 
 ```bash
 oc-deps diff before.json after.json                 # tree output (default)
-oc-deps diff before.json after.json --format table   # table output
-oc-deps diff before.json after.json --format json    # JSON output
+oc-deps snapshot diff before.json after.json -o table   # table output
+oc-deps snapshot diff before.json after.json -o json    # JSON output
 ```
 
 Resources are matched by logical identity (group/kind/namespace/name). UID changes are detected as Recreated. Volatile annotations (`last-applied-configuration`, etc.) are excluded from change detection.
