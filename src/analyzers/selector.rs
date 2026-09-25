@@ -5466,4 +5466,166 @@ mod tests {
         assert!(inv.warnings.is_empty());
         assert!(!inv.available);
     }
+
+    #[test]
+    fn requested_ip_in_pool_gives_provider_and_pool_match() {
+        let pool = make_test_pool("public", "metallb-system", vec!["192.0.2.0/24"]);
+        let l2 = make_test_l2("l2-pub", "metallb-system", vec!["public"]);
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        let mut svc = make_lb_svc("my-svc");
+        svc.load_balancer_ip = Some("192.0.2.10".into());
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &vec![],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.provider.as_deref(), Some("MetalLB"));
+        assert_eq!(result.pools.len(), 1);
+        assert!(
+            result.pools[0].match_reason.contains("requested IP"),
+            "match_reason should mention requested IP: {}",
+            result.pools[0].match_reason
+        );
+        assert_eq!(result.requested_ips, vec!["192.0.2.10"]);
+    }
+
+    #[test]
+    fn node_selector_mismatch_gives_explicit_warning_not_unknown() {
+        let pool = make_test_pool("public", "metallb-system", vec!["10.0.0.0/24"]);
+        let mut l2 = make_test_l2("l2-pub", "metallb-system", vec!["public"]);
+        l2.node_selectors = vec![LabelSelector {
+            match_labels: {
+                let mut m = BTreeMap::new();
+                m.insert("role".into(), "definitely-not-this".into());
+                m
+            },
+            match_expressions: vec![],
+        }];
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        metallb.node_labels.insert("worker-1".into(), {
+            let mut m = BTreeMap::new();
+            m.insert("role".into(), "worker".into());
+            m
+        });
+        let mut svc = make_lb_svc("web");
+        svc.lb_ingress = vec![LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        }];
+        svc.external_traffic_policy = Some("Local".into());
+        let ep_nodes = vec!["worker-1".to_string()];
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &ep_nodes,
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.advertisements[0].node_selector_status, "mismatch");
+        let has_mismatch_warning = result
+            .warnings
+            .iter()
+            .any(|w| w.contains("nodeSelector matched no nodes"));
+        assert!(
+            has_mismatch_warning,
+            "Should have nodeSelector mismatch warning: {:?}",
+            result.warnings
+        );
+        let has_no_advertised = result
+            .warnings
+            .iter()
+            .any(|w| w.contains("no advertised nodes"));
+        assert!(
+            has_no_advertised,
+            "Local should warn about no advertised nodes: {:?}",
+            result.warnings
+        );
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("unknown")),
+            "Should not say unknown when nodes are evaluated: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn namespace_in_list_short_circuits_without_ns_labels() {
+        let mut pool = make_test_pool("public", "metallb-system", vec!["10.0.0.0/24"]);
+        pool.service_allocation = Some(ServiceAllocation {
+            priority: 1,
+            namespaces: vec!["allowed-ns".into()],
+            namespace_selectors: vec![LabelSelector {
+                match_labels: {
+                    let mut m = BTreeMap::new();
+                    m.insert("env".into(), "prod".into());
+                    m
+                },
+                match_expressions: vec![],
+            }],
+            service_selectors: vec![],
+        });
+        let l2 = make_test_l2("l2-pub", "metallb-system", vec!["public"]);
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        // namespace_labels is empty (not fetched), but namespaces list matches
+        let mut svc = make_lb_svc("web");
+        svc.lb_ingress = vec![LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        }];
+        let result = resolve_metallb_for_service(
+            &svc,
+            "allowed-ns",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.pools.len(), 1);
+        assert_eq!(
+            result.pools[0].allocation_match.as_deref(),
+            Some("OK"),
+            "namespaces list match should short-circuit without checking unavailable ns labels"
+        );
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("unavailable")),
+            "Should not warn about unavailable ns labels: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn conditional_list_no_selectors_means_no_ns_node_fetch() {
+        // When no pool has namespaceSelectors and no ad has nodeSelectors,
+        // the inventory should not need ns/node labels.
+        // This is a structural test: verify that pools/ads without selectors
+        // produce correct results with empty namespace_labels/node_labels.
+        let pool = make_test_pool("simple", "metallb-system", vec!["10.0.0.0/24"]);
+        let l2 = make_test_l2("l2-all", "metallb-system", vec!["simple"]);
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        assert!(metallb.namespace_labels.is_empty());
+        assert!(metallb.node_labels.is_empty());
+        let mut svc = make_lb_svc("web");
+        svc.lb_ingress = vec![LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        }];
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.pools.len(), 1);
+        assert_eq!(result.advertisements.len(), 1);
+        assert_eq!(result.advertisements[0].node_selector_status, "all");
+        assert!(result.warnings.iter().all(|w| !w.contains("unavailable")));
+    }
 }

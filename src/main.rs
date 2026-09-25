@@ -5704,12 +5704,19 @@ fn network_paths_to_json(
                         obj["allocationMatch"] = serde_json::json!(am);
                     }
                     if let Some(sa) = &mp.pool.service_allocation {
-                        obj["serviceAllocation"] = serde_json::json!({
+                        let mut sa_obj = serde_json::json!({
                             "priority": sa.priority,
                             "namespaces": sa.namespaces,
-                            "namespaceSelectors": sa.namespace_selectors.len(),
-                            "serviceSelectors": sa.service_selectors.len(),
                         });
+                        if !sa.namespace_selectors.is_empty() {
+                            sa_obj["namespaceSelectors"] =
+                                label_selectors_to_json(&sa.namespace_selectors);
+                        }
+                        if !sa.service_selectors.is_empty() {
+                            sa_obj["serviceSelectors"] =
+                                label_selectors_to_json(&sa.service_selectors);
+                        }
+                        obj["serviceAllocation"] = sa_obj;
                     }
                     if let Some(v) = mp.pool.status_available_ipv4 {
                         obj["statusAvailableIPv4"] = serde_json::json!(v);
@@ -5950,6 +5957,22 @@ fn print_network_tree(
                 );
                 if let Some(am) = &mp.allocation_match {
                     println!("      Allocation: {}", am);
+                }
+                let mut status_parts = Vec::new();
+                if let Some(v) = mp.pool.status_available_ipv4 {
+                    status_parts.push(format!("available IPv4: {}", v));
+                }
+                if let Some(v) = mp.pool.status_assigned_ipv4 {
+                    status_parts.push(format!("assigned IPv4: {}", v));
+                }
+                if let Some(v) = mp.pool.status_available_ipv6 {
+                    status_parts.push(format!("available IPv6: {}", v));
+                }
+                if let Some(v) = mp.pool.status_assigned_ipv6 {
+                    status_parts.push(format!("assigned IPv6: {}", v));
+                }
+                if !status_parts.is_empty() {
+                    println!("      Status: {}", status_parts.join(", "));
                 }
             }
             for ad in &mlb.advertisements {
