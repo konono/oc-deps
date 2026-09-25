@@ -73,7 +73,10 @@ pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool, s
     let output = serde_json::json!({
         "namespace": namespace,
         "target": target,
+        "scope": "namespace",
         "tree": tree_to_json(tree, include_annotations, show_spec),
+        "warnings": serde_json::Value::Array(vec![]),
+        "scanWarningCount": 0,
     });
     println!(
         "{}",
@@ -86,6 +89,7 @@ pub fn print_chain_json(
     namespace: &str,
     include_annotations: bool,
     show_spec: bool,
+    warnings: &[crate::kube::resource::ScanWarning],
 ) {
     let items: Vec<_> = chain
         .iter()
@@ -129,10 +133,17 @@ pub fn print_chain_json(
             obj
         })
         .collect();
+    let json_warnings: Vec<serde_json::Value> = warnings
+        .iter()
+        .map(|w| serde_json::to_value(w).unwrap_or_else(|_| serde_json::json!(w.to_string())))
+        .collect();
     let output = serde_json::json!({
         "namespace": namespace,
         "target": chain.last().map(|e| format!("{}/{}", e.info.kind, e.info.name)).unwrap_or_default(),
+        "scope": "namespace",
         "chain": items,
+        "warnings": json_warnings,
+        "scanWarningCount": warnings.len(),
     });
     println!(
         "{}",

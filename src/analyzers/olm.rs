@@ -851,6 +851,7 @@ fn print_operators_json(operators: &[OperatorInstance], deps: &[OperatorDependen
     );
 }
 
+#[allow(dead_code)]
 pub struct CrdOriginChain {
     pub crd_name: String,
     pub crd_labels: Vec<(String, String)>,
@@ -861,6 +862,7 @@ pub struct CrdOriginChain {
     pub subscription_namespace: Option<String>,
 }
 
+#[allow(dead_code)]
 pub async fn find_crd_origin(
     client: &Client,
     kind: &str,
@@ -1004,6 +1006,7 @@ pub async fn find_crd_origin(
     Some(chain)
 }
 
+#[allow(dead_code)]
 pub fn print_crd_origin(chain: &CrdOriginChain, kind: &str, output: &OutputFormat) {
     match output {
         OutputFormat::Tree => {

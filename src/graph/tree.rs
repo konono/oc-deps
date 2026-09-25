@@ -200,6 +200,7 @@ impl MapFilter {
     }
 }
 
+#[allow(dead_code)]
 pub fn parse_filters(raw: &[String]) -> Result<Vec<MapFilter>> {
     let mut filters = Vec::new();
     for s in raw {
@@ -236,9 +237,22 @@ pub fn apply_filters(trees: Vec<TreeNode>, filters: &[MapFilter]) -> Vec<TreeNod
     if filters.is_empty() {
         return trees;
     }
+    let kind_filters: Vec<_> = filters
+        .iter()
+        .filter(|f| matches!(f, MapFilter::Kind(_)))
+        .collect();
+    let label_filters: Vec<_> = filters
+        .iter()
+        .filter(|f| matches!(f, MapFilter::Label { .. }))
+        .collect();
     trees
         .into_iter()
-        .filter(|tree| filters.iter().all(|f| f.matches(&tree.info)))
+        .filter(|tree| {
+            let kind_pass =
+                kind_filters.is_empty() || kind_filters.iter().any(|f| f.matches(&tree.info));
+            let label_pass = label_filters.iter().all(|f| f.matches(&tree.info));
+            kind_pass && label_pass
+        })
         .collect()
 }
 
@@ -402,5 +416,43 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].children.len(), 1);
         assert_eq!(result[0].children[0].info.kind, "ReplicaSet");
+    }
+
+    #[test]
+    fn apply_filters_multiple_kinds_or() {
+        let trees = vec![
+            make_tree("Deployment", "app1", vec![]),
+            make_tree("StatefulSet", "db1", vec![]),
+            make_tree("Service", "svc1", vec![]),
+        ];
+        let filters = vec![
+            MapFilter::Kind("Deployment".into()),
+            MapFilter::Kind("StatefulSet".into()),
+        ];
+        let result = apply_filters(trees, &filters);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].info.kind, "Deployment");
+        assert_eq!(result[1].info.kind, "StatefulSet");
+    }
+
+    #[test]
+    fn apply_filters_kind_or_with_label_and() {
+        let trees = vec![
+            make_tree("Deployment", "app1", vec![("app", "web")]),
+            make_tree("Deployment", "app2", vec![("app", "api")]),
+            make_tree("StatefulSet", "db1", vec![("app", "web")]),
+        ];
+        let filters = vec![
+            MapFilter::Kind("Deployment".into()),
+            MapFilter::Kind("StatefulSet".into()),
+            MapFilter::Label {
+                key: "app".into(),
+                value: "web".into(),
+            },
+        ];
+        let result = apply_filters(trees, &filters);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].info.name, "app1");
+        assert_eq!(result[1].info.name, "db1");
     }
 }

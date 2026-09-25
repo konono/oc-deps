@@ -416,6 +416,157 @@ pub struct NetworkPath {
     pub target_ref_matched_pods: Vec<String>,
 }
 
+pub struct VerifiedPod {
+    pub name: String,
+    pub uid: String,
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+pub fn resolve_verified_target_ref_pods(
+    endpoint_slices: &[EndpointSliceInfo],
+    index_by_uid: &std::collections::HashMap<String, crate::kube::resource::ResourceInfo>,
+    namespace: &str,
+) -> (Vec<String>, Vec<VerifiedPod>) {
+    let mut target_ref_pods = Vec::new();
+    let mut verified_pods = Vec::new();
+    let mut seen_uids = std::collections::HashSet::new();
+    for es in endpoint_slices {
+        for ep in &es.endpoints {
+            let Some(tr) = &ep.target_ref else {
+                continue;
+            };
+            if tr.kind.as_deref() != Some("Pod") {
+                continue;
+            }
+            let api_ver = tr.api_version.as_deref().unwrap_or("v1");
+            if api_ver != "v1" && !api_ver.is_empty() {
+                continue;
+            }
+            let Some(pod_name) = &tr.name else {
+                continue;
+            };
+            let tr_ns = tr.namespace.as_deref().unwrap_or(namespace);
+            if tr_ns != namespace {
+                continue;
+            }
+            let Some(tr_uid) = &tr.uid else {
+                continue;
+            };
+            for info in index_by_uid.values() {
+                if info.kind == "Pod"
+                    && info.name == *pod_name
+                    && info.namespace.as_deref() == Some(tr_ns)
+                    && info.uid == *tr_uid
+                {
+                    let pod_ref = format!("Pod/{}", pod_name);
+                    if !target_ref_pods.contains(&pod_ref) {
+                        target_ref_pods.push(pod_ref);
+                    }
+                    if seen_uids.insert(info.uid.clone()) {
+                        verified_pods.push(VerifiedPod {
+                            name: info.name.clone(),
+                            uid: info.uid.clone(),
+                            labels: info.labels.clone(),
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    (target_ref_pods, verified_pods)
+}
+
+pub type PodLabelsTuple = (String, String, std::collections::HashMap<String, String>);
+
+#[allow(clippy::type_complexity)]
+pub fn build_service_network_path(
+    target_svc: &NetworkService,
+    inventory: &NetworkInventory,
+    index_by_uid: &std::collections::HashMap<String, crate::kube::resource::ResourceInfo>,
+    namespace: &str,
+) -> (NetworkPath, Vec<PodLabelsTuple>) {
+    let svc_ep_slices: Vec<_> = inventory
+        .endpoint_slices
+        .iter()
+        .filter(|es| es.service_name.as_deref() == Some(&target_svc.name))
+        .cloned()
+        .collect();
+    let svc_ingresses: Vec<_> = inventory
+        .ingresses
+        .iter()
+        .filter(|i| i.backend_service == target_svc.name)
+        .cloned()
+        .collect();
+    let mut summary = EndpointSummary::default();
+    for es in &svc_ep_slices {
+        for ep in &es.endpoints {
+            match ep.conditions_ready {
+                Some(true) => summary.ready += 1,
+                Some(false) => summary.not_ready += 1,
+                None => summary.unknown += 1,
+            }
+            if ep.conditions_serving == Some(true) {
+                summary.serving += 1;
+            }
+            if ep.conditions_terminating == Some(true) {
+                summary.terminating += 1;
+            }
+        }
+    }
+    summary.effective_ready = summary.ready + summary.unknown;
+
+    let mut selector_pods = Vec::new();
+    if target_svc.has_selector {
+        for info in index_by_uid.values() {
+            if info.kind == "Pod"
+                && info.namespace.as_deref() == Some(namespace)
+                && target_svc
+                    .selector
+                    .iter()
+                    .all(|(k, v)| info.labels.get(k) == Some(v))
+            {
+                selector_pods.push(format!("Pod/{}", info.name));
+            }
+        }
+        selector_pods.sort();
+    }
+
+    let (target_ref_pods, verified_target_pods) =
+        resolve_verified_target_ref_pods(&svc_ep_slices, index_by_uid, namespace);
+
+    let mut pod_labels_list: Vec<PodLabelsTuple> = Vec::new();
+    let mut seen_pod_uids = std::collections::HashSet::new();
+    for pod_str in &selector_pods {
+        let pod_name = pod_str.strip_prefix("Pod/").unwrap_or(pod_str);
+        for info in index_by_uid.values() {
+            if info.kind == "Pod"
+                && info.name == pod_name
+                && info.namespace.as_deref() == Some(namespace)
+                && seen_pod_uids.insert(info.uid.clone())
+            {
+                pod_labels_list.push((info.name.clone(), info.uid.clone(), info.labels.clone()));
+                break;
+            }
+        }
+    }
+    for vp in &verified_target_pods {
+        if seen_pod_uids.insert(vp.uid.clone()) {
+            pod_labels_list.push((vp.name.clone(), vp.uid.clone(), vp.labels.clone()));
+        }
+    }
+
+    let path = NetworkPath {
+        service: target_svc.clone(),
+        ingresses: svc_ingresses,
+        endpoint_slices: svc_ep_slices,
+        endpoint_summary: summary,
+        selector_matched_pods: selector_pods,
+        target_ref_matched_pods: target_ref_pods,
+    };
+    (path, pod_labels_list)
+}
+
 pub struct NetworkInventory {
     pub services: Vec<NetworkService>,
     pub ingresses: Vec<NetworkIngress>,
@@ -2733,5 +2884,313 @@ mod tests {
         assert!(matches!(&ports[1].port, Some(IntOrString::String(s)) if s == "http-alt"));
         assert!(matches!(&ports[2].port, Some(IntOrString::Int(443))));
         assert_eq!(ports[2].end_port, Some(445));
+    }
+
+    fn make_svc(name: &str, selector: bool) -> NetworkService {
+        let mut sel = std::collections::BTreeMap::new();
+        if selector {
+            sel.insert("app".into(), "web".into());
+        }
+        NetworkService {
+            name: name.into(),
+            selector: sel,
+            has_selector: selector,
+            cluster_ip: "10.96.0.1".into(),
+            svc_type: "ClusterIP".into(),
+            ports: vec![],
+            health_check_node_port: None,
+            internal_traffic_policy: None,
+            ip_family_policy: None,
+            load_balancer_class: None,
+            allocate_lb_node_ports: None,
+            external_traffic_policy: None,
+            external_ips: vec![],
+            ip_families: vec![],
+            lb_ingress: vec![],
+        }
+    }
+
+    fn make_pod_info(
+        name: &str,
+        uid: &str,
+        ns: &str,
+        labels: Vec<(&str, &str)>,
+    ) -> crate::kube::resource::ResourceInfo {
+        crate::kube::resource::ResourceInfo {
+            group: String::new(),
+            kind: "Pod".into(),
+            name: name.into(),
+            namespace: Some(ns.into()),
+            uid: uid.into(),
+            owner_refs: vec![],
+            labels: labels
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+            annotations: std::collections::HashMap::new(),
+            pod_template: None,
+        }
+    }
+
+    fn make_ep_slice(svc_name: &str, endpoints: Vec<EndpointInfo>) -> EndpointSliceInfo {
+        EndpointSliceInfo {
+            name: format!("{}-slice", svc_name),
+            service_name: Some(svc_name.into()),
+            address_type: "IPv4".into(),
+            ports: vec![],
+            endpoints,
+        }
+    }
+
+    fn make_target_ref(
+        api_version: &str,
+        kind: &str,
+        name: &str,
+        ns: &str,
+        uid: &str,
+    ) -> EndpointTargetRef {
+        EndpointTargetRef {
+            api_version: Some(api_version.into()),
+            kind: Some(kind.into()),
+            name: Some(name.into()),
+            namespace: Some(ns.into()),
+            uid: Some(uid.into()),
+        }
+    }
+
+    #[test]
+    fn service_path_endpointless_shows_1_path() {
+        let svc = make_svc("empty-svc", false);
+        let inventory = NetworkInventory {
+            services: vec![svc.clone()],
+            ingresses: vec![],
+            endpoint_slices: vec![],
+            network_policies: vec![],
+            np_availability: NetworkPolicyAvailability::Available,
+            warnings: vec![],
+        };
+        let index = std::collections::HashMap::new();
+        let (path, pod_labels) = build_service_network_path(&svc, &inventory, &index, "test-ns");
+        assert_eq!(path.service.name, "empty-svc");
+        assert_eq!(path.endpoint_summary.ready, 0);
+        assert!(path.selector_matched_pods.is_empty());
+        assert!(path.target_ref_matched_pods.is_empty());
+        assert!(pod_labels.is_empty());
+    }
+
+    #[test]
+    fn service_path_only_target_service() {
+        let svc_a = make_svc("web", true);
+        let svc_b = make_svc("web-alias", true);
+        let inventory = NetworkInventory {
+            services: vec![svc_a.clone(), svc_b],
+            ingresses: vec![],
+            endpoint_slices: vec![],
+            network_policies: vec![],
+            np_availability: NetworkPolicyAvailability::Available,
+            warnings: vec![],
+        };
+        let index = std::collections::HashMap::new();
+        let (path, _) = build_service_network_path(&svc_a, &inventory, &index, "test-ns");
+        assert_eq!(path.service.name, "web");
+    }
+
+    #[test]
+    fn verified_target_ref_correct_uid() {
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "uid-1".into(),
+            make_pod_info("web-pod", "uid-1", "test-ns", vec![("app", "web")]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.1".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(make_target_ref("v1", "Pod", "web-pod", "test-ns", "uid-1")),
+            hints: None,
+        };
+        let slices = vec![make_ep_slice("web", vec![ep])];
+        let (refs, verified) = resolve_verified_target_ref_pods(&slices, &index, "test-ns");
+        assert_eq!(refs, vec!["Pod/web-pod"]);
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].uid, "uid-1");
+    }
+
+    #[test]
+    fn verified_target_ref_stale_uid_excluded() {
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "new-uid".into(),
+            make_pod_info("web-pod", "new-uid", "test-ns", vec![]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.1".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(make_target_ref(
+                "v1",
+                "Pod",
+                "web-pod",
+                "test-ns",
+                "stale-uid",
+            )),
+            hints: None,
+        };
+        let slices = vec![make_ep_slice("web", vec![ep])];
+        let (refs, verified) = resolve_verified_target_ref_pods(&slices, &index, "test-ns");
+        assert!(refs.is_empty(), "Stale UID should be excluded");
+        assert!(verified.is_empty());
+    }
+
+    #[test]
+    fn verified_target_ref_missing_uid_excluded() {
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "uid-1".into(),
+            make_pod_info("web-pod", "uid-1", "test-ns", vec![]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.1".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(EndpointTargetRef {
+                api_version: Some("v1".into()),
+                kind: Some("Pod".into()),
+                name: Some("web-pod".into()),
+                namespace: Some("test-ns".into()),
+                uid: None,
+            }),
+            hints: None,
+        };
+        let slices = vec![make_ep_slice("web", vec![ep])];
+        let (refs, verified) = resolve_verified_target_ref_pods(&slices, &index, "test-ns");
+        assert!(refs.is_empty(), "Missing UID should be excluded");
+        assert!(verified.is_empty());
+    }
+
+    #[test]
+    fn verified_target_ref_wrong_api_version_excluded() {
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "uid-1".into(),
+            make_pod_info("web-pod", "uid-1", "test-ns", vec![]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.1".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(make_target_ref(
+                "apps/v1", "Pod", "web-pod", "test-ns", "uid-1",
+            )),
+            hints: None,
+        };
+        let slices = vec![make_ep_slice("web", vec![ep])];
+        let (refs, verified) = resolve_verified_target_ref_pods(&slices, &index, "test-ns");
+        assert!(refs.is_empty(), "Wrong apiVersion should be excluded");
+        assert!(verified.is_empty());
+    }
+
+    #[test]
+    fn verified_target_ref_non_pod_excluded() {
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "uid-1".into(),
+            make_pod_info("web-pod", "uid-1", "test-ns", vec![]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.1".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(make_target_ref("v1", "Node", "web-pod", "test-ns", "uid-1")),
+            hints: None,
+        };
+        let slices = vec![make_ep_slice("web", vec![ep])];
+        let (refs, verified) = resolve_verified_target_ref_pods(&slices, &index, "test-ns");
+        assert!(refs.is_empty(), "Non-Pod kind should be excluded");
+        assert!(verified.is_empty());
+    }
+
+    #[test]
+    fn verified_target_ref_wrong_namespace_excluded() {
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "uid-1".into(),
+            make_pod_info("web-pod", "uid-1", "other-ns", vec![]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.1".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(make_target_ref("v1", "Pod", "web-pod", "other-ns", "uid-1")),
+            hints: None,
+        };
+        let slices = vec![make_ep_slice("web", vec![ep])];
+        let (refs, verified) = resolve_verified_target_ref_pods(&slices, &index, "test-ns");
+        assert!(refs.is_empty(), "Wrong namespace should be excluded");
+        assert!(verified.is_empty());
+    }
+
+    #[test]
+    fn selectorless_service_with_valid_target_ref_in_posture() {
+        let svc = make_svc("headless", false);
+        let mut index = std::collections::HashMap::new();
+        index.insert(
+            "uid-pod".into(),
+            make_pod_info("backend", "uid-pod", "test-ns", vec![("role", "api")]),
+        );
+        let ep = EndpointInfo {
+            addresses: vec!["10.0.0.5".into()],
+            hostname: None,
+            node_name: None,
+            zone: None,
+            conditions_ready: Some(true),
+            conditions_serving: Some(true),
+            conditions_terminating: None,
+            target_ref: Some(make_target_ref(
+                "v1", "Pod", "backend", "test-ns", "uid-pod",
+            )),
+            hints: None,
+        };
+        let inventory = NetworkInventory {
+            services: vec![svc.clone()],
+            ingresses: vec![],
+            endpoint_slices: vec![make_ep_slice("headless", vec![ep])],
+            network_policies: vec![],
+            np_availability: NetworkPolicyAvailability::Available,
+            warnings: vec![],
+        };
+        let (path, pod_labels) = build_service_network_path(&svc, &inventory, &index, "test-ns");
+        assert_eq!(path.target_ref_matched_pods, vec!["Pod/backend"]);
+        assert!(path.selector_matched_pods.is_empty());
+        assert_eq!(
+            pod_labels.len(),
+            1,
+            "verified targetRef pod should be in posture input"
+        );
+        assert_eq!(pod_labels[0].0, "backend");
     }
 }

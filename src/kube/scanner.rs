@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use futures::stream::StreamExt;
 use kube::{
     Client,
@@ -250,10 +250,48 @@ pub async fn scan_namespace(
         refs,
         show_spec,
         None,
+        &[],
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn scan_namespace_with_extra_apis(
+    client: &Client,
+    namespace: &str,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    target_group: &str,
+    target_kind: &str,
+    include_events: bool,
+    refs: bool,
+    show_spec: bool,
+) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
+    let mut extra = Vec::new();
+    if !target_group.is_empty()
+        && kind_map
+            .get(target_kind)
+            .is_none_or(|ki| ki.group != target_group)
+        && let Some(info) = gk_map.get(&(target_group.to_string(), target_kind.to_string()))
+        && info.namespaced
+        && info.listable
+    {
+        extra.push((target_kind.to_string(), info.clone()));
+    }
+    scan_namespace_with_semaphore(
+        client,
+        namespace,
+        kind_map,
+        include_events,
+        refs,
+        show_spec,
+        None,
+        &extra,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn scan_namespace_with_semaphore(
     client: &Client,
     namespace: &str,
@@ -262,6 +300,7 @@ pub async fn scan_namespace_with_semaphore(
     refs: bool,
     show_spec: bool,
     api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+    extra_apis: &[(String, crate::kube::discovery::KindInfo)],
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
@@ -269,11 +308,20 @@ pub async fn scan_namespace_with_semaphore(
         HashSet::from(["Event"])
     };
 
-    let scan_targets: Vec<_> = kind_map
+    let mut scan_targets: Vec<_> = kind_map
         .iter()
         .filter(|(k, info)| info.namespaced && info.listable && !skip_kinds.contains(k.as_str()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    let existing_groups: HashSet<_> = scan_targets
+        .iter()
+        .map(|(k, i)| (i.group.clone(), k.clone()))
+        .collect();
+    for (kind, info) in extra_apis {
+        if !existing_groups.contains(&(info.group.clone(), kind.clone())) {
+            scan_targets.push((kind.clone(), info.clone()));
+        }
+    }
 
     let total = scan_targets.len();
     let scanned = Arc::new(AtomicUsize::new(0));
@@ -555,6 +603,9 @@ pub async fn scan_namespace_with_semaphore(
     Ok((index, warnings))
 }
 
+// scan_single_api_into_index removed — replaced by scan_namespace_with_extra_apis
+// which integrates extra APIs into the initial scan_targets before parallel LIST.
+
 pub async fn resolve_missing_parents(
     index: &mut NamespaceIndex,
     start_uid: &str,
@@ -696,38 +747,54 @@ pub async fn resolve_missing_parents(
     warnings
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub async fn find_parents_only(
     client: &Client,
+    group: &str,
     kind: &str,
     name: &str,
     namespace: &str,
     kind_map: &KindMap,
+    gk_map: &GroupKindMap,
     show_spec: bool,
     refs: bool,
-) -> Result<Vec<ChainEntry>> {
+) -> Result<(Vec<ChainEntry>, Vec<ScanWarning>)> {
     let mut chain = Vec::new();
+    let mut warnings = Vec::new();
     let mut current_kind = kind.to_string();
     let mut current_name = name.to_string();
+    let mut current_group = group.to_string();
     let mut visited = HashSet::new();
+    let mut is_first = true;
 
     loop {
-        let info = match kind_map.get(&current_kind) {
+        let info = if !current_group.is_empty() {
+            gk_map
+                .get(&(current_group.clone(), current_kind.clone()))
+                .or_else(|| {
+                    kind_map
+                        .iter()
+                        .find(|(k, ki)| *k == &current_kind && ki.group == current_group)
+                        .map(|(_, ki)| ki)
+                })
+        } else {
+            kind_map.get(&current_kind)
+        };
+        let info = match info {
             Some(i) => i,
             None => {
-                chain.push(ChainEntry {
-                    info: ResourceInfo {
-                        group: String::new(),
-                        kind: current_kind,
-                        name: current_name,
-                        namespace: None,
-                        uid: String::new(),
-                        owner_refs: vec![],
-                        labels: HashMap::new(),
-                        annotations: HashMap::new(),
-                        pod_template: None,
-                    },
-                    spec_refs: vec![],
-                });
+                if is_first {
+                    bail!(
+                        "{}/{} not found in API discovery (group: {})",
+                        current_kind,
+                        current_name,
+                        if current_group.is_empty() {
+                            "core"
+                        } else {
+                            &current_group
+                        }
+                    );
+                }
                 break;
             }
         };
@@ -740,7 +807,15 @@ pub async fn find_parents_only(
             Api::all_with(client.clone(), &ar)
         };
 
-        match api.get(&current_name).await {
+        match get_with_retry(
+            &api,
+            &current_name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
             Ok(obj) => {
                 let uid = obj.metadata.uid.unwrap_or_default();
                 if !visited.insert(uid.clone()) {
@@ -807,34 +882,36 @@ pub async fn find_parents_only(
 
                 match next {
                     Some(oref) => {
+                        current_group = oref
+                            .api_version
+                            .split_once('/')
+                            .map(|(g, _)| g.to_string())
+                            .unwrap_or_default();
                         current_kind = oref.kind;
                         current_name = oref.name;
                     }
                     None => break,
                 }
             }
-            Err(e) => {
-                chain.push(ChainEntry {
-                    info: ResourceInfo {
-                        group: String::new(),
-                        kind: current_kind,
-                        name: format!("{} (error: {})", current_name, e),
-                        namespace: None,
-                        uid: String::new(),
-                        owner_refs: vec![],
-                        labels: HashMap::new(),
-                        annotations: HashMap::new(),
-                        pod_template: None,
-                    },
-                    spec_refs: vec![],
-                });
+            Err(w) => {
+                if is_first {
+                    bail!(
+                        "{}/{} not found in namespace '{}': {}",
+                        current_kind,
+                        current_name,
+                        namespace,
+                        w
+                    );
+                }
+                warnings.push(w);
                 break;
             }
         }
+        is_first = false;
     }
 
     chain.reverse();
-    Ok(chain)
+    Ok((chain, warnings))
 }
 
 pub async fn list_namespaces_with_retry(
@@ -1121,12 +1198,18 @@ mod tests {
             send.send_response(json_response(mock_deployment_obj()));
         });
 
-        let chain = find_parents_only(
+        let gk_map: GroupKindMap = kind_map
+            .iter()
+            .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+            .collect();
+        let (chain, _warnings) = find_parents_only(
             &client,
+            "",
             "Pod",
             "myapp-abc-xyz",
             "test-ns",
             &kind_map,
+            &gk_map,
             false,
             true,
         )
@@ -1222,12 +1305,18 @@ mod tests {
             send.send_response(json_response(mock_deployment_obj()));
         });
 
-        let chain = find_parents_only(
+        let gk_map2: GroupKindMap = kind_map
+            .iter()
+            .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+            .collect();
+        let (chain, _warnings) = find_parents_only(
             &client,
+            "",
             "Pod",
             "myapp-abc-xyz",
             "test-ns",
             &kind_map,
+            &gk_map2,
             false,
             false,
         )
@@ -1430,8 +1519,8 @@ mod tests {
         let c2 = client.clone();
 
         let (r1, r2) = tokio::join!(
-            scan_namespace_with_semaphore(&c1, "ns-a", &km1, false, false, false, Some(sem1)),
-            scan_namespace_with_semaphore(&c2, "ns-b", &km2, false, false, false, Some(sem2)),
+            scan_namespace_with_semaphore(&c1, "ns-a", &km1, false, false, false, Some(sem1), &[]),
+            scan_namespace_with_semaphore(&c2, "ns-b", &km2, false, false, false, Some(sem2), &[]),
         );
 
         spawned.await.unwrap();
@@ -1491,6 +1580,89 @@ mod tests {
                 retries: 0
             }
             .is_retryable()
+        );
+    }
+
+    #[tokio::test]
+    async fn find_parents_only_target_404_returns_err() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let gk_map: GroupKindMap = kind_map
+            .iter()
+            .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+            .collect();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected Pod GET");
+            send.send_response(status_response(404, "not found"));
+        });
+
+        let result = find_parents_only(
+            &client,
+            "",
+            "Pod",
+            "nonexistent",
+            "test-ns",
+            &kind_map,
+            &gk_map,
+            false,
+            false,
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_err(), "Expected error for target 404");
+        let err_msg = format!("{}", result.as_ref().err().unwrap());
+        assert!(
+            err_msg.contains("not found"),
+            "Error should mention not found: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn find_parents_only_intermediate_failure_returns_partial_chain_with_warning() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let gk_map: GroupKindMap = kind_map
+            .iter()
+            .map(|(k, v)| ((v.group.clone(), k.clone()), v.clone()))
+            .collect();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected Pod GET");
+            send.send_response(json_response(mock_pod_obj()));
+            let (_req, send) = handle.next_request().await.expect("expected RS GET");
+            send.send_response(status_response(403, "forbidden"));
+        });
+
+        let (chain, warnings) = find_parents_only(
+            &client,
+            "",
+            "Pod",
+            "myapp-abc-xyz",
+            "test-ns",
+            &kind_map,
+            &gk_map,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        spawned.await.unwrap();
+        assert_eq!(chain.len(), 1, "Should have partial chain (Pod only)");
+        assert_eq!(chain[0].info.kind, "Pod");
+        assert!(!warnings.is_empty(), "Should have warning for RS 403");
+        assert!(
+            matches!(warnings[0], ScanWarning::Forbidden { .. }),
+            "Warning should be Forbidden"
         );
     }
 }

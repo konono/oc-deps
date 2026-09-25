@@ -51,11 +51,13 @@ pub struct TraceCategory {
 pub struct TraceResultJson {
     pub root: ResourceId,
     pub root_namespace: Option<String>,
+    pub scope: String,
     pub descendant_count: usize,
     pub descendants: Vec<TracedResource>,
     pub categories: Vec<TraceCategory>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<String>,
+    pub warnings: Vec<serde_json::Value>,
+    #[serde(rename = "scanWarningCount")]
+    pub scan_warning_count: usize,
 }
 
 pub struct TraceResult {
@@ -254,9 +256,9 @@ pub async fn trace_resource(
     })
 }
 
-pub fn print_trace(result: &TraceResult, output: &OutputFormat) {
+pub fn print_trace(result: &TraceResult, output: &OutputFormat, scope: &str) {
     match output {
-        OutputFormat::Json => print_trace_json(result),
+        OutputFormat::Json => print_trace_json(result, scope),
         OutputFormat::Table => print_trace_table(result),
         OutputFormat::Tree => print_trace_tree(result),
     }
@@ -430,19 +432,22 @@ fn print_trace_table(result: &TraceResult) {
     println!("{}", table);
 }
 
-fn print_trace_json(result: &TraceResult) {
+fn print_trace_json(result: &TraceResult, scope: &str) {
     let descendant_count = result.descendants.len();
+    let warning_count = result.scan_failures.len();
     let json_result = TraceResultJson {
         root: result.root.clone(),
         root_namespace: result.root_namespace.clone(),
+        scope: scope.to_string(),
         descendant_count,
         descendants: result.descendants.clone(),
         categories: result.categories.clone(),
         warnings: result
             .scan_failures
             .iter()
-            .map(|w| format!("{}", w))
+            .map(|w| serde_json::to_value(w).unwrap_or_else(|_| serde_json::json!(w.to_string())))
             .collect(),
+        scan_warning_count: warning_count,
     };
     println!(
         "{}",
@@ -596,12 +601,16 @@ mod tests {
             ],
             categories: vec![],
             warnings: vec![],
+            scope: "namespace".into(),
+            scan_warning_count: 0,
         };
         let json = serde_json::to_string_pretty(&result).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["descendant_count"].as_u64().unwrap(), 2);
         assert_eq!(parsed["descendants"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["root"]["kind"].as_str().unwrap(), "Widget");
+        assert_eq!(parsed["scope"].as_str().unwrap(), "namespace");
+        assert_eq!(parsed["scanWarningCount"].as_u64().unwrap(), 0);
     }
 
     #[test]
