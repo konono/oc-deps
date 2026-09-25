@@ -5784,8 +5784,7 @@ fn network_paths_to_json(
                     .map(|n| {
                         serde_json::json!({
                             "node": n.node,
-                            "peerAddress": n.peer_address,
-                            "advertisedPrefixes": n.advertised_prefixes,
+                            "peers": n.peers,
                         })
                     })
                     .collect();
@@ -5804,11 +5803,7 @@ fn network_paths_to_json(
                             "holdTime": p.hold_time,
                             "keepaliveTime": p.keepalive_time,
                             "routerID": p.router_id,
-                            "nodeSelectors": p.node_selectors.iter().map(|s| {
-                                serde_json::json!({
-                                    "matchLabels": s.match_labels,
-                                })
-                            }).collect::<Vec<_>>(),
+                            "nodeSelectors": label_selectors_to_json(&p.node_selectors),
                         })
                     })
                     .collect();
@@ -5828,6 +5823,34 @@ fn network_paths_to_json(
                         })
                     })
                     .collect();
+                let events_json: Vec<serde_json::Value> = obs
+                    .events
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "reason": e.reason,
+                            "message": e.message,
+                            "sourceComponent": e.source_component,
+                            "type": e.event_type,
+                            "lastTimestamp": e.last_timestamp,
+                        })
+                    })
+                    .collect();
+                let mut obs_json = serde_json::json!({
+                    "observedState": obs.observed_state,
+                    "l2AdvertisedNodes": obs.l2_advertised_nodes,
+                    "l2Interfaces": obs.l2_interfaces,
+                    "l2StatusResources": obs.l2_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
+                    "bgpNodeStatus": bgp_node_json,
+                    "bgpStatusResources": obs.bgp_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
+                    "relatedPeers": peers_json,
+                    "relatedBfdProfiles": bfd_json,
+                    "events": events_json,
+                    "note": "Status represents advertisement intent, not BGP session establishment"
+                });
+                if !obs.session_state.is_empty() {
+                    obs_json["sessionState"] = serde_json::json!(obs.session_state);
+                }
                 result["metallb"] = serde_json::json!({
                     "provider": mlb.provider,
                     "requestedIPs": mlb.requested_ips,
@@ -5835,16 +5858,7 @@ fn network_paths_to_json(
                     "pools": pools_json,
                     "advertisements": ads_json,
                     "warnings": mlb.warnings,
-                    "observation": {
-                        "observedState": obs.observed_state,
-                        "l2AdvertisedNodes": obs.l2_advertised_nodes,
-                        "l2StatusResources": obs.l2_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
-                        "bgpNodeStatus": bgp_node_json,
-                        "bgpStatusResources": obs.bgp_status_resources.iter().map(|(n, ns)| format!("{}/{}", ns, n)).collect::<Vec<_>>(),
-                        "relatedPeers": peers_json,
-                        "relatedBfdProfiles": bfd_json,
-                        "note": "Status represents advertisement intent, not BGP session establishment"
-                    }
+                    "observation": obs_json
                 });
             }
             result
@@ -6070,19 +6084,19 @@ fn print_network_tree(
                         mlb.observation.l2_advertised_nodes.join(", ")
                     );
                 }
+                if !mlb.observation.l2_interfaces.is_empty() {
+                    println!(
+                        "      L2 interfaces: {}",
+                        mlb.observation.l2_interfaces.join(", ")
+                    );
+                }
                 for bgp_node in &mlb.observation.bgp_advertised_nodes {
-                    let peer = bgp_node
-                        .peer_address
-                        .as_deref()
-                        .map(|a| format!(" -> {}", a))
-                        .unwrap_or_default();
-                    println!("      BGP node: {}{}", bgp_node.node, peer);
-                    if !bgp_node.advertised_prefixes.is_empty() {
-                        println!(
-                            "        prefixes: {}",
-                            bgp_node.advertised_prefixes.join(", ")
-                        );
-                    }
+                    let peers_str = if bgp_node.peers.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" peers: {}", bgp_node.peers.join(", "))
+                    };
+                    println!("      BGP node: {}{}", bgp_node.node, peers_str);
                 }
                 for peer in &mlb.observation.related_peers {
                     let addr = peer.peer_address.as_deref().unwrap_or("?");
@@ -6092,16 +6106,17 @@ fn print_network_tree(
                         .unwrap_or_default();
                     println!("      BGP peer: BGPPeer/{} ({}{})", peer.name, addr, asn);
                 }
-                if mlb.observation.bgp_advertised_nodes.is_empty()
-                    && mlb
-                        .advertisements
-                        .iter()
-                        .any(|a| a.kind == "BGPAdvertisement")
-                {
-                    println!(
-                        "    BGP session: unknown (status is advertisement intent, not session state)"
-                    );
+                for event in &mlb.observation.events {
+                    let reason = event.reason.as_deref().unwrap_or("?");
+                    let msg = event.message.as_deref().unwrap_or("");
+                    println!("      Event: {} - {}", reason, msg);
                 }
+            }
+            if !mlb.observation.session_state.is_empty() {
+                println!(
+                    "    BGP session: {} (status is advertisement intent, not session state)",
+                    mlb.observation.session_state
+                );
             }
             for w in &mlb.warnings {
                 println!("    [!] {}", w);

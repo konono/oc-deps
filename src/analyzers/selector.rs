@@ -1599,12 +1599,16 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
             match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await
             {
                 Ok(items) => {
+                    observation.l2_status_availability = ApiAvailability::Available;
                     observation.l2_status = items
                         .into_iter()
                         .filter_map(parse_service_l2_status)
                         .collect();
                 }
-                Err(w) => warnings.push(w),
+                Err(w) => {
+                    observation.l2_status_availability = ApiAvailability::Unavailable;
+                    warnings.push(w);
+                }
             }
             break;
         }
@@ -1620,12 +1624,16 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
             match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await
             {
                 Ok(items) => {
+                    observation.bgp_status_availability = ApiAvailability::Available;
                     observation.bgp_status = items
                         .into_iter()
                         .filter_map(parse_service_bgp_status)
                         .collect();
                 }
-                Err(w) => warnings.push(w),
+                Err(w) => {
+                    observation.bgp_status_availability = ApiAvailability::Unavailable;
+                    warnings.push(w);
+                }
             }
             break;
         }
@@ -1639,9 +1647,13 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
         let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
         match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
             Ok(items) => {
+                observation.bgp_peer_availability = ApiAvailability::Available;
                 observation.bgp_peers = items.into_iter().filter_map(parse_bgp_peer).collect();
             }
-            Err(w) => warnings.push(w),
+            Err(w) => {
+                observation.bgp_peer_availability = ApiAvailability::Unavailable;
+                warnings.push(w);
+            }
         }
     }
 
@@ -1653,10 +1665,84 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
         let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
         match list_with_retry_and_timeout(&api, &info.group, &info.version, &info.plural).await {
             Ok(items) => {
+                observation.bfd_profile_availability = ApiAvailability::Available;
                 observation.bfd_profiles =
                     items.into_iter().filter_map(parse_bfd_profile).collect();
             }
-            Err(w) => warnings.push(w),
+            Err(w) => {
+                observation.bfd_profile_availability = ApiAvailability::Unavailable;
+                warnings.push(w);
+            }
+        }
+    }
+
+    // Service Events (from core v1 API)
+    {
+        let event_gvk = GroupVersion::gv("", "v1").with_kind("Event");
+        let event_ar = ApiResource::from_gvk_with_plural(&event_gvk, "events");
+        let event_api: Api<DynamicObject> = Api::all_with(client.clone(), &event_ar);
+        let lp = kube::api::ListParams::default().fields("involvedObject.kind=Service");
+        match event_api.list(&lp).await {
+            Ok(event_list) => {
+                observation.event_availability = ApiAvailability::Available;
+                observation.service_events = event_list
+                    .items
+                    .into_iter()
+                    .filter_map(|obj| {
+                        let source_component = obj
+                            .data
+                            .get("source")
+                            .and_then(|s| s.get("component"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        // Only keep events from metallb/speaker/controller
+                        let is_metallb = source_component.as_deref().is_some_and(|c| {
+                            let cl = c.to_lowercase();
+                            cl.contains("metallb")
+                                || cl.contains("speaker")
+                                || cl.contains("controller")
+                        });
+                        if !is_metallb {
+                            return None;
+                        }
+                        let involved = obj.data.get("involvedObject")?;
+                        let service_name = involved.get("name")?.as_str()?.to_string();
+                        let service_namespace = involved
+                            .get("namespace")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        Some(MetalLBServiceEvent {
+                            service_name,
+                            service_namespace,
+                            reason: obj
+                                .data
+                                .get("reason")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            message: obj
+                                .data
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            source_component,
+                            event_type: obj
+                                .data
+                                .get("type")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            last_timestamp: obj
+                                .data
+                                .get("lastTimestamp")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                        })
+                    })
+                    .collect();
+            }
+            Err(_) => {
+                observation.event_availability = ApiAvailability::Unavailable;
+            }
         }
     }
 
@@ -1886,12 +1972,37 @@ pub struct MetalLBInventory {
     pub observation: MetalLBObservation,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum ApiAvailability {
+    Available, // CRD exists and LIST succeeded
+    #[default]
+    Absent, // CRD not in gk_map
+    Unavailable, // CRD exists but LIST failed (403/timeout)
+}
+
+#[derive(Clone, Debug)]
+pub struct MetalLBServiceEvent {
+    pub service_name: String,
+    pub service_namespace: String,
+    pub reason: Option<String>,
+    pub message: Option<String>,
+    pub source_component: Option<String>,
+    pub event_type: Option<String>,
+    pub last_timestamp: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MetalLBObservation {
     pub l2_status: Vec<ServiceL2Status>,
     pub bgp_status: Vec<ServiceBGPStatus>,
     pub bgp_peers: Vec<BGPPeerInfo>,
     pub bfd_profiles: Vec<BFDProfileInfo>,
+    pub service_events: Vec<MetalLBServiceEvent>,
+    pub l2_status_availability: ApiAvailability,
+    pub bgp_status_availability: ApiAvailability,
+    pub bgp_peer_availability: ApiAvailability,
+    pub bfd_profile_availability: ApiAvailability,
+    pub event_availability: ApiAvailability,
 }
 
 #[derive(Clone, Debug)]
@@ -1911,8 +2022,7 @@ pub struct ServiceBGPStatus {
     pub service_name: Option<String>,
     pub service_namespace: Option<String>,
     pub node: Option<String>,
-    pub peer_address: Option<String>,
-    pub advertised_prefixes: Vec<String>,
+    pub peers: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1945,19 +2055,21 @@ pub struct BFDProfileInfo {
 #[derive(Clone, Debug, Default)]
 pub struct CorrelatedObservation {
     pub l2_advertised_nodes: Vec<String>,
+    pub l2_interfaces: Vec<String>,
     pub l2_status_resources: Vec<(String, String)>, // (name, namespace) of matched ServiceL2Status
     pub bgp_advertised_nodes: Vec<BGPNodeStatus>,
     pub bgp_status_resources: Vec<(String, String)>, // (name, namespace) of matched ServiceBGPStatus
     pub related_peers: Vec<BGPPeerInfo>,
     pub related_bfd_profiles: Vec<BFDProfileInfo>,
     pub observed_state: String,
+    pub session_state: String,
+    pub events: Vec<MetalLBServiceEvent>,
 }
 
 #[derive(Clone, Debug)]
 pub struct BGPNodeStatus {
     pub node: String,
-    pub peer_address: Option<String>,
-    pub advertised_prefixes: Vec<String>,
+    pub peers: Vec<String>,
 }
 
 pub fn label_selector_matches(selector: &LabelSelector, labels: &BTreeMap<String, String>) -> bool {
@@ -2759,11 +2871,18 @@ pub fn resolve_metallb_for_service(
         }
     }
 
+    // Derive metallb namespace from first pool's namespace
+    let metallb_ns = matched_pools
+        .first()
+        .map(|p| p.pool.namespace.as_str())
+        .or_else(|| metallb.pools.first().map(|p| p.namespace.as_str()))
+        .unwrap_or("");
     let observation = correlate_metallb_observations(
         &svc.name,
         svc_namespace,
         &metallb.observation,
         !matched_ads.is_empty(),
+        metallb_ns,
     );
 
     MetalLBResult {
@@ -2804,7 +2923,14 @@ fn parse_service_l2_status(obj: DynamicObject) -> Option<ServiceL2Status> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
+                .filter_map(|v| {
+                    // InterfaceInfo: {name: string} or plain string fallback
+                    v.as_object()
+                        .and_then(|o| o.get("name"))
+                        .and_then(|n| n.as_str())
+                        .map(String::from)
+                        .or_else(|| v.as_str().map(String::from))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -2840,14 +2966,9 @@ fn parse_service_bgp_status(obj: DynamicObject) -> Option<ServiceBGPStatus> {
         .or_else(|| spec.and_then(|s| s.get("node")))
         .and_then(|v| v.as_str())
         .map(String::from);
-    let peer_address = status
-        .and_then(|s| s.get("peerAddress"))
-        .or_else(|| spec.and_then(|s| s.get("peerAddress")))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let advertised_prefixes = status
-        .and_then(|s| s.get("advertisedPrefixes"))
-        .or_else(|| spec.and_then(|s| s.get("advertisedPrefixes")))
+    let peers = status
+        .and_then(|s| s.get("peers"))
+        .or_else(|| spec.and_then(|s| s.get("peers")))
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -2862,8 +2983,7 @@ fn parse_service_bgp_status(obj: DynamicObject) -> Option<ServiceBGPStatus> {
         service_name,
         service_namespace,
         node,
-        peer_address,
-        advertised_prefixes,
+        peers,
     })
 }
 
@@ -2966,12 +3086,8 @@ pub fn correlate_metallb_observations(
     svc_namespace: &str,
     observation: &MetalLBObservation,
     has_advertisements: bool,
+    metallb_namespace: &str,
 ) -> CorrelatedObservation {
-    // Check if observation APIs exist (any data fetched at all, even empty)
-    let has_observation_apis = !observation.l2_status.is_empty()
-        || !observation.bgp_status.is_empty()
-        || !observation.bgp_peers.is_empty();
-
     // Filter L2 status for this service
     let matched_l2: Vec<&ServiceL2Status> = observation
         .l2_status
@@ -2988,11 +3104,12 @@ pub fn correlate_metallb_observations(
     let mut l2_nodes: Vec<String> = matched_l2.iter().filter_map(|s| s.node.clone()).collect();
     l2_nodes.sort();
     l2_nodes.dedup();
-    // Read interfaces to suppress dead_code warning
-    let _l2_interfaces: Vec<&str> = matched_l2
+    let mut l2_interfaces: Vec<String> = matched_l2
         .iter()
-        .flat_map(|s| s.interfaces.iter().map(|i| i.as_str()))
+        .flat_map(|s| s.interfaces.iter().cloned())
         .collect();
+    l2_interfaces.sort();
+    l2_interfaces.dedup();
 
     // Filter BGP status for this service
     let matched_bgp: Vec<&ServiceBGPStatus> = observation
@@ -3012,45 +3129,67 @@ pub fn correlate_metallb_observations(
         .filter_map(|s| {
             Some(BGPNodeStatus {
                 node: s.node.clone()?,
-                peer_address: s.peer_address.clone(),
-                advertised_prefixes: s.advertised_prefixes.clone(),
+                peers: s.peers.clone(),
             })
         })
         .collect();
 
-    // Cross-reference BGP peers by address
-    let bgp_peer_addresses: std::collections::HashSet<&str> = bgp_nodes
+    // Cross-reference BGP peers by name (matching status.peers list)
+    let peer_names_from_status: std::collections::HashSet<&str> = bgp_nodes
         .iter()
-        .filter_map(|n| n.peer_address.as_deref())
+        .flat_map(|n| n.peers.iter().map(|p| p.as_str()))
         .collect();
     let related_peers: Vec<BGPPeerInfo> = observation
         .bgp_peers
         .iter()
         .filter(|p| {
-            p.peer_address
-                .as_deref()
-                .is_some_and(|addr| bgp_peer_addresses.contains(addr))
+            // Filter by metallb namespace
+            (metallb_namespace.is_empty() || p.namespace == metallb_namespace)
+                && peer_names_from_status.contains(p.name.as_str())
         })
         .cloned()
         .collect();
 
-    // Find related BFD profiles
-    let bfd_names: std::collections::HashSet<&str> = related_peers
+    // Find related BFD profiles (filter by same namespace as peer)
+    let bfd_refs: std::collections::HashSet<(&str, &str)> = related_peers
         .iter()
-        .filter_map(|p| p.bfd_profile.as_deref())
+        .filter_map(|p| Some((p.bfd_profile.as_deref()?, p.namespace.as_str())))
         .collect();
     let related_bfd_profiles: Vec<BFDProfileInfo> = observation
         .bfd_profiles
         .iter()
-        .filter(|b| bfd_names.contains(b.name.as_str()))
+        .filter(|b| bfd_refs.contains(&(b.name.as_str(), b.namespace.as_str())))
         .cloned()
         .collect();
 
-    // Determine observed state
+    // Filter events for this service
+    let events: Vec<MetalLBServiceEvent> = observation
+        .service_events
+        .iter()
+        .filter(|e| e.service_name == svc_name && e.service_namespace == svc_namespace)
+        .cloned()
+        .collect();
+
+    // Determine observed state based on API availability
     let has_status = !l2_nodes.is_empty() || !bgp_nodes.is_empty();
+    let l2_avail = &observation.l2_status_availability;
+    let bgp_avail = &observation.bgp_status_availability;
+    let any_unavailable =
+        *l2_avail == ApiAvailability::Unavailable || *bgp_avail == ApiAvailability::Unavailable;
+    let both_absent = *l2_avail == ApiAvailability::Absent && *bgp_avail == ApiAvailability::Absent;
+    let both_available_or_absent = (*l2_avail == ApiAvailability::Available
+        || *l2_avail == ApiAvailability::Absent)
+        && (*bgp_avail == ApiAvailability::Available || *bgp_avail == ApiAvailability::Absent);
+    let at_least_one_available =
+        *l2_avail == ApiAvailability::Available || *bgp_avail == ApiAvailability::Available;
+
     let observed_state = if has_status {
         "advertising".to_string()
-    } else if has_advertisements && has_observation_apis {
+    } else if has_advertisements && both_absent {
+        String::new() // no observation possible
+    } else if has_advertisements && any_unavailable {
+        "unknown".to_string()
+    } else if has_advertisements && both_available_or_absent && at_least_one_available {
         "configured".to_string()
     } else if has_advertisements {
         "unknown".to_string()
@@ -3058,14 +3197,25 @@ pub fn correlate_metallb_observations(
         String::new()
     };
 
+    // BGP session state: always "unknown" when BGP-related items exist
+    let has_bgp = !bgp_nodes.is_empty() || !matched_bgp.is_empty() || !related_peers.is_empty();
+    let session_state = if has_bgp {
+        "unknown".to_string()
+    } else {
+        String::new()
+    };
+
     CorrelatedObservation {
         l2_advertised_nodes: l2_nodes,
+        l2_interfaces,
         l2_status_resources,
         bgp_advertised_nodes: bgp_nodes,
         bgp_status_resources,
         related_peers,
         related_bfd_profiles,
         observed_state,
+        session_state,
+        events,
     }
 }
 
@@ -6294,10 +6444,34 @@ mod tests {
 
     // --- Phase 5: Observation tests ---
 
+    fn make_obs_with_availability(
+        l2_status: Vec<ServiceL2Status>,
+        bgp_status: Vec<ServiceBGPStatus>,
+        bgp_peers: Vec<BGPPeerInfo>,
+        bfd_profiles: Vec<BFDProfileInfo>,
+        l2_avail: ApiAvailability,
+        bgp_avail: ApiAvailability,
+        peer_avail: ApiAvailability,
+        bfd_avail: ApiAvailability,
+    ) -> MetalLBObservation {
+        MetalLBObservation {
+            l2_status,
+            bgp_status,
+            bgp_peers,
+            bfd_profiles,
+            service_events: vec![],
+            l2_status_availability: l2_avail,
+            bgp_status_availability: bgp_avail,
+            bgp_peer_availability: peer_avail,
+            bfd_profile_availability: bfd_avail,
+            event_availability: ApiAvailability::Absent,
+        }
+    }
+
     #[test]
     fn correlate_l2_status_advertising() {
-        let obs = MetalLBObservation {
-            l2_status: vec![ServiceL2Status {
+        let obs = make_obs_with_availability(
+            vec![ServiceL2Status {
                 name: "l2status-1".into(),
                 namespace: "metallb-system".into(),
                 service_name: Some("web".into()),
@@ -6305,19 +6479,24 @@ mod tests {
                 node: Some("worker-0".into()),
                 interfaces: vec!["eth0".into()],
             }],
-            bgp_status: vec![],
-            bgp_peers: vec![],
-            bfd_profiles: vec![],
-        };
-        let result = correlate_metallb_observations("web", "default", &obs, true);
+            vec![],
+            vec![],
+            vec![],
+            ApiAvailability::Available,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+        );
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
         assert_eq!(result.observed_state, "advertising");
         assert_eq!(result.l2_advertised_nodes, vec!["worker-0"]);
+        assert_eq!(result.l2_interfaces, vec!["eth0"]);
     }
 
     #[test]
     fn correlate_no_status_configured() {
-        let obs = MetalLBObservation {
-            l2_status: vec![ServiceL2Status {
+        let obs = make_obs_with_availability(
+            vec![ServiceL2Status {
                 name: "l2status-other".into(),
                 namespace: "metallb-system".into(),
                 service_name: Some("other-svc".into()),
@@ -6325,12 +6504,16 @@ mod tests {
                 node: Some("worker-0".into()),
                 interfaces: vec![],
             }],
-            bgp_status: vec![],
-            bgp_peers: vec![],
-            bfd_profiles: vec![],
-        };
-        // has_advertisements=true, but no status for "web" service
-        let result = correlate_metallb_observations("web", "default", &obs, true);
+            vec![],
+            vec![],
+            vec![],
+            ApiAvailability::Available,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+        );
+        // has_advertisements=true, L2 status Available but no match for "web"
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
         assert_eq!(result.observed_state, "configured");
         assert!(result.l2_advertised_nodes.is_empty());
     }
@@ -6338,31 +6521,66 @@ mod tests {
     #[test]
     fn correlate_no_advertisements_empty_state() {
         let obs = MetalLBObservation::default();
-        let result = correlate_metallb_observations("web", "default", &obs, false);
+        let result =
+            correlate_metallb_observations("web", "default", &obs, false, "metallb-system");
         assert_eq!(result.observed_state, "");
     }
 
     #[test]
-    fn correlate_unknown_when_no_observation_apis() {
+    fn correlate_absent_apis_empty_state() {
+        // Both L2+BGP status Absent → "" (no observation possible)
         let obs = MetalLBObservation::default();
-        let result = correlate_metallb_observations("web", "default", &obs, true);
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
+        assert_eq!(result.observed_state, "");
+    }
+
+    #[test]
+    fn correlate_available_zero_items_configured() {
+        // API Available with 0 items → "configured"
+        let obs = make_obs_with_availability(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            ApiAvailability::Available,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+        );
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
+        assert_eq!(result.observed_state, "configured");
+    }
+
+    #[test]
+    fn correlate_unavailable_unknown() {
+        // API Unavailable → "unknown"
+        let obs = make_obs_with_availability(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            ApiAvailability::Unavailable,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+        );
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
         assert_eq!(result.observed_state, "unknown");
     }
 
     #[test]
-    fn correlate_bgp_peer_cross_reference() {
-        let obs = MetalLBObservation {
-            l2_status: vec![],
-            bgp_status: vec![ServiceBGPStatus {
+    fn correlate_bgp_peer_cross_reference_by_name() {
+        let obs = make_obs_with_availability(
+            vec![],
+            vec![ServiceBGPStatus {
                 name: "bgpstatus-1".into(),
                 namespace: "metallb-system".into(),
                 service_name: Some("web".into()),
                 service_namespace: Some("default".into()),
                 node: Some("worker-1".into()),
-                peer_address: Some("192.168.1.1".into()),
-                advertised_prefixes: vec!["10.0.0.0/24".into()],
+                peers: vec!["router-a".into()],
             }],
-            bgp_peers: vec![BGPPeerInfo {
+            vec![BGPPeerInfo {
                 name: "router-a".into(),
                 namespace: "metallb-system".into(),
                 peer_address: Some("192.168.1.1".into()),
@@ -6375,7 +6593,7 @@ mod tests {
                 keepalive_time: None,
                 router_id: None,
             }],
-            bfd_profiles: vec![BFDProfileInfo {
+            vec![BFDProfileInfo {
                 name: "fast-detect".into(),
                 namespace: "metallb-system".into(),
                 detect_multiplier: Some(3),
@@ -6385,8 +6603,12 @@ mod tests {
                 minimum_ttl: None,
                 passive_mode: None,
             }],
-        };
-        let result = correlate_metallb_observations("web", "default", &obs, true);
+            ApiAvailability::Absent,
+            ApiAvailability::Available,
+            ApiAvailability::Available,
+            ApiAvailability::Available,
+        );
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
         assert_eq!(result.observed_state, "advertising");
         assert_eq!(result.bgp_advertised_nodes.len(), 1);
         assert_eq!(result.bgp_advertised_nodes[0].node, "worker-1");
@@ -6394,6 +6616,157 @@ mod tests {
         assert_eq!(result.related_peers[0].name, "router-a");
         assert_eq!(result.related_bfd_profiles.len(), 1);
         assert_eq!(result.related_bfd_profiles[0].name, "fast-detect");
+        // BGP session state always unknown when BGP items present
+        assert_eq!(result.session_state, "unknown");
+    }
+
+    #[test]
+    fn correlate_bgp_session_state_always_unknown() {
+        let obs = make_obs_with_availability(
+            vec![],
+            vec![ServiceBGPStatus {
+                name: "bgpstatus-1".into(),
+                namespace: "metallb-system".into(),
+                service_name: Some("web".into()),
+                service_namespace: Some("default".into()),
+                node: Some("worker-1".into()),
+                peers: vec![],
+            }],
+            vec![],
+            vec![],
+            ApiAvailability::Absent,
+            ApiAvailability::Available,
+            ApiAvailability::Absent,
+            ApiAvailability::Absent,
+        );
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
+        assert_eq!(result.session_state, "unknown");
+    }
+
+    #[test]
+    fn correlate_same_namespace_peer_filtering() {
+        // BGPPeer in different namespace should not match
+        let obs = make_obs_with_availability(
+            vec![],
+            vec![ServiceBGPStatus {
+                name: "bgpstatus-1".into(),
+                namespace: "metallb-system".into(),
+                service_name: Some("web".into()),
+                service_namespace: Some("default".into()),
+                node: Some("worker-1".into()),
+                peers: vec!["router-a".into()],
+            }],
+            vec![
+                BGPPeerInfo {
+                    name: "router-a".into(),
+                    namespace: "other-ns".into(), // wrong namespace
+                    peer_address: Some("192.168.1.1".into()),
+                    peer_asn: Some(64512),
+                    my_asn: Some(64513),
+                    source_address: None,
+                    node_selectors: vec![],
+                    bfd_profile: None,
+                    hold_time: None,
+                    keepalive_time: None,
+                    router_id: None,
+                },
+                BGPPeerInfo {
+                    name: "router-a".into(),
+                    namespace: "metallb-system".into(), // correct namespace
+                    peer_address: Some("192.168.1.2".into()),
+                    peer_asn: Some(64514),
+                    my_asn: Some(64515),
+                    source_address: None,
+                    node_selectors: vec![],
+                    bfd_profile: None,
+                    hold_time: None,
+                    keepalive_time: None,
+                    router_id: None,
+                },
+            ],
+            vec![],
+            ApiAvailability::Absent,
+            ApiAvailability::Available,
+            ApiAvailability::Available,
+            ApiAvailability::Absent,
+        );
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
+        assert_eq!(result.related_peers.len(), 1);
+        assert_eq!(result.related_peers[0].namespace, "metallb-system");
+        assert_eq!(result.related_peers[0].peer_asn, Some(64514));
+    }
+
+    #[test]
+    fn correlate_event_filtering() {
+        let obs = MetalLBObservation {
+            service_events: vec![
+                MetalLBServiceEvent {
+                    service_name: "web".into(),
+                    service_namespace: "default".into(),
+                    reason: Some("IPAllocated".into()),
+                    message: Some("Assigned IP 10.0.0.5".into()),
+                    source_component: Some("metallb-controller".into()),
+                    event_type: Some("Normal".into()),
+                    last_timestamp: None,
+                },
+                MetalLBServiceEvent {
+                    service_name: "other".into(),
+                    service_namespace: "default".into(),
+                    reason: Some("IPAllocated".into()),
+                    message: Some("Assigned IP 10.0.0.6".into()),
+                    source_component: Some("metallb-controller".into()),
+                    event_type: Some("Normal".into()),
+                    last_timestamp: None,
+                },
+            ],
+            event_availability: ApiAvailability::Available,
+            ..Default::default()
+        };
+        let result = correlate_metallb_observations("web", "default", &obs, true, "metallb-system");
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].service_name, "web");
+    }
+
+    #[test]
+    fn parse_l2_status_interface_info() {
+        let mut obj = DynamicObject::new(
+            "l2status-1",
+            &ApiResource::erase::<k8s_openapi::api::core::v1::ConfigMap>(&()),
+        );
+        obj.metadata.namespace = Some("metallb-system".into());
+        obj.data = serde_json::json!({
+            "spec": {
+                "serviceName": "web",
+                "serviceNamespace": "default",
+            },
+            "status": {
+                "node": "worker-0",
+                "interfaces": [{"name": "eth0"}, {"name": "ens3"}]
+            }
+        });
+        let status = parse_service_l2_status(obj).unwrap();
+        assert_eq!(status.interfaces, vec!["eth0", "ens3"]);
+    }
+
+    #[test]
+    fn parse_bgp_status_peers() {
+        let mut obj = DynamicObject::new(
+            "bgpstatus-1",
+            &ApiResource::erase::<k8s_openapi::api::core::v1::ConfigMap>(&()),
+        );
+        obj.metadata.namespace = Some("metallb-system".into());
+        obj.data = serde_json::json!({
+            "spec": {
+                "serviceName": "web",
+                "serviceNamespace": "default",
+            },
+            "status": {
+                "node": "worker-0",
+                "peers": ["router-a", "router-b"]
+            }
+        });
+        let status = parse_service_bgp_status(obj).unwrap();
+        assert_eq!(status.peers, vec!["router-a", "router-b"]);
     }
 
     #[test]
@@ -6431,7 +6804,7 @@ mod tests {
 
     #[test]
     fn observation_api_absence_graceful() {
-        // When MetalLBObservation is default (no APIs fetched), status resources are empty
+        // When MetalLBObservation is default (all Absent), no observation possible → empty
         let metallb = make_test_metallb(
             vec![make_test_pool(
                 "pool",
@@ -6456,7 +6829,7 @@ mod tests {
             &metallb.node_labels,
         );
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
-        // No observation APIs → unknown
-        assert_eq!(result.observation.observed_state, "unknown");
+        // All observation APIs Absent → empty (no observation possible)
+        assert_eq!(result.observation.observed_state, "");
     }
 }
