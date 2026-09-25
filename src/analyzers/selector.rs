@@ -1527,9 +1527,14 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
         }
     }
 
-    // Fetch namespace labels
+    // Fetch namespace labels only if any pool uses namespaceSelectors
     let mut namespace_labels = HashMap::new();
-    {
+    let needs_ns_labels = pools.iter().any(|p| {
+        p.service_allocation
+            .as_ref()
+            .is_some_and(|sa| !sa.namespace_selectors.is_empty())
+    });
+    if needs_ns_labels {
         let ns_gvk = GroupVersion::gv("", "v1").with_kind("Namespace");
         let ns_ar = ApiResource::from_gvk_with_plural(&ns_gvk, "namespaces");
         let ns_api: Api<DynamicObject> = Api::all_with(client.clone(), &ns_ar);
@@ -1551,9 +1556,15 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
         }
     }
 
-    // Fetch node labels
+    // Fetch node labels only if any advertisement uses nodeSelectors
     let mut node_labels = HashMap::new();
-    {
+    let needs_node_labels = l2_advertisements
+        .iter()
+        .any(|a| !a.node_selectors.is_empty())
+        || bgp_advertisements
+            .iter()
+            .any(|a| !a.node_selectors.is_empty());
+    if needs_node_labels {
         let node_gvk = GroupVersion::gv("", "v1").with_kind("Node");
         let node_ar = ApiResource::from_gvk_with_plural(&node_gvk, "nodes");
         let node_api: Api<DynamicObject> = Api::all_with(client.clone(), &node_ar);
@@ -1720,8 +1731,10 @@ pub struct IPAddressPool {
     pub auto_assign: bool,
     pub service_allocation: Option<ServiceAllocation>,
     pub labels: BTreeMap<String, String>,
-    pub status_available: Option<i64>,
-    pub status_assigned: Option<i64>,
+    pub status_available_ipv4: Option<i64>,
+    pub status_available_ipv6: Option<i64>,
+    pub status_assigned_ipv4: Option<i64>,
+    pub status_assigned_ipv6: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -1954,11 +1967,17 @@ pub(crate) fn parse_ip_address_pool(obj: DynamicObject) -> Option<IPAddressPool>
         .unwrap_or_default();
 
     let status = obj.data.get("status");
-    let status_available = status
-        .and_then(|s| s.get("available"))
+    let status_available_ipv4 = status
+        .and_then(|s| s.get("availableIPv4"))
         .and_then(|v| v.as_i64());
-    let status_assigned = status
-        .and_then(|s| s.get("assigned"))
+    let status_available_ipv6 = status
+        .and_then(|s| s.get("availableIPv6"))
+        .and_then(|v| v.as_i64());
+    let status_assigned_ipv4 = status
+        .and_then(|s| s.get("assignedIPv4"))
+        .and_then(|v| v.as_i64());
+    let status_assigned_ipv6 = status
+        .and_then(|s| s.get("assignedIPv6"))
         .and_then(|v| v.as_i64());
 
     Some(IPAddressPool {
@@ -1968,8 +1987,10 @@ pub(crate) fn parse_ip_address_pool(obj: DynamicObject) -> Option<IPAddressPool>
         auto_assign,
         service_allocation,
         labels,
-        status_available,
-        status_assigned,
+        status_available_ipv4,
+        status_available_ipv6,
+        status_assigned_ipv4,
+        status_assigned_ipv6,
     })
 }
 
@@ -2217,12 +2238,19 @@ pub fn resolve_metallb_for_service(
             .iter()
             .any(|p| ip_in_pool_ranges(ip, &p.addresses))
     });
+    let requested_ip_in_pool = requested_ips.iter().any(|ip| {
+        metallb
+            .pools
+            .iter()
+            .any(|p| ip_in_pool_ranges(ip, &p.addresses))
+    });
 
     let provider = if has_pool_annotation
         || has_allocated_from_pool
         || has_lb_ips_annotation
         || has_lb_class
         || assigned_ip_in_pool
+        || requested_ip_in_pool
     {
         Some("MetalLB".to_string())
     } else {
@@ -2315,9 +2343,7 @@ pub fn resolve_metallb_for_service(
             .filter(|p| {
                 let am =
                     evaluate_service_allocation(p, svc_namespace, &svc_labels_btree, ns_labels);
-                am.as_deref() != Some("OK") && am.is_some()
-                    || am.is_none()
-                    || am.as_deref() == Some("OK")
+                am.is_none() || am.as_deref() == Some("OK")
             })
             .filter(|p| {
                 // Only include if serviceAllocation allows
@@ -2437,8 +2463,13 @@ pub fn resolve_metallb_for_service(
             }
 
             // Evaluate node selectors
-            let (candidate_nodes, node_selector_status) =
-                evaluate_node_selectors(&l2.node_selectors, node_labels, &mut warnings);
+            let (candidate_nodes, node_selector_status) = evaluate_node_selectors(
+                &l2.name,
+                "L2Advertisement",
+                &l2.node_selectors,
+                node_labels,
+                &mut warnings,
+            );
 
             matched_ads.push(MatchedAdvertisement {
                 kind: "L2Advertisement".to_string(),
@@ -2494,8 +2525,13 @@ pub fn resolve_metallb_for_service(
             }
 
             // Evaluate node selectors
-            let (candidate_nodes, node_selector_status) =
-                evaluate_node_selectors(&bgp.node_selectors, node_labels, &mut warnings);
+            let (candidate_nodes, node_selector_status) = evaluate_node_selectors(
+                &bgp.name,
+                "BGPAdvertisement",
+                &bgp.node_selectors,
+                node_labels,
+                &mut warnings,
+            );
 
             matched_ads.push(MatchedAdvertisement {
                 kind: "BGPAdvertisement".to_string(),
@@ -2552,9 +2588,22 @@ pub fn resolve_metallb_for_service(
                             .to_string(),
                     );
                 }
-            } else if matched_ads.iter().any(|a| !a.node_selectors.is_empty()) {
-                warnings
-                    .push("externalTrafficPolicy=Local: advertised node set unknown".to_string());
+            } else if matched_ads
+                .iter()
+                .any(|a| a.node_selector_status == "unavailable")
+            {
+                warnings.push(
+                    "externalTrafficPolicy=Local: advertised node set unknown (node labels unavailable)"
+                        .to_string(),
+                );
+            } else if matched_ads
+                .iter()
+                .any(|a| a.node_selector_status == "mismatch")
+            {
+                warnings.push(
+                    "externalTrafficPolicy=Local: no advertised nodes (nodeSelector matched no nodes)"
+                        .to_string(),
+                );
             }
         }
     }
@@ -2580,18 +2629,21 @@ fn evaluate_service_allocation(
 
     // Namespace check: namespaces and namespaceSelectors are OR
     let ns_allowed = if sa.namespaces.is_empty() && sa.namespace_selectors.is_empty() {
-        true // no restriction
+        true
     } else {
         let ns_in_list = sa.namespaces.contains(&svc_namespace.to_string());
-        let ns_selector_match = if sa.namespace_selectors.is_empty() {
-            false
-        } else if let Some(ns_lbl) = ns_labels.get(svc_namespace) {
-            label_selector_list_matches(&sa.namespace_selectors, ns_lbl)
+        if ns_in_list {
+            true
+        } else if !sa.namespace_selectors.is_empty() {
+            if let Some(ns_lbl) = ns_labels.get(svc_namespace) {
+                label_selector_list_matches(&sa.namespace_selectors, ns_lbl)
+            } else {
+                issues.push("namespace labels unavailable for selector evaluation".to_string());
+                false
+            }
         } else {
-            issues.push("namespace labels unavailable for selector evaluation".to_string());
             false
-        };
-        ns_in_list || ns_selector_match
+        }
     };
     if !ns_allowed && !issues.iter().any(|i| i.contains("unavailable")) {
         issues.push(format!(
@@ -2615,14 +2667,20 @@ fn evaluate_service_allocation(
 }
 
 fn evaluate_node_selectors(
+    ad_name: &str,
+    ad_kind: &str,
     node_selectors: &[LabelSelector],
     node_labels: &HashMap<String, BTreeMap<String, String>>,
-    _warnings: &mut Vec<String>,
+    warnings: &mut Vec<String>,
 ) -> (Vec<String>, String) {
     if node_selectors.is_empty() {
         return (node_labels.keys().cloned().collect(), "all".to_string());
     }
     if node_labels.is_empty() {
+        warnings.push(format!(
+            "{}/{} nodeSelector present but node labels unavailable",
+            ad_kind, ad_name
+        ));
         return (vec![], "unavailable".to_string());
     }
     let matched: Vec<String> = node_labels
@@ -2631,6 +2689,10 @@ fn evaluate_node_selectors(
         .map(|(name, _)| name.clone())
         .collect();
     if matched.is_empty() {
+        warnings.push(format!(
+            "{}/{} nodeSelector matched no nodes",
+            ad_kind, ad_name
+        ));
         (vec![], "mismatch".to_string())
     } else {
         (matched.clone(), format!("matched {}", matched.len()))
@@ -4446,8 +4508,10 @@ mod tests {
             auto_assign: true,
             service_allocation: None,
             labels: BTreeMap::new(),
-            status_available: None,
-            status_assigned: None,
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
         }
     }
 
@@ -4662,8 +4726,10 @@ mod tests {
                 service_selectors: vec![],
             }),
             labels: BTreeMap::new(),
-            status_available: None,
-            status_assigned: None,
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
         };
         let l2 = make_test_l2("l2-all", "metallb-system", vec!["restricted"]);
 
@@ -4728,8 +4794,10 @@ mod tests {
                 service_selectors: vec![make_label_selector(&[("tier", "frontend")], vec![])],
             }),
             labels: BTreeMap::new(),
-            status_available: None,
-            status_assigned: None,
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
         };
         let l2 = make_test_l2("l2-all", "metallb-system", vec!["sa-pool"]);
 
@@ -4960,8 +5028,10 @@ mod tests {
                 service_selectors: vec![],
             }),
             labels: BTreeMap::new(),
-            status_available: None,
-            status_assigned: None,
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
         };
         let l2 = make_test_l2("l2-all", "metallb-system", vec!["ns-sel-pool"]);
 
@@ -5014,8 +5084,10 @@ mod tests {
                 service_selectors: vec![],
             }),
             labels: BTreeMap::new(),
-            status_available: None,
-            status_assigned: None,
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
         };
         let l2 = make_test_l2("l2-all", "metallb-system", vec!["ns-sel-pool"]);
 
@@ -5340,15 +5412,19 @@ mod tests {
                     "addresses": ["10.0.0.0/24"],
                 },
                 "status": {
-                    "available": 250,
-                    "assigned": 6,
+                    "availableIPv4": 250,
+                    "assignedIPv4": 6,
+                    "availableIPv6": 100,
+                    "assignedIPv6": 2,
                 }
             }),
         );
         obj.metadata.namespace = Some("metallb-system".into());
         let pool = parse_ip_address_pool(obj).unwrap();
-        assert_eq!(pool.status_available, Some(250));
-        assert_eq!(pool.status_assigned, Some(6));
+        assert_eq!(pool.status_available_ipv4, Some(250));
+        assert_eq!(pool.status_assigned_ipv4, Some(6));
+        assert_eq!(pool.status_available_ipv6, Some(100));
+        assert_eq!(pool.status_assigned_ipv6, Some(2));
     }
 
     #[test]

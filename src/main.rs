@@ -5271,7 +5271,10 @@ async fn main() -> Result<()> {
                         "Ports",
                         "Endpoints",
                         "LB Provider",
+                        "Pool",
+                        "Advertisement",
                         "Ingress/Route",
+                        "Warnings",
                     ]);
                     let mut seen_svcs = std::collections::HashSet::new();
                     let mut mlb_idx = 0usize;
@@ -5307,6 +5310,34 @@ async fn main() -> Result<()> {
                             .unwrap_or("-")
                             .to_string();
                         mlb_idx += 1;
+                        let mlb = metallb_results.get(mlb_idx.saturating_sub(1));
+                        let pool_str = mlb
+                            .map(|r| {
+                                r.pools
+                                    .iter()
+                                    .map(|p| p.pool.name.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        let ad_str = mlb
+                            .map(|r| {
+                                r.advertisements
+                                    .iter()
+                                    .map(|a| format!("{}/{}", a.kind, a.name))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        let warn_str = mlb
+                            .map(|r| {
+                                if r.warnings.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{} warning(s)", r.warnings.len())
+                                }
+                            })
+                            .unwrap_or_default();
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
@@ -5314,7 +5345,10 @@ async fn main() -> Result<()> {
                             ports_str,
                             eps_str,
                             lb_provider,
+                            pool_str,
+                            ad_str,
                             ing_str,
+                            warn_str,
                         ]);
                     }
                     println!("{table}");
@@ -5375,6 +5409,36 @@ fn selector_to_json(sel: &crate::analyzers::selector::PodSelector) -> serde_json
         obj["matchExpressions"] = serde_json::json!(exprs);
     }
     obj
+}
+
+fn label_selectors_to_json(
+    selectors: &[crate::analyzers::selector::LabelSelector],
+) -> serde_json::Value {
+    let items: Vec<_> = selectors
+        .iter()
+        .map(|s| {
+            let mut obj = serde_json::json!({});
+            if !s.match_labels.is_empty() {
+                obj["matchLabels"] = serde_json::json!(s.match_labels);
+            }
+            if !s.match_expressions.is_empty() {
+                let exprs: Vec<_> = s
+                    .match_expressions
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "key": e.key,
+                            "operator": e.operator,
+                            "values": e.values,
+                        })
+                    })
+                    .collect();
+                obj["matchExpressions"] = serde_json::json!(exprs);
+            }
+            obj
+        })
+        .collect();
+    serde_json::json!(items)
 }
 
 fn format_selector(sel: &crate::analyzers::selector::PodSelector) -> String {
@@ -5647,11 +5711,17 @@ fn network_paths_to_json(
                             "serviceSelectors": sa.service_selectors.len(),
                         });
                     }
-                    if let Some(avail) = mp.pool.status_available {
-                        obj["statusAvailable"] = serde_json::json!(avail);
+                    if let Some(v) = mp.pool.status_available_ipv4 {
+                        obj["statusAvailableIPv4"] = serde_json::json!(v);
                     }
-                    if let Some(assigned) = mp.pool.status_assigned {
-                        obj["statusAssigned"] = serde_json::json!(assigned);
+                    if let Some(v) = mp.pool.status_available_ipv6 {
+                        obj["statusAvailableIPv6"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = mp.pool.status_assigned_ipv4 {
+                        obj["statusAssignedIPv4"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = mp.pool.status_assigned_ipv6 {
+                        obj["statusAssignedIPv6"] = serde_json::json!(v);
                     }
                     if !mp.pool.labels.is_empty() {
                         obj["labels"] = serde_json::json!(mp.pool.labels);
@@ -5667,13 +5737,13 @@ fn network_paths_to_json(
                         "nodeSelectorStatus": a.node_selector_status,
                     });
                     if !a.node_selectors.is_empty() {
-                        obj["nodeSelectors"] = serde_json::json!(a.node_selectors.len());
+                        obj["nodeSelectors"] = label_selectors_to_json(&a.node_selectors);
                     }
                     if !a.candidate_nodes.is_empty() {
                         obj["candidateNodes"] = serde_json::json!(a.candidate_nodes);
                     }
                     if !a.service_selectors.is_empty() {
-                        obj["serviceSelectors"] = serde_json::json!(a.service_selectors.len());
+                        obj["serviceSelectors"] = label_selectors_to_json(&a.service_selectors);
                     }
                     if !a.interfaces.is_empty() {
                         obj["interfaces"] = serde_json::json!(a.interfaces);
