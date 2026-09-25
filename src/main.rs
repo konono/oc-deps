@@ -5857,7 +5857,7 @@ fn network_paths_to_json(
                         }
                         crate::analyzers::selector::CrossNamespaceStatus::Unknown => "unknown",
                     };
-                    serde_json::json!({
+                    let mut route_json = serde_json::json!({
                         "kind": gr.route_kind,
                         "name": gr.route_name,
                         "namespace": gr.route_namespace,
@@ -5867,7 +5867,26 @@ fn network_paths_to_json(
                         "matches": matches_json,
                         "crossNamespace": cross_ns_str,
                         "statusConditions": conditions_json,
-                    })
+                    });
+                    if !gr.hostnames.is_empty() {
+                        route_json["hostnames"] = serde_json::json!(gr.hostnames);
+                    }
+                    if let Some(gc) = &gr.gateway_class {
+                        route_json["gatewayClass"] = serde_json::json!(gc);
+                    }
+                    if let Some(p) = gr.backend_port {
+                        route_json["backendPort"] = serde_json::json!(p);
+                    }
+                    if let Some(w) = gr.backend_weight {
+                        route_json["backendWeight"] = serde_json::json!(w);
+                    }
+                    if let Some(sn) = &gr.section_name {
+                        route_json["sectionName"] = serde_json::json!(sn);
+                    }
+                    if let Some(pp) = gr.parent_port {
+                        route_json["parentPort"] = serde_json::json!(pp);
+                    }
+                    route_json
                 })
                 .collect();
             let gw_warnings_json: Vec<String> = gw_routes
@@ -6521,16 +6540,51 @@ fn print_network_tree(
                         " [cross-ns: unknown]"
                     }
                 };
+                let gw_class_str = gr
+                    .gateway_class
+                    .as_deref()
+                    .map(|gc| format!(" (class: {})", gc))
+                    .unwrap_or_default();
+                let section_str = gr
+                    .section_name
+                    .as_deref()
+                    .map(|sn| format!(" section={}", sn))
+                    .unwrap_or_default();
                 if stdout_tty {
                     println!(
-                        "    \x1b[1m{}/{}\x1b[0m via Gateway/{}{} \u{2192} Service/{}",
-                        gr.route_kind, gr.route_name, gr.gateway_name, cross_ns_str, svc.name
+                        "    \x1b[1m{}/{}\x1b[0m via Gateway/{}{}{}{} \u{2192} Service/{}",
+                        gr.route_kind,
+                        gr.route_name,
+                        gr.gateway_name,
+                        gw_class_str,
+                        section_str,
+                        cross_ns_str,
+                        svc.name
                     );
                 } else {
                     println!(
-                        "    {}/{} via Gateway/{}{} \u{2192} Service/{}",
-                        gr.route_kind, gr.route_name, gr.gateway_name, cross_ns_str, svc.name
+                        "    {}/{} via Gateway/{}{}{}{} \u{2192} Service/{}",
+                        gr.route_kind,
+                        gr.route_name,
+                        gr.gateway_name,
+                        gw_class_str,
+                        section_str,
+                        cross_ns_str,
+                        svc.name
                     );
+                }
+                if !gr.hostnames.is_empty() {
+                    println!("      Hostnames: {}", gr.hostnames.join(", "));
+                }
+                let mut backend_info = Vec::new();
+                if let Some(p) = gr.backend_port {
+                    backend_info.push(format!("port={}", p));
+                }
+                if let Some(w) = gr.backend_weight {
+                    backend_info.push(format!("weight={}", w));
+                }
+                if !backend_info.is_empty() {
+                    println!("      Backend: {}", backend_info.join(" "));
                 }
                 for listener in &gr.listeners {
                     let hostname = listener

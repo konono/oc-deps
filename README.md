@@ -161,11 +161,26 @@ EndpointSlices are the modern replacement for Endpoints. Each slice contains a l
 
 **External reachability** is not determined by Service type alone. A LoadBalancer type does not guarantee external access — it depends on cloud provider, MetalLB, or other LB implementation.
 
-**Gateway API integration:** When Gateway API CRDs (`gateway.networking.k8s.io`) exist on the cluster, `network` discovers HTTPRoute, GRPCRoute, and TLSRoute resources that reference a Service as a backend. Gateway listeners are resolved per parentRef:
+**Gateway API integration:** When Gateway API CRDs (`gateway.networking.k8s.io`) exist on the cluster, `network` discovers all route types — HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and UDPRoute — that reference a Service as a backend. Routes and Gateways are fetched cluster-wide (`Api::all_with`) to support cross-namespace routing.
 
+**BackendRef identity matching:** Each backendRef is matched using its full identity:
+- `group` (default `""` = core API group) must be empty for Service
+- `kind` (default `"Service"`) must be `"Service"`
+- `namespace` (default = route's own namespace) must match the target Service namespace
+- `name` must match the target Service name
+
+This prevents false matches when Services share names across namespaces.
+
+**GatewayClass:** GatewayClass resources are fetched (cluster-scoped) and the controller name is resolved from the Gateway's `spec.gatewayClassName`. Displayed in tree output and `gatewayClass` field in JSON.
+
+**Hostnames:** Route-level `spec.hostnames` are captured and displayed.
+
+**Listener resolution** per parentRef:
 - If `parentRef.sectionName` is specified, only the matching listener is included
 - If `parentRef.port` is specified, listeners are filtered by port
 - If both are omitted, **all** gateway listeners are included as candidates
+
+**Multiple parentRef attachments:** Each parentRef produces a separate result entry. The dedup key includes sectionName and port, so a route attached to both `http` and `https` listeners on the same Gateway produces two entries with independent status conditions.
 
 Cross-namespace references are checked against ReferenceGrant resources. The `crossNamespace` status in output can be:
 - `same-namespace` — route and service are in the same namespace (no grant needed)
@@ -173,7 +188,7 @@ Cross-namespace references are checked against ReferenceGrant resources. The `cr
 - `not-allowed` — no matching ReferenceGrant found, or ReferenceGrant CRD is absent
 - `unknown` — ReferenceGrant API LIST failed (e.g., 403); a warning is emitted
 
-HTTPRoute match conditions (path type/value, method) are displayed in tree output and included in JSON. Route status conditions from `status.parents` are matched using the full identity: group, kind, namespace (defaulting to route namespace), name, sectionName, and port.
+HTTPRoute match conditions (path type/value, method) are displayed in tree output and included in JSON. Route status conditions from `status.parents` are matched using the full identity: group, kind, namespace (defaulting to route namespace), name, sectionName, and port (strict equality).
 
 `gatewayRoutes[]` and `gatewayWarnings[]` are **always present** in JSON output (empty arrays when no routes match). This guarantees a stable schema for consumers.
 
@@ -188,7 +203,7 @@ Each entry in `networkPaths[]` contains:
 - `endpointSummary`: `ready`, `notReady`, `unknown`, `effectiveReady`, `serving`, `terminating`
 - `selectorMatchedPods[]`, `targetRefMatchedPods[]`
 - `ingresses[]` with `kind`, `name`, `host`, `path`, `tls`
-- `gatewayRoutes[]` — always present (empty array when no routes). Each entry: `kind`, `name`, `namespace`, `gatewayName`, `gatewayNamespace`, `listeners[]` (with `name`, `port`, `protocol`, `hostname`, `tlsMode`), `matches[]` (with `pathType`, `pathValue`, `method`), `crossNamespace`, `statusConditions[]`
+- `gatewayRoutes[]` — always present (empty array when no routes). Each entry: `kind`, `name`, `namespace`, `gatewayName`, `gatewayNamespace`, `gatewayClass` (controller name), `listeners[]` (with `name`, `port`, `protocol`, `hostname`, `tlsMode`), `matches[]` (with `pathType`, `pathValue`, `method`), `hostnames[]`, `backendPort`, `backendWeight`, `sectionName`, `parentPort`, `crossNamespace`, `statusConditions[]`
 - `gatewayWarnings[]` — always present (empty array). Cross-namespace and availability warnings
 - Top-level `warnings[]` (typed ScanWarning array) and `scanWarningCount`
 
