@@ -5230,6 +5230,25 @@ async fn main() -> Result<()> {
                 results
             };
 
+            // Resolve Gateway API routes per service
+            let gateway_results: Vec<Vec<crate::analyzers::selector::MatchedGatewayRoute>> = {
+                let mut seen = std::collections::HashSet::new();
+                let mut results = Vec::new();
+                for (_, p) in &all_paths {
+                    if !seen.insert(p.service.name.clone()) {
+                        continue;
+                    }
+                    results.push(
+                        crate::analyzers::selector::resolve_gateway_routes_for_service(
+                            &p.service.name,
+                            &namespace,
+                            &inventory.gateway,
+                        ),
+                    );
+                }
+                results
+            };
+
             // Merge inventory warnings
             let existing_keys: std::collections::HashSet<String> =
                 scan_warnings.iter().map(|w| format!("{}", w)).collect();
@@ -5241,7 +5260,8 @@ async fn main() -> Result<()> {
 
             match online.output {
                 OutputFormat::Json => {
-                    let json_paths = network_paths_to_json(&all_paths, &metallb_results);
+                    let json_paths =
+                        network_paths_to_json(&all_paths, &metallb_results, &gateway_results);
                     let json_postures = network_postures_to_json(&postures);
                     let json_warnings: Vec<serde_json::Value> = scan_warnings
                         .iter()
@@ -5280,10 +5300,12 @@ async fn main() -> Result<()> {
                         "Events",
                         "Config",
                         "Ingress/Route",
+                        "Gateway Routes",
                         "Warnings",
                     ]);
                     let mut seen_svcs = std::collections::HashSet::new();
                     let mut mlb_idx = 0usize;
+                    let mut gw_idx = 0usize;
                     for (_, path) in &all_paths {
                         if !seen_svcs.insert(path.service.name.clone()) {
                             continue;
@@ -5374,6 +5396,32 @@ async fn main() -> Result<()> {
                                     .unwrap_or_else(|| "-".to_string())
                             })
                             .unwrap_or_else(|| "-".to_string());
+                        // Gateway Routes column
+                        let gw = gateway_results.get(gw_idx).cloned().unwrap_or_default();
+                        gw_idx += 1;
+                        let not_allowed_count = gw
+                            .iter()
+                            .filter(|gr| {
+                                gr.cross_namespace
+                                    == crate::analyzers::selector::CrossNamespaceStatus::NotAllowed
+                            })
+                            .count();
+                        let gw_str = if gw.is_empty() {
+                            String::new()
+                        } else if not_allowed_count > 0 {
+                            format!("{} ({} not-allowed)", gw.len(), not_allowed_count)
+                        } else {
+                            format!("{}", gw.len())
+                        };
+                        // Append gateway warnings to warn_str
+                        let gw_warn_count: usize = gw.iter().map(|gr| gr.warnings.len()).sum();
+                        let combined_warn = if !warn_str.is_empty() && gw_warn_count > 0 {
+                            format!("{}, {} gw-warning(s)", warn_str, gw_warn_count)
+                        } else if gw_warn_count > 0 {
+                            format!("{} gw-warning(s)", gw_warn_count)
+                        } else {
+                            warn_str
+                        };
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
@@ -5388,7 +5436,8 @@ async fn main() -> Result<()> {
                             events_str,
                             config_str,
                             ing_str,
-                            warn_str,
+                            gw_str,
+                            combined_warn,
                         ]);
                     }
                     println!("{table}");
@@ -5415,7 +5464,14 @@ async fn main() -> Result<()> {
                     }
                 }
                 OutputFormat::Tree => {
-                    print_network_tree(&kind, &name, &all_paths, &postures, &metallb_results);
+                    print_network_tree(
+                        &kind,
+                        &name,
+                        &all_paths,
+                        &postures,
+                        &metallb_results,
+                        &gateway_results,
+                    );
                 }
             }
 
@@ -5555,15 +5611,19 @@ fn format_policy_ports(ports: &[crate::analyzers::selector::NetworkPolicyPort]) 
 fn network_paths_to_json(
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
     metallb_results: &[crate::analyzers::selector::MetalLBResult],
+    gateway_results: &[Vec<crate::analyzers::selector::MatchedGatewayRoute>],
 ) -> Vec<serde_json::Value> {
     let mut seen_svcs = std::collections::HashSet::new();
     let mut metallb_idx = 0usize;
+    let mut gw_idx = 0usize;
     paths
         .iter()
         .filter(|(_, p)| seen_svcs.insert(p.service.name.clone()))
         .map(|(_, p)| {
             let mlb = metallb_results.get(metallb_idx);
             metallb_idx += 1;
+            let gw_routes = gateway_results.get(gw_idx).cloned().unwrap_or_default();
+            gw_idx += 1;
             let _ = mlb; // used below
             let ports: Vec<_> = p
                 .service
@@ -5731,6 +5791,124 @@ fn network_paths_to_json(
                 "selectorMatchedPods": p.selector_matched_pods,
                 "targetRefMatchedPods": p.target_ref_matched_pods,
             });
+            // Always emit gatewayRoutes and gatewayWarnings (empty arrays when no routes)
+            let gw_routes_json: Vec<serde_json::Value> = gw_routes
+                .iter()
+                .map(|gr| {
+                    let listeners_json: Vec<serde_json::Value> = gr
+                        .listeners
+                        .iter()
+                        .map(|l| {
+                            let mut obj = serde_json::json!({
+                                "name": l.name,
+                                "port": l.port,
+                                "protocol": l.protocol,
+                            });
+                            if let Some(h) = &l.hostname {
+                                obj["hostname"] = serde_json::json!(h);
+                            }
+                            if let Some(t) = &l.tls_mode {
+                                obj["tlsMode"] = serde_json::json!(t);
+                            }
+                            obj
+                        })
+                        .collect();
+                    let matched_backends_json: Vec<serde_json::Value> = gr
+                        .matched_backends
+                        .iter()
+                        .map(|mb| {
+                            let rule_matches: Vec<serde_json::Value> = mb
+                                .rule_matches
+                                .iter()
+                                .map(|m| {
+                                    let mut obj = serde_json::Map::new();
+                                    if let Some(pt) = &m.path_type {
+                                        obj.insert("pathType".into(), serde_json::json!(pt));
+                                    }
+                                    if let Some(pv) = &m.path_value {
+                                        obj.insert("pathValue".into(), serde_json::json!(pv));
+                                    }
+                                    if let Some(method) = &m.method {
+                                        obj.insert("method".into(), serde_json::json!(method));
+                                    }
+                                    serde_json::Value::Object(obj)
+                                })
+                                .collect();
+                            let mut obj = serde_json::Map::new();
+                            if let Some(p) = mb.port {
+                                obj.insert("port".into(), serde_json::json!(p));
+                            }
+                            if let Some(w) = mb.weight {
+                                obj.insert("weight".into(), serde_json::json!(w));
+                            }
+                            if !rule_matches.is_empty() {
+                                obj.insert("ruleMatches".into(), serde_json::json!(rule_matches));
+                            }
+                            serde_json::Value::Object(obj)
+                        })
+                        .collect();
+                    let conditions_json: Vec<serde_json::Value> = gr
+                        .status_conditions
+                        .iter()
+                        .map(|c| {
+                            let mut obj = serde_json::json!({
+                                "type": c.condition_type,
+                                "status": c.status,
+                            });
+                            if let Some(r) = &c.reason {
+                                obj["reason"] = serde_json::json!(r);
+                            }
+                            if let Some(m) = &c.message {
+                                obj["message"] = serde_json::json!(m);
+                            }
+                            obj
+                        })
+                        .collect();
+                    let cross_ns_str = match &gr.cross_namespace {
+                        crate::analyzers::selector::CrossNamespaceStatus::SameNamespace => {
+                            "same-namespace"
+                        }
+                        crate::analyzers::selector::CrossNamespaceStatus::Allowed => "allowed",
+                        crate::analyzers::selector::CrossNamespaceStatus::NotAllowed => {
+                            "not-allowed"
+                        }
+                        crate::analyzers::selector::CrossNamespaceStatus::Unknown => "unknown",
+                    };
+                    let mut route_json = serde_json::json!({
+                        "kind": gr.route_kind,
+                        "name": gr.route_name,
+                        "namespace": gr.route_namespace,
+                        "gatewayName": gr.gateway_name,
+                        "gatewayNamespace": gr.gateway_namespace,
+                        "listeners": listeners_json,
+                        "matchedBackends": matched_backends_json,
+                        "crossNamespace": cross_ns_str,
+                        "statusConditions": conditions_json,
+                    });
+                    if !gr.hostnames.is_empty() {
+                        route_json["hostnames"] = serde_json::json!(gr.hostnames);
+                    }
+                    if let Some(gc) = &gr.gateway_class_name {
+                        route_json["gatewayClassName"] = serde_json::json!(gc);
+                    }
+                    if let Some(gc) = &gr.gateway_class_controller {
+                        route_json["gatewayClassController"] = serde_json::json!(gc);
+                    }
+                    if let Some(sn) = &gr.section_name {
+                        route_json["sectionName"] = serde_json::json!(sn);
+                    }
+                    if let Some(pp) = gr.parent_port {
+                        route_json["parentPort"] = serde_json::json!(pp);
+                    }
+                    route_json
+                })
+                .collect();
+            let gw_warnings_json: Vec<String> = gw_routes
+                .iter()
+                .flat_map(|gr| gr.warnings.clone())
+                .collect();
+            result["gatewayRoutes"] = serde_json::json!(gw_routes_json);
+            result["gatewayWarnings"] = serde_json::json!(gw_warnings_json);
             if let Some(mlb) = mlb {
                 let pools_json: Vec<_> = mlb.pools.iter().map(|mp| {
                     let mut obj = serde_json::json!({
@@ -6009,6 +6187,7 @@ fn print_network_tree(
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
     postures: &[crate::analyzers::selector::PodNetworkPosture],
     metallb_results: &[crate::analyzers::selector::MetalLBResult],
+    gateway_results: &[Vec<crate::analyzers::selector::MatchedGatewayRoute>],
 ) {
     let stdout_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if paths.is_empty() {
@@ -6018,6 +6197,7 @@ fn print_network_tree(
     println!("Network paths for {}/{}:\n", kind, name);
     let mut seen_svcs = std::collections::HashSet::new();
     let mut mlb_idx = 0usize;
+    let mut gw_idx = 0usize;
     for (_, path) in paths {
         if !seen_svcs.insert(path.service.name.clone()) {
             continue;
@@ -6358,6 +6538,116 @@ fn print_network_tree(
                 println!("      TLS:  {}", tls);
             }
         }
+        // Gateway API routes
+        if let Some(gw_routes) = gateway_results.get(gw_idx) {
+            for gr in gw_routes {
+                println!();
+                let cross_ns_str = match &gr.cross_namespace {
+                    crate::analyzers::selector::CrossNamespaceStatus::SameNamespace => "",
+                    crate::analyzers::selector::CrossNamespaceStatus::Allowed => {
+                        " [cross-ns: allowed]"
+                    }
+                    crate::analyzers::selector::CrossNamespaceStatus::NotAllowed => {
+                        " [cross-ns: not-allowed]"
+                    }
+                    crate::analyzers::selector::CrossNamespaceStatus::Unknown => {
+                        " [cross-ns: unknown]"
+                    }
+                };
+                let gw_class_str = match (&gr.gateway_class_name, &gr.gateway_class_controller) {
+                    (Some(name), Some(ctrl)) => {
+                        format!(" (GatewayClass/{}, controller: {})", name, ctrl)
+                    }
+                    (Some(name), None) => format!(" (GatewayClass/{})", name),
+                    (None, Some(ctrl)) => format!(" (controller: {})", ctrl),
+                    (None, None) => String::new(),
+                };
+                let section_str = gr
+                    .section_name
+                    .as_deref()
+                    .map(|sn| format!(" section={}", sn))
+                    .unwrap_or_default();
+                if stdout_tty {
+                    println!(
+                        "    \x1b[1m{}/{}\x1b[0m via Gateway/{}{}{}{} \u{2192} Service/{}",
+                        gr.route_kind,
+                        gr.route_name,
+                        gr.gateway_name,
+                        gw_class_str,
+                        section_str,
+                        cross_ns_str,
+                        svc.name
+                    );
+                } else {
+                    println!(
+                        "    {}/{} via Gateway/{}{}{}{} \u{2192} Service/{}",
+                        gr.route_kind,
+                        gr.route_name,
+                        gr.gateway_name,
+                        gw_class_str,
+                        section_str,
+                        cross_ns_str,
+                        svc.name
+                    );
+                }
+                if !gr.hostnames.is_empty() {
+                    println!("      Hostnames: {}", gr.hostnames.join(", "));
+                }
+                for listener in &gr.listeners {
+                    let hostname = listener
+                        .hostname
+                        .as_deref()
+                        .map(|h| format!(" hostname={}", h))
+                        .unwrap_or_default();
+                    let tls = listener
+                        .tls_mode
+                        .as_deref()
+                        .map(|t| format!(" tls={}", t))
+                        .unwrap_or_default();
+                    println!(
+                        "      Listener: {} port={}/{}{}{}",
+                        listener.name, listener.port, listener.protocol, hostname, tls
+                    );
+                }
+                for mb in &gr.matched_backends {
+                    let mut backend_info = Vec::new();
+                    if let Some(p) = mb.port {
+                        backend_info.push(format!("port {}", p));
+                    }
+                    if let Some(w) = mb.weight {
+                        backend_info.push(format!("weight {}", w));
+                    }
+                    if !backend_info.is_empty() {
+                        println!("      Backend: {}", backend_info.join(", "));
+                    }
+                    for m in &mb.rule_matches {
+                        let path_str = match (&m.path_type, &m.path_value) {
+                            (Some(pt), Some(pv)) => format!("{} {}", pt, pv),
+                            (None, Some(pv)) => pv.clone(),
+                            _ => continue,
+                        };
+                        let method_str = m
+                            .method
+                            .as_deref()
+                            .map(|meth| format!(" method={}", meth))
+                            .unwrap_or_default();
+                        println!("        Match: {}{}", path_str, method_str);
+                    }
+                }
+                for c in &gr.status_conditions {
+                    let reason = c
+                        .reason
+                        .as_deref()
+                        .map(|r| format!(" ({})", r))
+                        .unwrap_or_default();
+                    println!("      Status: {}={}{}", c.condition_type, c.status, reason);
+                }
+                for w in &gr.warnings {
+                    println!("      [!] {}", w);
+                }
+            }
+        }
+        gw_idx += 1;
         println!();
     }
     if !postures.is_empty() {
@@ -8583,5 +8873,179 @@ mod basis_drift_tests {
         assert_eq!(json["type"], "Forbidden");
         assert_eq!(json["gvr"], "v1/pods");
         assert_eq!(json["status"], 403);
+    }
+
+    #[test]
+    fn network_json_gateway_routes_always_present() {
+        use crate::analyzers::selector::{EndpointSummary, NetworkPath, NetworkService};
+        use std::collections::BTreeMap;
+
+        let svc = NetworkService {
+            name: "test-svc".into(),
+            uid: "uid-1".into(),
+            selector: BTreeMap::new(),
+            has_selector: false,
+            cluster_ip: "10.0.0.1".into(),
+            svc_type: "ClusterIP".into(),
+            ports: vec![],
+            health_check_node_port: None,
+            internal_traffic_policy: None,
+            ip_family_policy: None,
+            load_balancer_class: None,
+            allocate_lb_node_ports: None,
+            external_traffic_policy: None,
+            external_ips: vec![],
+            ip_families: vec![],
+            lb_ingress: vec![],
+            annotations: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            load_balancer_ip: None,
+        };
+        let path = NetworkPath {
+            service: svc,
+            ingresses: vec![],
+            endpoint_slices: vec![],
+            endpoint_summary: EndpointSummary {
+                ready: 0,
+                not_ready: 0,
+                unknown: 0,
+                effective_ready: 0,
+                serving: 0,
+                terminating: 0,
+            },
+            selector_matched_pods: vec![],
+            target_ref_matched_pods: vec![],
+        };
+        let paths = vec![("test".to_string(), path)];
+        let metallb_results = vec![];
+        let gateway_results: Vec<Vec<crate::analyzers::selector::MatchedGatewayRoute>> =
+            vec![vec![]];
+        let json = network_paths_to_json(&paths, &metallb_results, &gateway_results);
+        assert_eq!(json.len(), 1);
+        let entry = &json[0];
+        assert!(
+            entry.get("gatewayRoutes").is_some(),
+            "gatewayRoutes must always be present"
+        );
+        assert_eq!(
+            entry["gatewayRoutes"].as_array().unwrap().len(),
+            0,
+            "gatewayRoutes should be empty array when no routes"
+        );
+        assert!(
+            entry.get("gatewayWarnings").is_some(),
+            "gatewayWarnings must always be present"
+        );
+        assert_eq!(
+            entry["gatewayWarnings"].as_array().unwrap().len(),
+            0,
+            "gatewayWarnings should be empty array when no warnings"
+        );
+    }
+
+    #[test]
+    fn network_json_gateway_route_fields() {
+        use crate::analyzers::selector::{
+            CrossNamespaceStatus, EndpointSummary, GatewayListener, HTTPRouteMatch, MatchedBackend,
+            MatchedGatewayRoute, NetworkPath, NetworkService, RouteCondition,
+        };
+        use std::collections::BTreeMap;
+
+        let svc = NetworkService {
+            name: "web".into(),
+            uid: "uid-w".into(),
+            selector: BTreeMap::new(),
+            has_selector: false,
+            cluster_ip: "10.0.0.1".into(),
+            svc_type: "ClusterIP".into(),
+            ports: vec![],
+            health_check_node_port: None,
+            internal_traffic_policy: None,
+            ip_family_policy: None,
+            load_balancer_class: None,
+            allocate_lb_node_ports: None,
+            external_traffic_policy: None,
+            external_ips: vec![],
+            ip_families: vec![],
+            lb_ingress: vec![],
+            annotations: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            load_balancer_ip: None,
+        };
+        let path = NetworkPath {
+            service: svc,
+            ingresses: vec![],
+            endpoint_slices: vec![],
+            endpoint_summary: EndpointSummary::default(),
+            selector_matched_pods: vec![],
+            target_ref_matched_pods: vec![],
+        };
+        let route = MatchedGatewayRoute {
+            route_kind: "HTTPRoute".into(),
+            route_name: "my-route".into(),
+            route_namespace: "default".into(),
+            hostnames: vec!["example.com".into()],
+            gateway_name: "main-gw".into(),
+            gateway_namespace: "gw-ns".into(),
+            gateway_class_name: Some("my-class".into()),
+            gateway_class_controller: Some("example.com/ctrl".into()),
+            listeners: vec![GatewayListener {
+                name: "https".into(),
+                hostname: Some("example.com".into()),
+                port: 443,
+                protocol: "HTTPS".into(),
+                tls_mode: Some("Terminate".into()),
+            }],
+            matched_backends: vec![
+                MatchedBackend {
+                    port: Some(8080),
+                    weight: Some(1),
+                    rule_matches: vec![HTTPRouteMatch {
+                        path_type: Some("PathPrefix".into()),
+                        path_value: Some("/api".into()),
+                        method: None,
+                    }],
+                },
+                MatchedBackend {
+                    port: Some(8443),
+                    weight: Some(2),
+                    rule_matches: vec![HTTPRouteMatch {
+                        path_type: Some("Exact".into()),
+                        path_value: Some("/admin".into()),
+                        method: Some("GET".into()),
+                    }],
+                },
+            ],
+            section_name: Some("https".into()),
+            parent_port: Some(443),
+            cross_namespace: CrossNamespaceStatus::SameNamespace,
+            status_conditions: vec![RouteCondition {
+                condition_type: "Accepted".into(),
+                status: "True".into(),
+                reason: Some("Accepted".into()),
+                message: None,
+            }],
+            warnings: vec![],
+        };
+        let paths = vec![("".into(), path)];
+        let gateway_results = vec![vec![route]];
+        let json = network_paths_to_json(&paths, &[], &gateway_results);
+        let entry = &json[0];
+        let gw_routes = entry["gatewayRoutes"].as_array().unwrap();
+        assert_eq!(gw_routes.len(), 1);
+        let r = &gw_routes[0];
+        assert_eq!(r["gatewayClassName"], "my-class");
+        assert_eq!(r["gatewayClassController"], "example.com/ctrl");
+        let backends = r["matchedBackends"].as_array().unwrap();
+        assert_eq!(backends.len(), 2);
+        assert_eq!(backends[0]["port"], 8080);
+        assert_eq!(backends[0]["weight"], 1);
+        let matches0 = backends[0]["ruleMatches"].as_array().unwrap();
+        assert_eq!(matches0[0]["pathType"], "PathPrefix");
+        assert_eq!(matches0[0]["pathValue"], "/api");
+        assert_eq!(backends[1]["port"], 8443);
+        assert_eq!(backends[1]["weight"], 2);
+        let matches1 = backends[1]["ruleMatches"].as_array().unwrap();
+        assert_eq!(matches1[0]["method"], "GET");
     }
 }
