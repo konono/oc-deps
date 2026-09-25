@@ -2827,7 +2827,11 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(action);
+                    if is_label_only_delete(cr) {
+                        deferred_remaining_actions.push(action);
+                    } else {
+                        phase_actions.push(action);
+                    }
                 }
             }
             for cr in &managed_descendants {
@@ -2854,11 +2858,12 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(
-                        cr,
-                        GraphPosition::Descendant,
-                        &resolved_decisions,
-                    ));
+                    let action = cr_to_action(cr, GraphPosition::Descendant, &resolved_decisions);
+                    if is_label_only_delete(cr) {
+                        deferred_remaining_actions.push(action);
+                    } else {
+                        phase_actions.push(action);
+                    }
                 }
             }
             for cr in &independent_crs {
@@ -2877,11 +2882,12 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(
-                        cr,
-                        GraphPosition::Independent,
-                        &resolved_decisions,
-                    ));
+                    let action = cr_to_action(cr, GraphPosition::Independent, &resolved_decisions);
+                    if is_label_only_delete(cr) {
+                        deferred_remaining_actions.push(action);
+                    } else {
+                        phase_actions.push(action);
+                    }
                 }
             }
 
@@ -6017,6 +6023,163 @@ mod tests {
         assert!(
             apisvc_deletes.is_empty(),
             "APIService should never be DELETE with --prune-crds"
+        );
+    }
+
+    // ── Phase assignment: label-only deferral ──
+
+    #[test]
+    fn resolve_decisions_bulk_label_only_has_correct_origin() {
+        let resource = make_res("LLMConfig", "config-1", "uid-1");
+        let mut cr = make_cr_instance(
+            "LLMConfig",
+            "config-1",
+            "uid-1",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        cr.provenance = Provenance::Unknown;
+        cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Root),
+            approval_class: compute_approval_class(&cr, GraphPosition::Root),
+            exact_approvable: true,
+            is_label_only_eligible: is_label_only_bulk_eligible(&cr),
+        };
+        let policy = DecisionPolicy {
+            approvals: vec![DeleteApproval::Bulk(BulkScope::LabelOnly)],
+            preserves: vec![],
+        };
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        let decision = resolved.get(&resource).expect("should be resolved");
+        match decision {
+            ResolvedDecision::Delete {
+                approval_origin, ..
+            } => {
+                assert_eq!(
+                    *approval_origin,
+                    ApprovalOrigin::BulkLabelOnly,
+                    "bulk label-only approval must set BulkLabelOnly origin"
+                );
+            }
+            _ => panic!("Expected Delete decision"),
+        }
+    }
+
+    #[test]
+    fn resolve_decisions_root_approval_has_other_origin() {
+        let resource = make_res("DSC", "default-dsc", "uid-dsc");
+        let _cr = make_cr_instance(
+            "DSC",
+            "default-dsc",
+            "uid-dsc",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Root),
+            approval_class: DeleteApprovalClass::Standard,
+            exact_approvable: true,
+            is_label_only_eligible: false,
+        };
+        let policy = DecisionPolicy {
+            approvals: vec![DeleteApproval::Bulk(BulkScope::Root)],
+            preserves: vec![],
+        };
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        let decision = resolved.get(&resource).expect("should be resolved");
+        match decision {
+            ResolvedDecision::Delete {
+                approval_origin, ..
+            } => {
+                assert_eq!(
+                    *approval_origin,
+                    ApprovalOrigin::Other,
+                    "root bulk approval must set Other origin"
+                );
+            }
+            _ => panic!("Expected Delete decision"),
+        }
+    }
+
+    #[test]
+    fn resolve_decisions_exact_approval_has_other_origin() {
+        let resource = make_res("Config", "default", "uid-cfg");
+        let _cr = make_cr_instance(
+            "Config",
+            "default",
+            "uid-cfg",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Root),
+            approval_class: DeleteApprovalClass::ExplicitOnly,
+            exact_approvable: true,
+            is_label_only_eligible: false,
+        };
+        let policy = DecisionPolicy {
+            approvals: vec![DeleteApproval::Exact("Config/default".to_string())],
+            preserves: vec![],
+        };
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        let decision = resolved.get(&resource).expect("should be resolved");
+        match decision {
+            ResolvedDecision::Delete {
+                approval_origin, ..
+            } => {
+                assert_eq!(
+                    *approval_origin,
+                    ApprovalOrigin::Other,
+                    "exact approval must set Other origin"
+                );
+            }
+            _ => panic!("Expected Delete decision"),
+        }
+    }
+
+    // ── CSV package: load/save boundary tests ──
+
+    #[test]
+    fn load_execution_plan_rejects_empty_package() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01T00:00:00Z".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: String::new(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "csv.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-empty-pkg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Empty package_name must be rejected on load"
+        );
+        assert!(
+            format!("{}", result.unwrap_err()).contains("empty package_name"),
+            "Error should mention empty package"
         );
     }
 }

@@ -1867,4 +1867,77 @@ mod tests {
         assert!(!is_transient_list_error(&api_error(403)));
         assert!(!is_transient_list_error(&api_error(404)));
     }
+
+    fn make_csv_with_annotation(annotation: &str) -> kube::api::DynamicObject {
+        let mut obj = kube::api::DynamicObject::new(
+            "test-csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        obj.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            annotation.to_string(),
+        )]));
+        obj
+    }
+
+    #[test]
+    fn extract_annotation_packages_array_single() {
+        let csv = make_csv_with_annotation(
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"rhods-operator\",\"version\":\"3.5.1\"}"}]"#,
+        );
+        let pkgs = extract_annotation_packages(&csv);
+        assert_eq!(pkgs, vec!["rhods-operator"]);
+    }
+
+    #[test]
+    fn extract_annotation_packages_object_properties() {
+        let csv = make_csv_with_annotation(
+            r#"{"properties":[{"type":"olm.package","value":{"packageName":"my-operator","version":"1.0"}}]}"#,
+        );
+        let pkgs = extract_annotation_packages(&csv);
+        assert_eq!(pkgs, vec!["my-operator"]);
+    }
+
+    #[test]
+    fn extract_annotation_packages_empty_annotation() {
+        let csv = make_csv_with_annotation("[]");
+        let pkgs = extract_annotation_packages(&csv);
+        assert!(pkgs.is_empty());
+    }
+
+    #[test]
+    fn extract_annotation_packages_no_olm_package_type() {
+        let csv =
+            make_csv_with_annotation(r#"[{"type":"olm.gvk","value":{"group":"example.com"}}]"#);
+        let pkgs = extract_annotation_packages(&csv);
+        assert!(pkgs.is_empty());
+    }
+
+    #[test]
+    fn extract_annotation_packages_invalid_json() {
+        let csv = make_csv_with_annotation("not valid json");
+        let pkgs = extract_annotation_packages(&csv);
+        assert!(pkgs.is_empty());
+    }
+
+    #[test]
+    fn extract_annotation_packages_multiple_distinct() {
+        let csv = make_csv_with_annotation(
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"pkg-a\"}"},{"type":"olm.package","value":"{\"packageName\":\"pkg-b\"}"}]"#,
+        );
+        let pkgs = extract_annotation_packages(&csv);
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains(&"pkg-a".to_string()));
+        assert!(pkgs.contains(&"pkg-b".to_string()));
+    }
+
+    #[test]
+    fn extract_annotation_packages_no_annotation() {
+        let obj = kube::api::DynamicObject::new(
+            "test-csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        let pkgs = extract_annotation_packages(&obj);
+        assert!(pkgs.is_empty());
+    }
 }
