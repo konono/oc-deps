@@ -129,6 +129,8 @@ Advertisement resolution evaluates pool selectors (`ipAddressPools` direct name 
 
 MetalLB LIST failures (403, 500, timeout) propagate as typed warnings with retry. MetalLB CRD absence is handled gracefully. JSON includes a `metallb` object per service path with `provider`, `requestedIPs`, `requestedPool`, `pools[]`, `advertisements[]`, `observation` (with `observedState`, `sessionState`, `apiAvailability`, `l2AdvertisedNodes`, `l2Interfaces`, `bgpNodeStatus`, `relatedPeers`, `relatedBfdProfiles`, `configurationStates`, `events`), and `warnings[]`.
 
+**Gateway API integration (Phase 4):** When Gateway API CRDs (`gateway.networking.k8s.io`) exist on the cluster, `network` discovers the full Gateway API path: GatewayClass -> Gateway -> Route -> Service. Supported route types: HTTPRoute, GRPCRoute, TCPRoute, TLSRoute, UDPRoute. Cross-namespace backendRefs are evaluated against ReferenceGrant resources in the target Service's namespace. Routes referencing a Service in a different namespace without a matching ReferenceGrant produce a warning and `crossNamespace: "not-allowed"`. Route status conditions (e.g., `Accepted=True`) are included from `status.parents`. Gateway API CRD absence is handled gracefully (empty result, no errors). JSON includes a `gatewayRoutes` array per service path with `routeKind`, `routeName`, `routeNamespace`, `gateway` (name/namespace/class), `listener`, `hostnames`, `backendPort`, `weight`, `parentConditions`, and `crossNamespace`.
+
 **Service fields displayed:**
 
 | Field | Description |

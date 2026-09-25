@@ -22,7 +22,7 @@ use crate::analyzers::olm::{
 };
 use crate::analyzers::selector::{
     build_network_inventory, build_service_network_path, evaluate_network_postures,
-    find_network_paths, get_service_selected_pods,
+    find_network_paths, get_service_selected_pods, resolve_gateway_routes_for_service,
 };
 use crate::analyzers::trace::{print_trace, trace_resource};
 use crate::cli::{Args, Command, Direction, OutputFormat, Scope, ShowField, TeardownAction};
@@ -5230,6 +5230,22 @@ async fn main() -> Result<()> {
                 results
             };
 
+            // Resolve Gateway API routes for each service path
+            let gateway_results: Vec<crate::analyzers::selector::GatewayResult> = {
+                let mut seen = std::collections::HashSet::new();
+                let mut results = Vec::new();
+                for (_, p) in &all_paths {
+                    if seen.insert(p.service.name.clone()) {
+                        results.push(resolve_gateway_routes_for_service(
+                            &p.service.name,
+                            &namespace,
+                            &inventory.gateway,
+                        ));
+                    }
+                }
+                results
+            };
+
             // Merge inventory warnings
             let existing_keys: std::collections::HashSet<String> =
                 scan_warnings.iter().map(|w| format!("{}", w)).collect();
@@ -5241,7 +5257,8 @@ async fn main() -> Result<()> {
 
             match online.output {
                 OutputFormat::Json => {
-                    let json_paths = network_paths_to_json(&all_paths, &metallb_results);
+                    let json_paths =
+                        network_paths_to_json(&all_paths, &metallb_results, &gateway_results);
                     let json_postures = network_postures_to_json(&postures);
                     let json_warnings: Vec<serde_json::Value> = scan_warnings
                         .iter()
@@ -5280,6 +5297,7 @@ async fn main() -> Result<()> {
                         "Events",
                         "Config",
                         "Ingress/Route",
+                        "Gateway Routes",
                         "Warnings",
                     ]);
                     let mut seen_svcs = std::collections::HashSet::new();
@@ -5374,6 +5392,16 @@ async fn main() -> Result<()> {
                                     .unwrap_or_else(|| "-".to_string())
                             })
                             .unwrap_or_else(|| "-".to_string());
+                        let gw_str = gateway_results
+                            .get(mlb_idx.saturating_sub(1))
+                            .map(|r| {
+                                if r.routes.is_empty() {
+                                    "-".to_string()
+                                } else {
+                                    format!("{}", r.routes.len())
+                                }
+                            })
+                            .unwrap_or_else(|| "-".to_string());
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
@@ -5388,6 +5416,7 @@ async fn main() -> Result<()> {
                             events_str,
                             config_str,
                             ing_str,
+                            gw_str,
                             warn_str,
                         ]);
                     }
@@ -5415,7 +5444,14 @@ async fn main() -> Result<()> {
                     }
                 }
                 OutputFormat::Tree => {
-                    print_network_tree(&kind, &name, &all_paths, &postures, &metallb_results);
+                    print_network_tree(
+                        &kind,
+                        &name,
+                        &all_paths,
+                        &postures,
+                        &metallb_results,
+                        &gateway_results,
+                    );
                 }
             }
 
@@ -5555,6 +5591,7 @@ fn format_policy_ports(ports: &[crate::analyzers::selector::NetworkPolicyPort]) 
 fn network_paths_to_json(
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
     metallb_results: &[crate::analyzers::selector::MetalLBResult],
+    gateway_results: &[crate::analyzers::selector::GatewayResult],
 ) -> Vec<serde_json::Value> {
     let mut seen_svcs = std::collections::HashSet::new();
     let mut metallb_idx = 0usize;
@@ -5938,6 +5975,68 @@ fn network_paths_to_json(
                     "observation": obs_json
                 });
             }
+            // Gateway API routes
+            if let Some(gw_result) = gateway_results.get(metallb_idx.saturating_sub(1)) {
+                if !gw_result.routes.is_empty() {
+                    let gw_routes_json: Vec<serde_json::Value> = gw_result
+                        .routes
+                        .iter()
+                        .map(|r| {
+                            let mut obj = serde_json::json!({
+                                "routeKind": r.route_kind,
+                                "routeName": r.route_name,
+                                "routeNamespace": r.route_namespace,
+                                "gateway": {
+                                    "name": r.gateway_name,
+                                    "namespace": r.gateway_namespace,
+                                    "class": r.gateway_class,
+                                },
+                                "crossNamespace": r.cross_namespace.to_string(),
+                            });
+                            if let Some(ref l) = r.listener {
+                                obj["listener"] = serde_json::json!({
+                                    "name": l.name,
+                                    "port": l.port,
+                                    "protocol": l.protocol,
+                                });
+                                if let Some(ref h) = l.hostname {
+                                    obj["listener"]["hostname"] = serde_json::json!(h);
+                                }
+                                if let Some(ref tm) = l.tls_mode {
+                                    obj["listener"]["tlsMode"] = serde_json::json!(tm);
+                                }
+                            }
+                            if !r.hostnames.is_empty() {
+                                obj["hostnames"] = serde_json::json!(r.hostnames);
+                            }
+                            if let Some(bp) = r.backend_port {
+                                obj["backendPort"] = serde_json::json!(bp);
+                            }
+                            if let Some(w) = r.weight {
+                                obj["weight"] = serde_json::json!(w);
+                            }
+                            if !r.parent_conditions.is_empty() {
+                                let conds: Vec<_> = r.parent_conditions.iter().map(|c| {
+                                    let mut co = serde_json::json!({
+                                        "type": c.condition_type,
+                                        "status": c.status,
+                                    });
+                                    if let Some(ref reason) = c.reason {
+                                        co["reason"] = serde_json::json!(reason);
+                                    }
+                                    co
+                                }).collect();
+                                obj["parentConditions"] = serde_json::json!(conds);
+                            }
+                            obj
+                        })
+                        .collect();
+                    result["gatewayRoutes"] = serde_json::json!(gw_routes_json);
+                }
+                if !gw_result.warnings.is_empty() {
+                    result["gatewayWarnings"] = serde_json::json!(gw_result.warnings);
+                }
+            }
             result
         })
         .collect()
@@ -6009,6 +6108,7 @@ fn print_network_tree(
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
     postures: &[crate::analyzers::selector::PodNetworkPosture],
     metallb_results: &[crate::analyzers::selector::MetalLBResult],
+    gateway_results: &[crate::analyzers::selector::GatewayResult],
 ) {
     let stdout_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if paths.is_empty() {
@@ -6224,6 +6324,59 @@ fn print_network_tree(
                 );
             }
             for w in &mlb.warnings {
+                println!("    [!] {}", w);
+            }
+        }
+        // Gateway API routes
+        if let Some(gw_result) = gateway_results.get(mlb_idx) {
+            if !gw_result.routes.is_empty() {
+                println!("    Gateway API:");
+                for r in &gw_result.routes {
+                    if stdout_tty {
+                        print!(
+                            "      \x1b[1m{}/{}\x1b[0m \u{2192} Gateway/{} (class: {})",
+                            r.route_kind, r.route_name, r.gateway_name, r.gateway_class
+                        );
+                    } else {
+                        print!(
+                            "      {}/{} \u{2192} Gateway/{} (class: {})",
+                            r.route_kind, r.route_name, r.gateway_name, r.gateway_class
+                        );
+                    }
+                    println!();
+                    if let Some(ref l) = r.listener {
+                        println!("        Listener: {} ({}/{})", l.name, l.port, l.protocol);
+                    }
+                    if !r.hostnames.is_empty() {
+                        println!("        Hostnames: {}", r.hostnames.join(", "));
+                    }
+                    let mut backend_parts = Vec::new();
+                    if let Some(bp) = r.backend_port {
+                        backend_parts.push(format!("port {}", bp));
+                    }
+                    if let Some(w) = r.weight {
+                        backend_parts.push(format!("weight {}", w));
+                    }
+                    if !backend_parts.is_empty() {
+                        println!("        Backend: {}", backend_parts.join(", "));
+                    }
+                    let status_str: Vec<String> = r
+                        .parent_conditions
+                        .iter()
+                        .map(|c| format!("{}={}", c.condition_type, c.status))
+                        .collect();
+                    if !status_str.is_empty() {
+                        println!("        Status: {}", status_str.join(", "));
+                    }
+                    if !matches!(
+                        r.cross_namespace,
+                        crate::analyzers::selector::CrossNamespaceStatus::SameNamespace
+                    ) {
+                        println!("        CrossNamespace: {}", r.cross_namespace);
+                    }
+                }
+            }
+            for w in &gw_result.warnings {
                 println!("    [!] {}", w);
             }
         }
