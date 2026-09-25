@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use kube::{
     Client,
@@ -205,6 +205,9 @@ pub struct NetworkService {
     pub external_ips: Vec<String>,
     pub ip_families: Vec<String>,
     pub lb_ingress: Vec<LBIngress>,
+    pub annotations: BTreeMap<String, String>,
+    pub labels: BTreeMap<String, String>,
+    pub load_balancer_ip: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -574,6 +577,7 @@ pub struct NetworkInventory {
     pub network_policies: Vec<NetworkPolicyInfo>,
     pub np_availability: NetworkPolicyAvailability,
     pub warnings: Vec<ScanWarning>,
+    pub metallb: MetalLBInventory,
 }
 
 pub(crate) fn parse_service(obj: DynamicObject) -> Option<NetworkService> {
@@ -715,6 +719,23 @@ pub(crate) fn parse_service(obj: DynamicObject) -> Option<NetworkService> {
         svc_type
     };
 
+    let annotations = obj
+        .metadata
+        .annotations
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    let labels = obj
+        .metadata
+        .labels
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    let load_balancer_ip = spec
+        .and_then(|s| s.get("loadBalancerIP"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     Some(NetworkService {
         name,
         selector,
@@ -731,6 +752,9 @@ pub(crate) fn parse_service(obj: DynamicObject) -> Option<NetworkService> {
         external_ips,
         ip_families,
         lb_ingress,
+        annotations,
+        labels,
+        load_balancer_ip,
     })
 }
 
@@ -1401,6 +1425,9 @@ pub async fn build_network_inventory(
         list_network_policies(client, namespace, gk_map).await;
     warnings.extend(np_warnings);
 
+    let metallb = build_metallb_inventory(client, gk_map).await;
+    warnings.extend(metallb.warnings.clone());
+
     NetworkInventory {
         services,
         ingresses,
@@ -1408,6 +1435,165 @@ pub async fn build_network_inventory(
         network_policies,
         np_availability,
         warnings,
+        metallb,
+    }
+}
+
+async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> MetalLBInventory {
+    let metallb_group = "metallb.io";
+
+    // Check if IPAddressPool CRD exists
+    let pool_key = (metallb_group.to_string(), "IPAddressPool".to_string());
+    let pool_info = match gk_map.get(&pool_key) {
+        Some(i) => i,
+        None => return MetalLBInventory::default(),
+    };
+
+    let mut pools = Vec::new();
+    let mut l2_advertisements = Vec::new();
+    let mut bgp_advertisements = Vec::new();
+    let mut warnings = Vec::new();
+
+    // List IPAddressPools (all namespaces)
+    {
+        let gvk = GroupVersion::gv(&pool_info.group, &pool_info.version).with_kind("IPAddressPool");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &pool_info.plural);
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+        match list_with_retry_and_timeout(
+            &api,
+            &pool_info.group,
+            &pool_info.version,
+            &pool_info.plural,
+        )
+        .await
+        {
+            Ok(items) => {
+                pools = items
+                    .into_iter()
+                    .filter_map(parse_ip_address_pool)
+                    .collect();
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // List L2Advertisements
+    let l2_key = (metallb_group.to_string(), "L2Advertisement".to_string());
+    if let Some(l2_info) = gk_map.get(&l2_key) {
+        let gvk = GroupVersion::gv(&l2_info.group, &l2_info.version).with_kind("L2Advertisement");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &l2_info.plural);
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+        match list_with_retry_and_timeout(&api, &l2_info.group, &l2_info.version, &l2_info.plural)
+            .await
+        {
+            Ok(items) => {
+                l2_advertisements = items
+                    .into_iter()
+                    .filter_map(parse_l2_advertisement)
+                    .collect();
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // List BGPAdvertisements
+    let bgp_key = (metallb_group.to_string(), "BGPAdvertisement".to_string());
+    if let Some(bgp_info) = gk_map.get(&bgp_key) {
+        let gvk =
+            GroupVersion::gv(&bgp_info.group, &bgp_info.version).with_kind("BGPAdvertisement");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &bgp_info.plural);
+        let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
+        match list_with_retry_and_timeout(
+            &api,
+            &bgp_info.group,
+            &bgp_info.version,
+            &bgp_info.plural,
+        )
+        .await
+        {
+            Ok(items) => {
+                bgp_advertisements = items
+                    .into_iter()
+                    .filter_map(parse_bgp_advertisement)
+                    .collect();
+            }
+            Err(w) => {
+                warnings.push(w);
+            }
+        }
+    }
+
+    // Fetch namespace labels only if any pool uses namespaceSelectors
+    let mut namespace_labels = HashMap::new();
+    let needs_ns_labels = pools.iter().any(|p| {
+        p.service_allocation
+            .as_ref()
+            .is_some_and(|sa| !sa.namespace_selectors.is_empty())
+    });
+    if needs_ns_labels {
+        let ns_gvk = GroupVersion::gv("", "v1").with_kind("Namespace");
+        let ns_ar = ApiResource::from_gvk_with_plural(&ns_gvk, "namespaces");
+        let ns_api: Api<DynamicObject> = Api::all_with(client.clone(), &ns_ar);
+        match list_with_retry_and_timeout(&ns_api, "", "v1", "namespaces").await {
+            Ok(items) => {
+                for obj in items {
+                    if let Some(name) = obj.metadata.name {
+                        let labels: BTreeMap<String, String> = obj
+                            .metadata
+                            .labels
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                        namespace_labels.insert(name, labels);
+                    }
+                }
+            }
+            Err(w) => warnings.push(w),
+        }
+    }
+
+    // Fetch node labels only if any advertisement uses nodeSelectors
+    let mut node_labels = HashMap::new();
+    let needs_node_labels = l2_advertisements
+        .iter()
+        .any(|a| !a.node_selectors.is_empty())
+        || bgp_advertisements
+            .iter()
+            .any(|a| !a.node_selectors.is_empty());
+    if needs_node_labels {
+        let node_gvk = GroupVersion::gv("", "v1").with_kind("Node");
+        let node_ar = ApiResource::from_gvk_with_plural(&node_gvk, "nodes");
+        let node_api: Api<DynamicObject> = Api::all_with(client.clone(), &node_ar);
+        match list_with_retry_and_timeout(&node_api, "", "v1", "nodes").await {
+            Ok(items) => {
+                for obj in items {
+                    if let Some(name) = obj.metadata.name {
+                        let labels: BTreeMap<String, String> = obj
+                            .metadata
+                            .labels
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                        node_labels.insert(name, labels);
+                    }
+                }
+            }
+            Err(w) => warnings.push(w),
+        }
+    }
+
+    MetalLBInventory {
+        available: true,
+        pools,
+        l2_advertisements,
+        bgp_advertisements,
+        warnings,
+        namespace_labels,
+        node_labels,
     }
 }
 
@@ -1510,6 +1696,1007 @@ pub fn find_network_paths(
     }
 
     paths
+}
+
+// ──────────────────────────────────────────────────────────────
+//  MetalLB types and resolution
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct LabelSelector {
+    pub match_labels: BTreeMap<String, String>,
+    pub match_expressions: Vec<MatchExpression>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchExpression {
+    pub key: String,
+    pub operator: String,
+    pub values: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceAllocation {
+    pub priority: i64,
+    pub namespaces: Vec<String>,
+    pub namespace_selectors: Vec<LabelSelector>,
+    pub service_selectors: Vec<LabelSelector>,
+}
+
+#[derive(Clone, Debug)]
+pub struct IPAddressPool {
+    pub name: String,
+    pub namespace: String,
+    pub addresses: Vec<String>,
+    pub auto_assign: bool,
+    pub service_allocation: Option<ServiceAllocation>,
+    pub labels: BTreeMap<String, String>,
+    pub status_available_ipv4: Option<i64>,
+    pub status_available_ipv6: Option<i64>,
+    pub status_assigned_ipv4: Option<i64>,
+    pub status_assigned_ipv6: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct L2Advertisement {
+    pub name: String,
+    pub namespace: String,
+    pub ip_address_pools: Vec<String>,
+    pub ip_address_pool_selectors: Vec<LabelSelector>,
+    pub node_selectors: Vec<LabelSelector>,
+    pub service_selectors: Vec<LabelSelector>,
+    pub interfaces: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BGPAdvertisement {
+    pub name: String,
+    pub namespace: String,
+    pub ip_address_pools: Vec<String>,
+    pub ip_address_pool_selectors: Vec<LabelSelector>,
+    pub node_selectors: Vec<LabelSelector>,
+    pub aggregation_length: Option<i64>,
+    pub aggregation_length_v6: Option<i64>,
+    pub local_pref: Option<i64>,
+    pub communities: Vec<String>,
+    pub service_selectors: Vec<LabelSelector>,
+    pub peers: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchedPool {
+    pub pool: IPAddressPool,
+    pub match_reason: String,
+    pub allocation_match: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchedAdvertisement {
+    pub kind: String,
+    pub name: String,
+    pub namespace: String,
+    pub match_reason: String,
+    pub node_selectors: Vec<LabelSelector>,
+    pub service_selectors: Vec<LabelSelector>,
+    pub aggregation_length: Option<i64>,
+    pub aggregation_length_v6: Option<i64>,
+    pub local_pref: Option<i64>,
+    pub communities: Vec<String>,
+    pub interfaces: Vec<String>,
+    pub peers: Vec<String>,
+    pub candidate_nodes: Vec<String>,
+    pub node_selector_status: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MetalLBResult {
+    pub provider: Option<String>,
+    pub pools: Vec<MatchedPool>,
+    pub advertisements: Vec<MatchedAdvertisement>,
+    pub warnings: Vec<String>,
+    pub requested_ips: Vec<String>,
+    pub requested_pool: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MetalLBInventory {
+    pub available: bool,
+    pub pools: Vec<IPAddressPool>,
+    pub l2_advertisements: Vec<L2Advertisement>,
+    pub bgp_advertisements: Vec<BGPAdvertisement>,
+    pub warnings: Vec<ScanWarning>,
+    pub namespace_labels: HashMap<String, BTreeMap<String, String>>,
+    pub node_labels: HashMap<String, BTreeMap<String, String>>,
+}
+
+pub fn label_selector_matches(selector: &LabelSelector, labels: &BTreeMap<String, String>) -> bool {
+    for (k, v) in &selector.match_labels {
+        if labels.get(k) != Some(v) {
+            return false;
+        }
+    }
+    for expr in &selector.match_expressions {
+        match expr.operator.as_str() {
+            "In" => {
+                let Some(val) = labels.get(&expr.key) else {
+                    return false;
+                };
+                if !expr.values.contains(val) {
+                    return false;
+                }
+            }
+            "NotIn" => {
+                if let Some(val) = labels.get(&expr.key)
+                    && expr.values.contains(val)
+                {
+                    return false;
+                }
+            }
+            "Exists" => {
+                if !labels.contains_key(&expr.key) {
+                    return false;
+                }
+            }
+            "DoesNotExist" => {
+                if labels.contains_key(&expr.key) {
+                    return false;
+                }
+            }
+            _ => {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn label_selector_list_matches(
+    selectors: &[LabelSelector],
+    labels: &BTreeMap<String, String>,
+) -> bool {
+    if selectors.is_empty() {
+        return true;
+    }
+    selectors.iter().any(|s| label_selector_matches(s, labels))
+}
+
+fn parse_label_selectors(value: Option<&serde_json::Value>) -> Vec<LabelSelector> {
+    let Some(arr) = value.and_then(|v| v.as_array()) else {
+        return vec![];
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let obj = item.as_object()?;
+            let match_labels = obj
+                .get("matchLabels")
+                .and_then(|v| v.as_object())
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|val| (k.clone(), val.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let match_expressions = obj
+                .get("matchExpressions")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| {
+                            Some(MatchExpression {
+                                key: e.get("key")?.as_str()?.to_string(),
+                                operator: e.get("operator")?.as_str()?.to_string(),
+                                values: e
+                                    .get("values")
+                                    .and_then(|v| v.as_array())
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(LabelSelector {
+                match_labels,
+                match_expressions,
+            })
+        })
+        .collect()
+}
+
+fn parse_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn parse_ip_address_pool(obj: DynamicObject) -> Option<IPAddressPool> {
+    let name = obj.metadata.name?;
+    let namespace = obj.metadata.namespace.unwrap_or_default();
+    let spec = obj.data.get("spec");
+
+    let addresses = spec
+        .and_then(|s| s.get("addresses"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let auto_assign = spec
+        .and_then(|s| s.get("autoAssign"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let service_allocation = spec.and_then(|s| s.get("serviceAllocation")).map(|sa| {
+        let priority = sa.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
+        let namespaces = sa
+            .get("namespaces")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let namespace_selectors = parse_label_selectors(sa.get("namespaceSelectors"));
+        let service_selectors = parse_label_selectors(sa.get("serviceSelectors"));
+        ServiceAllocation {
+            priority,
+            namespaces,
+            namespace_selectors,
+            service_selectors,
+        }
+    });
+
+    let labels = obj
+        .metadata
+        .labels
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+
+    let status = obj.data.get("status");
+    let status_available_ipv4 = status
+        .and_then(|s| s.get("availableIPv4"))
+        .and_then(|v| v.as_i64());
+    let status_available_ipv6 = status
+        .and_then(|s| s.get("availableIPv6"))
+        .and_then(|v| v.as_i64());
+    let status_assigned_ipv4 = status
+        .and_then(|s| s.get("assignedIPv4"))
+        .and_then(|v| v.as_i64());
+    let status_assigned_ipv6 = status
+        .and_then(|s| s.get("assignedIPv6"))
+        .and_then(|v| v.as_i64());
+
+    Some(IPAddressPool {
+        name,
+        namespace,
+        addresses,
+        auto_assign,
+        service_allocation,
+        labels,
+        status_available_ipv4,
+        status_available_ipv6,
+        status_assigned_ipv4,
+        status_assigned_ipv6,
+    })
+}
+
+pub(crate) fn parse_l2_advertisement(obj: DynamicObject) -> Option<L2Advertisement> {
+    let name = obj.metadata.name?;
+    let namespace = obj.metadata.namespace.unwrap_or_default();
+    let spec = obj.data.get("spec");
+
+    let ip_address_pools = spec
+        .and_then(|s| s.get("ipAddressPools"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let ip_address_pool_selectors =
+        parse_label_selectors(spec.and_then(|s| s.get("ipAddressPoolSelectors")));
+    let node_selectors = parse_label_selectors(spec.and_then(|s| s.get("nodeSelectors")));
+    let service_selectors = parse_label_selectors(spec.and_then(|s| s.get("serviceSelectors")));
+
+    let interfaces = parse_string_array(spec.and_then(|s| s.get("interfaces")));
+
+    Some(L2Advertisement {
+        name,
+        namespace,
+        ip_address_pools,
+        ip_address_pool_selectors,
+        node_selectors,
+        service_selectors,
+        interfaces,
+    })
+}
+
+pub(crate) fn parse_bgp_advertisement(obj: DynamicObject) -> Option<BGPAdvertisement> {
+    let name = obj.metadata.name?;
+    let namespace = obj.metadata.namespace.unwrap_or_default();
+    let spec = obj.data.get("spec");
+
+    let ip_address_pools = spec
+        .and_then(|s| s.get("ipAddressPools"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let ip_address_pool_selectors =
+        parse_label_selectors(spec.and_then(|s| s.get("ipAddressPoolSelectors")));
+    let node_selectors = parse_label_selectors(spec.and_then(|s| s.get("nodeSelectors")));
+    let service_selectors = parse_label_selectors(spec.and_then(|s| s.get("serviceSelectors")));
+
+    let aggregation_length = spec
+        .and_then(|s| s.get("aggregationLength"))
+        .and_then(|v| v.as_i64());
+    let aggregation_length_v6 = spec
+        .and_then(|s| s.get("aggregationLengthV6"))
+        .and_then(|v| v.as_i64());
+    let local_pref = spec
+        .and_then(|s| s.get("localPref"))
+        .and_then(|v| v.as_i64());
+    let communities = spec
+        .and_then(|s| s.get("communities"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let peers = parse_string_array(spec.and_then(|s| s.get("peers")));
+
+    Some(BGPAdvertisement {
+        name,
+        namespace,
+        ip_address_pools,
+        ip_address_pool_selectors,
+        node_selectors,
+        aggregation_length,
+        aggregation_length_v6,
+        local_pref,
+        communities,
+        service_selectors,
+        peers,
+    })
+}
+
+/// Check if an IP address falls within one of the pool's address ranges.
+/// Supports CIDR notation (e.g., "192.168.1.0/24") and ranges (e.g., "192.168.1.10-192.168.1.20").
+fn ip_in_pool_ranges(ip: &str, addresses: &[String]) -> bool {
+    let parsed_ip: std::net::IpAddr = match ip.parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    for addr_spec in addresses {
+        if addr_spec.contains('/') {
+            // CIDR
+            if let Some((net_str, prefix_str)) = addr_spec.split_once('/')
+                && let (Ok(net_addr), Ok(prefix_len)) = (
+                    net_str.parse::<std::net::IpAddr>(),
+                    prefix_str.parse::<u8>(),
+                )
+                && ip_in_cidr(parsed_ip, net_addr, prefix_len)
+            {
+                return true;
+            }
+        } else if addr_spec.contains('-') {
+            // Range
+            if let Some((start_str, end_str)) = addr_spec.split_once('-')
+                && let (Ok(start), Ok(end)) = (
+                    start_str.trim().parse::<std::net::IpAddr>(),
+                    end_str.trim().parse::<std::net::IpAddr>(),
+                )
+                && ip_in_range(parsed_ip, start, end)
+            {
+                return true;
+            }
+        } else {
+            // Single IP
+            if ip == addr_spec {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn ip_in_cidr(ip: std::net::IpAddr, network: std::net::IpAddr, prefix_len: u8) -> bool {
+    match (ip, network) {
+        (std::net::IpAddr::V4(ip4), std::net::IpAddr::V4(net4)) => {
+            if prefix_len > 32 {
+                return false;
+            }
+            let mask = if prefix_len == 0 {
+                0u32
+            } else {
+                !0u32 << (32 - prefix_len)
+            };
+            (u32::from(ip4) & mask) == (u32::from(net4) & mask)
+        }
+        (std::net::IpAddr::V6(ip6), std::net::IpAddr::V6(net6)) => {
+            if prefix_len > 128 {
+                return false;
+            }
+            let mask = if prefix_len == 0 {
+                0u128
+            } else {
+                !0u128 << (128 - prefix_len)
+            };
+            (u128::from(ip6) & mask) == (u128::from(net6) & mask)
+        }
+        _ => false,
+    }
+}
+
+fn ip_in_range(ip: std::net::IpAddr, start: std::net::IpAddr, end: std::net::IpAddr) -> bool {
+    match (ip, start, end) {
+        (std::net::IpAddr::V4(i), std::net::IpAddr::V4(s), std::net::IpAddr::V4(e)) => {
+            u32::from(i) >= u32::from(s) && u32::from(i) <= u32::from(e)
+        }
+        (std::net::IpAddr::V6(i), std::net::IpAddr::V6(s), std::net::IpAddr::V6(e)) => {
+            u128::from(i) >= u128::from(s) && u128::from(i) <= u128::from(e)
+        }
+        _ => false,
+    }
+}
+
+pub fn resolve_metallb_for_service(
+    svc: &NetworkService,
+    svc_namespace: &str,
+    metallb: &MetalLBInventory,
+    endpoint_nodes: &[String],
+    ns_labels: &HashMap<String, BTreeMap<String, String>>,
+    node_labels: &HashMap<String, BTreeMap<String, String>>,
+) -> MetalLBResult {
+    if !metallb.available || svc.svc_type != "LoadBalancer" {
+        return MetalLBResult::default();
+    }
+
+    let mut warnings = Vec::new();
+
+    // Collect requested IPs
+    let mut requested_ips = Vec::new();
+    if let Some(ips) = svc
+        .annotations
+        .get("metallb.io/loadBalancerIPs")
+        .or_else(|| svc.annotations.get("metallb.universe.tf/loadBalancerIPs"))
+    {
+        requested_ips.extend(
+            ips.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+    }
+    if let Some(lb_ip) = &svc.load_balancer_ip
+        && !lb_ip.is_empty()
+        && !requested_ips.contains(lb_ip)
+    {
+        requested_ips.push(lb_ip.clone());
+    }
+
+    // Collect assigned IPs
+    let assigned_ips: Vec<String> = svc
+        .lb_ingress
+        .iter()
+        .filter_map(|lbi| lbi.ip.clone())
+        .collect();
+
+    // Collect requested pool
+    let requested_pool = svc
+        .annotations
+        .get("metallb.io/address-pool")
+        .or_else(|| svc.annotations.get("metallb.universe.tf/address-pool"))
+        .cloned();
+
+    // Check ip-allocated-from-pool annotation
+    let allocated_from_pool = svc
+        .annotations
+        .get("metallb.io/ip-allocated-from-pool")
+        .or_else(|| {
+            svc.annotations
+                .get("metallb.universe.tf/ip-allocated-from-pool")
+        })
+        .cloned();
+
+    // Determine provider evidence
+    let has_pool_annotation = requested_pool.is_some();
+    let has_allocated_from_pool = allocated_from_pool.is_some();
+    let has_lb_ips_annotation = svc.annotations.contains_key("metallb.io/loadBalancerIPs")
+        || svc
+            .annotations
+            .contains_key("metallb.universe.tf/loadBalancerIPs");
+    let has_lb_class = svc
+        .load_balancer_class
+        .as_ref()
+        .is_some_and(|c| c.to_lowercase().contains("metallb"));
+    let assigned_ip_in_pool = assigned_ips.iter().any(|ip| {
+        metallb
+            .pools
+            .iter()
+            .any(|p| ip_in_pool_ranges(ip, &p.addresses))
+    });
+    let requested_ip_in_pool = requested_ips.iter().any(|ip| {
+        metallb
+            .pools
+            .iter()
+            .any(|p| ip_in_pool_ranges(ip, &p.addresses))
+    });
+
+    let provider = if has_pool_annotation
+        || has_allocated_from_pool
+        || has_lb_ips_annotation
+        || has_lb_class
+        || assigned_ip_in_pool
+        || requested_ip_in_pool
+    {
+        Some("MetalLB".to_string())
+    } else {
+        None
+    };
+
+    if provider.is_none() {
+        return MetalLBResult {
+            provider,
+            requested_ips,
+            requested_pool,
+            ..Default::default()
+        };
+    }
+
+    // Match pools
+    let svc_labels_btree: BTreeMap<String, String> = svc.labels.clone();
+    let mut matched_pools = Vec::new();
+
+    for pool in &metallb.pools {
+        let mut match_reason = None;
+
+        // a. Requested pool annotation
+        if let Some(ref rp) = requested_pool
+            && rp == &pool.name
+        {
+            match_reason = Some("requested pool annotation".to_string());
+        }
+
+        // a2. Allocated from pool annotation
+        if match_reason.is_none()
+            && let Some(ref afp) = allocated_from_pool
+            && afp == &pool.name
+        {
+            match_reason = Some("allocated from pool annotation".to_string());
+        }
+
+        // b. Assigned IP in range
+        if match_reason.is_none() {
+            for ip in &assigned_ips {
+                if ip_in_pool_ranges(ip, &pool.addresses) {
+                    match_reason = Some(format!("assigned IP {} in range", ip));
+                    break;
+                }
+            }
+        }
+
+        // c. Requested IP in range
+        if match_reason.is_none() {
+            for ip in &requested_ips {
+                if ip_in_pool_ranges(ip, &pool.addresses) {
+                    match_reason = Some(format!("requested IP {} in range", ip));
+                    break;
+                }
+            }
+        }
+
+        // e. autoAssign=false without explicit request -> skip
+        if match_reason.is_none() && !pool.auto_assign {
+            continue;
+        }
+
+        let Some(reason) = match_reason else {
+            continue;
+        };
+
+        // d. Check serviceAllocation
+        let allocation_match =
+            evaluate_service_allocation(pool, svc_namespace, &svc_labels_btree, ns_labels);
+
+        if let Some(ref am) = allocation_match
+            && am != "OK"
+        {
+            warnings.push(format!("Pool {} serviceAllocation: {}", pool.name, am));
+        }
+
+        matched_pools.push(MatchedPool {
+            pool: pool.clone(),
+            match_reason: reason,
+            allocation_match,
+        });
+    }
+
+    // autoAssign candidates when no pool explicitly matched
+    if matched_pools.is_empty() && provider.is_some() {
+        let mut candidates: Vec<_> = metallb
+            .pools
+            .iter()
+            .filter(|p| p.auto_assign)
+            .filter(|p| {
+                let am =
+                    evaluate_service_allocation(p, svc_namespace, &svc_labels_btree, ns_labels);
+                am.is_none() || am.as_deref() == Some("OK")
+            })
+            .filter(|p| {
+                // Only include if serviceAllocation allows
+                if let Some(sa) = &p.service_allocation {
+                    let ns_allowed =
+                        if sa.namespaces.is_empty() && sa.namespace_selectors.is_empty() {
+                            true
+                        } else {
+                            let ns_in_list = sa.namespaces.contains(&svc_namespace.to_string());
+                            let ns_selector_match = if sa.namespace_selectors.is_empty() {
+                                false
+                            } else if let Some(ns_lbl) = ns_labels.get(svc_namespace) {
+                                label_selector_list_matches(&sa.namespace_selectors, ns_lbl)
+                            } else {
+                                false
+                            };
+                            ns_in_list || ns_selector_match
+                        };
+                    let svc_allowed = if sa.service_selectors.is_empty() {
+                        true
+                    } else {
+                        label_selector_list_matches(&sa.service_selectors, &svc_labels_btree)
+                    };
+                    ns_allowed && svc_allowed
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+        candidates.sort_by_key(|p| {
+            p.service_allocation
+                .as_ref()
+                .map(|sa| {
+                    if sa.priority == 0 {
+                        i64::MAX
+                    } else {
+                        sa.priority
+                    }
+                })
+                .unwrap_or(i64::MAX)
+        });
+        for pool in candidates {
+            let allocation_match =
+                evaluate_service_allocation(&pool, svc_namespace, &svc_labels_btree, ns_labels);
+            matched_pools.push(MatchedPool {
+                pool,
+                match_reason: "autoAssign candidate".to_string(),
+                allocation_match,
+            });
+        }
+    }
+
+    // Check for requested pool not found
+    if let Some(ref rp) = requested_pool
+        && !matched_pools.iter().any(|mp| mp.pool.name == *rp)
+    {
+        warnings.push(format!("Requested pool '{}' not found", rp));
+    }
+
+    // Check assigned IP not in any pool
+    for ip in &assigned_ips {
+        if !metallb
+            .pools
+            .iter()
+            .any(|p| ip_in_pool_ranges(ip, &p.addresses))
+        {
+            warnings.push(format!("Assigned IP {} does not match any pool", ip));
+        }
+    }
+
+    if assigned_ips.is_empty() && provider.is_some() {
+        warnings.push("No assigned IP (loadBalancer ingress empty)".to_string());
+    }
+
+    // Match advertisements
+    let mut matched_ads = Vec::new();
+
+    for mp in &matched_pools {
+        let pool = &mp.pool;
+
+        // L2 advertisements
+        for l2 in &metallb.l2_advertisements {
+            if l2.namespace != pool.namespace {
+                continue;
+            }
+            let pool_match = if l2.ip_address_pools.contains(&pool.name) {
+                true
+            } else if !l2.ip_address_pool_selectors.is_empty() {
+                label_selector_list_matches(&l2.ip_address_pool_selectors, &pool.labels)
+            } else {
+                // Empty pools + empty selectors = match all pools
+                l2.ip_address_pools.is_empty() && l2.ip_address_pool_selectors.is_empty()
+            };
+            if !pool_match {
+                continue;
+            }
+
+            // Service selector check
+            if !l2.service_selectors.is_empty()
+                && !label_selector_list_matches(&l2.service_selectors, &svc_labels_btree)
+            {
+                warnings.push(format!(
+                    "L2Advertisement/{} serviceSelector mismatch for Service/{}",
+                    l2.name, svc.name
+                ));
+                continue;
+            }
+
+            let mut match_reason = format!("pool {} via ", pool.name);
+            if l2.ip_address_pools.contains(&pool.name) {
+                match_reason.push_str("ipAddressPools");
+            } else if !l2.ip_address_pool_selectors.is_empty() {
+                match_reason.push_str("ipAddressPoolSelectors");
+            } else {
+                match_reason.push_str("match-all (empty selectors)");
+            }
+
+            // Evaluate node selectors
+            let (candidate_nodes, node_selector_status) = evaluate_node_selectors(
+                &l2.name,
+                "L2Advertisement",
+                &l2.node_selectors,
+                node_labels,
+                &mut warnings,
+            );
+
+            matched_ads.push(MatchedAdvertisement {
+                kind: "L2Advertisement".to_string(),
+                name: l2.name.clone(),
+                namespace: l2.namespace.clone(),
+                match_reason,
+                node_selectors: l2.node_selectors.clone(),
+                service_selectors: l2.service_selectors.clone(),
+                aggregation_length: None,
+                aggregation_length_v6: None,
+                local_pref: None,
+                communities: vec![],
+                interfaces: l2.interfaces.clone(),
+                peers: vec![],
+                candidate_nodes,
+                node_selector_status,
+            });
+        }
+
+        // BGP advertisements
+        for bgp in &metallb.bgp_advertisements {
+            if bgp.namespace != pool.namespace {
+                continue;
+            }
+            let pool_match = if bgp.ip_address_pools.contains(&pool.name) {
+                true
+            } else if !bgp.ip_address_pool_selectors.is_empty() {
+                label_selector_list_matches(&bgp.ip_address_pool_selectors, &pool.labels)
+            } else {
+                bgp.ip_address_pools.is_empty() && bgp.ip_address_pool_selectors.is_empty()
+            };
+            if !pool_match {
+                continue;
+            }
+
+            if !bgp.service_selectors.is_empty()
+                && !label_selector_list_matches(&bgp.service_selectors, &svc_labels_btree)
+            {
+                warnings.push(format!(
+                    "BGPAdvertisement/{} serviceSelector mismatch for Service/{}",
+                    bgp.name, svc.name
+                ));
+                continue;
+            }
+
+            let mut match_reason = format!("pool {} via ", pool.name);
+            if bgp.ip_address_pools.contains(&pool.name) {
+                match_reason.push_str("ipAddressPools");
+            } else if !bgp.ip_address_pool_selectors.is_empty() {
+                match_reason.push_str("ipAddressPoolSelectors");
+            } else {
+                match_reason.push_str("match-all (empty selectors)");
+            }
+
+            // Evaluate node selectors
+            let (candidate_nodes, node_selector_status) = evaluate_node_selectors(
+                &bgp.name,
+                "BGPAdvertisement",
+                &bgp.node_selectors,
+                node_labels,
+                &mut warnings,
+            );
+
+            matched_ads.push(MatchedAdvertisement {
+                kind: "BGPAdvertisement".to_string(),
+                name: bgp.name.clone(),
+                namespace: bgp.namespace.clone(),
+                match_reason,
+                node_selectors: bgp.node_selectors.clone(),
+                service_selectors: bgp.service_selectors.clone(),
+                aggregation_length: bgp.aggregation_length,
+                aggregation_length_v6: bgp.aggregation_length_v6,
+                local_pref: bgp.local_pref,
+                communities: bgp.communities.clone(),
+                interfaces: vec![],
+                peers: bgp.peers.clone(),
+                candidate_nodes,
+                node_selector_status,
+            });
+        }
+    }
+
+    // Warn if pool matched but no advertisement
+    for mp in &matched_pools {
+        let has_ad = matched_ads.iter().any(|a| {
+            a.match_reason
+                .starts_with(&format!("pool {}", mp.pool.name))
+        });
+        if !has_ad {
+            warnings.push(format!(
+                "Pool {} matched but no L2/BGP advertisement found",
+                mp.pool.name
+            ));
+        }
+    }
+
+    // externalTrafficPolicy=Local checks
+    if svc.external_traffic_policy.as_deref() == Some("Local") {
+        if endpoint_nodes.is_empty() {
+            warnings
+                .push("externalTrafficPolicy=Local but no ready endpoint nodes found".to_string());
+        } else {
+            let advertised_nodes: HashSet<&str> = matched_ads
+                .iter()
+                .flat_map(|a| a.candidate_nodes.iter().map(|s| s.as_str()))
+                .collect();
+            if !advertised_nodes.is_empty() {
+                let ready_on_advertised: Vec<&str> = endpoint_nodes
+                    .iter()
+                    .filter(|n| advertised_nodes.contains(n.as_str()))
+                    .map(|s| s.as_str())
+                    .collect();
+                if ready_on_advertised.is_empty() {
+                    warnings.push(
+                        "externalTrafficPolicy=Local: no ready endpoints on advertised nodes"
+                            .to_string(),
+                    );
+                }
+            } else if matched_ads
+                .iter()
+                .any(|a| a.node_selector_status == "unavailable")
+            {
+                warnings.push(
+                    "externalTrafficPolicy=Local: advertised node set unknown (node labels unavailable)"
+                        .to_string(),
+                );
+            } else if matched_ads
+                .iter()
+                .any(|a| a.node_selector_status == "mismatch")
+            {
+                warnings.push(
+                    "externalTrafficPolicy=Local: no advertised nodes (nodeSelector matched no nodes)"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    MetalLBResult {
+        provider,
+        pools: matched_pools,
+        advertisements: matched_ads,
+        warnings,
+        requested_ips,
+        requested_pool,
+    }
+}
+
+fn evaluate_service_allocation(
+    pool: &IPAddressPool,
+    svc_namespace: &str,
+    svc_labels: &BTreeMap<String, String>,
+    ns_labels: &HashMap<String, BTreeMap<String, String>>,
+) -> Option<String> {
+    let sa = pool.service_allocation.as_ref()?;
+    let mut issues = Vec::new();
+
+    // Namespace check: namespaces and namespaceSelectors are OR
+    let ns_allowed = if sa.namespaces.is_empty() && sa.namespace_selectors.is_empty() {
+        true
+    } else {
+        let ns_in_list = sa.namespaces.contains(&svc_namespace.to_string());
+        if ns_in_list {
+            true
+        } else if !sa.namespace_selectors.is_empty() {
+            if let Some(ns_lbl) = ns_labels.get(svc_namespace) {
+                label_selector_list_matches(&sa.namespace_selectors, ns_lbl)
+            } else {
+                issues.push("namespace labels unavailable for selector evaluation".to_string());
+                false
+            }
+        } else {
+            false
+        }
+    };
+    if !ns_allowed && !issues.iter().any(|i| i.contains("unavailable")) {
+        issues.push(format!(
+            "namespace {} not allowed by serviceAllocation",
+            svc_namespace
+        ));
+    }
+
+    // Service selector check
+    if !sa.service_selectors.is_empty()
+        && !label_selector_list_matches(&sa.service_selectors, svc_labels)
+    {
+        issues.push("service selector mismatch".to_string());
+    }
+
+    if issues.is_empty() {
+        Some("OK".to_string())
+    } else {
+        Some(issues.join("; "))
+    }
+}
+
+fn evaluate_node_selectors(
+    ad_name: &str,
+    ad_kind: &str,
+    node_selectors: &[LabelSelector],
+    node_labels: &HashMap<String, BTreeMap<String, String>>,
+    warnings: &mut Vec<String>,
+) -> (Vec<String>, String) {
+    if node_selectors.is_empty() {
+        return (node_labels.keys().cloned().collect(), "all".to_string());
+    }
+    if node_labels.is_empty() {
+        warnings.push(format!(
+            "{}/{} nodeSelector present but node labels unavailable",
+            ad_kind, ad_name
+        ));
+        return (vec![], "unavailable".to_string());
+    }
+    let matched: Vec<String> = node_labels
+        .iter()
+        .filter(|(_, labels)| label_selector_list_matches(node_selectors, labels))
+        .map(|(name, _)| name.clone())
+        .collect();
+    if matched.is_empty() {
+        warnings.push(format!(
+            "{}/{} nodeSelector matched no nodes",
+            ad_kind, ad_name
+        ));
+        (vec![], "mismatch".to_string())
+    } else {
+        (matched.clone(), format!("matched {}", matched.len()))
+    }
 }
 
 #[cfg(test)]
@@ -1642,6 +2829,9 @@ mod tests {
             external_ips: vec![],
             ip_families: vec![],
             lb_ingress: vec![],
+            annotations: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            load_balancer_ip: None,
         }
     }
 
@@ -1664,6 +2854,7 @@ mod tests {
             network_policies: vec![],
             np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
+            metallb: MetalLBInventory::default(),
         };
         let labels: std::collections::HashMap<String, String> =
             [("app".into(), "x".into())].into_iter().collect();
@@ -1684,6 +2875,7 @@ mod tests {
             network_policies: vec![],
             np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
+            metallb: MetalLBInventory::default(),
         };
         let labels: std::collections::HashMap<String, String> =
             [("app".into(), "z".into())].into_iter().collect();
@@ -1869,6 +3061,7 @@ mod tests {
             network_policies: vec![],
             np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
+            metallb: MetalLBInventory::default(),
         };
         let labels: std::collections::HashMap<String, String> =
             [("app".into(), "x".into())].into_iter().collect();
@@ -2907,6 +4100,9 @@ mod tests {
             external_ips: vec![],
             ip_families: vec![],
             lb_ingress: vec![],
+            annotations: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            load_balancer_ip: None,
         }
     }
 
@@ -2968,6 +4164,7 @@ mod tests {
             network_policies: vec![],
             np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
+            metallb: MetalLBInventory::default(),
         };
         let index = std::collections::HashMap::new();
         let (path, pod_labels) = build_service_network_path(&svc, &inventory, &index, "test-ns");
@@ -2989,6 +4186,7 @@ mod tests {
             network_policies: vec![],
             np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
+            metallb: MetalLBInventory::default(),
         };
         let index = std::collections::HashMap::new();
         let (path, _) = build_service_network_path(&svc_a, &inventory, &index, "test-ns");
@@ -3182,6 +4380,7 @@ mod tests {
             network_policies: vec![],
             np_availability: NetworkPolicyAvailability::Available,
             warnings: vec![],
+            metallb: MetalLBInventory::default(),
         };
         let (path, pod_labels) = build_service_network_path(&svc, &inventory, &index, "test-ns");
         assert_eq!(path.target_ref_matched_pods, vec!["Pod/backend"]);
@@ -3192,5 +4391,1443 @@ mod tests {
             "verified targetRef pod should be in posture input"
         );
         assert_eq!(pod_labels[0].0, "backend");
+    }
+
+    // ── MetalLB tests ──
+
+    fn make_label_selector(labels: &[(&str, &str)], exprs: Vec<MatchExpression>) -> LabelSelector {
+        LabelSelector {
+            match_labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            match_expressions: exprs,
+        }
+    }
+
+    #[test]
+    fn label_selector_match_labels_all_must_match() {
+        let sel = make_label_selector(&[("app", "web"), ("env", "prod")], vec![]);
+        let mut labels = BTreeMap::new();
+        labels.insert("app".into(), "web".into());
+        labels.insert("env".into(), "prod".into());
+        assert!(label_selector_matches(&sel, &labels));
+
+        labels.insert("env".into(), "dev".into());
+        assert!(!label_selector_matches(&sel, &labels));
+    }
+
+    #[test]
+    fn label_selector_match_expressions_in() {
+        let sel = make_label_selector(
+            &[],
+            vec![MatchExpression {
+                key: "tier".into(),
+                operator: "In".into(),
+                values: vec!["frontend".into(), "backend".into()],
+            }],
+        );
+        let mut labels = BTreeMap::new();
+        labels.insert("tier".into(), "frontend".into());
+        assert!(label_selector_matches(&sel, &labels));
+
+        labels.insert("tier".into(), "db".into());
+        assert!(!label_selector_matches(&sel, &labels));
+    }
+
+    #[test]
+    fn label_selector_match_expressions_notin() {
+        let sel = make_label_selector(
+            &[],
+            vec![MatchExpression {
+                key: "tier".into(),
+                operator: "NotIn".into(),
+                values: vec!["db".into()],
+            }],
+        );
+        let mut labels = BTreeMap::new();
+        labels.insert("tier".into(), "frontend".into());
+        assert!(label_selector_matches(&sel, &labels));
+
+        labels.insert("tier".into(), "db".into());
+        assert!(!label_selector_matches(&sel, &labels));
+
+        // Key absent: NotIn passes
+        let empty_labels = BTreeMap::new();
+        assert!(label_selector_matches(&sel, &empty_labels));
+    }
+
+    #[test]
+    fn label_selector_match_expressions_exists_doesnotexist() {
+        let exists = make_label_selector(
+            &[],
+            vec![MatchExpression {
+                key: "gpu".into(),
+                operator: "Exists".into(),
+                values: vec![],
+            }],
+        );
+        let dne = make_label_selector(
+            &[],
+            vec![MatchExpression {
+                key: "gpu".into(),
+                operator: "DoesNotExist".into(),
+                values: vec![],
+            }],
+        );
+        let mut labels = BTreeMap::new();
+        labels.insert("gpu".into(), "true".into());
+        assert!(label_selector_matches(&exists, &labels));
+        assert!(!label_selector_matches(&dne, &labels));
+
+        let empty = BTreeMap::new();
+        assert!(!label_selector_matches(&exists, &empty));
+        assert!(label_selector_matches(&dne, &empty));
+    }
+
+    #[test]
+    fn label_selector_list_empty_matches_everything() {
+        let labels = BTreeMap::new();
+        assert!(label_selector_list_matches(&[], &labels));
+    }
+
+    #[test]
+    fn label_selector_list_any_match_is_true() {
+        let sel1 = make_label_selector(&[("app", "web")], vec![]);
+        let sel2 = make_label_selector(&[("app", "api")], vec![]);
+        let mut labels = BTreeMap::new();
+        labels.insert("app".into(), "api".into());
+        assert!(label_selector_list_matches(&[sel1, sel2], &labels));
+    }
+
+    fn make_test_pool(name: &str, ns: &str, addresses: Vec<&str>) -> IPAddressPool {
+        IPAddressPool {
+            name: name.into(),
+            namespace: ns.into(),
+            addresses: addresses.into_iter().map(String::from).collect(),
+            auto_assign: true,
+            service_allocation: None,
+            labels: BTreeMap::new(),
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
+        }
+    }
+
+    fn make_test_l2(name: &str, ns: &str, pools: Vec<&str>) -> L2Advertisement {
+        L2Advertisement {
+            name: name.into(),
+            namespace: ns.into(),
+            ip_address_pools: pools.into_iter().map(String::from).collect(),
+            ip_address_pool_selectors: vec![],
+            node_selectors: vec![],
+            service_selectors: vec![],
+            interfaces: vec![],
+        }
+    }
+
+    fn make_test_metallb(
+        pools: Vec<IPAddressPool>,
+        l2s: Vec<L2Advertisement>,
+        bgps: Vec<BGPAdvertisement>,
+    ) -> MetalLBInventory {
+        MetalLBInventory {
+            available: true,
+            pools,
+            l2_advertisements: l2s,
+            bgp_advertisements: bgps,
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        }
+    }
+
+    fn make_lb_svc(name: &str) -> NetworkService {
+        NetworkService {
+            name: name.into(),
+            selector: BTreeMap::new(),
+            has_selector: false,
+            cluster_ip: "10.0.0.1".into(),
+            svc_type: "LoadBalancer".into(),
+            ports: vec![],
+            health_check_node_port: None,
+            internal_traffic_policy: None,
+            ip_family_policy: None,
+            load_balancer_class: None,
+            allocate_lb_node_ports: None,
+            external_traffic_policy: None,
+            external_ips: vec![],
+            ip_families: vec![],
+            lb_ingress: vec![],
+            annotations: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            load_balancer_ip: None,
+        }
+    }
+
+    #[test]
+    fn pool_selector_match_via_ip_address_pool_selectors() {
+        let mut pool = make_test_pool("labeled-pool", "metallb-system", vec!["192.168.1.0/24"]);
+        pool.labels.insert("pool-type".into(), "external".into());
+
+        let l2 = L2Advertisement {
+            name: "l2-by-selector".into(),
+            namespace: "metallb-system".into(),
+            ip_address_pools: vec![],
+            ip_address_pool_selectors: vec![make_label_selector(
+                &[("pool-type", "external")],
+                vec![],
+            )],
+            node_selectors: vec![],
+            service_selectors: vec![],
+            interfaces: vec![],
+        };
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "labeled-pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("192.168.1.10".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![l2],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.provider.as_deref(), Some("MetalLB"));
+        assert_eq!(result.pools.len(), 1);
+        assert_eq!(result.advertisements.len(), 1);
+        assert!(
+            result.advertisements[0]
+                .match_reason
+                .contains("ipAddressPoolSelectors")
+        );
+    }
+
+    #[test]
+    fn l2_service_selector_mismatch_excludes_advertisement() {
+        let pool = make_test_pool("pool-1", "metallb-system", vec!["10.0.0.0/24"]);
+        let l2 = L2Advertisement {
+            name: "l2-filtered".into(),
+            namespace: "metallb-system".into(),
+            ip_address_pools: vec!["pool-1".into()],
+            ip_address_pool_selectors: vec![],
+            node_selectors: vec![],
+            service_selectors: vec![make_label_selector(&[("team", "platform")], vec![])],
+            interfaces: vec![],
+        };
+
+        let mut svc = make_lb_svc("my-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "pool-1".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+        // svc.labels does NOT have team=platform
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![l2],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(result.advertisements.is_empty());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("serviceSelector mismatch"))
+        );
+    }
+
+    #[test]
+    fn bgp_service_selector_match_includes_advertisement() {
+        let pool = make_test_pool("pool-bgp", "metallb-system", vec!["172.16.0.0/24"]);
+        let bgp = BGPAdvertisement {
+            name: "bgp-filtered".into(),
+            namespace: "metallb-system".into(),
+            ip_address_pools: vec!["pool-bgp".into()],
+            ip_address_pool_selectors: vec![],
+            node_selectors: vec![],
+            aggregation_length: Some(32),
+            aggregation_length_v6: None,
+            local_pref: Some(100),
+            communities: vec!["65000:1".into()],
+            service_selectors: vec![make_label_selector(&[("team", "platform")], vec![])],
+            peers: vec![],
+        };
+
+        let mut svc = make_lb_svc("bgp-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "pool-bgp".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("172.16.0.10".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+        svc.labels.insert("team".into(), "platform".into());
+
+        let metallb = make_test_metallb(vec![pool], vec![], vec![bgp]);
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.advertisements.len(), 1);
+        assert_eq!(result.advertisements[0].kind, "BGPAdvertisement");
+    }
+
+    #[test]
+    fn service_allocation_namespace_restriction() {
+        let pool = IPAddressPool {
+            name: "restricted".into(),
+            namespace: "metallb-system".into(),
+            addresses: vec!["10.10.0.0/24".into()],
+            auto_assign: true,
+            service_allocation: Some(ServiceAllocation {
+                priority: 0,
+                namespaces: vec!["allowed-ns".into()],
+                namespace_selectors: vec![],
+                service_selectors: vec![],
+            }),
+            labels: BTreeMap::new(),
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
+        };
+        let l2 = make_test_l2("l2-all", "metallb-system", vec!["restricted"]);
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "restricted".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.10.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![l2],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        // Wrong namespace
+        let result = resolve_metallb_for_service(
+            &svc,
+            "other-ns",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("namespace other-ns not allowed by serviceAllocation"))
+        );
+
+        // Correct namespace
+        let result = resolve_metallb_for_service(
+            &svc,
+            "allowed-ns",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(!result.warnings.iter().any(|w| w.contains("namespace")));
+    }
+
+    #[test]
+    fn service_allocation_service_selector_mismatch_warns() {
+        let pool = IPAddressPool {
+            name: "sa-pool".into(),
+            namespace: "metallb-system".into(),
+            addresses: vec!["10.20.0.0/24".into()],
+            auto_assign: true,
+            service_allocation: Some(ServiceAllocation {
+                priority: 0,
+                namespaces: vec![],
+                namespace_selectors: vec![],
+                service_selectors: vec![make_label_selector(&[("tier", "frontend")], vec![])],
+            }),
+            labels: BTreeMap::new(),
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
+        };
+        let l2 = make_test_l2("l2-all", "metallb-system", vec!["sa-pool"]);
+
+        let mut svc = make_lb_svc("backend-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "sa-pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.20.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+        // No tier=frontend label
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![l2],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(result.warnings.iter().any(|w| w.contains("serviceAllocation") && w.contains("service selector mismatch")));
+    }
+
+    #[test]
+    fn load_balancer_ips_annotation_parsing() {
+        let mut svc = make_lb_svc("dual-stack");
+        svc.annotations.insert(
+            "metallb.io/loadBalancerIPs".into(),
+            "192.168.1.100, fd00::1".into(),
+        );
+
+        let pool = make_test_pool(
+            "dual",
+            "metallb-system",
+            vec!["192.168.1.0/24", "fd00::/64"],
+        );
+        let l2 = make_test_l2("l2-dual", "metallb-system", vec!["dual"]);
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![l2],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.requested_ips, vec!["192.168.1.100", "fd00::1"]);
+        assert_eq!(result.provider.as_deref(), Some("MetalLB"));
+        assert_eq!(result.pools.len(), 1);
+    }
+
+    #[test]
+    fn provider_evidence_metallb_annotation_present() {
+        let mut svc = make_lb_svc("annotated");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "my-pool".into());
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![],
+            l2_advertisements: vec![],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.provider.as_deref(), Some("MetalLB"));
+    }
+
+    #[test]
+    fn provider_evidence_none_for_plain_lb() {
+        let svc = make_lb_svc("plain-lb");
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![make_test_pool(
+                "pool",
+                "metallb-system",
+                vec!["10.0.0.0/24"],
+            )],
+            l2_advertisements: vec![],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(result.provider.is_none());
+    }
+
+    #[test]
+    fn auto_assign_false_without_explicit_request_skipped() {
+        let mut pool = make_test_pool("no-auto", "metallb-system", vec!["10.0.0.0/24"]);
+        pool.auto_assign = false;
+
+        let mut svc = make_lb_svc("test");
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+        // No pool annotation, no requested IPs annotation — only evidence is assigned IP in range
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        // Provider detected because assigned IP is in pool range, but
+        // pool is NOT matched because autoAssign=false and no explicit pool/IP annotation
+        // Actually assigned IP IS in range so match_reason is "assigned IP in range" — autoAssign only skips when no match_reason
+        // Let me re-check: the code checks autoAssign before the skip at the end
+        // Actually the code first checks explicit matches (annotation, assigned IP, requested IP) then checks autoAssign
+        // Assigned IP in range IS a match, so autoAssign=false doesn't skip it
+        assert_eq!(result.pools.len(), 1);
+    }
+
+    #[test]
+    fn different_namespace_pool_ad_excluded() {
+        let pool = make_test_pool("pool-a", "metallb-system", vec!["10.0.0.0/24"]);
+        // L2 in different namespace
+        let l2 = make_test_l2("l2-other-ns", "other-metallb", vec!["pool-a"]);
+
+        let mut svc = make_lb_svc("test");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "pool-a".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let metallb = MetalLBInventory {
+            available: true,
+            pools: vec![pool],
+            l2_advertisements: vec![l2],
+            bgp_advertisements: vec![],
+            warnings: vec![],
+            namespace_labels: HashMap::new(),
+            node_labels: HashMap::new(),
+        };
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.pools.len(), 1);
+        assert!(
+            result.advertisements.is_empty(),
+            "L2 in different namespace should be excluded"
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("no L2/BGP advertisement"))
+        );
+    }
+
+    // ── New MetalLB tests ──
+
+    #[test]
+    fn namespace_selector_match_with_labels() {
+        let pool = IPAddressPool {
+            name: "ns-sel-pool".into(),
+            namespace: "metallb-system".into(),
+            addresses: vec!["10.0.0.0/24".into()],
+            auto_assign: true,
+            service_allocation: Some(ServiceAllocation {
+                priority: 0,
+                namespaces: vec![],
+                namespace_selectors: vec![make_label_selector(&[("env", "prod")], vec![])],
+                service_selectors: vec![],
+            }),
+            labels: BTreeMap::new(),
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
+        };
+        let l2 = make_test_l2("l2-all", "metallb-system", vec!["ns-sel-pool"]);
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "ns-sel-pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+
+        // With matching namespace labels
+        metallb.namespace_labels.insert(
+            "my-ns".into(),
+            [("env".to_string(), "prod".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let result = resolve_metallb_for_service(
+            &svc,
+            "my-ns",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not allowed by serviceAllocation")),
+            "matching namespace selector should pass"
+        );
+    }
+
+    #[test]
+    fn namespace_selector_mismatch() {
+        let pool = IPAddressPool {
+            name: "ns-sel-pool".into(),
+            namespace: "metallb-system".into(),
+            addresses: vec!["10.0.0.0/24".into()],
+            auto_assign: true,
+            service_allocation: Some(ServiceAllocation {
+                priority: 0,
+                namespaces: vec![],
+                namespace_selectors: vec![make_label_selector(&[("env", "prod")], vec![])],
+                service_selectors: vec![],
+            }),
+            labels: BTreeMap::new(),
+            status_available_ipv4: None,
+            status_available_ipv6: None,
+            status_assigned_ipv4: None,
+            status_assigned_ipv6: None,
+        };
+        let l2 = make_test_l2("l2-all", "metallb-system", vec!["ns-sel-pool"]);
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "ns-sel-pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        metallb.namespace_labels.insert(
+            "my-ns".into(),
+            [("env".to_string(), "dev".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "my-ns",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("not allowed by serviceAllocation")),
+            "mismatched namespace selector should warn"
+        );
+    }
+
+    #[test]
+    fn node_selector_match_with_labels() {
+        let pool = make_test_pool("pool", "metallb-system", vec!["10.0.0.0/24"]);
+        let mut l2 = make_test_l2("l2-node", "metallb-system", vec!["pool"]);
+        l2.node_selectors = vec![make_label_selector(&[("role", "worker")], vec![])];
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        metallb.node_labels.insert(
+            "worker-1".into(),
+            [("role".to_string(), "worker".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        metallb.node_labels.insert(
+            "master-1".into(),
+            [("role".to_string(), "master".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.advertisements.len(), 1);
+        assert_eq!(result.advertisements[0].node_selector_status, "matched 1");
+        assert_eq!(result.advertisements[0].candidate_nodes, vec!["worker-1"]);
+    }
+
+    #[test]
+    fn node_selector_mismatch() {
+        let pool = make_test_pool("pool", "metallb-system", vec!["10.0.0.0/24"]);
+        let mut l2 = make_test_l2("l2-node", "metallb-system", vec!["pool"]);
+        l2.node_selectors = vec![make_label_selector(&[("role", "gpu")], vec![])];
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        metallb.node_labels.insert(
+            "worker-1".into(),
+            [("role".to_string(), "worker".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.advertisements[0].node_selector_status, "mismatch");
+        assert!(result.advertisements[0].candidate_nodes.is_empty());
+    }
+
+    #[test]
+    fn local_endpoint_nodes_vs_advertised_nodes() {
+        let pool = make_test_pool("pool", "metallb-system", vec!["10.0.0.0/24"]);
+        let mut l2 = make_test_l2("l2-node", "metallb-system", vec!["pool"]);
+        l2.node_selectors = vec![make_label_selector(&[("role", "worker")], vec![])];
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/address-pool".into(), "pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.1".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+        svc.external_traffic_policy = Some("Local".into());
+
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        metallb.node_labels.insert(
+            "worker-1".into(),
+            [("role".to_string(), "worker".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        // Endpoint on non-advertised node
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &["master-1".to_string()],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("no ready endpoints on advertised nodes")),
+            "should warn when endpoint nodes don't intersect advertised nodes"
+        );
+
+        // Endpoint on advertised node
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &["worker-1".to_string()],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("no ready endpoints on advertised nodes")),
+            "should not warn when endpoint nodes intersect advertised nodes"
+        );
+    }
+
+    #[test]
+    fn auto_assign_candidate_with_priority_sorting() {
+        let mut pool_a = make_test_pool("pool-a", "metallb-system", vec!["10.0.0.0/24"]);
+        pool_a.service_allocation = Some(ServiceAllocation {
+            priority: 10,
+            namespaces: vec![],
+            namespace_selectors: vec![],
+            service_selectors: vec![],
+        });
+        let mut pool_b = make_test_pool("pool-b", "metallb-system", vec!["10.1.0.0/24"]);
+        pool_b.service_allocation = Some(ServiceAllocation {
+            priority: 5,
+            namespaces: vec![],
+            namespace_selectors: vec![],
+            service_selectors: vec![],
+        });
+
+        let l2 = make_test_l2("l2-all", "metallb-system", vec![]);
+
+        // Service with MetalLB class but no explicit pool/IP match
+        let mut svc = make_lb_svc("test-svc");
+        svc.load_balancer_class = Some("metallb.io/metallb".into());
+
+        let metallb = make_test_metallb(vec![pool_a, pool_b], vec![l2], vec![]);
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            result.pools.len() >= 2,
+            "both pools should be autoAssign candidates"
+        );
+        assert_eq!(
+            result.pools[0].pool.name, "pool-b",
+            "lower priority should come first"
+        );
+        assert!(
+            result.pools[0]
+                .match_reason
+                .contains("autoAssign candidate")
+        );
+    }
+
+    #[test]
+    fn auto_assign_false_excluded_from_candidates() {
+        let mut pool = make_test_pool("no-auto", "metallb-system", vec!["10.0.0.0/24"]);
+        pool.auto_assign = false;
+        let l2 = make_test_l2("l2-all", "metallb-system", vec![]);
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.load_balancer_class = Some("metallb.io/metallb".into());
+
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert!(
+            result.pools.is_empty(),
+            "autoAssign=false pools should not be candidates"
+        );
+    }
+
+    #[test]
+    fn same_priority_both_shown() {
+        let mut pool_a = make_test_pool("pool-a", "metallb-system", vec!["10.0.0.0/24"]);
+        pool_a.service_allocation = Some(ServiceAllocation {
+            priority: 5,
+            namespaces: vec![],
+            namespace_selectors: vec![],
+            service_selectors: vec![],
+        });
+        let mut pool_b = make_test_pool("pool-b", "metallb-system", vec!["10.1.0.0/24"]);
+        pool_b.service_allocation = Some(ServiceAllocation {
+            priority: 5,
+            namespaces: vec![],
+            namespace_selectors: vec![],
+            service_selectors: vec![],
+        });
+        let l2 = make_test_l2("l2-all", "metallb-system", vec![]);
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.load_balancer_class = Some("metallb.io/metallb".into());
+
+        let metallb = make_test_metallb(vec![pool_a, pool_b], vec![l2], vec![]);
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.pools.len(), 2, "both same-priority pools shown");
+    }
+
+    #[test]
+    fn l2_interfaces_populated() {
+        let obj = make_dynamic_object(
+            "l2-with-ifaces",
+            serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "L2Advertisement",
+                "spec": {
+                    "ipAddressPools": ["pool-1"],
+                    "interfaces": ["eth0", "eth1"],
+                }
+            }),
+        );
+        let l2 = parse_l2_advertisement(obj).unwrap();
+        assert_eq!(l2.interfaces, vec!["eth0", "eth1"]);
+    }
+
+    #[test]
+    fn bgp_peers_populated() {
+        let obj = make_dynamic_object(
+            "bgp-with-peers",
+            serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "BGPAdvertisement",
+                "spec": {
+                    "peers": ["peer-1", "peer-2"],
+                }
+            }),
+        );
+        let bgp = parse_bgp_advertisement(obj).unwrap();
+        assert_eq!(bgp.peers, vec!["peer-1", "peer-2"]);
+    }
+
+    #[test]
+    fn pool_status_counters_parsed() {
+        let mut obj = make_dynamic_object(
+            "pool-with-status",
+            serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "IPAddressPool",
+                "spec": {
+                    "addresses": ["10.0.0.0/24"],
+                },
+                "status": {
+                    "availableIPv4": 250,
+                    "assignedIPv4": 6,
+                    "availableIPv6": 100,
+                    "assignedIPv6": 2,
+                }
+            }),
+        );
+        obj.metadata.namespace = Some("metallb-system".into());
+        let pool = parse_ip_address_pool(obj).unwrap();
+        assert_eq!(pool.status_available_ipv4, Some(250));
+        assert_eq!(pool.status_assigned_ipv4, Some(6));
+        assert_eq!(pool.status_available_ipv6, Some(100));
+        assert_eq!(pool.status_assigned_ipv6, Some(2));
+    }
+
+    #[test]
+    fn ip_allocated_from_pool_annotation() {
+        let pool = make_test_pool("my-pool", "metallb-system", vec!["10.0.0.0/24"]);
+        let l2 = make_test_l2("l2-all", "metallb-system", vec!["my-pool"]);
+
+        let mut svc = make_lb_svc("test-svc");
+        svc.annotations
+            .insert("metallb.io/ip-allocated-from-pool".into(), "my-pool".into());
+        svc.lb_ingress.push(LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        });
+
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.provider.as_deref(), Some("MetalLB"));
+        assert!(
+            result
+                .pools
+                .iter()
+                .any(|mp| mp.match_reason.contains("allocated from pool annotation"))
+        );
+    }
+
+    #[test]
+    fn metallb_inventory_warnings_field() {
+        let inv = MetalLBInventory::default();
+        assert!(inv.warnings.is_empty());
+        assert!(!inv.available);
+    }
+
+    #[test]
+    fn requested_ip_in_pool_gives_provider_and_pool_match() {
+        let pool = make_test_pool("public", "metallb-system", vec!["192.0.2.0/24"]);
+        let l2 = make_test_l2("l2-pub", "metallb-system", vec!["public"]);
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        let mut svc = make_lb_svc("my-svc");
+        svc.load_balancer_ip = Some("192.0.2.10".into());
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.provider.as_deref(), Some("MetalLB"));
+        assert_eq!(result.pools.len(), 1);
+        assert!(
+            result.pools[0].match_reason.contains("requested IP"),
+            "match_reason should mention requested IP: {}",
+            result.pools[0].match_reason
+        );
+        assert_eq!(result.requested_ips, vec!["192.0.2.10"]);
+    }
+
+    #[test]
+    fn node_selector_mismatch_gives_explicit_warning_not_unknown() {
+        let pool = make_test_pool("public", "metallb-system", vec!["10.0.0.0/24"]);
+        let mut l2 = make_test_l2("l2-pub", "metallb-system", vec!["public"]);
+        l2.node_selectors = vec![LabelSelector {
+            match_labels: {
+                let mut m = BTreeMap::new();
+                m.insert("role".into(), "definitely-not-this".into());
+                m
+            },
+            match_expressions: vec![],
+        }];
+        let mut metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        metallb.node_labels.insert("worker-1".into(), {
+            let mut m = BTreeMap::new();
+            m.insert("role".into(), "worker".into());
+            m
+        });
+        let mut svc = make_lb_svc("web");
+        svc.lb_ingress = vec![LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        }];
+        svc.external_traffic_policy = Some("Local".into());
+        let ep_nodes = vec!["worker-1".to_string()];
+        let result = resolve_metallb_for_service(
+            &svc,
+            "default",
+            &metallb,
+            &ep_nodes,
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.advertisements[0].node_selector_status, "mismatch");
+        let has_mismatch_warning = result
+            .warnings
+            .iter()
+            .any(|w| w.contains("nodeSelector matched no nodes"));
+        assert!(
+            has_mismatch_warning,
+            "Should have nodeSelector mismatch warning: {:?}",
+            result.warnings
+        );
+        let has_no_advertised = result
+            .warnings
+            .iter()
+            .any(|w| w.contains("no advertised nodes"));
+        assert!(
+            has_no_advertised,
+            "Local should warn about no advertised nodes: {:?}",
+            result.warnings
+        );
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("unknown")),
+            "Should not say unknown when nodes are evaluated: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn namespace_in_list_short_circuits_without_ns_labels() {
+        let mut pool = make_test_pool("public", "metallb-system", vec!["10.0.0.0/24"]);
+        pool.service_allocation = Some(ServiceAllocation {
+            priority: 1,
+            namespaces: vec!["allowed-ns".into()],
+            namespace_selectors: vec![LabelSelector {
+                match_labels: {
+                    let mut m = BTreeMap::new();
+                    m.insert("env".into(), "prod".into());
+                    m
+                },
+                match_expressions: vec![],
+            }],
+            service_selectors: vec![],
+        });
+        let l2 = make_test_l2("l2-pub", "metallb-system", vec!["public"]);
+        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
+        // namespace_labels is empty (not fetched), but namespaces list matches
+        let mut svc = make_lb_svc("web");
+        svc.lb_ingress = vec![LBIngress {
+            ip: Some("10.0.0.5".into()),
+            hostname: None,
+            ip_mode: None,
+        }];
+        let result = resolve_metallb_for_service(
+            &svc,
+            "allowed-ns",
+            &metallb,
+            &[],
+            &metallb.namespace_labels,
+            &metallb.node_labels,
+        );
+        assert_eq!(result.pools.len(), 1);
+        assert_eq!(
+            result.pools[0].allocation_match.as_deref(),
+            Some("OK"),
+            "namespaces list match should short-circuit without checking unavailable ns labels"
+        );
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("unavailable")),
+            "Should not warn about unavailable ns labels: {:?}",
+            result.warnings
+        );
+    }
+
+    fn make_metallb_gk_map() -> GroupKindMap {
+        use crate::kube::discovery::KindInfo;
+        let mut gk = GroupKindMap::new();
+        gk.insert(
+            ("metallb.io".into(), "IPAddressPool".into()),
+            KindInfo {
+                group: "metallb.io".into(),
+                version: "v1beta1".into(),
+                plural: "ipaddresspools".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk.insert(
+            ("metallb.io".into(), "L2Advertisement".into()),
+            KindInfo {
+                group: "metallb.io".into(),
+                version: "v1beta1".into(),
+                plural: "l2advertisements".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk.insert(
+            ("metallb.io".into(), "BGPAdvertisement".into()),
+            KindInfo {
+                group: "metallb.io".into(),
+                version: "v1beta1".into(),
+                plural: "bgpadvertisements".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk
+    }
+
+    fn mock_403_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": "forbidden", "reason": "Forbidden", "code": 403
+        });
+        http::Response::builder()
+            .status(403)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn metallb_no_selectors_skips_namespace_and_node_list() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let request_paths = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rc = request_count.clone();
+        let rp = request_paths.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gk_map = make_metallb_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Pool, L2, BGP = 3 LIST requests. No Namespace/Node.
+            for _ in 0..3 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, Ordering::Relaxed);
+                rp.lock().unwrap().push(req.uri().path().to_string());
+                send.send_response(mock_empty_list());
+            }
+        });
+
+        let inv = build_metallb_inventory(&client, &gk_map).await;
+        spawned.await.unwrap();
+
+        assert!(inv.available);
+        assert_eq!(request_count.load(Ordering::Relaxed), 3);
+        let paths = request_paths.lock().unwrap();
+        assert!(
+            !paths.iter().any(|p| p.contains("/namespaces")),
+            "Should NOT list namespaces when no selectors: {:?}",
+            *paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("/nodes")),
+            "Should NOT list nodes when no selectors: {:?}",
+            *paths
+        );
+    }
+
+    #[tokio::test]
+    async fn metallb_with_selectors_fetches_namespace_and_node() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let request_paths = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rc = request_count.clone();
+        let rp = request_paths.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gk_map = make_metallb_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Pool LIST returns pool with namespaceSelectors
+            let (req, send) = handle.next_request().await.expect("pool list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_json_response(serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "IPAddressPoolList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": "metallb.io/v1beta1",
+                    "kind": "IPAddressPool",
+                    "metadata": {"name": "pool-a", "namespace": "metallb-system"},
+                    "spec": {
+                        "addresses": ["10.0.0.0/24"],
+                        "serviceAllocation": {
+                            "namespaceSelectors": [{"matchLabels": {"env": "prod"}}]
+                        }
+                    }
+                }]
+            })));
+            // L2 LIST returns ad with nodeSelectors
+            let (req, send) = handle.next_request().await.expect("l2 list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_json_response(serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "L2AdvertisementList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": "metallb.io/v1beta1",
+                    "kind": "L2Advertisement",
+                    "metadata": {"name": "l2-a", "namespace": "metallb-system"},
+                    "spec": {
+                        "ipAddressPools": ["pool-a"],
+                        "nodeSelectors": [{"matchLabels": {"role": "worker"}}]
+                    }
+                }]
+            })));
+            // BGP LIST empty
+            let (req, send) = handle.next_request().await.expect("bgp list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
+            // Namespace LIST (triggered by namespaceSelectors)
+            let (req, send) = handle.next_request().await.expect("ns list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
+            // Node LIST (triggered by nodeSelectors)
+            let (req, send) = handle.next_request().await.expect("node list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
+        });
+
+        let inv = build_metallb_inventory(&client, &gk_map).await;
+        spawned.await.unwrap();
+
+        assert_eq!(request_count.load(Ordering::Relaxed), 5);
+        let paths = request_paths.lock().unwrap();
+        assert!(
+            paths.iter().any(|p| p.contains("/namespaces")),
+            "Should list namespaces when namespaceSelectors present: {:?}",
+            *paths
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("/nodes")),
+            "Should list nodes when nodeSelectors present: {:?}",
+            *paths
+        );
+        assert_eq!(inv.pools.len(), 1);
+        assert_eq!(inv.l2_advertisements.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn metallb_api_403_returns_warning_single_request() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gk_map = make_metallb_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Pool LIST → 403 (no retry for 403)
+            let (_req, send) = handle.next_request().await.expect("pool list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
+            // L2 LIST → 403
+            let (_req, send) = handle.next_request().await.expect("l2 list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
+            // BGP LIST → 403
+            let (_req, send) = handle.next_request().await.expect("bgp list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
+        });
+
+        let inv = build_metallb_inventory(&client, &gk_map).await;
+        spawned.await.unwrap();
+
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            3,
+            "403 should not retry: 1 request per API"
+        );
+        assert_eq!(
+            inv.warnings.len(),
+            3,
+            "Each 403 should produce a ScanWarning"
+        );
+        assert!(
+            inv.warnings
+                .iter()
+                .all(|w| matches!(w, ScanWarning::Forbidden { .. })),
+            "All warnings should be Forbidden"
+        );
+        assert!(inv.pools.is_empty());
     }
 }

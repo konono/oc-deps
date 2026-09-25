@@ -5200,6 +5200,34 @@ async fn main() -> Result<()> {
                 (result_paths, postures)
             };
 
+            // Resolve MetalLB for each service path
+            let metallb_results: Vec<crate::analyzers::selector::MetalLBResult> = {
+                let mut seen = std::collections::HashSet::new();
+                all_paths
+                    .iter()
+                    .filter(|(_, p)| seen.insert(p.service.name.clone()))
+                    .map(|(_, p)| {
+                        let endpoint_nodes: Vec<String> = p
+                            .endpoint_slices
+                            .iter()
+                            .flat_map(|es| es.endpoints.iter())
+                            .filter(|ep| ep.conditions_ready == Some(true))
+                            .filter_map(|ep| ep.node_name.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        crate::analyzers::selector::resolve_metallb_for_service(
+                            &p.service,
+                            &namespace,
+                            &inventory.metallb,
+                            &endpoint_nodes,
+                            &inventory.metallb.namespace_labels,
+                            &inventory.metallb.node_labels,
+                        )
+                    })
+                    .collect()
+            };
+
             // Merge inventory warnings
             let existing_keys: std::collections::HashSet<String> =
                 scan_warnings.iter().map(|w| format!("{}", w)).collect();
@@ -5211,7 +5239,7 @@ async fn main() -> Result<()> {
 
             match online.output {
                 OutputFormat::Json => {
-                    let json_paths = network_paths_to_json(&all_paths);
+                    let json_paths = network_paths_to_json(&all_paths, &metallb_results);
                     let json_postures = network_postures_to_json(&postures);
                     let json_warnings: Vec<serde_json::Value> = scan_warnings
                         .iter()
@@ -5242,9 +5270,14 @@ async fn main() -> Result<()> {
                         "ClusterIP",
                         "Ports",
                         "Endpoints",
+                        "LB Provider",
+                        "Pool",
+                        "Advertisement",
                         "Ingress/Route",
+                        "Warnings",
                     ]);
                     let mut seen_svcs = std::collections::HashSet::new();
+                    let mut mlb_idx = 0usize;
                     for (_, path) in &all_paths {
                         if !seen_svcs.insert(path.service.name.clone()) {
                             continue;
@@ -5271,13 +5304,51 @@ async fn main() -> Result<()> {
                             .map(|i| format!("{}/{}", i.kind, i.name))
                             .collect::<Vec<_>>()
                             .join(", ");
+                        let lb_provider = metallb_results
+                            .get(mlb_idx)
+                            .and_then(|r| r.provider.as_deref())
+                            .unwrap_or("-")
+                            .to_string();
+                        mlb_idx += 1;
+                        let mlb = metallb_results.get(mlb_idx.saturating_sub(1));
+                        let pool_str = mlb
+                            .map(|r| {
+                                r.pools
+                                    .iter()
+                                    .map(|p| p.pool.name.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        let ad_str = mlb
+                            .map(|r| {
+                                r.advertisements
+                                    .iter()
+                                    .map(|a| format!("{}/{}", a.kind, a.name))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        let warn_str = mlb
+                            .map(|r| {
+                                if r.warnings.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{} warning(s)", r.warnings.len())
+                                }
+                            })
+                            .unwrap_or_default();
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
                             svc.cluster_ip.clone(),
                             ports_str,
                             eps_str,
+                            lb_provider,
+                            pool_str,
+                            ad_str,
                             ing_str,
+                            warn_str,
                         ]);
                     }
                     println!("{table}");
@@ -5304,7 +5375,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 OutputFormat::Tree => {
-                    print_network_tree(&kind, &name, &all_paths, &postures);
+                    print_network_tree(&kind, &name, &all_paths, &postures, &metallb_results);
                 }
             }
 
@@ -5338,6 +5409,36 @@ fn selector_to_json(sel: &crate::analyzers::selector::PodSelector) -> serde_json
         obj["matchExpressions"] = serde_json::json!(exprs);
     }
     obj
+}
+
+fn label_selectors_to_json(
+    selectors: &[crate::analyzers::selector::LabelSelector],
+) -> serde_json::Value {
+    let items: Vec<_> = selectors
+        .iter()
+        .map(|s| {
+            let mut obj = serde_json::json!({});
+            if !s.match_labels.is_empty() {
+                obj["matchLabels"] = serde_json::json!(s.match_labels);
+            }
+            if !s.match_expressions.is_empty() {
+                let exprs: Vec<_> = s
+                    .match_expressions
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "key": e.key,
+                            "operator": e.operator,
+                            "values": e.values,
+                        })
+                    })
+                    .collect();
+                obj["matchExpressions"] = serde_json::json!(exprs);
+            }
+            obj
+        })
+        .collect();
+    serde_json::json!(items)
 }
 
 fn format_selector(sel: &crate::analyzers::selector::PodSelector) -> String {
@@ -5413,12 +5514,17 @@ fn format_policy_ports(ports: &[crate::analyzers::selector::NetworkPolicyPort]) 
 
 fn network_paths_to_json(
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
+    metallb_results: &[crate::analyzers::selector::MetalLBResult],
 ) -> Vec<serde_json::Value> {
     let mut seen_svcs = std::collections::HashSet::new();
+    let mut metallb_idx = 0usize;
     paths
         .iter()
         .filter(|(_, p)| seen_svcs.insert(p.service.name.clone()))
         .map(|(_, p)| {
+            let mlb = metallb_results.get(metallb_idx);
+            metallb_idx += 1;
+            let _ = mlb; // used below
             let ports: Vec<_> = p
                 .service
                 .ports
@@ -5577,14 +5683,105 @@ fn network_paths_to_json(
                     .collect();
                 status["loadBalancerIngress"] = serde_json::json!(lb);
             }
-            serde_json::json!({
+            let mut result = serde_json::json!({
                 "service": {"name": svc.name, "config": config, "status": status},
                 "ingresses": ingresses,
                 "endpointSlices": endpoint_slices_json,
                 "endpointSummary": {"ready": es.ready, "notReady": es.not_ready, "unknown": es.unknown, "effectiveReady": es.effective_ready, "serving": es.serving, "terminating": es.terminating},
                 "selectorMatchedPods": p.selector_matched_pods,
                 "targetRefMatchedPods": p.target_ref_matched_pods,
-            })
+            });
+            if let Some(mlb) = mlb {
+                let pools_json: Vec<_> = mlb.pools.iter().map(|mp| {
+                    let mut obj = serde_json::json!({
+                        "name": mp.pool.name,
+                        "namespace": mp.pool.namespace,
+                        "addresses": mp.pool.addresses,
+                        "matchReason": mp.match_reason,
+                        "autoAssign": mp.pool.auto_assign,
+                    });
+                    if let Some(am) = &mp.allocation_match {
+                        obj["allocationMatch"] = serde_json::json!(am);
+                    }
+                    if let Some(sa) = &mp.pool.service_allocation {
+                        let mut sa_obj = serde_json::json!({
+                            "priority": sa.priority,
+                            "namespaces": sa.namespaces,
+                        });
+                        if !sa.namespace_selectors.is_empty() {
+                            sa_obj["namespaceSelectors"] =
+                                label_selectors_to_json(&sa.namespace_selectors);
+                        }
+                        if !sa.service_selectors.is_empty() {
+                            sa_obj["serviceSelectors"] =
+                                label_selectors_to_json(&sa.service_selectors);
+                        }
+                        obj["serviceAllocation"] = sa_obj;
+                    }
+                    if let Some(v) = mp.pool.status_available_ipv4 {
+                        obj["statusAvailableIPv4"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = mp.pool.status_available_ipv6 {
+                        obj["statusAvailableIPv6"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = mp.pool.status_assigned_ipv4 {
+                        obj["statusAssignedIPv4"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = mp.pool.status_assigned_ipv6 {
+                        obj["statusAssignedIPv6"] = serde_json::json!(v);
+                    }
+                    if !mp.pool.labels.is_empty() {
+                        obj["labels"] = serde_json::json!(mp.pool.labels);
+                    }
+                    obj
+                }).collect();
+                let ads_json: Vec<_> = mlb.advertisements.iter().map(|a| {
+                    let mut obj = serde_json::json!({
+                        "kind": a.kind,
+                        "name": a.name,
+                        "namespace": a.namespace,
+                        "matchReason": a.match_reason,
+                        "nodeSelectorStatus": a.node_selector_status,
+                    });
+                    if !a.node_selectors.is_empty() {
+                        obj["nodeSelectors"] = label_selectors_to_json(&a.node_selectors);
+                    }
+                    if !a.candidate_nodes.is_empty() {
+                        obj["candidateNodes"] = serde_json::json!(a.candidate_nodes);
+                    }
+                    if !a.service_selectors.is_empty() {
+                        obj["serviceSelectors"] = label_selectors_to_json(&a.service_selectors);
+                    }
+                    if !a.interfaces.is_empty() {
+                        obj["interfaces"] = serde_json::json!(a.interfaces);
+                    }
+                    if !a.peers.is_empty() {
+                        obj["peers"] = serde_json::json!(a.peers);
+                    }
+                    if let Some(al) = a.aggregation_length {
+                        obj["aggregationLength"] = serde_json::json!(al);
+                    }
+                    if let Some(al6) = a.aggregation_length_v6 {
+                        obj["aggregationLengthV6"] = serde_json::json!(al6);
+                    }
+                    if let Some(lp) = a.local_pref {
+                        obj["localPref"] = serde_json::json!(lp);
+                    }
+                    if !a.communities.is_empty() {
+                        obj["communities"] = serde_json::json!(a.communities);
+                    }
+                    obj
+                }).collect();
+                result["metallb"] = serde_json::json!({
+                    "provider": mlb.provider,
+                    "requestedIPs": mlb.requested_ips,
+                    "requestedPool": mlb.requested_pool,
+                    "pools": pools_json,
+                    "advertisements": ads_json,
+                    "warnings": mlb.warnings,
+                });
+            }
+            result
         })
         .collect()
 }
@@ -5654,6 +5851,7 @@ fn print_network_tree(
     name: &str,
     paths: &[(String, crate::analyzers::selector::NetworkPath)],
     postures: &[crate::analyzers::selector::PodNetworkPosture],
+    metallb_results: &[crate::analyzers::selector::MetalLBResult],
 ) {
     let stdout_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if paths.is_empty() {
@@ -5662,6 +5860,7 @@ fn print_network_tree(
     }
     println!("Network paths for {}/{}:\n", kind, name);
     let mut seen_svcs = std::collections::HashSet::new();
+    let mut mlb_idx = 0usize;
     for (_, path) in paths {
         if !seen_svcs.insert(path.service.name.clone()) {
             continue;
@@ -5738,6 +5937,69 @@ fn print_network_tree(
                 .unwrap_or_default();
             println!("    LB Ingress: {}{}", addr, mode);
         }
+        // MetalLB section
+        if let Some(mlb) = metallb_results.get(mlb_idx)
+            && let Some(provider) = &mlb.provider
+        {
+            println!("    LB Provider:   {}", provider);
+            if !mlb.requested_ips.is_empty() {
+                println!("    Requested IPs: {}", mlb.requested_ips.join(", "));
+            }
+            if let Some(rp) = &mlb.requested_pool {
+                println!("    Requested Pool: {}", rp);
+            }
+            for mp in &mlb.pools {
+                println!(
+                    "    Pool: {} [{}] ({})",
+                    mp.pool.name,
+                    mp.pool.addresses.join(", "),
+                    mp.match_reason
+                );
+                if let Some(am) = &mp.allocation_match {
+                    println!("      Allocation: {}", am);
+                }
+                let mut status_parts = Vec::new();
+                if let Some(v) = mp.pool.status_available_ipv4 {
+                    status_parts.push(format!("available IPv4: {}", v));
+                }
+                if let Some(v) = mp.pool.status_assigned_ipv4 {
+                    status_parts.push(format!("assigned IPv4: {}", v));
+                }
+                if let Some(v) = mp.pool.status_available_ipv6 {
+                    status_parts.push(format!("available IPv6: {}", v));
+                }
+                if let Some(v) = mp.pool.status_assigned_ipv6 {
+                    status_parts.push(format!("assigned IPv6: {}", v));
+                }
+                if !status_parts.is_empty() {
+                    println!("      Status: {}", status_parts.join(", "));
+                }
+            }
+            for ad in &mlb.advertisements {
+                println!("    {}/{} ({})", ad.kind, ad.name, ad.match_reason);
+                if !ad.interfaces.is_empty() {
+                    println!("      interfaces: {}", ad.interfaces.join(", "));
+                }
+                if !ad.peers.is_empty() {
+                    println!("      peers: {}", ad.peers.join(", "));
+                }
+                if !ad.node_selectors.is_empty() {
+                    println!(
+                        "      node selector: {} ({})",
+                        ad.node_selector_status,
+                        if ad.candidate_nodes.is_empty() {
+                            "no matching nodes".to_string()
+                        } else {
+                            ad.candidate_nodes.join(", ")
+                        }
+                    );
+                }
+            }
+            for w in &mlb.warnings {
+                println!("    [!] {}", w);
+            }
+        }
+        mlb_idx += 1;
         println!(
             "    SelectorPods:  {}",
             path.selector_matched_pods.join(", ")
