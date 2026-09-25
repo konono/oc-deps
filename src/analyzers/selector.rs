@@ -5478,7 +5478,7 @@ mod tests {
             &svc,
             "default",
             &metallb,
-            &vec![],
+            &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
         );
@@ -5598,34 +5598,236 @@ mod tests {
         );
     }
 
-    #[test]
-    fn conditional_list_no_selectors_means_no_ns_node_fetch() {
-        // When no pool has namespaceSelectors and no ad has nodeSelectors,
-        // the inventory should not need ns/node labels.
-        // This is a structural test: verify that pools/ads without selectors
-        // produce correct results with empty namespace_labels/node_labels.
-        let pool = make_test_pool("simple", "metallb-system", vec!["10.0.0.0/24"]);
-        let l2 = make_test_l2("l2-all", "metallb-system", vec!["simple"]);
-        let metallb = make_test_metallb(vec![pool], vec![l2], vec![]);
-        assert!(metallb.namespace_labels.is_empty());
-        assert!(metallb.node_labels.is_empty());
-        let mut svc = make_lb_svc("web");
-        svc.lb_ingress = vec![LBIngress {
-            ip: Some("10.0.0.5".into()),
-            hostname: None,
-            ip_mode: None,
-        }];
-        let result = resolve_metallb_for_service(
-            &svc,
-            "default",
-            &metallb,
-            &[],
-            &metallb.namespace_labels,
-            &metallb.node_labels,
+    fn make_metallb_gk_map() -> GroupKindMap {
+        use crate::kube::discovery::KindInfo;
+        let mut gk = GroupKindMap::new();
+        gk.insert(
+            ("metallb.io".into(), "IPAddressPool".into()),
+            KindInfo {
+                group: "metallb.io".into(),
+                version: "v1beta1".into(),
+                plural: "ipaddresspools".into(),
+                namespaced: true,
+                listable: true,
+            },
         );
-        assert_eq!(result.pools.len(), 1);
-        assert_eq!(result.advertisements.len(), 1);
-        assert_eq!(result.advertisements[0].node_selector_status, "all");
-        assert!(result.warnings.iter().all(|w| !w.contains("unavailable")));
+        gk.insert(
+            ("metallb.io".into(), "L2Advertisement".into()),
+            KindInfo {
+                group: "metallb.io".into(),
+                version: "v1beta1".into(),
+                plural: "l2advertisements".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk.insert(
+            ("metallb.io".into(), "BGPAdvertisement".into()),
+            KindInfo {
+                group: "metallb.io".into(),
+                version: "v1beta1".into(),
+                plural: "bgpadvertisements".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk
+    }
+
+    fn mock_403_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": "forbidden", "reason": "Forbidden", "code": 403
+        });
+        http::Response::builder()
+            .status(403)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn metallb_no_selectors_skips_namespace_and_node_list() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let request_paths = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rc = request_count.clone();
+        let rp = request_paths.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gk_map = make_metallb_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Pool, L2, BGP = 3 LIST requests. No Namespace/Node.
+            for _ in 0..3 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, Ordering::Relaxed);
+                rp.lock().unwrap().push(req.uri().path().to_string());
+                send.send_response(mock_empty_list());
+            }
+        });
+
+        let inv = build_metallb_inventory(&client, &gk_map).await;
+        spawned.await.unwrap();
+
+        assert!(inv.available);
+        assert_eq!(request_count.load(Ordering::Relaxed), 3);
+        let paths = request_paths.lock().unwrap();
+        assert!(
+            !paths.iter().any(|p| p.contains("/namespaces")),
+            "Should NOT list namespaces when no selectors: {:?}",
+            *paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("/nodes")),
+            "Should NOT list nodes when no selectors: {:?}",
+            *paths
+        );
+    }
+
+    #[tokio::test]
+    async fn metallb_with_selectors_fetches_namespace_and_node() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let request_paths = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rc = request_count.clone();
+        let rp = request_paths.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gk_map = make_metallb_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Pool LIST returns pool with namespaceSelectors
+            let (req, send) = handle.next_request().await.expect("pool list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_json_response(serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "IPAddressPoolList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": "metallb.io/v1beta1",
+                    "kind": "IPAddressPool",
+                    "metadata": {"name": "pool-a", "namespace": "metallb-system"},
+                    "spec": {
+                        "addresses": ["10.0.0.0/24"],
+                        "serviceAllocation": {
+                            "namespaceSelectors": [{"matchLabels": {"env": "prod"}}]
+                        }
+                    }
+                }]
+            })));
+            // L2 LIST returns ad with nodeSelectors
+            let (req, send) = handle.next_request().await.expect("l2 list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_json_response(serde_json::json!({
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "L2AdvertisementList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": "metallb.io/v1beta1",
+                    "kind": "L2Advertisement",
+                    "metadata": {"name": "l2-a", "namespace": "metallb-system"},
+                    "spec": {
+                        "ipAddressPools": ["pool-a"],
+                        "nodeSelectors": [{"matchLabels": {"role": "worker"}}]
+                    }
+                }]
+            })));
+            // BGP LIST empty
+            let (req, send) = handle.next_request().await.expect("bgp list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
+            // Namespace LIST (triggered by namespaceSelectors)
+            let (req, send) = handle.next_request().await.expect("ns list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
+            // Node LIST (triggered by nodeSelectors)
+            let (req, send) = handle.next_request().await.expect("node list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
+        });
+
+        let inv = build_metallb_inventory(&client, &gk_map).await;
+        spawned.await.unwrap();
+
+        assert_eq!(request_count.load(Ordering::Relaxed), 5);
+        let paths = request_paths.lock().unwrap();
+        assert!(
+            paths.iter().any(|p| p.contains("/namespaces")),
+            "Should list namespaces when namespaceSelectors present: {:?}",
+            *paths
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("/nodes")),
+            "Should list nodes when nodeSelectors present: {:?}",
+            *paths
+        );
+        assert_eq!(inv.pools.len(), 1);
+        assert_eq!(inv.l2_advertisements.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn metallb_api_403_returns_warning_single_request() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let gk_map = make_metallb_gk_map();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Pool LIST → 403 (no retry for 403)
+            let (_req, send) = handle.next_request().await.expect("pool list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
+            // L2 LIST → 403
+            let (_req, send) = handle.next_request().await.expect("l2 list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
+            // BGP LIST → 403
+            let (_req, send) = handle.next_request().await.expect("bgp list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
+        });
+
+        let inv = build_metallb_inventory(&client, &gk_map).await;
+        spawned.await.unwrap();
+
+        assert_eq!(
+            request_count.load(Ordering::Relaxed),
+            3,
+            "403 should not retry: 1 request per API"
+        );
+        assert_eq!(
+            inv.warnings.len(),
+            3,
+            "Each 403 should produce a ScanWarning"
+        );
+        assert!(
+            inv.warnings
+                .iter()
+                .all(|w| matches!(w, ScanWarning::Forbidden { .. })),
+            "All warnings should be Forbidden"
+        );
+        assert!(inv.pools.is_empty());
     }
 }
