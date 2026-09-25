@@ -235,7 +235,7 @@ pub fn csv_package_evidence_is_exclusive(
     evidence_packages.len() == 1 && evidence_packages.contains(expected_pkg)
 }
 
-fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
+pub fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
     let mut packages = Vec::new();
     let annotations = match csv.metadata.annotations.as_ref() {
         Some(a) => a,
@@ -644,9 +644,21 @@ pub async fn discover_operators(
                     .iter()
                     .any(|sub| sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())));
 
+        // Derive package_name: subscription > CSV annotation > None
+        let effective_package_name = if pkg_name.is_some() {
+            pkg_name.clone()
+        } else {
+            let annotation_pkgs = extract_annotation_packages(csv);
+            if annotation_pkgs.len() == 1 {
+                Some(annotation_pkgs[0].clone())
+            } else {
+                None
+            }
+        };
+
         operators.push(OperatorInstance {
             subscription: subscription.clone(),
-            package_name: pkg_name.clone(),
+            package_name: effective_package_name,
             csv: ResourceId {
                 group: csv_info.group.clone(),
                 version: csv_info.version.clone(),

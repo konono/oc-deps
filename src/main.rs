@@ -682,21 +682,27 @@ fn build_execution_plan_from_teardown(
     approve_scope: &[crate::cli::ApprovalScope],
     approve_resource: &[String],
     keep_resource: &[String],
-) -> crate::teardown::plan::ExecutionPlan {
+) -> anyhow::Result<crate::teardown::plan::ExecutionPlan> {
     use crate::teardown::plan::{
         ApprovalScopeValue, EXECUTION_PLAN_SCHEMA_VERSION, ExecutionAction, ExecutionPhase,
         ExecutionResource,
     };
     use crate::teardown::planner::Action;
 
-    let exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> = target_operators
-        .iter()
-        .map(|op| crate::teardown::plan::SavedOperatorTarget {
-            package_name: op.package_name.clone().unwrap_or_default(),
+    let mut exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> = Vec::new();
+    for op in target_operators {
+        let Some(pkg) = op.package_name.clone() else {
+            bail!(
+                "Operator {} has no package_name (no Subscription and CSV annotation evidence empty or ambiguous). Cannot create execution plan.",
+                op.csv.name
+            );
+        };
+        exec_targets.push(crate::teardown::plan::SavedOperatorTarget {
+            package_name: pkg,
             install_namespace: op.install_namespace.clone(),
             csv_name_pattern: op.csv.name.clone(),
-        })
-        .collect();
+        });
+    }
 
     let exec_phases: Vec<ExecutionPhase> = plan
         .phases
@@ -742,7 +748,7 @@ fn build_execution_plan_from_teardown(
         })
         .collect();
 
-    crate::teardown::plan::ExecutionPlan {
+    Ok(crate::teardown::plan::ExecutionPlan {
         schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
         cluster_identity: cluster_identity.clone(),
         created_at: plan.snapshot_taken_at.clone(),
@@ -752,7 +758,7 @@ fn build_execution_plan_from_teardown(
         approve_resources: approve_resource.to_vec(),
         keep_resources: keep_resource.to_vec(),
         phases: exec_phases,
-    }
+    })
 }
 
 #[tokio::main]
@@ -1237,7 +1243,7 @@ async fn main() -> Result<()> {
                             &approve_scope,
                             &approve_resource,
                             &keep_resource,
-                        );
+                        )?;
                         crate::teardown::plan::save_execution_plan(&exec_plan, save_path)?;
                         eprintln!("📄 Execution plan saved to {}", save_path);
                     }
@@ -1424,7 +1430,7 @@ async fn main() -> Result<()> {
                             &approve_scope_values,
                             &exec_plan.approve_resources,
                             &exec_plan.keep_resources,
-                        );
+                        )?;
                         if let Err(drift_errors) =
                             crate::teardown::plan::validate_execution_plan_against_fresh(
                                 &exec_plan,
