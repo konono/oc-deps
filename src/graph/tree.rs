@@ -237,9 +237,22 @@ pub fn apply_filters(trees: Vec<TreeNode>, filters: &[MapFilter]) -> Vec<TreeNod
     if filters.is_empty() {
         return trees;
     }
+    let kind_filters: Vec<_> = filters
+        .iter()
+        .filter(|f| matches!(f, MapFilter::Kind(_)))
+        .collect();
+    let label_filters: Vec<_> = filters
+        .iter()
+        .filter(|f| matches!(f, MapFilter::Label { .. }))
+        .collect();
     trees
         .into_iter()
-        .filter(|tree| filters.iter().all(|f| f.matches(&tree.info)))
+        .filter(|tree| {
+            let kind_pass =
+                kind_filters.is_empty() || kind_filters.iter().any(|f| f.matches(&tree.info));
+            let label_pass = label_filters.iter().all(|f| f.matches(&tree.info));
+            kind_pass && label_pass
+        })
         .collect()
 }
 

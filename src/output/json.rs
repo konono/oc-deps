@@ -73,7 +73,10 @@ pub fn print_json(tree: &TreeNode, namespace: &str, include_annotations: bool, s
     let output = serde_json::json!({
         "namespace": namespace,
         "target": target,
+        "scope": "namespace",
         "tree": tree_to_json(tree, include_annotations, show_spec),
+        "warnings": serde_json::Value::Array(vec![]),
+        "scanWarningCount": 0,
     });
     println!(
         "{}",
@@ -132,7 +135,10 @@ pub fn print_chain_json(
     let output = serde_json::json!({
         "namespace": namespace,
         "target": chain.last().map(|e| format!("{}/{}", e.info.kind, e.info.name)).unwrap_or_default(),
+        "scope": "namespace",
         "chain": items,
+        "warnings": serde_json::Value::Array(vec![]),
+        "scanWarningCount": 0,
     });
     println!(
         "{}",

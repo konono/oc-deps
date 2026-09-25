@@ -25,6 +25,12 @@ pub enum ShowField {
     PodResources,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Scope {
+    Namespace,
+    Related,
+}
+
 /// Common options for subcommands that connect to a cluster.
 #[derive(clap::Args, Clone, Debug)]
 pub struct OnlineOpts {
@@ -118,7 +124,7 @@ pub enum Command {
         #[arg(short = 'd', long, default_value_t = 20)]
         depth: usize,
 
-        /// Filter by root resource kind (repeatable)
+        /// Filter by root resource kind (repeatable, OR)
         #[arg(long, value_name = "KIND")]
         root_kind: Vec<String>,
 
@@ -129,28 +135,12 @@ pub enum Command {
 
     /// Diagnose how a workload is exposed and network-restricted
     Network {
-        /// Resource in kind/name format (Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet)
+        /// Resource in kind/name format (Pod, Deployment, ReplicaSet, StatefulSet, DaemonSet, Service)
         #[arg(value_name = "RESOURCE")]
         resource: String,
 
         #[command(flatten)]
         online: OnlineOpts,
-
-        /// Disable spec-level references
-        #[arg(long)]
-        no_refs: bool,
-
-        /// Include Event resources in scan (default: skip)
-        #[arg(long)]
-        include_events: bool,
-
-        /// Show additional fields
-        #[arg(long, value_enum)]
-        show: Vec<ShowField>,
-
-        /// Max traversal depth
-        #[arg(short = 'd', long, default_value_t = 20)]
-        depth: usize,
     },
 
     /// Show which Operator manages a resource (ownerRef chain → CSV → Subscription)
@@ -278,7 +268,7 @@ pub enum Command {
         strict: bool,
     },
 
-    /// Trace impact radius from a root resource (ownerRef descendants, spec refs, same-operator CRDs, labels)
+    /// Trace discovered relationships from a resource, including ownerRef descendants, spec references, same-operator resources, and label correlations
     Trace {
         /// Resource in kind/name format
         #[arg(value_name = "RESOURCE")]
@@ -291,9 +281,9 @@ pub enum Command {
         #[arg(short = 'd', long, default_value_t = 20)]
         depth: usize,
 
-        /// Discover resources across namespaces via OperatorGroup, owned CRD instances, and label evidence
-        #[arg(long)]
-        cross_namespace: bool,
+        /// Scope: namespace (default) or related (cross-namespace via OperatorGroup, owned CRD instances, label evidence)
+        #[arg(long, value_enum, default_value = "namespace")]
+        scope: Scope,
     },
 
     /// List all OLM-managed operators in the cluster
@@ -718,22 +708,34 @@ mod tests {
             "datasciencecluster/default",
             "-n",
             "test-ns",
-            "--cross-namespace",
+            "--scope",
+            "related",
             "--strict",
         ]);
         match args.command {
             Command::Trace {
                 resource,
                 online,
-                cross_namespace,
+                scope,
                 depth,
                 ..
             } => {
                 assert_eq!(resource, "datasciencecluster/default");
                 assert_eq!(online.namespace, Some("test-ns".to_string()));
-                assert!(cross_namespace);
+                assert!(matches!(scope, Scope::Related));
                 assert!(online.strict);
                 assert_eq!(depth, 20);
+            }
+            _ => panic!("Expected Command::Trace"),
+        }
+    }
+
+    #[test]
+    fn test_trace_scope_default_namespace() {
+        let args = Args::parse_from(["oc-deps", "trace", "deployment/foo", "-n", "ns"]);
+        match args.command {
+            Command::Trace { scope, .. } => {
+                assert!(matches!(scope, Scope::Namespace));
             }
             _ => panic!("Expected Command::Trace"),
         }

@@ -349,6 +349,7 @@ pub fn resolve_kind_with_group(
     bail!("Unsupported kind: {}. Try plural.group/name format.", input);
 }
 
+#[allow(dead_code)]
 pub fn resolve_kind(input: &str, kind_map: &KindMap, gvr_map: &GvrMap) -> Result<String> {
     let lower = input.to_lowercase();
 

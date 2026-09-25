@@ -696,8 +696,10 @@ pub async fn resolve_missing_parents(
     warnings
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn find_parents_only(
     client: &Client,
+    group: &str,
     kind: &str,
     name: &str,
     namespace: &str,
@@ -708,10 +710,20 @@ pub async fn find_parents_only(
     let mut chain = Vec::new();
     let mut current_kind = kind.to_string();
     let mut current_name = name.to_string();
+    let mut current_group = group.to_string();
     let mut visited = HashSet::new();
 
     loop {
-        let info = match kind_map.get(&current_kind) {
+        let info = if !current_group.is_empty() {
+            kind_map
+                .iter()
+                .find(|(k, ki)| *k == &current_kind && ki.group == current_group)
+                .map(|(_, ki)| ki)
+                .or_else(|| kind_map.get(&current_kind))
+        } else {
+            kind_map.get(&current_kind)
+        };
+        let info = match info {
             Some(i) => i,
             None => {
                 chain.push(ChainEntry {
@@ -807,6 +819,11 @@ pub async fn find_parents_only(
 
                 match next {
                     Some(oref) => {
+                        current_group = oref
+                            .api_version
+                            .split_once('/')
+                            .map(|(g, _)| g.to_string())
+                            .unwrap_or_default();
                         current_kind = oref.kind;
                         current_name = oref.name;
                     }
@@ -1123,6 +1140,7 @@ mod tests {
 
         let chain = find_parents_only(
             &client,
+            "",
             "Pod",
             "myapp-abc-xyz",
             "test-ns",
@@ -1224,6 +1242,7 @@ mod tests {
 
         let chain = find_parents_only(
             &client,
+            "",
             "Pod",
             "myapp-abc-xyz",
             "test-ns",

@@ -63,9 +63,9 @@ oc-deps who-manages deployment/<name> -n <namespace>
 oc-deps inspect rhods-operator
 oc-deps inspect rhods-operator --cross-namespace
 
-# Trace impact radius from a root CR
+# Trace discovered relationships from a resource
 oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications
-oc-deps trace deployment/<name> -n <namespace> --cross-namespace
+oc-deps trace deployment/<name> -n <namespace> --scope related
 
 # Output formats (available on tree, map, network, trace)
 oc-deps tree deployment/<name> -n <namespace> -o tree    # default
@@ -361,11 +361,11 @@ If some namespaces or CRDs fail (403, timeout), partial results are still return
 Show the impact radius from a root resource — ownerRef descendants, spec references, same-operator CRDs, and label matches:
 
 ```bash
-oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications --cross-namespace  # cluster-scoped, scan operand ns
+oc-deps trace datasciencecluster/default-dsc -n redhat-ods-applications --scope related  # discover across namespaces
 oc-deps trace deployment/dashboard-operator -n redhat-ods-applications
 oc-deps trace deployment/<name> -n <ns> -o json
 oc-deps trace deployment/<name> -n <ns> -o table
-oc-deps trace deployment/<name> -n <ns> --cross-namespace --strict
+oc-deps trace deployment/<name> -n <ns> --scope related --strict
 ```
 
 Each category shows Relationship and Confidence:
@@ -376,7 +376,7 @@ Each category shows Relationship and Confidence:
 
 The managing operator is determined via `who-manages` (ownerRef chain → CSV), not CRD origin. This prevents misattribution for built-in kinds like Deployment.
 
-`--cross-namespace` uses the same evidence-based namespace discovery as `inspect`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
+`--scope related` uses the same evidence-based namespace discovery as `inspect`. `--strict` exits with code 2 when any discovery or scan fails, after outputting partial results. In JSON, `warnings` contains all failure messages, `scanWarningCount` gives the count, and `descendants` contains the full ownerRef tree with `group/kind/namespace/name` identity.
 
 ### Generate a teardown plan
 
