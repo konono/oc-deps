@@ -332,6 +332,10 @@ pub struct ExecutionResource {
     pub action: ExecutionAction,
 }
 
+pub fn csv_name_matches(saved_pattern: &str, live_csv_name: &str) -> bool {
+    saved_pattern == live_csv_name
+}
+
 static SAVE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<()> {
@@ -361,16 +365,15 @@ pub fn save_execution_plan(plan: &ExecutionPlan, path: &str) -> anyhow::Result<(
     let tmp_path = parent.join(format!(".tmp_exec_plan_{}_{}", std::process::id(), seq));
 
     let json = serde_json::to_string_pretty(plan)?;
-    {
-        let mut f = std::fs::File::create_new(&tmp_path)
-            .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
-        f.write_all(json.as_bytes())?;
-        f.sync_all()?;
-    }
+    let mut f = std::fs::File::create_new(&tmp_path)
+        .with_context(|| format!("Failed to create temp file: {}", tmp_path.display()))?;
     let mut guard = TempGuard {
         path: tmp_path.clone(),
         armed: true,
     };
+    f.write_all(json.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
     std::fs::rename(&tmp_path, path)
         .with_context(|| format!("Failed to rename {} -> {}", tmp_path.display(), path))?;
     guard.disarm();
@@ -1268,9 +1271,10 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_save_no_collision() {
+    fn concurrent_save_same_target() {
         let dir = std::env::temp_dir().join(format!("test-concurrent-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
+        let target = dir.join("shared-plan.json");
         let plan = make_exec_plan(
             "uid-1",
             vec![(
@@ -1283,20 +1287,19 @@ mod tests {
             )],
         );
         let handles: Vec<_> = (0..4)
-            .map(|i| {
+            .map(|_| {
                 let p = plan.clone();
-                let d = dir.clone();
+                let t = target.clone();
                 std::thread::spawn(move || {
-                    let path = d.join(format!("plan-{}.json", i));
-                    save_execution_plan(&p, path.to_str().unwrap()).unwrap();
-                    let loaded = load_execution_plan(path.to_str().unwrap()).unwrap();
-                    assert_eq!(loaded.phases.len(), 1);
+                    save_execution_plan(&p, t.to_str().unwrap()).unwrap();
                 })
             })
             .collect();
         for h in handles {
             h.join().unwrap();
         }
+        let loaded = load_execution_plan(target.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.phases.len(), 1, "Final JSON must be valid");
         let tmps: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -1311,6 +1314,38 @@ mod tests {
     }
 
     #[test]
+    fn save_rename_failure_preserves_existing_and_cleans_temp() {
+        let dir = std::env::temp_dir().join(format!("test-rename-fail-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let existing = dir.join("existing.json");
+        std::fs::write(&existing, r#"{"original": true}"#).unwrap();
+        let plan = make_exec_plan("uid-1", vec![]);
+        // Try to save to a path where rename will fail: use a directory as target
+        let dir_target = dir.join("subdir");
+        std::fs::create_dir_all(&dir_target).unwrap();
+        std::fs::write(dir_target.join("blocker"), "x").unwrap();
+        let result = save_execution_plan(&plan, dir_target.to_str().unwrap());
+        assert!(result.is_err(), "rename to directory should fail");
+        // Existing file preserved
+        assert_eq!(
+            std::fs::read_to_string(&existing).unwrap(),
+            r#"{"original": true}"#
+        );
+        // No temp residual in parent
+        let tmps: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with(".tmp_"))
+            })
+            .collect();
+        assert_eq!(tmps.len(), 0, "Temp cleaned up on rename failure");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn save_to_nonexistent_dir_fails_no_temp() {
         let plan = make_exec_plan("uid-1", vec![]);
         let result = save_execution_plan(&plan, "/nonexistent/dir/plan.json");
@@ -1318,18 +1353,26 @@ mod tests {
     }
 
     #[test]
-    fn csv_exact_match_rejects_substring() {
-        let saved_pattern = "rhbk-operator.v26.6.7-opr.1";
-        let live_csv = "rhbk-operator.v26.6.7-opr.1";
-        assert_eq!(saved_pattern, live_csv, "exact match should pass");
-
-        let tampered_pattern = "rhbk";
-        assert_ne!(tampered_pattern, live_csv, "substring must not match exact");
-
-        let upgraded_csv = "rhbk-operator.v27.0.0";
-        assert_ne!(
-            saved_pattern, upgraded_csv,
+    fn csv_name_matches_production_helper() {
+        assert!(csv_name_matches(
+            "rhbk-operator.v26.6.7-opr.1",
+            "rhbk-operator.v26.6.7-opr.1"
+        ));
+        assert!(
+            !csv_name_matches("rhbk", "rhbk-operator.v26.6.7-opr.1"),
+            "substring must not match"
+        );
+        assert!(
+            !csv_name_matches("rhbk-operator.v26.6.7-opr.1", "rhbk-operator.v27.0.0"),
             "version upgrade must not match"
+        );
+        assert!(
+            !csv_name_matches("rhbk-operator.v26.6.7-opr.1", "rhbk"),
+            "reverse substring must not match"
+        );
+        assert!(
+            !csv_name_matches("", "rhbk-operator.v26.6.7-opr.1"),
+            "empty must not match"
         );
     }
 }

@@ -1330,7 +1330,12 @@ async fn main() -> Result<()> {
                         let csv_matched: Vec<usize> = ns_matched
                             .iter()
                             .copied()
-                            .filter(|&i| all_operators[i].csv.name == target.csv_name_pattern)
+                            .filter(|&i| {
+                                crate::teardown::plan::csv_name_matches(
+                                    &target.csv_name_pattern,
+                                    &all_operators[i].csv.name,
+                                )
+                            })
                             .collect();
                         if csv_matched.is_empty() {
                             bail!(
