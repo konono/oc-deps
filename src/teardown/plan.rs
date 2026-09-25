@@ -397,7 +397,7 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
     }
     // Validate targets have non-empty package_name
     for target in &plan.targets {
-        if target.package_name.is_empty() {
+        if target.package_name.trim().is_empty() {
             anyhow::bail!(
                 "Execution plan target has empty package_name (csv: {}). Plan is invalid.",
                 target.csv_name_pattern

@@ -6182,4 +6182,52 @@ mod tests {
             "Error should mention empty package"
         );
     }
+
+    #[test]
+    fn load_execution_plan_rejects_whitespace_package() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01T00:00:00Z".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "   ".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "csv.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-ws-pkg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "Whitespace-only package must be rejected");
+    }
+
+    #[test]
+    fn extract_annotation_whitespace_package_excluded() {
+        use crate::analyzers::olm::extract_annotation_packages;
+        let mut obj = kube::api::DynamicObject::new(
+            "csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        obj.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"   \"}"}]"#.to_string(),
+        )]));
+        let pkgs = extract_annotation_packages(&obj);
+        assert!(
+            pkgs.is_empty(),
+            "Whitespace-only packageName must be excluded"
+        );
+    }
 }
