@@ -5200,7 +5200,7 @@ async fn main() -> Result<()> {
                 (result_paths, postures)
             };
 
-            // Resolve MetalLB for each service path (with per-service event fetch)
+            // Resolve MetalLB for each service path (events fetched once in inventory)
             let metallb_results: Vec<crate::analyzers::selector::MetalLBResult> = {
                 let mut seen = std::collections::HashSet::new();
                 let unique_paths: Vec<_> = all_paths
@@ -5218,31 +5218,6 @@ async fn main() -> Result<()> {
                         .collect::<std::collections::HashSet<_>>()
                         .into_iter()
                         .collect();
-                    // Fetch events per-service if MetalLB provider detected
-                    let (events, event_avail, event_warnings) = if p.service.svc_type
-                        == "LoadBalancer"
-                        && inventory.metallb.available
-                        && !p.service.uid.is_empty()
-                    {
-                        let (ev, avail, warns) =
-                            crate::analyzers::selector::fetch_metallb_service_events(
-                                &client,
-                                &namespace,
-                                &p.service.name,
-                                &p.service.uid,
-                            )
-                            .await;
-                        (ev, avail, warns)
-                    } else {
-                        (
-                            vec![],
-                            crate::analyzers::selector::ApiAvailability::Absent,
-                            vec![],
-                        )
-                    };
-                    for w in event_warnings {
-                        scan_warnings.push(w);
-                    }
                     results.push(crate::analyzers::selector::resolve_metallb_for_service(
                         &p.service,
                         &namespace,
@@ -5250,7 +5225,6 @@ async fn main() -> Result<()> {
                         &endpoint_nodes,
                         &inventory.metallb.namespace_labels,
                         &inventory.metallb.node_labels,
-                        (events, event_avail),
                     ));
                 }
                 results
@@ -5302,6 +5276,9 @@ async fn main() -> Result<()> {
                         "Pool",
                         "Advertisement",
                         "Observed",
+                        "Session",
+                        "Events",
+                        "Config",
                         "Ingress/Route",
                         "Warnings",
                     ]);
@@ -5370,6 +5347,33 @@ async fn main() -> Result<()> {
                         let observed_str = mlb
                             .map(|r| r.observation.observed_state.clone())
                             .unwrap_or_default();
+                        let session_str = mlb
+                            .map(|r| {
+                                if r.observation.session_state.is_empty() {
+                                    "-".to_string()
+                                } else {
+                                    r.observation.session_state.clone()
+                                }
+                            })
+                            .unwrap_or_else(|| "-".to_string());
+                        let events_str = mlb
+                            .map(|r| {
+                                if r.observation.events.is_empty() {
+                                    "-".to_string()
+                                } else {
+                                    format!("{}", r.observation.events.len())
+                                }
+                            })
+                            .unwrap_or_else(|| "-".to_string());
+                        let config_str = mlb
+                            .map(|r| {
+                                r.observation
+                                    .configuration_states
+                                    .first()
+                                    .and_then(|cs| cs.result.clone())
+                                    .unwrap_or_else(|| "-".to_string())
+                            })
+                            .unwrap_or_else(|| "-".to_string());
                         table.add_row(vec![
                             format!("Service/{}", svc.name),
                             svc.svc_type.clone(),
@@ -5380,6 +5384,9 @@ async fn main() -> Result<()> {
                             pool_str,
                             ad_str,
                             observed_str,
+                            session_str,
+                            events_str,
+                            config_str,
                             ing_str,
                             warn_str,
                         ]);
@@ -5911,6 +5918,8 @@ fn network_paths_to_json(
                     "apiAvailability": {
                         "l2Status": avail_str(&obs.api_availability.l2_status),
                         "bgpStatus": avail_str(&obs.api_availability.bgp_status),
+                        "bgpPeer": avail_str(&obs.api_availability.bgp_peer),
+                        "bfdProfile": avail_str(&obs.api_availability.bfd_profile),
                         "events": avail_str(&obs.api_availability.events),
                         "configurationState": avail_str(&obs.api_availability.configuration_state),
                     },
@@ -6184,23 +6193,28 @@ fn print_network_tree(
                     let err = cs.error_summary.as_deref().unwrap_or("");
                     let comp = cs.component_type.as_deref().unwrap_or("");
                     let node = cs.node_name.as_deref().unwrap_or("");
-                    let detail = if !err.is_empty() {
-                        format!(" error: {}", err)
-                    } else {
-                        String::new()
-                    };
-                    println!(
-                        "      ConfigurationState/{}: {} ({}{}){}",
-                        cs.name,
-                        result_str,
-                        comp,
-                        if !node.is_empty() {
-                            format!(", node: {}", node)
-                        } else {
-                            String::new()
-                        },
-                        detail,
-                    );
+                    println!("      ConfigurationState/{}:", cs.name);
+                    println!("        Result: {}", result_str);
+                    if !err.is_empty() {
+                        println!("        Error: {}", err);
+                    }
+                    if !comp.is_empty() {
+                        println!("        Component: {}", comp);
+                    }
+                    if !node.is_empty() {
+                        println!("        Node: {}", node);
+                    }
+                    if result_str != "OK" && result_str != "Success" && !cs.conditions.is_empty() {
+                        println!("        Conditions:");
+                        for c in &cs.conditions {
+                            let reason = c
+                                .reason
+                                .as_deref()
+                                .map(|r| format!(" ({})", r))
+                                .unwrap_or_default();
+                            println!("          {}: {}{}", c.condition_type, c.status, reason);
+                        }
+                    }
                 }
             }
             if !mlb.observation.session_state.is_empty() {

@@ -1452,7 +1452,7 @@ pub async fn build_network_inventory(
         list_network_policies(client, namespace, gk_map).await;
     warnings.extend(np_warnings);
 
-    let metallb = build_metallb_inventory(client, gk_map).await;
+    let metallb = build_metallb_inventory(client, namespace, gk_map).await;
     warnings.extend(metallb.warnings.clone());
 
     NetworkInventory {
@@ -1466,7 +1466,11 @@ pub async fn build_network_inventory(
     }
 }
 
-async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> MetalLBInventory {
+async fn build_metallb_inventory(
+    client: &Client,
+    svc_namespace: &str,
+    gk_map: &GroupKindMap,
+) -> MetalLBInventory {
     let metallb_group = "metallb.io";
 
     // Check if IPAddressPool CRD exists
@@ -1724,6 +1728,87 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
         }
     }
 
+    // Fetch MetalLB events once for the service namespace
+    let (metallb_events, event_availability) = {
+        let event_gvk = GroupVersion::gv("", "v1").with_kind("Event");
+        let event_ar = ApiResource::from_gvk_with_plural(&event_gvk, "events");
+        let event_api: Api<DynamicObject> =
+            Api::namespaced_with(client.clone(), svc_namespace, &event_ar);
+        let field_selector = "involvedObject.kind=Service";
+        match list_with_field_selector_retry(&event_api, field_selector, "", "v1", "events").await {
+            Ok(items) => {
+                let events: Vec<MetalLBServiceEvent> = items
+                    .into_iter()
+                    .filter_map(|obj| {
+                        let source_component = obj
+                            .data
+                            .get("source")
+                            .and_then(|s| s.get("component"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from);
+                        let reporting_component = obj
+                            .data
+                            .get("reportingComponent")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                            .or_else(|| source_component.clone());
+                        let is_metallb = source_component
+                            .as_deref()
+                            .is_some_and(|c| METALLB_COMPONENTS.contains(&c));
+                        if !is_metallb {
+                            return None;
+                        }
+                        let involved = obj.data.get("involvedObject")?;
+                        let service_name = involved.get("name")?.as_str()?.to_string();
+                        let service_namespace = involved
+                            .get("namespace")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let involved_uid = involved
+                            .get("uid")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        Some(MetalLBServiceEvent {
+                            service_name,
+                            service_namespace,
+                            reason: obj
+                                .data
+                                .get("reason")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            message: obj
+                                .data
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            source_component,
+                            reporting_component,
+                            involved_uid,
+                            event_type: obj
+                                .data
+                                .get("type")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            last_timestamp: obj
+                                .data
+                                .get("lastTimestamp")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                        })
+                    })
+                    .collect();
+                (events, ApiAvailability::Available)
+            }
+            Err(w) => {
+                warnings.push(w);
+                (vec![], ApiAvailability::Unavailable)
+            }
+        }
+    };
+
     MetalLBInventory {
         available: true,
         pools,
@@ -1733,6 +1818,8 @@ async fn build_metallb_inventory(client: &Client, gk_map: &GroupKindMap) -> Meta
         namespace_labels,
         node_labels,
         observation,
+        metallb_events,
+        event_availability,
     }
 }
 
@@ -1948,6 +2035,8 @@ pub struct MetalLBInventory {
     pub namespace_labels: HashMap<String, BTreeMap<String, String>>,
     pub node_labels: HashMap<String, BTreeMap<String, String>>,
     pub observation: MetalLBObservation,
+    pub metallb_events: Vec<MetalLBServiceEvent>,
+    pub event_availability: ApiAvailability,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2071,6 +2160,8 @@ pub struct CorrelatedObservation {
 pub struct ObservationApiAvailability {
     pub l2_status: ApiAvailability,
     pub bgp_status: ApiAvailability,
+    pub bgp_peer: ApiAvailability,
+    pub bfd_profile: ApiAvailability,
     pub events: ApiAvailability,
     pub configuration_state: ApiAvailability,
 }
@@ -2442,9 +2533,9 @@ pub fn resolve_metallb_for_service(
     endpoint_nodes: &[String],
     ns_labels: &HashMap<String, BTreeMap<String, String>>,
     node_labels: &HashMap<String, BTreeMap<String, String>>,
-    service_events: (Vec<MetalLBServiceEvent>, ApiAvailability),
 ) -> MetalLBResult {
-    let (events, event_availability) = service_events;
+    let events: Vec<MetalLBServiceEvent> = metallb.metallb_events.clone();
+    let event_availability = metallb.event_availability;
     if !metallb.available || svc.svc_type != "LoadBalancer" {
         return MetalLBResult::default();
     }
@@ -2883,6 +2974,14 @@ pub fn resolve_metallb_for_service(
     }
 
     let has_bgp_ad = matched_ads.iter().any(|a| a.kind == "BGPAdvertisement");
+    let mut metallb_namespaces: Vec<String> = matched_pools
+        .iter()
+        .map(|p| p.pool.namespace.clone())
+        .chain(matched_ads.iter().map(|a| a.namespace.clone()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    metallb_namespaces.sort();
     let observation = correlate_metallb_observations(&CorrelateParams {
         svc_name: &svc.name,
         svc_namespace,
@@ -2892,6 +2991,7 @@ pub fn resolve_metallb_for_service(
         has_bgp_advertisement: has_bgp_ad,
         events,
         event_availability,
+        metallb_namespaces: &metallb_namespaces,
     });
 
     MetalLBResult {
@@ -3147,6 +3247,7 @@ const METALLB_COMPONENTS: &[&str] = &[
 ];
 
 /// Fetch MetalLB-related events for a specific service from its namespace.
+#[cfg(test)]
 pub async fn fetch_metallb_service_events(
     client: &Client,
     namespace: &str,
@@ -3171,11 +3272,13 @@ pub async fn fetch_metallb_service_events(
                         .get("source")
                         .and_then(|s| s.get("component"))
                         .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
                         .map(String::from);
                     let reporting_component = obj
                         .data
                         .get("reportingComponent")
                         .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
                         .map(String::from)
                         .or_else(|| source_component.clone());
                     let is_metallb = source_component
@@ -3243,6 +3346,7 @@ pub struct CorrelateParams<'a> {
     pub has_bgp_advertisement: bool,
     pub events: Vec<MetalLBServiceEvent>,
     pub event_availability: ApiAvailability,
+    pub metallb_namespaces: &'a [String],
 }
 
 pub fn correlate_metallb_observations(params: &CorrelateParams<'_>) -> CorrelatedObservation {
@@ -3288,7 +3392,7 @@ pub fn correlate_metallb_observations(params: &CorrelateParams<'_>) -> Correlate
         .iter()
         .map(|s| (s.name.clone(), s.namespace.clone()))
         .collect();
-    let bgp_nodes: Vec<BGPNodeStatus> = matched_bgp
+    let mut bgp_nodes: Vec<BGPNodeStatus> = matched_bgp
         .iter()
         .filter_map(|s| {
             Some(BGPNodeStatus {
@@ -3297,6 +3401,8 @@ pub fn correlate_metallb_observations(params: &CorrelateParams<'_>) -> Correlate
             })
         })
         .collect();
+    bgp_nodes.sort_by(|a, b| a.node.cmp(&b.node));
+    bgp_nodes.dedup_by(|a, b| a.node == b.node);
 
     // Cross-reference BGP peers by (namespace, name) from status resources
     let peer_refs: HashSet<(&str, &str)> = matched_bgp
@@ -3337,16 +3443,20 @@ pub fn correlate_metallb_observations(params: &CorrelateParams<'_>) -> Correlate
         })
         .cloned()
         .collect();
+    let mut filtered_events = filtered_events;
+    filtered_events.sort_by(|a, b| a.reason.cmp(&b.reason).then(a.message.cmp(&b.message)));
+    filtered_events.dedup_by(|a, b| {
+        a.reason == b.reason && a.message == b.message && a.last_timestamp == b.last_timestamp
+    });
 
-    // Filter ConfigurationState by metallb namespace (same as status resources)
-    let metallb_ns: Option<&str> = matched_l2
-        .first()
-        .map(|s| s.namespace.as_str())
-        .or_else(|| matched_bgp.first().map(|s| s.namespace.as_str()));
+    // Filter ConfigurationState by metallb namespaces (from matched pools/advertisements)
     let mut configuration_states: Vec<ConfigurationStateInfo> = observation
         .configuration_states
         .iter()
-        .filter(|cs| metallb_ns.is_none_or(|ns| cs.namespace == ns))
+        .filter(|cs| {
+            params.metallb_namespaces.is_empty()
+                || params.metallb_namespaces.contains(&cs.namespace)
+        })
         .cloned()
         .collect();
     configuration_states.sort_by(|a, b| a.namespace.cmp(&b.namespace).then(a.name.cmp(&b.name)));
@@ -3407,6 +3517,8 @@ pub fn correlate_metallb_observations(params: &CorrelateParams<'_>) -> Correlate
         api_availability: ObservationApiAvailability {
             l2_status: observation.l2_status_availability,
             bgp_status: observation.bgp_status_availability,
+            bgp_peer: observation.bgp_peer_availability,
+            bfd_profile: observation.bfd_profile_availability,
             events: params.event_availability,
             configuration_state: observation.config_state_availability,
         },
@@ -5339,6 +5451,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         }
     }
 
@@ -5402,6 +5516,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5411,7 +5527,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
         assert_eq!(result.pools.len(), 1);
@@ -5455,6 +5570,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5464,7 +5581,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(result.advertisements.is_empty());
         assert!(
@@ -5511,7 +5627,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.advertisements.len(), 1);
         assert_eq!(result.advertisements[0].kind, "BGPAdvertisement");
@@ -5556,6 +5671,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         // Wrong namespace
@@ -5566,7 +5683,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             result
@@ -5583,7 +5699,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(!result.warnings.iter().any(|w| w.contains("namespace")));
     }
@@ -5628,6 +5743,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5637,7 +5754,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(result.warnings.iter().any(|w| w.contains("serviceAllocation") && w.contains("service selector mismatch")));
     }
@@ -5666,6 +5782,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5675,7 +5793,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.requested_ips, vec!["192.168.1.100", "fd00::1"]);
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
@@ -5697,6 +5814,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5706,7 +5825,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
     }
@@ -5728,6 +5846,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5737,7 +5857,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(result.provider.is_none());
     }
@@ -5764,6 +5883,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5773,7 +5894,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         // Provider detected because assigned IP is in pool range, but
         // pool is NOT matched because autoAssign=false and no explicit pool/IP annotation
@@ -5808,6 +5928,8 @@ mod tests {
             namespace_labels: HashMap::new(),
             node_labels: HashMap::new(),
             observation: MetalLBObservation::default(),
+            metallb_events: vec![],
+            event_availability: ApiAvailability::Absent,
         };
 
         let result = resolve_metallb_for_service(
@@ -5817,7 +5939,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.pools.len(), 1);
         assert!(
@@ -5880,7 +6001,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             !result
@@ -5936,7 +6056,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             result
@@ -5983,7 +6102,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.advertisements.len(), 1);
         assert_eq!(result.advertisements[0].node_selector_status, "matched 1");
@@ -6020,7 +6138,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.advertisements[0].node_selector_status, "mismatch");
         assert!(result.advertisements[0].candidate_nodes.is_empty());
@@ -6058,7 +6175,6 @@ mod tests {
             &["master-1".to_string()],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             result
@@ -6076,7 +6192,6 @@ mod tests {
             &["worker-1".to_string()],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             !result
@@ -6119,7 +6234,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             result.pools.len() >= 2,
@@ -6154,7 +6268,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert!(
             result.pools.is_empty(),
@@ -6192,7 +6305,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.pools.len(), 2, "both same-priority pools shown");
     }
@@ -6279,7 +6391,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
         assert!(
@@ -6311,7 +6422,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
         assert_eq!(result.pools.len(), 1);
@@ -6356,7 +6466,6 @@ mod tests {
             &ep_nodes,
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.advertisements[0].node_selector_status, "mismatch");
         let has_mismatch_warning = result
@@ -6416,7 +6525,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.pools.len(), 1);
         assert_eq!(
@@ -6495,8 +6603,8 @@ mod tests {
 
         let spawned = tokio::spawn(async move {
             let mut handle = pin!(handle);
-            // Pool, L2, BGP = 3 LIST requests. No Namespace/Node.
-            for _ in 0..3 {
+            // Pool, L2, BGP = 3 LIST requests + 1 Event LIST. No Namespace/Node.
+            for _ in 0..4 {
                 let (req, send) = handle.next_request().await.expect("expected request");
                 rc.fetch_add(1, Ordering::Relaxed);
                 rp.lock().unwrap().push(req.uri().path().to_string());
@@ -6504,14 +6612,16 @@ mod tests {
             }
         });
 
-        let inv = build_metallb_inventory(&client, &gk_map).await;
+        let inv = build_metallb_inventory(&client, "default", &gk_map).await;
         spawned.await.unwrap();
 
         assert!(inv.available);
-        assert_eq!(request_count.load(Ordering::Relaxed), 3);
+        assert_eq!(request_count.load(Ordering::Relaxed), 4);
         let paths = request_paths.lock().unwrap();
+        // Check that no cluster-scoped Namespace LIST was made
+        // (the event path /api/v1/namespaces/default/events is expected)
         assert!(
-            !paths.iter().any(|p| p.contains("/namespaces")),
+            !paths.iter().any(|p| p == "/api/v1/namespaces"),
             "Should NOT list namespaces when no selectors: {:?}",
             *paths
         );
@@ -6592,12 +6702,17 @@ mod tests {
             rc.fetch_add(1, Ordering::Relaxed);
             rp.lock().unwrap().push(req.uri().path().to_string());
             send.send_response(mock_empty_list());
+            // Event LIST
+            let (req, send) = handle.next_request().await.expect("event list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            rp.lock().unwrap().push(req.uri().path().to_string());
+            send.send_response(mock_empty_list());
         });
 
-        let inv = build_metallb_inventory(&client, &gk_map).await;
+        let inv = build_metallb_inventory(&client, "default", &gk_map).await;
         spawned.await.unwrap();
 
-        assert_eq!(request_count.load(Ordering::Relaxed), 5);
+        assert_eq!(request_count.load(Ordering::Relaxed), 6);
         let paths = request_paths.lock().unwrap();
         assert!(
             paths.iter().any(|p| p.contains("/namespaces")),
@@ -6640,19 +6755,23 @@ mod tests {
             let (_req, send) = handle.next_request().await.expect("bgp list");
             rc.fetch_add(1, Ordering::Relaxed);
             send.send_response(mock_403_response());
+            // Event LIST → 403
+            let (_req, send) = handle.next_request().await.expect("event list");
+            rc.fetch_add(1, Ordering::Relaxed);
+            send.send_response(mock_403_response());
         });
 
-        let inv = build_metallb_inventory(&client, &gk_map).await;
+        let inv = build_metallb_inventory(&client, "default", &gk_map).await;
         spawned.await.unwrap();
 
         assert_eq!(
             request_count.load(Ordering::Relaxed),
-            3,
+            4,
             "403 should not retry: 1 request per API"
         );
         assert_eq!(
             inv.warnings.len(),
-            3,
+            4,
             "Each 403 should produce a ScanWarning"
         );
         assert!(
@@ -6757,6 +6876,7 @@ mod tests {
             has_bgp_advertisement,
             events,
             event_availability: ApiAvailability::Absent,
+            metallb_namespaces: &[],
         })
     }
 
@@ -7013,14 +7133,10 @@ mod tests {
     #[test]
     fn event_exact_component_matching() {
         // "metallb-speaker" yes, "service-controller" no
-        assert!(METALLB_COMPONENTS.iter().any(|mc| *mc == "metallb-speaker"));
-        assert!(
-            !METALLB_COMPONENTS
-                .iter()
-                .any(|mc| *mc == "service-controller")
-        );
-        assert!(METALLB_COMPONENTS.iter().any(|mc| *mc == "speaker"));
-        assert!(!METALLB_COMPONENTS.iter().any(|mc| *mc == "controller"));
+        assert!(METALLB_COMPONENTS.contains(&"metallb-speaker"));
+        assert!(!METALLB_COMPONENTS.contains(&"service-controller"));
+        assert!(METALLB_COMPONENTS.contains(&"speaker"));
+        assert!(!METALLB_COMPONENTS.contains(&"controller"));
     }
 
     #[test]
@@ -7037,6 +7153,7 @@ mod tests {
             has_bgp_advertisement: false,
             events: vec![],
             event_availability: ApiAvailability::Available,
+            metallb_namespaces: &[],
         });
         assert_eq!(
             result.api_availability.l2_status,
@@ -7150,7 +7267,6 @@ mod tests {
             &[],
             &metallb.namespace_labels,
             &metallb.node_labels,
-            (vec![], ApiAvailability::Absent),
         );
         assert_eq!(result.provider.as_deref(), Some("MetalLB"));
         // All observation APIs Absent with advertisements → "unknown"
@@ -7187,5 +7303,81 @@ mod tests {
         assert_eq!(cs.result.as_deref(), Some("Success"));
         assert_eq!(cs.conditions.len(), 1);
         assert_eq!(cs.conditions[0].condition_type, "Ready");
+    }
+
+    #[tokio::test]
+    async fn event_field_selector_403_single_request() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_403_response());
+        });
+
+        let (events, avail, warnings) =
+            fetch_metallb_service_events(&client, "default", "web", "uid-1").await;
+        spawned.await.unwrap();
+        assert!(events.is_empty());
+        assert_eq!(avail, ApiAvailability::Unavailable);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn event_field_selector_500_persistent_3_requests() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..3 {
+                let (_req, send) = handle.next_request().await.unwrap();
+                rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                send.send_response(mock_status_response(500, "Internal Server Error"));
+            }
+        });
+
+        let (events, avail, warnings) =
+            fetch_metallb_service_events(&client, "default", "web", "uid-1").await;
+        spawned.await.unwrap();
+        assert!(events.is_empty());
+        assert_eq!(avail, ApiAvailability::Unavailable);
+        assert!(!warnings.is_empty());
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn event_field_selector_500_then_200_recovery() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "default");
+        let rc = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc2 = rc.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_status_response(500, "Internal Server Error"));
+            let (_req, send) = handle.next_request().await.unwrap();
+            rc2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            send.send_response(mock_empty_list());
+        });
+
+        let (events, avail, _warnings) =
+            fetch_metallb_service_events(&client, "default", "web", "uid-1").await;
+        spawned.await.unwrap();
+        assert!(events.is_empty()); // empty list has no metallb events
+        assert_eq!(avail, ApiAvailability::Available);
+        assert_eq!(rc.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 }
