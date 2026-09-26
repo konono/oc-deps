@@ -557,23 +557,17 @@ pub fn validate_execution_plan_against_fresh(
         ));
     }
 
-    let saved_phase_meta: Vec<(u32, &str)> = saved_phases
+    let saved_phase_names: Vec<&str> = saved_phases.iter().map(|p| p.name.as_str()).collect();
+    let fresh_phase_names: Vec<&str> = fresh_phases.iter().map(|p| p.name.as_str()).collect();
+    for (i, (s, f)) in saved_phase_names
         .iter()
-        .map(|p| (p.phase, p.name.as_str()))
-        .collect();
-    let fresh_phase_meta: Vec<(u32, &str)> = fresh_phases
-        .iter()
-        .map(|p| (p.phase, p.name.as_str()))
-        .collect();
-    for (i, (s, f)) in saved_phase_meta
-        .iter()
-        .zip(fresh_phase_meta.iter())
+        .zip(fresh_phase_names.iter())
         .enumerate()
     {
         if s != f {
             errors.push(format!(
-                "Phase metadata drift at index {}: saved ({}, {:?}) vs fresh ({}, {:?})",
-                i, s.0, s.1, f.0, f.1
+                "Phase name drift at index {}: saved {:?} vs fresh {:?}",
+                i, s, f
             ));
         }
     }
@@ -594,10 +588,11 @@ pub fn validate_execution_plan_against_fresh(
             .phases
             .iter()
             .filter(|p| p.name != EXPLICIT_CLEANUP_PHASE_NAME)
-            .flat_map(|p| {
+            .enumerate()
+            .flat_map(|(idx, p)| {
                 p.resources.iter().map(move |r| {
                     (
-                        p.phase,
+                        (idx + 1) as u32,
                         p.name.clone(),
                         r.action.to_string(),
                         r.group.clone(),
@@ -1092,7 +1087,7 @@ mod tests {
             result
                 .unwrap_err()
                 .iter()
-                .any(|e| e.contains("Phase metadata drift"))
+                .any(|e| e.contains("Phase name drift"))
         );
     }
 
@@ -1243,12 +1238,9 @@ mod tests {
         );
         fresh.phases[0].phase = 99;
         let result = validate_execution_plan_against_fresh(&saved, &fresh);
-        assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .iter()
-                .any(|e| e.contains("Phase metadata drift"))
+            result.is_ok(),
+            "Phase number change alone is not drift (renumbering after explicit phase insertion)"
         );
     }
 

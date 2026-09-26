@@ -72,11 +72,17 @@ fn is_owned_by_deletion_closure(obj: &DynamicObject, closure: &DeletionClosureWi
                 ""
             };
             let ns = obj.metadata.namespace.as_deref();
-            let key = deletion_key(group, &oref.kind, ns, &oref.name);
-            if let Some(closure_uid) = closure.get(&key)
-                && (closure_uid.is_empty() || closure_uid == &oref.uid)
-            {
-                return true;
+            // Try namespaced key first, then cluster-scoped (owner may be cluster-scoped)
+            let keys = [
+                deletion_key(group, &oref.kind, ns, &oref.name),
+                deletion_key(group, &oref.kind, None, &oref.name),
+            ];
+            for key in &keys {
+                if let Some(closure_uid) = closure.get(key)
+                    && (closure_uid.is_empty() || closure_uid == &oref.uid)
+                {
+                    return true;
+                }
             }
         }
     }
