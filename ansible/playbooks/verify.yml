@@ -1,0 +1,616 @@
+---
+# デプロイ後の検証 Playbook
+# 全コンポーネントが正常状態であることを確認する
+#
+# Usage:
+#   ansible-playbook playbooks/verify.yml -i inventory/myenv
+#   ansible-playbook playbooks/verify.yml -i inventory/myenv --tags platform
+#   ansible-playbook playbooks/verify.yml -i inventory/myenv -e install_ogx=false  # OGX スキップ
+#
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    K8S_AUTH_KUBECONFIG: "{{ k8s_kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
+    KUBECONFIG: "{{ k8s_kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
+
+  tasks:
+    # ==================== Preflight ====================
+    - name: Verify oc login
+      ansible.builtin.command: oc whoami
+      changed_when: false
+      tags: [always]
+
+    - name: Get cluster domain
+      ansible.builtin.command: >-
+        oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}'
+      changed_when: false
+      register: _cluster_domain
+      tags: [always]
+
+    - name: Set cluster_domain
+      ansible.builtin.set_fact:
+        cluster_domain: "{{ _cluster_domain.stdout }}"
+      tags: [always]
+
+    # ==================== Teardown Target Operators ====================
+    # oc-deps teardown batch の対象 15 operator が全て存在することを確認
+    - name: "Verify: Teardown target operator Subscriptions present"
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: "{{ item.sub }}"
+        namespace: "{{ item.ns }}"
+      register: _target_sub
+      failed_when: _target_sub.resources | length == 0
+      loop:
+        - { sub: rhods-operator, ns: redhat-ods-operator }
+        - { sub: rhbk-operator, ns: keycloak }
+        - { sub: leader-worker-set, ns: openshift-leaderworkerset }
+        - { sub: job-set, ns: openshift-jobset }
+        - { sub: kueue-operator, ns: openshift-kueue }
+        - { sub: servicemeshoperator3, ns: openshift-servicemesh }
+        - { sub: nfd, ns: openshift-nfd }
+        - { sub: gpu-operator-certified, ns: nvidia-gpu-operator }
+        - { sub: openshift-cert-manager-operator, ns: cert-manager-operator }
+        - { sub: rhcl-operator, ns: openshift-rhcl }
+        - { sub: authorino-operator-stable-redhat-operators-openshift-marketplace, ns: openshift-rhcl }
+        - { sub: dns-operator-stable-redhat-operators-openshift-marketplace, ns: openshift-rhcl }
+        - { sub: limitador-operator-stable-redhat-operators-openshift-marketplace, ns: openshift-rhcl }
+        - { sub: cluster-observability-operator, ns: openshift-cluster-observability-operator }
+        - { sub: opentelemetry-product, ns: openshift-opentelemetry-operator }
+      loop_control:
+        label: "{{ item.sub }}"
+      tags: [teardown_targets]
+
+    # ==================== Infrastructure ====================
+    - name: "Verify: LVM Operator CSV"
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: lvms-operator
+        namespace: openshift-lvm-storage
+      register: _lvm_sub
+      failed_when: >-
+        _lvm_sub.resources | length == 0 or
+        _lvm_sub.resources[0].status.installedCSV is not defined
+      when: install_lvm | default(true)
+      tags: [infra, lvm]
+
+    - name: "Verify: LVMCluster Ready"
+      kubernetes.core.k8s_info:
+        api_version: lvm.topolvm.io/v1alpha1
+        kind: LVMCluster
+        name: lvmcluster
+        namespace: openshift-lvm-storage
+      register: _lvmcluster
+      failed_when: >-
+        _lvmcluster.resources | length == 0 or
+        _lvmcluster.resources[0].status.state | default('') != 'Ready'
+      when: install_lvm | default(true)
+      tags: [infra, lvm]
+
+    - name: "Verify: MetalLB speaker running"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: metallb-system
+        label_selectors:
+          - component=speaker
+        field_selectors:
+          - status.phase=Running
+      register: _metallb
+      failed_when: _metallb.resources | length == 0
+      when: install_metallb | default(true)
+      tags: [infra, metallb]
+
+    # ==================== Dependency Operators ====================
+    - name: "Verify: Dependency Operator CSVs"
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace }}"
+      register: _dep_sub
+      failed_when: >-
+        _dep_sub.resources | length == 0 or
+        _dep_sub.resources[0].status.installedCSV is not defined
+      loop:
+        - { name: openshift-cert-manager-operator, namespace: cert-manager-operator, flag: install_cert_manager }
+        - { name: servicemeshoperator3, namespace: openshift-servicemesh, flag: install_servicemesh }
+        - { name: nfd, namespace: openshift-nfd, flag: install_nfd }
+        - { name: gpu-operator-certified, namespace: nvidia-gpu-operator, flag: install_gpu_operator }
+        - { name: rhcl-operator, namespace: openshift-rhcl, flag: install_rhcl }
+        - { name: kueue-operator, namespace: openshift-kueue, flag: install_kueue }
+        - { name: job-set, namespace: openshift-jobset, flag: install_jobset }
+        - { name: leader-worker-set, namespace: openshift-leaderworkerset, flag: install_leaderworkerset }
+      loop_control:
+        label: "{{ item.name }}"
+      when: lookup('vars', item.flag, default=true)
+      tags: [deps]
+
+    # ==================== Storage ====================
+    - name: "Verify: NooBaa Ready"
+      kubernetes.core.k8s_info:
+        api_version: noobaa.io/v1alpha1
+        kind: NooBaa
+        name: noobaa
+        namespace: openshift-storage
+      register: _noobaa
+      failed_when: >-
+        _noobaa.resources | length == 0 or
+        _noobaa.resources[0].status.phase | default('') != 'Ready'
+      when: install_odf | default(true)
+      tags: [storage, odf]
+
+    # ==================== Platform ====================
+    - name: "Verify: RHOAI Operator CSV"
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: rhods-operator
+        namespace: redhat-ods-operator
+      register: _rhoai_sub
+      failed_when: >-
+        _rhoai_sub.resources | length == 0 or
+        _rhoai_sub.resources[0].status.installedCSV is not defined
+      when: install_rhoai | default(true)
+      tags: [platform, rhoai]
+
+    - name: "Verify: DataScienceCluster Ready"
+      kubernetes.core.k8s_info:
+        api_version: datasciencecluster.opendatahub.io/v2
+        kind: DataScienceCluster
+        name: default-dsc
+      register: _dsc
+      failed_when: >-
+        _dsc.resources | length == 0 or
+        _dsc.resources[0].status.phase | default('') != 'Ready'
+      when: install_rhoai | default(true)
+      tags: [platform, rhoai]
+
+    - name: "Verify: MaaS Gateway Programmed"
+      kubernetes.core.k8s_info:
+        api_version: gateway.networking.k8s.io/v1
+        kind: Gateway
+        name: maas-default-gateway
+        namespace: openshift-ingress
+      register: _gw
+      failed_when: >-
+        _gw.resources | length == 0 or
+        (_gw.resources[0].status.conditions | default([])
+         | selectattr('type', 'equalto', 'Programmed')
+         | selectattr('status', 'equalto', 'True')
+         | list | length == 0)
+      when: install_rhoai | default(true)
+      tags: [platform, rhoai]
+
+    - name: "Verify: RHOAI Dashboard Deployment"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: rhods-dashboard
+        namespace: redhat-ods-applications
+      register: _dashboard
+      failed_when: >-
+        _dashboard.resources | length == 0 or
+        (_dashboard.resources[0].status.readyReplicas | default(0)) == 0
+      when: install_rhoai | default(true)
+      tags: [platform, rhoai]
+
+    - name: "Verify: Keycloak Ready"
+      kubernetes.core.k8s_info:
+        api_version: k8s.keycloak.org/v2beta1
+        kind: Keycloak
+        name: keycloak
+        namespace: "{{ keycloak_namespace | default('keycloak') }}"
+      register: _kc
+      failed_when: >-
+        _kc.resources | length == 0 or
+        (_kc.resources[0].status.conditions | default([])
+         | selectattr('type', 'equalto', 'Ready')
+         | selectattr('status', 'equalto', 'True')
+         | list | length == 0)
+      when: install_keycloak | default(true)
+      tags: [platform, keycloak]
+
+    # ==================== Integration ====================
+    - name: "Verify: Keycloak user-group assignments"
+      block:
+        - name: "Verify: Get Keycloak admin token"
+          ansible.builtin.include_tasks: "{{ ansible_root }}/roles/keycloak/tasks/_get_kc_token.yml"
+          vars:
+            keycloak_url: "https://keycloak-{{ keycloak_namespace | default('keycloak') }}.{{ cluster_domain }}"
+
+        - name: "Verify: Fetch Keycloak user groups"
+          ansible.builtin.uri:
+            url: "https://keycloak-{{ keycloak_namespace | default('keycloak') }}.{{ cluster_domain }}/admin/realms/{{ keycloak_realm | default('maas') }}/users?username={{ item.username }}&exact=true"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ _kc_token }}"
+            validate_certs: false
+          register: _verify_users
+          loop: "{{ keycloak_users | default([]) }}"
+          loop_control:
+            label: "{{ item.username }}"
+
+        - name: "Verify: Get group memberships"
+          ansible.builtin.uri:
+            url: "https://keycloak-{{ keycloak_namespace | default('keycloak') }}.{{ cluster_domain }}/admin/realms/{{ keycloak_realm | default('maas') }}/users/{{ item.json[0].id }}/groups"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ _kc_token }}"
+            validate_certs: false
+          register: _verify_memberships
+          loop: "{{ _verify_users.results }}"
+          loop_control:
+            label: "{{ item.item.username }}"
+          when: item.json | length > 0
+
+        - name: "Verify: Check each user belongs to expected groups"
+          ansible.builtin.assert:
+            that:
+              - _actual_groups is superset(item.item.item.groups | default([]))
+            fail_msg: >-
+              {{ item.item.item.username }} missing groups:
+              expected {{ item.item.item.groups | default([]) }},
+              actual {{ _actual_groups }}
+            quiet: true
+          vars:
+            _actual_groups: "{{ item.json | default([]) | map(attribute='name') | list }}"
+          loop: "{{ _verify_memberships.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.item.username }}"
+          when: item.skipped is not defined or not item.skipped
+      when: install_keycloak | default(true)
+      tags: [integration, keycloak_users]
+
+    - name: "Verify: Keycloak OAuth IdP registered"
+      ansible.builtin.command: >-
+        oc get oauth cluster -o jsonpath='{.spec.identityProviders[*].name}'
+      register: _oauth_idps
+      changed_when: false
+      failed_when: "'keycloak' not in _oauth_idps.stdout"
+      when: (install_keycloak | default(true)) and (integrate_keycloak_oauth | default(true))
+      tags: [integration, keycloak_oauth]
+
+    - name: "Verify: AITenant exists"
+      kubernetes.core.k8s_info:
+        api_version: maas.opendatahub.io/v1alpha1
+        kind: AITenant
+      register: _aitenant
+      failed_when: _aitenant.resources | length == 0
+      when: install_rhoai | default(true)
+      tags: [platform, rhoai]
+
+    # ==================== Workloads ====================
+    - name: "Verify: LLMInferenceService Ready"
+      kubernetes.core.k8s_info:
+        api_version: serving.kserve.io/v1alpha2
+        kind: LLMInferenceService
+        name: "{{ item.key }}"
+        namespace: "{{ item.value.namespace | default(model_defaults.namespace | default('llm-serving')) }}"
+      register: _lis
+      failed_when: >-
+        _lis.resources | length == 0 or
+        (_lis.resources[0].status.conditions | default([])
+         | selectattr('type', 'equalto', 'Ready')
+         | selectattr('status', 'equalto', 'True')
+         | list | length == 0)
+      loop: "{{ models | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - install_llm_serving | default(true)
+        - (item.value.state | default('present')) == 'present'
+      tags: [workload, llm]
+
+    - name: "Verify: MaaS API healthy"
+      ansible.builtin.uri:
+        url: "https://maas.{{ cluster_domain }}/maas-api/health"
+        validate_certs: false
+        return_content: true
+      register: _maas_health
+      failed_when: "'healthy' not in (_maas_health.content | default(''))"
+      when: install_rhoai | default(true)
+      tags: [workload, maas]
+
+    - name: "Verify: MaaSModelRef exists"
+      kubernetes.core.k8s_info:
+        api_version: maas.opendatahub.io/v1alpha1
+        kind: MaaSModelRef
+        name: "{{ item.key }}"
+        namespace: "{{ item.value.namespace | default(model_defaults.namespace | default('llm-serving')) }}"
+      register: _modelref
+      failed_when: _modelref.resources | length == 0
+      loop: "{{ models | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - install_maas_resources | default(true)
+        - (item.value.state | default('present')) == 'present'
+      tags: [workload, maas]
+
+    - name: "Verify: MaaS Subscription Active"
+      kubernetes.core.k8s_info:
+        api_version: maas.opendatahub.io/v1alpha1
+        kind: MaaSSubscription
+        namespace: models-as-a-service
+      register: _subscriptions
+      failed_when: >-
+        _subscriptions.resources | length == 0 or
+        (_subscriptions.resources
+         | selectattr('status.phase', 'defined')
+         | selectattr('status.phase', 'equalto', 'Active')
+         | list | length == 0)
+      when: install_maas_resources | default(true) and install_keycloak | default(true)
+      tags: [workload, maas]
+
+    - name: "Verify: Get maas-api Pod name"
+      ansible.builtin.command: >-
+        oc get pods -n redhat-ai-gateway-infra
+        -l app.kubernetes.io/name=maas-api
+        -o jsonpath='{.items[0].metadata.name}'
+      register: _maas_pod
+      changed_when: false
+      when: install_maas_resources | default(true) and install_keycloak | default(true)
+      tags: [workload, maas]
+
+    - name: "Verify: MaaS API Key issuable"
+      ansible.builtin.command: >-
+        oc exec -n redhat-ai-gateway-infra
+        {{ _maas_pod.stdout }}
+        -- curl -sk -o /dev/null -w '%{http_code}'
+        -X POST https://localhost:8443/v1/api-keys
+        -H 'X-MaaS-Username: admin1'
+        -H 'X-MaaS-Group: ["maas-admins"]'
+        -H 'Content-Type: application/json'
+        -d '{"name":"verify-test"}'
+      register: _apikey_test
+      failed_when: _apikey_test.stdout not in ['200', '201']
+      changed_when: false
+      when:
+        - install_maas_resources | default(true)
+        - install_keycloak | default(true)
+        - _maas_pod.stdout | default('') | length > 0
+      tags: [workload, maas]
+
+    - name: "Verify: MLflow Available"
+      kubernetes.core.k8s_info:
+        api_version: mlflow.opendatahub.io/v1
+        kind: MLflow
+        name: mlflow
+        namespace: redhat-ods-applications
+      register: _mlflow
+      failed_when: >-
+        _mlflow.resources | length == 0 or
+        (_mlflow.resources[0].status.conditions | default([])
+         | selectattr('type', 'equalto', 'Available')
+         | selectattr('status', 'equalto', 'True')
+         | list | length == 0)
+      when: install_mlflow | default(true)
+      tags: [workload, mlflow]
+
+    - name: "Verify: OGXServer Ready"
+      kubernetes.core.k8s_info:
+        api_version: ogx.io/v1beta1
+        kind: OGXServer
+        name: ogx-server
+        namespace: redhat-ods-applications
+      register: _ogx
+      failed_when: >-
+        _ogx.resources | length == 0 or
+        _ogx.resources[0].status.phase | default('') != 'Ready'
+      when: install_ogx | default(true)
+      tags: [workload, ogx]
+
+    - name: "Verify: NeMo Guardrails Ready"
+      kubernetes.core.k8s_info:
+        api_version: trustyai.opendatahub.io/v1alpha1
+        kind: NemoGuardrails
+        name: nemo-guardrails
+        namespace: redhat-ods-applications
+      register: _guardrails
+      failed_when: >-
+        _guardrails.resources | length == 0 or
+        _guardrails.resources[0].status.phase | default('') != 'Ready'
+      when: install_guardrails | default(true)
+      tags: [workload, guardrails]
+
+    # ==================== Health: Routes ====================
+    - name: "Verify: No HostAlreadyClaimed routes"
+      ansible.builtin.command: >-
+        oc get route --all-namespaces -o jsonpath='{range .items[*]}{range .status.ingress[*]}{range .conditions[*]}{.reason}{"\t"}{.host}{"\t"}{.message}{"\n"}{end}{end}{end}'
+      register: _all_route_conditions
+      changed_when: false
+      tags: [health, routes]
+
+    - name: "Verify: Check routes for HostAlreadyClaimed"
+      ansible.builtin.assert:
+        that:
+          - _claimed_lines | length == 0
+        fail_msg: >-
+          HostAlreadyClaimed routes found:
+          {% for line in _claimed_lines %}{{ line }}; {% endfor %}
+          Remove the conflicting route.
+        quiet: true
+      vars:
+        _claimed_lines: "{{ _all_route_conditions.stdout_lines | default([]) | select('search', 'HostAlreadyClaimed') | list }}"
+      tags: [health, routes]
+
+    # ==================== Health: Pods ====================
+    - name: "Verify: No unhealthy pods in managed namespaces"
+      ansible.builtin.command: >-
+        oc get pods -n {{ item.name }} --no-headers
+        --field-selector=status.phase!=Running,status.phase!=Succeeded
+      register: _unhealthy_pods
+      changed_when: false
+      failed_when: false
+      loop:
+        - { name: "{{ keycloak_namespace | default('keycloak') }}", flag: install_keycloak }
+        - { name: openshift-lvm-storage, flag: install_lvm }
+        - { name: openshift-storage, flag: install_odf }
+        - { name: redhat-ods-applications, flag: install_rhoai }
+        - { name: redhat-ai-gateway-infra, flag: install_rhoai }
+        - { name: llm-serving, flag: install_llm_serving }
+        - { name: openshift-ingress, flag: always }
+      loop_control:
+        label: "{{ item.name }}"
+      when: lookup('vars', item.flag, default=true) or item.flag == 'always'
+      tags: [health, pods]
+
+    - name: "Verify: Assert no unhealthy pods"
+      ansible.builtin.assert:
+        that:
+          - item.stdout_lines | default([]) | length == 0
+        fail_msg: >-
+          Unhealthy pods in {{ item.item.name }}:
+          {{ item.stdout_lines | default([]) | join(', ') }}
+        quiet: true
+      loop: "{{ _unhealthy_pods.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name | default('unknown') }}"
+      when: item.skipped is not defined or not item.skipped
+      tags: [health, pods]
+
+    # ==================== Health: LVM VolumeGroups ====================
+    - name: "Verify: LVMCluster VolumeGroupsReady"
+      kubernetes.core.k8s_info:
+        api_version: lvm.topolvm.io/v1alpha1
+        kind: LVMCluster
+        name: lvmcluster
+        namespace: openshift-lvm-storage
+      register: _lvmcluster_vg
+      failed_when: >-
+        _lvmcluster_vg.resources | length == 0 or
+        (_lvmcluster_vg.resources[0].status.conditions | default([])
+         | selectattr('type', 'equalto', 'VolumeGroupsReady')
+         | selectattr('status', 'equalto', 'True')
+         | list | length == 0)
+      when: install_lvm | default(true)
+      tags: [health, lvm]
+
+    # ==================== Namespaces ====================
+    - name: "Verify: Expected namespaces exist"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: "{{ item.name }}"
+      register: _ns
+      failed_when: _ns.resources | length == 0
+      loop:
+        - { name: openshift-lvm-storage, flag: install_lvm }
+        - { name: metallb-system, flag: install_metallb }
+        - { name: openshift-storage, flag: install_odf }
+        - { name: redhat-ods-applications, flag: install_rhoai }
+        - { name: redhat-ods-operator, flag: install_rhoai }
+        - { name: redhat-ai-gateway-infra, flag: install_rhoai }
+        - { name: "{{ keycloak_namespace | default('keycloak') }}", flag: install_keycloak }
+        - { name: group-sync-operator, flag: install_keycloak }
+        - { name: llm-serving, flag: install_llm_serving }
+        - { name: mlflow-workspace, flag: install_mlflow }
+      loop_control:
+        label: "{{ item.name }}"
+      when: lookup('vars', item.flag, default=true)
+      tags: [namespaces]
+
+    # ==================== Status Summary ====================
+    - name: Get Console URL
+      ansible.builtin.command: >-
+        oc get route console -n openshift-console -o jsonpath='https://{.spec.host}'
+      register: _console_url
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Check for saved credentials
+      ansible.builtin.find:
+        paths: "{{ ansible_root }}/.credentials"
+        patterns: "*.password"
+      register: _cred_files
+      tags: [always]
+
+    - name: Get Dashboard URL
+      ansible.builtin.command: >-
+        oc get route rhods-dashboard -n redhat-ods-applications -o jsonpath='https://{.spec.host}'
+      register: _dashboard_url
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Get Keycloak URL
+      ansible.builtin.command: >-
+        oc get route keycloak -n {{ keycloak_namespace | default('keycloak') }} -o jsonpath='https://{.spec.host}'
+      register: _kc_url
+      changed_when: false
+      failed_when: false
+      when: install_keycloak | default(true)
+      tags: [always]
+
+    - name: Check Keycloak admin secret exists
+      ansible.builtin.command: >-
+        oc get secret keycloak-initial-admin -n {{ keycloak_namespace | default('keycloak') }}
+        -o jsonpath='{.metadata.name}'
+      register: _kc_creds_raw
+      changed_when: false
+      failed_when: false
+      when: install_keycloak | default(true)
+      tags: [always]
+
+    - name: Get MaaS endpoint
+      ansible.builtin.command: >-
+        oc get route maas-gateway -n openshift-ingress -o jsonpath='https://{.spec.host}'
+      register: _maas_url
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Get MLflow URL
+      ansible.builtin.command: >-
+        oc get mlflow mlflow -n redhat-ods-applications -o jsonpath='{.status.url}'
+      register: _mlflow_url
+      changed_when: false
+      failed_when: false
+      when: install_mlflow | default(true)
+      tags: [always]
+
+    - name: Check for API Key file
+      ansible.builtin.stat:
+        path: "{{ ansible_root }}/.vllm-token"
+      register: _vllm_token_file
+      tags: [always]
+
+    - name: Display environment summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+            環境サマリー
+          ========================================
+
+          Console:     {{ _console_url.stdout | default('(未取得)') }}
+          Dashboard:   {{ _dashboard_url.stdout | default('(未デプロイ)') }}
+          Keycloak:    {{ _kc_url.stdout | default('(未デプロイ)') }}
+          {% if _kc_creds_raw.stdout | default('') | length > 0 %}
+          KC Admin:    oc get secret keycloak-initial-admin -n {{ keycloak_namespace | default('keycloak') }} -o jsonpath='{.data.password}' | base64 -d
+          {% endif %}
+          MaaS API:    {{ _maas_url.stdout | default('(未デプロイ)') }}/llm-serving/{{ llm_model_name | default((models | default({}) | dict2items | selectattr('value.state', 'defined') | selectattr('value.state', 'equalto', 'present') | map(attribute='key') | first | default('unknown'))) }}/v1/chat/completions
+          {% if _mlflow_url is defined and _mlflow_url.stdout | default('') | length > 0 %}
+          MLflow:      {{ _mlflow_url.stdout }}
+          {% endif %}
+          {% if _vllm_token_file.stat.exists | default(false) %}
+          API Key:     cat {{ ansible_root }}/.vllm-token
+          {% endif %}
+          {% if _cred_files.files | default([]) | length > 0 %}
+
+          --- Saved Credentials ---
+          {% for f in _cred_files.files %}
+          {{ f.path | basename | replace('.password', '') }}:  cat {{ f.path }}
+          {% endfor %}
+          {% endif %}
+      tags: [always]
+
+    # ==================== Summary ====================
+    - name: All checks passed
+      ansible.builtin.debug:
+        msg: "All verification checks passed"
+      tags: [always]

@@ -265,7 +265,7 @@ pub async fn build_kind_lookup_cached(
     no_cache: bool,
 ) -> Result<(KindMap, GvrMap, GroupKindMap, GvkMap)> {
     let path = discovery_cache_path(config);
-    // apply-set refreshes this cache in its first child process, then marks the
+    // batch refreshes this cache in its first child process, then marks the
     // remaining children so they can reuse that same snapshot for the whole run.
     let reuse_for_apply_set = std::env::var_os(APPLY_SET_REUSE_CACHE_ENV).is_some();
 

@@ -57,7 +57,7 @@ use crate::teardown::journal::{
 use crate::teardown::permit::MutationGate;
 use crate::teardown::planner::{
     DecisionPolicy, generate_teardown_plan, load_plan_from_file, print_teardown_plan,
-    resolve_operator_targets, save_as_saved_plan, save_plan_to_file,
+    resolve_operator_targets, save_plan_to_file,
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
 
@@ -83,9 +83,87 @@ struct ApplySetDefaults {
     #[serde(default)]
     preserve: Vec<String>,
     #[serde(default)]
-    force: bool,
-    #[serde(default)]
     non_interactive: bool,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteResourceSpec {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+}
+
+impl DeleteResourceSpec {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.kind.trim().is_empty() || self.kind != self.kind.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid kind {:?} (empty or whitespace)",
+                self.kind
+            );
+        }
+        if self.name.trim().is_empty() || self.name != self.name.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid name {:?} (empty or whitespace)",
+                self.name
+            );
+        }
+        if self.group != self.group.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid group {:?} (whitespace)",
+                self.group
+            );
+        }
+        const FORBIDDEN: &[&str] = &[
+            "Namespace",
+            "PersistentVolume",
+            "PersistentVolumeClaim",
+            "CustomResourceDefinition",
+            "APIService",
+        ];
+        if FORBIDDEN.contains(&self.kind.as_str()) {
+            anyhow::bail!(
+                "delete_resources: kind {} is forbidden (use --prune-crds for CRDs)",
+                self.kind
+            );
+        }
+        Ok(())
+    }
+
+    pub fn to_cli_arg(&self) -> String {
+        let ns = self.namespace.as_deref().unwrap_or("-");
+        if self.group.is_empty() {
+            format!("{}/{}/{}", self.kind, ns, self.name)
+        } else {
+            format!("{}/{}/{}/{}", self.group, self.kind, ns, self.name)
+        }
+    }
+
+    pub fn parse_cli_arg(s: &str) -> anyhow::Result<Self> {
+        let parts: Vec<&str> = s.split('/').collect();
+        let (group, kind, ns_str, name) = match parts.len() {
+            3 => ("", parts[0], parts[1], parts[2]),
+            4 => (parts[0], parts[1], parts[2], parts[3]),
+            _ => anyhow::bail!(
+                "Invalid delete-resource spec '{}': expected Kind/ns/name or group/Kind/ns/name",
+                s
+            ),
+        };
+        let namespace = if ns_str == "-" {
+            None
+        } else {
+            Some(ns_str.to_string())
+        };
+        let spec = Self {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            namespace,
+            name: name.to_string(),
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -97,16 +175,16 @@ struct ApplySetEntry {
     #[serde(default)]
     preserve: Vec<String>,
     #[serde(default)]
-    force: Option<bool>,
-    #[serde(default)]
     non_interactive: Option<bool>,
+    #[serde(default)]
+    delete_resources: Vec<DeleteResourceSpec>,
 }
 
 struct EffectiveApplySetOptions {
     approve_delete: Vec<String>,
     preserve: Vec<String>,
-    force: bool,
     non_interactive: bool,
+    delete_resources: Vec<DeleteResourceSpec>,
 }
 
 impl ApplySetEntry {
@@ -124,46 +202,29 @@ impl ApplySetEntry {
         EffectiveApplySetOptions {
             approve_delete,
             preserve,
-            force: self.force.unwrap_or(defaults.force),
             non_interactive: self.non_interactive.unwrap_or(defaults.non_interactive),
-        }
-    }
-}
-
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum ApplySetDeleteApprovals {
-    Structured(StructuredDeleteApprovals),
-    Legacy(Vec<String>),
-}
-
-impl Default for ApplySetDeleteApprovals {
-    fn default() -> Self {
-        Self::Structured(StructuredDeleteApprovals::default())
-    }
-}
-
-impl ApplySetDeleteApprovals {
-    fn cli_args(&self) -> Vec<String> {
-        match self {
-            Self::Structured(approvals) => approvals
-                .scopes
-                .iter()
-                .map(|scope| scope.cli_arg().to_string())
-                .chain(approvals.resources.iter().cloned())
-                .collect(),
-            Self::Legacy(approvals) => approvals.clone(),
+            delete_resources: self.delete_resources.clone(),
         }
     }
 }
 
 #[derive(Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StructuredDeleteApprovals {
+struct ApplySetDeleteApprovals {
     #[serde(default)]
     scopes: Vec<ApplySetApprovalScope>,
     #[serde(default)]
     resources: Vec<String>,
+}
+
+impl ApplySetDeleteApprovals {
+    fn cli_args(&self) -> Vec<String> {
+        self.scopes
+            .iter()
+            .map(|scope| scope.cli_arg().to_string())
+            .chain(self.resources.iter().cloned())
+            .collect()
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -697,6 +758,371 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
     }
 }
 
+fn build_deletion_closure_from_teardown_plan(
+    plan: &crate::teardown::planner::TeardownPlan,
+) -> crate::teardown::ref_guard::DeletionClosureWithUid {
+    use crate::teardown::planner::Action;
+    use crate::teardown::ref_guard::{DeletionClosureWithUid, deletion_key};
+    let mut closure = DeletionClosureWithUid::new();
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            let rid = match action {
+                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => resource,
+                _ => continue,
+            };
+            let key = deletion_key(&rid.group, &rid.kind, rid.namespace.as_deref(), &rid.name);
+            if let Some(uid) = &rid.uid {
+                closure.insert(key, uid.clone());
+            }
+        }
+    }
+    closure
+}
+
+async fn resolve_explicit_delete_targets(
+    client: &::kube::Client,
+    specs: &[DeleteResourceSpec],
+    plan: &crate::teardown::planner::TeardownPlan,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<Vec<crate::teardown::plan::ExplicitDeleteTarget>> {
+    use crate::teardown::ref_guard;
+    use ::kube::api::{Api, DynamicObject};
+
+    // Pass 1: GET all explicit targets to capture UIDs
+    struct ResolvedSpec {
+        spec: DeleteResourceSpec,
+        uid: String,
+        version: String,
+    }
+    let mut resolved = Vec::new();
+    for spec in specs {
+        let gk = (spec.group.clone(), spec.kind.clone());
+        let Some(info) = gk_map.get(&gk) else {
+            bail!(
+                "delete-resource: {}/{} not found in API discovery (group={:?})",
+                spec.kind,
+                spec.name,
+                spec.group
+            );
+        };
+
+        if info.namespaced && spec.namespace.is_none() {
+            bail!(
+                "delete-resource: {}/{} is namespaced but no namespace specified",
+                spec.kind,
+                spec.name
+            );
+        }
+        if !info.namespaced && spec.namespace.is_some() {
+            bail!(
+                "delete-resource: {}/{} is cluster-scoped but namespace {:?} specified",
+                spec.kind,
+                spec.name,
+                spec.namespace
+            );
+        }
+
+        let gvk = ::kube::api::GroupVersionKind {
+            group: info.group.clone(),
+            version: info.version.clone(),
+            kind: spec.kind.clone(),
+        };
+        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+
+        let api: Api<DynamicObject> = if let Some(ref ns) = spec.namespace {
+            Api::namespaced_with(client.clone(), ns, &ar)
+        } else {
+            Api::all_with(client.clone(), &ar)
+        };
+
+        let obj = match crate::kube::scanner::get_with_retry(
+            &api,
+            &spec.name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err(w) if w.is_not_found() => {
+                bail!(
+                    "delete-resource: {}/{} not found in cluster",
+                    spec.kind,
+                    spec.name
+                );
+            }
+            Err(w) => {
+                bail!(
+                    "delete-resource: failed to GET {}/{}: {}",
+                    spec.kind,
+                    spec.name,
+                    w
+                );
+            }
+        };
+
+        let uid = obj
+            .metadata
+            .uid
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!("delete-resource: {}/{} has no UID", spec.kind, spec.name)
+            })?
+            .to_string();
+
+        resolved.push(ResolvedSpec {
+            spec: spec.clone(),
+            uid,
+            version: info.version.clone(),
+        });
+    }
+
+    // Pass 2: Build closure with bound UIDs, then run ref guard
+    let mut deletion_closure = build_deletion_closure_from_teardown_plan(plan);
+    for r in &resolved {
+        let key = ref_guard::deletion_key(
+            &r.spec.group,
+            &r.spec.kind,
+            r.spec.namespace.as_deref(),
+            &r.spec.name,
+        );
+        deletion_closure.insert(key, r.uid.clone());
+    }
+
+    let mut targets = Vec::new();
+    for r in &resolved {
+        let target_rid = crate::kube::resource::ResourceId {
+            group: r.spec.group.clone(),
+            version: r.version.clone(),
+            kind: r.spec.kind.clone(),
+            namespace: r.spec.namespace.clone(),
+            name: r.spec.name.clone(),
+            uid: Some(r.uid.clone()),
+        };
+
+        let scan =
+            ref_guard::check_inbound_refs(client, &target_rid, &deletion_closure, gk_map).await?;
+
+        if !scan.blockers.is_empty() {
+            let blocker_list: Vec<String> = scan
+                .blockers
+                .iter()
+                .map(|b| format!("{}/{}({})", b.resource.kind, b.resource.name, b.ref_field))
+                .collect();
+            bail!(
+                "delete-resource: {}/{} is referenced by {} resource(s) outside the deletion plan: {}. \
+                 Cannot safely delete a shared resource.",
+                r.spec.kind,
+                r.spec.name,
+                scan.blockers.len(),
+                blocker_list.join(", ")
+            );
+        }
+
+        if !scan.coverage.scan_complete {
+            bail!(
+                "delete-resource: inbound reference scan for {}/{} is incomplete — cannot verify safety",
+                r.spec.kind,
+                r.spec.name
+            );
+        }
+
+        let inbound_refs = ref_guard::to_inbound_ref_identities(&scan);
+
+        targets.push(crate::teardown::plan::ExplicitDeleteTarget {
+            group: r.spec.group.clone(),
+            kind: r.spec.kind.clone(),
+            namespace: r.spec.namespace.clone(),
+            name: r.spec.name.clone(),
+            uid: r.uid.clone(),
+            reason: "config explicit".to_string(),
+            inbound_refs_at_plan: inbound_refs,
+            ref_scan_coverage: scan.coverage,
+        });
+    }
+
+    Ok(targets)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum BatchOutcome {
+    Succeeded,
+    Skipped,
+    Failed(i32),
+}
+
+fn batch_summary(results: &[(String, BatchOutcome)]) -> (usize, usize, usize) {
+    let s = results
+        .iter()
+        .filter(|(_, o)| *o == BatchOutcome::Succeeded)
+        .count();
+    let sk = results
+        .iter()
+        .filter(|(_, o)| *o == BatchOutcome::Skipped)
+        .count();
+    let f = results
+        .iter()
+        .filter(|(_, o)| matches!(o, BatchOutcome::Failed(_)))
+        .count();
+    (s, sk, f)
+}
+
+fn operator_matches_entry(op: &crate::analyzers::olm::OperatorInstance, entry_name: &str) -> bool {
+    op.csv.name.starts_with(&format!("{}.", entry_name))
+        || op.csv.name.starts_with(&format!("{}.v", entry_name))
+        || op.package_name.as_deref() == Some(entry_name)
+        || op.csv.name == entry_name
+}
+
+fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
+    user_requested || explicit_target_count > 0
+}
+
+fn inject_explicit_phase_into_teardown_plan(
+    plan: &mut crate::teardown::planner::TeardownPlan,
+    explicit_deletes: &[crate::teardown::plan::ExplicitDeleteTarget],
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> anyhow::Result<()> {
+    use crate::teardown::planner::{Action, Barrier, PlanPhase};
+    if explicit_deletes.is_empty() {
+        return Ok(());
+    }
+    let mut actions: Vec<Action> = Vec::with_capacity(explicit_deletes.len());
+    for t in explicit_deletes {
+        let version = gk_map
+            .get(&(t.group.clone(), t.kind.clone()))
+            .map(|info| info.version.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Explicit target {}/{} not found in API discovery — cannot determine version",
+                    t.kind,
+                    t.name
+                )
+            })?;
+        actions.push(Action::Delete {
+            resource: crate::kube::resource::ResourceId {
+                group: t.group.clone(),
+                version,
+                kind: t.kind.clone(),
+                namespace: t.namespace.clone(),
+                name: t.name.clone(),
+                uid: Some(t.uid.clone()),
+            },
+            reason: t.reason.clone(),
+        });
+    }
+
+    // Insert before the last 2 phases (CRDs preserve + Namespace preserve)
+    let insert_idx = if plan.phases.len() >= 2 {
+        plan.phases.len() - 2
+    } else {
+        plan.phases.len()
+    };
+
+    plan.phases.insert(
+        insert_idx,
+        PlanPhase {
+            name: crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME.to_string(),
+            description: "Explicit resource cleanup (config-specified)".to_string(),
+            actions,
+            barrier: Some(Barrier {
+                description: "Wait for explicit targets to be fully removed".to_string(),
+                conditions: explicit_deletes
+                    .iter()
+                    .map(|t| format!("{}/{} gone", t.kind, t.name))
+                    .collect(),
+            }),
+        },
+    );
+    plan.explicit_deletes = explicit_deletes.to_vec();
+    Ok(())
+}
+
+fn build_execution_plan_from_teardown(
+    plan: &crate::teardown::planner::TeardownPlan,
+    target_operators: &[&crate::analyzers::olm::OperatorInstance],
+    cluster_identity: &crate::teardown::plan::ClusterIdentity,
+    prune_crds: bool,
+    approve_scope: &[crate::cli::ApprovalScope],
+    approve_resource: &[String],
+    keep_resource: &[String],
+) -> anyhow::Result<crate::teardown::plan::ExecutionPlan> {
+    use crate::teardown::plan::{
+        ApprovalScopeValue, EXECUTION_PLAN_SCHEMA_VERSION, ExecutionAction, ExecutionPhase,
+        ExecutionResource,
+    };
+    use crate::teardown::planner::Action;
+
+    let mut exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> = Vec::new();
+    for op in target_operators {
+        let pkg =
+            crate::teardown::plan::validate_package_name(op.package_name.as_deref(), &op.csv.name)?;
+        exec_targets.push(crate::teardown::plan::SavedOperatorTarget {
+            package_name: pkg,
+            install_namespace: op.install_namespace.clone(),
+            csv_name_pattern: op.csv.name.clone(),
+        });
+    }
+
+    let exec_phases: Vec<ExecutionPhase> = plan
+        .phases
+        .iter()
+        .enumerate()
+        .map(|(i, phase)| {
+            let resources = phase
+                .actions
+                .iter()
+                .map(|action| {
+                    let (rid, act) = match action {
+                        Action::Delete { resource, .. } => (resource, ExecutionAction::Delete),
+                        Action::ExpectGone { resource, .. } => (resource, ExecutionAction::Expect),
+                        Action::WaitGone { resource } => (resource, ExecutionAction::Wait),
+                        Action::Keep { resource, .. } => (resource, ExecutionAction::Keep),
+                        Action::Review { resource, .. } => (resource, ExecutionAction::Review),
+                    };
+                    ExecutionResource {
+                        group: rid.group.clone(),
+                        kind: rid.kind.clone(),
+                        namespace: rid.namespace.clone(),
+                        name: rid.name.clone(),
+                        uid: rid.uid.clone(),
+                        action: act,
+                    }
+                })
+                .collect();
+            ExecutionPhase {
+                phase: (i + 1) as u32,
+                name: phase.name.clone(),
+                resources,
+            }
+        })
+        .collect();
+
+    let scopes: Vec<ApprovalScopeValue> = approve_scope
+        .iter()
+        .map(|s| match s {
+            crate::cli::ApprovalScope::Root => ApprovalScopeValue::Root,
+            crate::cli::ApprovalScope::Independent => ApprovalScopeValue::Independent,
+            crate::cli::ApprovalScope::LabelOnly => ApprovalScopeValue::LabelOnly,
+            crate::cli::ApprovalScope::OperatorGroup => ApprovalScopeValue::OperatorGroup,
+        })
+        .collect();
+
+    Ok(crate::teardown::plan::ExecutionPlan {
+        schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+        cluster_identity: cluster_identity.clone(),
+        created_at: plan.snapshot_taken_at.clone(),
+        targets: exec_targets,
+        prune_crds,
+        approve_scopes: scopes,
+        approve_resources: approve_resource.to_vec(),
+        keep_resources: keep_resource.to_vec(),
+        phases: exec_phases,
+        explicit_deletes: Vec::new(),
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -1113,12 +1539,46 @@ async fn main() -> Result<()> {
                 TeardownAction::Plan {
                     operators: operator_queries,
                     output,
-                    no_cache,
-                    prune_apis,
-                    approve_delete,
-                    preserve,
-                    save_plan_path,
+                    refresh_discovery,
+                    prune_crds,
+                    approve_scope,
+                    approve_resource,
+                    keep_resource,
+                    delete_resource,
+                    file: save_plan_path,
                 } => {
+                    // Early validation of delete-resource specs (before discovery)
+                    let explicit_specs: Vec<DeleteResourceSpec> = delete_resource
+                        .iter()
+                        .map(|s| DeleteResourceSpec::parse_cli_arg(s))
+                        .collect::<Result<Vec<_>>>()?;
+                    for spec in &explicit_specs {
+                        spec.validate()?;
+                    }
+                    {
+                        let mut seen = HashSet::new();
+                        for spec in &explicit_specs {
+                            let key = (
+                                spec.group.clone(),
+                                spec.kind.clone(),
+                                spec.namespace.clone(),
+                                spec.name.clone(),
+                            );
+                            if !seen.insert(key) {
+                                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
+                            }
+                        }
+                    }
+
+                    let no_cache =
+                        should_refresh_discovery(refresh_discovery, explicit_specs.len());
+
+                    let mut approve_delete: Vec<String> = approve_scope
+                        .iter()
+                        .map(|s| s.cli_arg().to_string())
+                        .collect();
+                    approve_delete.extend(approve_resource.iter().cloned());
+                    let preserve = keep_resource.clone();
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -1146,11 +1606,27 @@ async fn main() -> Result<()> {
                         &gvr_map,
                         &gk_map,
                         &gvk_map,
-                        prune_apis,
+                        prune_crds,
                         &policy,
                     )
                     .await?;
                     let t_plan = t_plan.elapsed();
+
+                    // Resolve explicit delete targets and inject into plan before display
+                    let mut plan = plan;
+                    let explicit_targets = if !explicit_specs.is_empty() {
+                        let targets = resolve_explicit_delete_targets(
+                            &client,
+                            &explicit_specs,
+                            &plan,
+                            &gk_map,
+                        )
+                        .await?;
+                        inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
+                        targets
+                    } else {
+                        Vec::new()
+                    };
 
                     print_teardown_plan(&plan, &output);
 
@@ -1160,31 +1636,22 @@ async fn main() -> Result<()> {
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                     }
 
-                    // Save as SavedTeardownPlan (for --plan replay)
-                    if !target_operators.is_empty() {
-                        let pkg_name = match &target_operators[0].package_name {
-                            Some(n) => n.clone(),
-                            None => {
-                                if save_plan_path.is_some() {
-                                    bail!(
-                                        "Cannot save plan: operator has no package_name (Subscription required)"
-                                    );
-                                }
-                                eprintln!("⚠ Cannot save replay plan: no package_name");
-                                String::new()
-                            }
-                        };
-                        if !pkg_name.is_empty() {
-                            let target = crate::teardown::plan::SavedOperatorTarget {
-                                package_name: pkg_name.to_string(),
-                                install_namespace: target_operators[0].install_namespace.clone(),
-                                csv_name_pattern: target_operators[0].csv.name.clone(),
-                            };
-                            match save_as_saved_plan(&plan, &target, save_plan_path.as_deref()) {
-                                Ok(path) => eprintln!("📄 Saved plan for replay: {}", path),
-                                Err(e) => eprintln!("⚠ Could not save replay plan: {}", e),
-                            }
-                        }
+                    // Build and save ExecutionPlan
+                    if let Some(ref save_path) = save_plan_path {
+                        let cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                        let mut exec_plan = build_execution_plan_from_teardown(
+                            &plan,
+                            &target_operators,
+                            &cluster_identity,
+                            prune_crds,
+                            &approve_scope,
+                            &approve_resource,
+                            &keep_resource,
+                        )?;
+                        exec_plan.explicit_deletes = explicit_targets;
+
+                        crate::teardown::plan::save_execution_plan(&exec_plan, save_path)?;
+                        eprintln!("📄 Execution plan saved to {}", save_path);
                     }
 
                     eprintln!(
@@ -1196,25 +1663,34 @@ async fn main() -> Result<()> {
                     );
                 }
                 TeardownAction::Apply {
-                    operators: operator_queries,
                     plan: plan_file,
-                    no_cache,
+                    refresh_discovery,
                     dry_run,
-                    prune_apis,
-                    force,
-                    approve_delete,
-                    preserve,
-                    approve_finalizer_recovery,
                     non_interactive,
+                    yes,
                     script,
                     tui: use_tui,
-                    save_plan_path,
                 } => {
-                    // Validate: --plan and positional operators are mutually exclusive
-                    if plan_file.is_some() && !operator_queries.is_empty() {
+                    let force = false; // advisory warnings always shown
+                    let approve_finalizer_recovery = true; // always enabled
+
+                    // Load execution plan
+                    let exec_plan = crate::teardown::plan::load_execution_plan(&plan_file)?;
+                    let no_cache = should_refresh_discovery(
+                        refresh_discovery,
+                        exec_plan.explicit_deletes.len(),
+                    );
+                    eprintln!("📄 Loaded execution plan from {}", plan_file);
+
+                    // P0: Validate cluster identity via kube-system UID (hard fail)
+                    let current_cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                    if !current_cluster_identity.matches(&exec_plan.cluster_identity) {
                         bail!(
-                            "--plan and positional operator arguments cannot be combined. \
-                                 Use --plan alone to replay a saved plan."
+                            "Cluster identity mismatch: execution plan kube-system UID '{}' \
+                             does not match current cluster '{}'. \
+                             This plan was created for a different cluster.",
+                            exec_plan.cluster_identity.kube_system_uid,
+                            current_cluster_identity.kube_system_uid,
                         );
                     }
 
@@ -1228,47 +1704,102 @@ async fn main() -> Result<()> {
                     let all_operators = discover_operators(&client, &kind_map).await?;
                     eprintln!(" found {} operators", all_operators.len());
 
-                    // Resolve targets: from --plan or from positional args
-                    let (target_indices, _saved_plan) = if let Some(ref pf) = plan_file {
-                        let saved = crate::teardown::planner::load_saved_plan(pf)?;
-                        eprintln!("📄 Loaded saved plan from {}", pf);
-                        // Resolve via package_name + install_namespace (both required)
-                        let target_query = saved.target.package_name.clone();
-                        let indices = resolve_operator_targets(&[target_query], &all_operators)?;
-                        // Filter by install_namespace
-                        let ns_filtered: Vec<usize> = indices
+                    // P1: Resolve targets with package_name + install_namespace validation
+                    if exec_plan.targets.is_empty() {
+                        bail!("Execution plan has no operator targets");
+                    }
+                    let operator_queries: Vec<String> = exec_plan
+                        .targets
+                        .iter()
+                        .map(|t| t.package_name.clone())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if operator_queries.is_empty() {
+                        bail!(
+                            "Execution plan has no valid operator targets (all package_names empty)"
+                        );
+                    }
+                    let target_indices =
+                        resolve_operator_targets(&operator_queries, &all_operators)?;
+
+                    // Filter by install_namespace and validate csv_name_pattern
+                    let mut validated_indices = Vec::new();
+                    for target in &exec_plan.targets {
+                        if target.package_name.is_empty() {
+                            continue;
+                        }
+                        let ns_matched: Vec<usize> = target_indices
                             .iter()
                             .copied()
                             .filter(|&i| {
-                                all_operators[i].install_namespace == saved.target.install_namespace
+                                all_operators[i].install_namespace == target.install_namespace
                             })
                             .collect();
-                        if ns_filtered.is_empty() {
+                        if ns_matched.is_empty() {
                             bail!(
-                                "Saved plan target {}/{} not found in current cluster",
-                                saved.target.package_name,
-                                saved.target.install_namespace
+                                "Execution plan target {}/{} not found in current cluster",
+                                target.package_name,
+                                target.install_namespace
                             );
                         }
-                        if ns_filtered.len() > 1 {
+                        // Validate csv_name_pattern matches
+                        let csv_matched: Vec<usize> = ns_matched
+                            .iter()
+                            .copied()
+                            .filter(|&i| {
+                                crate::teardown::plan::csv_name_matches(
+                                    &target.csv_name_pattern,
+                                    &all_operators[i].csv.name,
+                                )
+                            })
+                            .collect();
+                        if csv_matched.is_empty() {
                             bail!(
-                                "Saved plan target {}/{} matches {} operators — ambiguous",
-                                saved.target.package_name,
-                                saved.target.install_namespace,
-                                ns_filtered.len()
+                                "Execution plan target {}/{}: csv_name_pattern '{}' \
+                                 does not match any CSV in namespace '{}'",
+                                target.package_name,
+                                target.install_namespace,
+                                target.csv_name_pattern,
+                                target.install_namespace,
                             );
                         }
-                        (ns_filtered, Some(saved))
-                    } else {
-                        let indices = resolve_operator_targets(&operator_queries, &all_operators)?;
-                        (indices, None)
-                    };
+                        for idx in csv_matched {
+                            if !validated_indices.contains(&idx) {
+                                validated_indices.push(idx);
+                            }
+                        }
+                    }
+                    if validated_indices.len()
+                        != exec_plan
+                            .targets
+                            .iter()
+                            .filter(|t| !t.package_name.is_empty())
+                            .count()
+                    {
+                        bail!(
+                            "Target count mismatch: execution plan has {} targets, resolved {}",
+                            exec_plan.targets.len(),
+                            validated_indices.len()
+                        );
+                    }
 
-                    let target_operators: Vec<&_> =
-                        target_indices.iter().map(|&i| &all_operators[i]).collect();
+                    let target_operators: Vec<&_> = validated_indices
+                        .iter()
+                        .map(|&i| &all_operators[i])
+                        .collect();
+
+                    // Reconstruct approval policy from execution plan
+                    let mut approve_delete: Vec<String> = exec_plan
+                        .approve_scopes
+                        .iter()
+                        .map(|s| s.cli_arg().to_string())
+                        .collect();
+                    approve_delete.extend(exec_plan.approve_resources.iter().cloned());
+                    let preserve = exec_plan.keep_resources.clone();
+                    let prune_crds = exec_plan.prune_crds;
 
                     let policy = DecisionPolicy::from_args(&approve_delete, &preserve);
-                    let mut plan = generate_teardown_plan(
+                    let plan = generate_teardown_plan(
                         &client,
                         &target_operators,
                         &all_operators,
@@ -1276,52 +1807,104 @@ async fn main() -> Result<()> {
                         &gvr_map,
                         &gk_map,
                         &gvk_map,
-                        prune_apis,
+                        prune_crds,
                         &policy,
                     )
                     .await?;
 
-                    // Apply saved plan decisions via DecisionPolicy
-                    if let Some(ref saved) = _saved_plan {
-                        use crate::teardown::planner::validate_saved_decisions;
-                        match validate_saved_decisions(&plan, saved) {
-                            Ok((extra_approvals, extra_preserves)) => {
-                                if !extra_approvals.is_empty() || !extra_preserves.is_empty() {
-                                    let mut all_approvals = approve_delete.clone();
-                                    all_approvals.extend(extra_approvals);
-                                    let mut all_preserves = preserve.clone();
-                                    all_preserves.extend(extra_preserves);
-                                    let saved_policy =
-                                        DecisionPolicy::from_args(&all_approvals, &all_preserves);
-                                    plan = generate_teardown_plan(
-                                        &client,
-                                        &target_operators,
-                                        &all_operators,
-                                        &kind_map,
-                                        &gvr_map,
-                                        &gk_map,
-                                        &gvk_map,
-                                        prune_apis,
-                                        &saved_policy,
-                                    )
-                                    .await?;
-                                    eprintln!(
-                                        "📄 Saved plan replayed with {} approval(s)",
-                                        all_approvals.len()
-                                    );
+                    // P0: Drift detection — build fresh ExecutionPlan and compare
+                    {
+                        let approve_scope_values: Vec<crate::cli::ApprovalScope> = exec_plan
+                            .approve_scopes
+                            .iter()
+                            .map(|s| match s {
+                                crate::teardown::plan::ApprovalScopeValue::Root => {
+                                    crate::cli::ApprovalScope::Root
                                 }
-                            }
-                            Err(errors) => {
-                                for err in &errors {
-                                    eprintln!("  ⚠ Saved plan drift: {}", err);
+                                crate::teardown::plan::ApprovalScopeValue::Independent => {
+                                    crate::cli::ApprovalScope::Independent
                                 }
-                                bail!(
-                                    "Saved plan has {} validation error(s) — cannot replay",
-                                    errors.len()
-                                );
+                                crate::teardown::plan::ApprovalScopeValue::LabelOnly => {
+                                    crate::cli::ApprovalScope::LabelOnly
+                                }
+                                crate::teardown::plan::ApprovalScopeValue::OperatorGroup => {
+                                    crate::cli::ApprovalScope::OperatorGroup
+                                }
+                            })
+                            .collect();
+                        let fresh_exec = build_execution_plan_from_teardown(
+                            &plan,
+                            &target_operators,
+                            &current_cluster_identity,
+                            prune_crds,
+                            &approve_scope_values,
+                            &exec_plan.approve_resources,
+                            &exec_plan.keep_resources,
+                        )?;
+                        if let Err(drift_errors) =
+                            crate::teardown::plan::validate_execution_plan_against_fresh(
+                                &exec_plan,
+                                &fresh_exec,
+                            )
+                        {
+                            eprintln!("\n⛔ Execution plan drift detected:");
+                            for err in &drift_errors {
+                                eprintln!("  - {}", err);
                             }
+                            bail!(
+                                "{} drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.",
+                                drift_errors.len()
+                            );
                         }
+                        eprintln!("✅ Execution plan validated — no drift detected");
                     }
+
+                    // Inject explicit cleanup phase into runtime TeardownPlan
+                    let mut plan = plan;
+                    if !exec_plan.explicit_deletes.is_empty() {
+                        // Re-resolve explicit targets fresh for authority validation
+                        let fresh_specs: Vec<DeleteResourceSpec> = exec_plan
+                            .explicit_deletes
+                            .iter()
+                            .map(|t| DeleteResourceSpec {
+                                group: t.group.clone(),
+                                kind: t.kind.clone(),
+                                namespace: t.namespace.clone(),
+                                name: t.name.clone(),
+                            })
+                            .collect();
+                        let fresh_targets =
+                            resolve_explicit_delete_targets(&client, &fresh_specs, &plan, &gk_map)
+                                .await?;
+
+                        // Canonical authority validation: order-independent, full-field, duplicate-rejecting
+                        if let Err(drift_errors) =
+                            crate::teardown::plan::validate_explicit_targets_authority(
+                                &exec_plan.explicit_deletes,
+                                &fresh_targets,
+                                &exec_plan.phases,
+                            )
+                        {
+                            for e in &drift_errors {
+                                eprintln!("❌ {}", e);
+                            }
+                            bail!(
+                                "{} explicit target authority error(s). Re-run `teardown plan`.",
+                                drift_errors.len()
+                            );
+                        }
+
+                        inject_explicit_phase_into_teardown_plan(
+                            &mut plan,
+                            &fresh_targets,
+                            &gk_map,
+                        )?;
+                    }
+
+                    #[allow(unused)]
+                    let _saved_plan: Option<
+                        crate::teardown::plan::SavedTeardownPlan,
+                    > = None;
 
                     // Non-interactive: bail if unresolved REVIEW items remain
                     if non_interactive {
@@ -1989,7 +2572,7 @@ async fn main() -> Result<()> {
 
                     // CLI uses the approved plan directly. REVIEW actions stay
                     // preserved; users can approve exact resources with
-                    // --approve-delete or choose them in the TUI.
+                    // --approve-scope/--approve-resource or choose them in the TUI.
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
                     let effective_finalizer_recovery = approve_finalizer_recovery;
 
@@ -2053,8 +2636,8 @@ async fn main() -> Result<()> {
                         force,
                         journal_store.as_deref(),
                         Some(&gate),
-                        0,     // start from phase 0 (fresh execution)
-                        false, // prompt for confirmation
+                        0,   // start from phase 0 (fresh execution)
+                        yes, // skip confirmation when --yes is passed
                     )
                     .await;
 
@@ -2091,6 +2674,7 @@ async fn main() -> Result<()> {
                             }
 
                             print_execution_result(&result);
+
                             let mut cleanup_failure: Option<String> = None;
 
                             // Run post-apply residual audit (only if apply succeeded and operator is Absent)
@@ -2424,91 +3008,7 @@ async fn main() -> Result<()> {
                                 }
                             }
 
-                            // Save plan with residual decisions if --save-plan provided
-                            if let Some(ref save_path) = save_plan_path
-                                && final_state == RunState::ApplyCompleted
-                                && !target_operators.is_empty()
-                                && let Some(store) = &journal_store
-                            {
-                                let j = store.read().await;
-                                let mut residual_decisions = Vec::new();
-                                // Build from cleanup_decisions + last_residual_audit
-                                let mut seen_residual = std::collections::HashSet::new();
-                                for cd in &j.cleanup_decisions {
-                                    let dedup_key = (
-                                        cd.resource.group.clone(),
-                                        cd.resource.kind.clone(),
-                                        cd.resource.namespace.clone(),
-                                        cd.resource.name.clone(),
-                                    );
-                                    if !seen_residual.insert(dedup_key) {
-                                        continue;
-                                    }
-                                    let evidence = build_residual_evidence(
-                                        &cd.resource,
-                                        &j.last_residual_audit,
-                                    );
-                                    let approval = if evidence.is_empty() {
-                                        crate::teardown::plan::ApprovalKind::ExplicitUnattributed
-                                    } else {
-                                        crate::teardown::plan::ApprovalKind::Explicit
-                                    };
-                                    residual_decisions.push(crate::teardown::plan::SavedDecision {
-                                        match_spec:
-                                            crate::teardown::plan::ResourceMatch::from_resource_id(
-                                                &cd.resource,
-                                            ),
-                                        action: crate::teardown::plan::SavedAction::Delete,
-                                        approval,
-                                        basis: crate::teardown::plan::DecisionBasis {
-                                            provenance: None,
-                                            review_category: None,
-                                            discovery_source: None,
-                                            decisive_evidence: evidence,
-                                        },
-                                    });
-                                }
-                                drop(j);
-
-                                let pkg_name =
-                                    target_operators[0].package_name.as_deref().unwrap_or("");
-                                if !pkg_name.is_empty() {
-                                    let target = crate::teardown::plan::SavedOperatorTarget {
-                                        package_name: pkg_name.to_string(),
-                                        install_namespace: target_operators[0]
-                                            .install_namespace
-                                            .clone(),
-                                        csv_name_pattern: target_operators[0].csv.name.clone(),
-                                    };
-                                    let saved_plan = plan.clone();
-                                    // Merge residual decisions from cleanup into saved plan
-                                    match save_as_saved_plan(&saved_plan, &target, Some(save_path))
-                                    {
-                                        Ok(path) => {
-                                            if !residual_decisions.is_empty()
-                                                && let Ok(data) = std::fs::read_to_string(&path)
-                                                && let Ok(mut sp) = serde_json::from_str::<
-                                                    crate::teardown::plan::SavedTeardownPlan,
-                                                >(
-                                                    &data
-                                                )
-                                            {
-                                                sp.residual_decisions = residual_decisions;
-                                                let _ = std::fs::write(
-                                                    &path,
-                                                    serde_json::to_string_pretty(&sp)
-                                                        .unwrap_or_default(),
-                                                );
-                                            }
-                                            eprintln!(
-                                                "📄 Saved plan with residual decisions: {}",
-                                                path
-                                            );
-                                        }
-                                        Err(e) => eprintln!("⚠ Could not save plan: {}", e),
-                                    }
-                                }
-                            }
+                            // (Execution plan saving is done by `teardown plan --file`)
 
                             // Non-zero exit for non-ApplyCompleted states
                             match final_state {
@@ -2568,9 +3068,10 @@ async fn main() -> Result<()> {
                 }
                 TeardownAction::Status {
                     operators: operator_queries,
-                    no_cache,
+                    refresh_discovery,
                     plan_file,
                 } => {
+                    let no_cache = refresh_discovery;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, _gvr_map, gk_map, _gvk_map) =
@@ -2613,8 +3114,9 @@ async fn main() -> Result<()> {
                 TeardownAction::Coverage {
                     operators: operator_queries,
                     output,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let (kind_map, gvr_map, gk_map, gvk_map) =
                         build_kind_lookup_cached(&client, &config, no_cache).await?;
                     let all_operators = discover_operators(&client, &kind_map).await?;
@@ -2701,37 +3203,12 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                TeardownAction::Inspect {
-                    operator: operator_query,
-                    output,
-                    no_cache,
-                } => {
-                    let t0 = Instant::now();
-                    eprintln!("🔍 Discovering API resources...");
-                    let (kind_map, gvr_map, gk_map, _) =
-                        build_kind_lookup_cached(&client, &config, no_cache).await?;
-                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
-
-                    eprint!("🔍 Discovering operators...");
-                    let all_operators = discover_operators(&client, &kind_map).await?;
-                    eprintln!(" found {} operators", all_operators.len());
-
-                    let target_indices =
-                        resolve_operator_targets(&[operator_query], &all_operators)?;
-                    let target_op = &all_operators[target_indices[0]];
-
-                    let inspection = inspect_operator_with_options(
-                        &client, target_op, &kind_map, &gvr_map, &gk_map, false,
-                    )
-                    .await?;
-
-                    print_inspection_top(&inspection, &output, false);
-                }
                 TeardownAction::Explain {
                     operators: operator_queries,
                     resource,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
                     let (kind_map, gvr_map, gk_map, gvk_map) =
@@ -2777,8 +3254,9 @@ async fn main() -> Result<()> {
                 TeardownAction::Resume {
                     operator,
                     run,
-                    no_cache,
+                    refresh_discovery,
                 } => {
+                    let no_cache = refresh_discovery;
                     let cluster_id = journal::fetch_cluster_identity(&client).await?;
 
                     let found = if let Some(run_id) = run {
@@ -4101,15 +4579,17 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                TeardownAction::ApplySet {
-                    config,
-                    no_cache,
+                TeardownAction::Batch {
+                    config: config_path,
+                    refresh_discovery,
                     dry_run,
+                    skip_missing,
                 } => {
-                    let config_content = std::fs::read_to_string(&config)
-                        .with_context(|| format!("Failed to read config: {}", config))?;
+                    let no_cache = refresh_discovery;
+                    let config_content = std::fs::read_to_string(&config_path)
+                        .with_context(|| format!("Failed to read config: {}", config_path))?;
                     let parsed: ApplySetConfig = serde_json::from_str(&config_content)
-                        .with_context(|| format!("Invalid config: {}", config))?;
+                        .with_context(|| format!("Invalid config: {}", config_path))?;
                     let defaults = parsed.defaults;
                     let entries = parsed.operators;
 
@@ -4123,27 +4603,116 @@ async fn main() -> Result<()> {
                     }
 
                     eprintln!(
-                        "📋 Apply-set: {} operator(s) from {}",
+                        "📋 Batch: {} operator(s) from {}",
                         entries.len(),
-                        config
+                        config_path
                     );
                     for (i, entry) in entries.iter().enumerate() {
-                        eprintln!("  {}: {}", i + 1, entry.name);
+                        let dr_count = entry.delete_resources.len();
+                        let suffix = if dr_count > 0 {
+                            format!(" (+{} explicit)", dr_count)
+                        } else {
+                            String::new()
+                        };
+                        eprintln!("  {}: {}{}", i + 1, entry.name, suffix);
                     }
                     eprintln!();
-                    if no_cache {
-                        eprintln!(
-                            "🔄 API discovery: refresh once, then reuse within this apply-set\n"
+
+                    // Baseline gate: verify all target operators are present (phase is informational)
+                    eprintln!(
+                        "🔍 Baseline gate: verifying {} target operators...",
+                        entries.len()
+                    );
+                    let (kind_map, _, _, _) =
+                        build_kind_lookup_cached(&client, &config, true).await?;
+                    let all_operators = discover_operators(&client, &kind_map).await?;
+                    let mut baseline_missing: Vec<String> = Vec::new();
+                    let mut skip_indices: std::collections::HashSet<usize> =
+                        std::collections::HashSet::new();
+                    for (idx, entry) in entries.iter().enumerate() {
+                        let found = all_operators
+                            .iter()
+                            .find(|op| operator_matches_entry(op, &entry.name));
+                        match found {
+                            Some(op) => {
+                                let icon = if op.csv_phase == "Succeeded" {
+                                    "✅"
+                                } else {
+                                    "⚠"
+                                };
+                                eprintln!(
+                                    "  {} {} — {} ({})",
+                                    icon, entry.name, op.csv.name, op.csv_phase
+                                );
+                            }
+                            None => {
+                                if skip_missing {
+                                    eprintln!("  ⏭ {} — not found, will skip", entry.name);
+                                    skip_indices.insert(idx);
+                                } else {
+                                    baseline_missing.push(entry.name.clone());
+                                    eprintln!("  ⛔ {} — NOT FOUND", entry.name);
+                                }
+                            }
+                        }
+                    }
+                    if !baseline_missing.is_empty() {
+                        bail!(
+                            "Baseline gate failed: {} operator(s) not found: {}. \
+                             Use --skip-missing to skip absent operators.",
+                            baseline_missing.len(),
+                            baseline_missing.join(", ")
                         );
+                    }
+                    let present_count = entries.len() - skip_indices.len();
+                    eprintln!(
+                        "✅ Baseline: {}/{} operators present{}\n",
+                        present_count,
+                        entries.len(),
+                        if skip_indices.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", {} skipped", skip_indices.len())
+                        }
+                    );
+
+                    if no_cache {
+                        eprintln!("🔄 API discovery: refresh once, then reuse within this batch\n");
                     }
 
                     let exe = std::env::current_exe()
                         .context("Cannot determine current executable path")?;
 
-                    let mut results: Vec<(String, i32)> = Vec::new();
+                    // Create temp directory for batch plans (cleaned up on exit)
+                    let batch_dir =
+                        std::env::temp_dir().join(format!("oc-deps-batch-{}", std::process::id()));
+                    std::fs::create_dir_all(&batch_dir).with_context(|| {
+                        format!("Failed to create batch dir: {}", batch_dir.display())
+                    })?;
+
+                    // Drop guard for cleanup
+                    struct BatchDirGuard(std::path::PathBuf);
+                    impl Drop for BatchDirGuard {
+                        fn drop(&mut self) {
+                            let _ = std::fs::remove_dir_all(&self.0);
+                        }
+                    }
+                    let _batch_guard = BatchDirGuard(batch_dir.clone());
+
+                    let mut results: Vec<(String, BatchOutcome)> = Vec::new();
 
                     let entry_count = entries.len();
                     for (i, entry) in entries.iter().enumerate() {
+                        if skip_indices.contains(&i) {
+                            eprintln!(
+                                "\n  ⏭ [{}/{}] SKIP {} (not found)",
+                                i + 1,
+                                entry_count,
+                                entry.name
+                            );
+                            results.push((entry.name.clone(), BatchOutcome::Skipped));
+                            continue;
+                        }
                         let op_name = &entry.name;
                         let options = entry.effective_options(&defaults);
                         eprintln!(
@@ -4156,82 +4725,135 @@ async fn main() -> Result<()> {
                             "=".repeat(60),
                         );
 
-                        let mut cmd = std::process::Command::new(&exe);
-                        cmd.arg("teardown").arg("apply").arg(op_name);
+                        // Step 1: Run `teardown plan` to generate execution plan
+                        let plan_file = batch_dir.join(format!("{}-{}.json", i, op_name));
+                        let plan_path = plan_file.to_string_lossy().to_string();
+                        {
+                            let mut cmd = std::process::Command::new(&exe);
+                            cmd.arg("teardown").arg("plan").arg(op_name);
 
-                        if apply_set_child_bypasses_cache(no_cache, i) {
-                            cmd.arg("--no-cache");
-                        }
-                        if no_cache {
-                            cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
-                        }
-                        if dry_run {
-                            cmd.arg("--dry-run");
-                        }
-                        if options.force {
-                            cmd.arg("--force");
-                        }
-                        if options.non_interactive {
-                            cmd.arg("--non-interactive");
-                        }
-                        for approval in options.approve_delete {
-                            cmd.arg("--approve-delete").arg(approval);
-                        }
-                        for p in options.preserve {
-                            cmd.arg("--preserve").arg(p);
+                            // Only refresh discovery for the first entry
+                            if apply_set_child_bypasses_cache(no_cache, i) {
+                                cmd.arg("--refresh-discovery");
+                            }
+                            if no_cache {
+                                cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
+                            }
+
+                            for approval in &options.approve_delete {
+                                match approval.as_str() {
+                                    "root" | "independent" | "label-only" | "operator-group" => {
+                                        cmd.arg("--approve-scope").arg(approval);
+                                    }
+                                    _ => {
+                                        cmd.arg("--approve-resource").arg(approval);
+                                    }
+                                }
+                            }
+                            for p in &options.preserve {
+                                cmd.arg("--keep-resource").arg(p);
+                            }
+                            for dr in &options.delete_resources {
+                                cmd.arg("--delete-resource").arg(dr.to_cli_arg());
+                            }
+                            cmd.arg("--file").arg(&plan_path);
+
+                            cmd.stdout(std::process::Stdio::inherit());
+                            cmd.stderr(std::process::Stdio::inherit());
+
+                            if let Ok(kc) = std::env::var("KUBECONFIG") {
+                                cmd.env("KUBECONFIG", kc);
+                            }
+
+                            let status = cmd
+                                .status()
+                                .with_context(|| format!("Failed to spawn plan for {}", op_name))?;
+                            if !status.success() {
+                                let exit_code = status.code().unwrap_or(1);
+                                results
+                                    .push((op_name.to_string(), BatchOutcome::Failed(exit_code)));
+                                eprintln!(
+                                    "\n⛔ {} plan failed (exit {}). Stopping batch.",
+                                    op_name, exit_code
+                                );
+                                break;
+                            }
                         }
 
-                        // Pipe "y" to stdin for confirmation prompt
-                        cmd.stdin(std::process::Stdio::piped());
-                        cmd.stdout(std::process::Stdio::inherit());
-                        cmd.stderr(std::process::Stdio::inherit());
+                        // Step 2: Run `teardown apply` with the plan file
+                        {
+                            let mut cmd = std::process::Command::new(&exe);
+                            cmd.arg("teardown").arg("apply").arg(&plan_path);
 
-                        // Forward KUBECONFIG
-                        if let Ok(kc) = std::env::var("KUBECONFIG") {
-                            cmd.env("KUBECONFIG", kc);
+                            if dry_run {
+                                cmd.arg("--dry-run");
+                            }
+                            if options.non_interactive {
+                                cmd.arg("--non-interactive");
+                            }
+
+                            cmd.stdin(std::process::Stdio::piped());
+                            cmd.stdout(std::process::Stdio::inherit());
+                            cmd.stderr(std::process::Stdio::inherit());
+
+                            if let Ok(kc) = std::env::var("KUBECONFIG") {
+                                cmd.env("KUBECONFIG", kc);
+                            }
+
+                            let mut child = cmd.spawn().with_context(|| {
+                                format!("Failed to spawn apply for {}", op_name)
+                            })?;
+
+                            if let Some(mut stdin) = child.stdin.take() {
+                                use std::io::Write;
+                                let _ = stdin.write_all(b"y\n");
+                            }
+
+                            let status = child.wait().with_context(|| {
+                                format!("Failed to wait for apply of {}", op_name)
+                            })?;
+
+                            let exit_code = status.code().unwrap_or(1);
+                            let outcome = if exit_code == 0 {
+                                BatchOutcome::Succeeded
+                            } else {
+                                BatchOutcome::Failed(exit_code)
+                            };
+                            results.push((op_name.to_string(), outcome));
+
+                            if exit_code != 0 {
+                                eprintln!(
+                                    "\n⛔ {} apply failed (exit {}). Stopping batch.",
+                                    op_name, exit_code
+                                );
+                                break;
+                            }
+                            eprintln!("  ✅ {} completed", op_name);
                         }
-
-                        let mut child = cmd
-                            .spawn()
-                            .with_context(|| format!("Failed to spawn teardown for {}", op_name))?;
-
-                        // Write "y\n" to stdin for confirmation
-                        if let Some(mut stdin) = child.stdin.take() {
-                            use std::io::Write;
-                            let _ = stdin.write_all(b"y\n");
-                        }
-
-                        let status = child.wait().with_context(|| {
-                            format!("Failed to wait for teardown of {}", op_name)
-                        })?;
-
-                        let exit_code = status.code().unwrap_or(1);
-                        results.push((op_name.to_string(), exit_code));
-
-                        if exit_code != 0 {
-                            eprintln!(
-                                "\n⛔ {} failed (exit {}). Stopping apply-set.",
-                                op_name, exit_code
-                            );
-                            break;
-                        }
-                        eprintln!("  ✅ {} completed", op_name);
                     }
 
                     // Summary
-                    eprintln!("\n📊 Apply-set results:");
+                    let (s, sk, f) = batch_summary(&results);
+                    eprintln!("\n📊 Batch results:");
                     let mut any_failed = false;
-                    for (name, code) in &results {
-                        let status = if *code == 0 { "✅" } else { "⛔" };
-                        eprintln!("  {} {} (exit {})", status, name, code);
-                        if *code != 0 {
-                            any_failed = true;
+                    for (name, outcome) in &results {
+                        match outcome {
+                            BatchOutcome::Succeeded => eprintln!("  ✅ {}", name),
+                            BatchOutcome::Skipped => eprintln!("  ⏭ {} SKIPPED", name),
+                            BatchOutcome::Failed(c) => {
+                                eprintln!("  ⛔ {} (exit {})", name, c);
+                                any_failed = true;
+                            }
                         }
                     }
                     let not_run = entry_count - results.len();
                     if not_run > 0 {
                         eprintln!("  ⏭ {} operator(s) not run (stopped on failure)", not_run);
                     }
+                    eprintln!(
+                        "\n  {} succeeded, {} skipped, {} failed, {} not run",
+                        s, sk, f, not_run
+                    );
 
                     if any_failed {
                         std::process::exit(1);
@@ -6747,6 +7369,7 @@ fn print_network_tree(
     }
 }
 
+#[allow(dead_code)]
 fn build_residual_evidence(
     rid: &crate::kube::resource::ResourceId,
     audit: &Option<crate::teardown::audit::ResidualAudit>,
@@ -8003,15 +8626,13 @@ mod basis_drift_tests {
                 "defaults": {
                     "approve_delete": {
                         "scopes": ["root", "independent", "label-only", "operator-group"]
-                    },
-                    "force": true
+                    }
                 },
                 "operators": [{
                     "name": "example-operator",
                     "approve_delete": {
                         "resources": ["example.io/Widget/ns/example"]
-                    },
-                    "force": false
+                    }
                 }]
             }"#,
         )
@@ -8028,8 +8649,21 @@ mod basis_drift_tests {
                 "example.io/Widget/ns/example",
             ]
         );
-        assert!(!options.force, "operator value must override the default");
         assert!(!options.non_interactive);
+    }
+
+    #[test]
+    fn batch_config_rejects_force_field() {
+        let result = serde_json::from_str::<ApplySetConfig>(
+            r#"{
+                "defaults": { "force": true },
+                "operators": [{ "name": "example-operator" }]
+            }"#,
+        );
+        assert!(
+            result.is_err(),
+            "force field must be rejected by deny_unknown_fields"
+        );
     }
 
     #[test]
@@ -8046,20 +8680,18 @@ mod basis_drift_tests {
     }
 
     #[test]
-    fn legacy_apply_set_approval_array_remains_supported() {
-        let config: ApplySetConfig = serde_json::from_str(
+    fn legacy_apply_set_approval_array_rejected() {
+        let result: Result<ApplySetConfig, _> = serde_json::from_str(
             r#"{
                 "operators": [{
                     "name": "example-operator",
                     "approve_delete": ["all", "Widget/example"]
                 }]
             }"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            config.operators[0].approve_delete.cli_args(),
-            vec!["all", "Widget/example"]
+        );
+        assert!(
+            result.is_err(),
+            "Legacy array form must be rejected (use structured scopes/resources)"
         );
     }
 
@@ -8366,6 +8998,7 @@ mod basis_drift_tests {
                 dependency_edges: vec![],
                 operator_inventory: vec![],
                 explicit_decisions: vec![],
+                explicit_deletes: vec![],
             },
             execution: ExecutionRecord {
                 phases_completed,
@@ -9076,5 +9709,526 @@ mod basis_drift_tests {
         assert_eq!(backends[1]["weight"], 2);
         let matches1 = backends[1]["ruleMatches"].as_array().unwrap();
         assert_eq!(matches1[0]["method"], "GET");
+    }
+
+    #[test]
+    fn delete_resource_spec_parse_core_group() {
+        let spec = DeleteResourceSpec::parse_cli_arg("ConfigMap/ns-a/my-cm").unwrap();
+        assert_eq!(spec.group, "");
+        assert_eq!(spec.kind, "ConfigMap");
+        assert_eq!(spec.namespace, Some("ns-a".to_string()));
+        assert_eq!(spec.name, "my-cm");
+    }
+
+    #[test]
+    fn delete_resource_spec_parse_with_group() {
+        let spec =
+            DeleteResourceSpec::parse_cli_arg("gateway.networking.k8s.io/Gateway/ns-a/my-gw")
+                .unwrap();
+        assert_eq!(spec.group, "gateway.networking.k8s.io");
+        assert_eq!(spec.kind, "Gateway");
+        assert_eq!(spec.namespace, Some("ns-a".to_string()));
+        assert_eq!(spec.name, "my-gw");
+    }
+
+    #[test]
+    fn delete_resource_spec_parse_cluster_scoped() {
+        let spec =
+            DeleteResourceSpec::parse_cli_arg("console.openshift.io/ConsolePlugin/-/my-plugin")
+                .unwrap();
+        assert_eq!(spec.group, "console.openshift.io");
+        assert_eq!(spec.kind, "ConsolePlugin");
+        assert_eq!(spec.namespace, None);
+        assert_eq!(spec.name, "my-plugin");
+    }
+
+    #[test]
+    fn delete_resource_spec_rejects_forbidden_kinds() {
+        assert!(DeleteResourceSpec::parse_cli_arg("Namespace/-/my-ns").is_err());
+        assert!(DeleteResourceSpec::parse_cli_arg("PersistentVolume/-/pv1").is_err());
+        assert!(DeleteResourceSpec::parse_cli_arg("PersistentVolumeClaim/ns/pvc1").is_err());
+        assert!(
+            DeleteResourceSpec::parse_cli_arg(
+                "apiextensions.k8s.io/CustomResourceDefinition/-/foo"
+            )
+            .is_err()
+        );
+        assert!(DeleteResourceSpec::parse_cli_arg("APIService/-/v1.foo").is_err());
+    }
+
+    #[test]
+    fn delete_resource_spec_rejects_empty_fields() {
+        assert!(DeleteResourceSpec::parse_cli_arg("/ns/name").is_err());
+        assert!(DeleteResourceSpec::parse_cli_arg("ConfigMap/ns/").is_err());
+    }
+
+    #[test]
+    fn delete_resource_spec_rejects_whitespace() {
+        let spec = DeleteResourceSpec {
+            group: "".into(),
+            kind: " ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm".into(),
+        };
+        assert!(spec.validate().is_err());
+
+        let spec2 = DeleteResourceSpec {
+            group: "".into(),
+            kind: "ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm ".into(),
+        };
+        assert!(spec2.validate().is_err());
+    }
+
+    #[test]
+    fn batch_config_parses_delete_resources() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{
+                    "name": "my-op",
+                    "delete_resources": [
+                        {"group": "apps", "kind": "Deployment", "namespace": "ns-a", "name": "my-deploy"},
+                        {"group": "", "kind": "ConfigMap", "namespace": "ns-a", "name": "my-cm"}
+                    ]
+                }]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.operators[0].delete_resources.len(), 2);
+        assert_eq!(config.operators[0].delete_resources[0].kind, "Deployment");
+        assert_eq!(config.operators[0].delete_resources[1].group, "");
+    }
+
+    #[test]
+    fn batch_config_without_delete_resources_ok() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{"name": "my-op"}]
+            }"#,
+        )
+        .unwrap();
+        assert!(config.operators[0].delete_resources.is_empty());
+    }
+
+    #[test]
+    fn delete_resource_to_cli_arg_roundtrip() {
+        let spec = DeleteResourceSpec {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            namespace: Some("ns-a".into()),
+            name: "my-deploy".into(),
+        };
+        let arg = spec.to_cli_arg();
+        assert_eq!(arg, "apps/Deployment/ns-a/my-deploy");
+        let parsed = DeleteResourceSpec::parse_cli_arg(&arg).unwrap();
+        assert_eq!(parsed.group, "apps");
+        assert_eq!(parsed.kind, "Deployment");
+
+        let core_spec = DeleteResourceSpec {
+            group: "".into(),
+            kind: "ConfigMap".into(),
+            namespace: None,
+            name: "cm1".into(),
+        };
+        let core_arg = core_spec.to_cli_arg();
+        assert_eq!(core_arg, "ConfigMap/-/cm1");
+        let core_parsed = DeleteResourceSpec::parse_cli_arg(&core_arg).unwrap();
+        assert_eq!(core_parsed.group, "");
+        assert!(core_parsed.namespace.is_none());
+    }
+
+    #[test]
+    fn inject_explicit_phase_errors_on_missing_gk() {
+        use crate::teardown::plan::{ExplicitDeleteTarget, RefScanCoverage};
+        use crate::teardown::planner::TeardownPlan;
+        let mut plan = TeardownPlan {
+            targets: vec![],
+            preflight: crate::teardown::planner::Preflight { checks: vec![] },
+            phases: vec![],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+            explicit_deletes: vec![],
+        };
+        let targets = vec![ExplicitDeleteTarget {
+            group: "nonexistent.io".into(),
+            kind: "Widget".into(),
+            namespace: Some("ns".into()),
+            name: "w1".into(),
+            uid: "uid-1".into(),
+            reason: "config".into(),
+            inbound_refs_at_plan: vec![],
+            ref_scan_coverage: RefScanCoverage {
+                kinds_scanned: vec![],
+                scan_complete: true,
+            },
+        }];
+        let gk_map = std::collections::HashMap::new();
+        let result = inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map);
+        assert!(result.is_err(), "missing GK must error");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found in API discovery"),
+            "error should mention API discovery"
+        );
+    }
+
+    #[test]
+    fn should_refresh_discovery_logic() {
+        assert!(
+            !should_refresh_discovery(false, 0),
+            "no flag, no targets = use cache"
+        );
+        assert!(
+            should_refresh_discovery(true, 0),
+            "user --refresh-discovery = refresh"
+        );
+        assert!(
+            should_refresh_discovery(false, 1),
+            "explicit targets present = force refresh even without flag"
+        );
+        assert!(
+            should_refresh_discovery(true, 3),
+            "both flag and targets = refresh"
+        );
+    }
+
+    fn make_test_operator(
+        csv_name: &str,
+        phase: &str,
+        pkg: Option<&str>,
+    ) -> crate::analyzers::olm::OperatorInstance {
+        crate::analyzers::olm::OperatorInstance {
+            subscription: None,
+            csv: crate::kube::resource::ResourceId {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                kind: "ClusterServiceVersion".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: csv_name.to_string(),
+                uid: Some("test-uid".to_string()),
+            },
+            csv_phase: phase.to_string(),
+            owned_crds: vec![],
+            required_crds: vec![],
+            owned_api_service_defs: vec![],
+            required_api_service_defs: vec![],
+            deployments: vec![],
+            service_accounts: vec![],
+            install_namespace: "test-ns".to_string(),
+            package_name: pkg.map(|s| s.to_string()),
+            has_unlinked_subscriptions: false,
+        }
+    }
+
+    #[test]
+    fn presence_gate_succeeded_passes() {
+        let op = make_test_operator("rhods-operator.3.5.1", "Succeeded", Some("rhods-operator"));
+        assert!(operator_matches_entry(&op, "rhods-operator"));
+    }
+
+    #[test]
+    fn presence_gate_failed_passes() {
+        let op = make_test_operator("rhods-operator.3.5.1", "Failed", Some("rhods-operator"));
+        assert!(operator_matches_entry(&op, "rhods-operator"));
+    }
+
+    #[test]
+    fn presence_gate_pending_passes() {
+        let op = make_test_operator(
+            "cert-manager-operator.v1.20.0",
+            "Pending",
+            Some("openshift-cert-manager-operator"),
+        );
+        assert!(operator_matches_entry(
+            &op,
+            "openshift-cert-manager-operator"
+        ));
+    }
+
+    #[test]
+    fn presence_gate_missing_fails() {
+        let operators = [make_test_operator(
+            "rhods-operator.3.5.1",
+            "Succeeded",
+            Some("rhods-operator"),
+        )];
+        let found = operators
+            .iter()
+            .any(|op| operator_matches_entry(op, "nonexistent-operator"));
+        assert!(!found, "Missing operator must not match");
+    }
+
+    #[test]
+    fn batch_summary_counts_outcomes_correctly() {
+        let results = vec![
+            ("op-a".to_string(), BatchOutcome::Succeeded),
+            ("op-b".to_string(), BatchOutcome::Skipped),
+            ("op-c".to_string(), BatchOutcome::Succeeded),
+            ("op-d".to_string(), BatchOutcome::Failed(1)),
+            ("op-e".to_string(), BatchOutcome::Skipped),
+        ];
+        let (s, sk, f) = batch_summary(&results);
+        assert_eq!(s, 2, "succeeded count");
+        assert_eq!(sk, 2, "skipped count");
+        assert_eq!(f, 1, "failed count");
+    }
+
+    #[test]
+    fn batch_skipped_excluded_from_success() {
+        let results = vec![("op-a".to_string(), BatchOutcome::Skipped)];
+        let (s, sk, f) = batch_summary(&results);
+        assert_eq!(s, 0, "skipped must not count as succeeded");
+        assert_eq!(sk, 1);
+        assert_eq!(f, 0, "skipped must not count as failed");
+    }
+
+    #[test]
+    fn health_preflight_produces_warning_not_critical() {
+        use crate::teardown::planner::{PreflightSeverity, health_preflight_checks};
+        let checks = health_preflight_checks(
+            "test-op.v1",
+            (false, "CSV phase: Failed".to_string()),
+            (false, "0/1 controllers available".to_string()),
+        );
+        assert_eq!(checks.len(), 2);
+        for check in &checks {
+            assert_eq!(
+                check.severity,
+                PreflightSeverity::Warning,
+                "{} must be Warning, not Critical",
+                check.name
+            );
+            assert!(!check.passed);
+        }
+    }
+
+    #[test]
+    fn blocking_preflight_filters_critical_only() {
+        use crate::teardown::executor::blocking_preflight_failures;
+        use crate::teardown::planner::{PreflightCheck, PreflightSeverity};
+        let checks = vec![
+            PreflightCheck {
+                name: "CSV health (op.v1)".to_string(),
+                severity: PreflightSeverity::Warning,
+                passed: false,
+                detail: "Failed".to_string(),
+            },
+            PreflightCheck {
+                name: "Controller available (op.v1)".to_string(),
+                severity: PreflightSeverity::Warning,
+                passed: false,
+                detail: "unavailable".to_string(),
+            },
+            PreflightCheck {
+                name: "CR enumeration (widgets)".to_string(),
+                severity: PreflightSeverity::Critical,
+                passed: false,
+                detail: "cannot enumerate".to_string(),
+            },
+        ];
+        let blockers = blocking_preflight_failures(&checks);
+        assert_eq!(blockers.len(), 1, "only Critical should block");
+        assert!(blockers[0].contains("CR enumeration"));
+    }
+}
+
+#[cfg(test)]
+mod resolve_explicit_target_tests {
+    use super::*;
+    use ::kube::client::Body;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "apiVersion": "v1", "kind": "Status",
+            "metadata": {},
+            "status": "Failure",
+            "reason": reason,
+            "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn test_gk_map() -> crate::kube::discovery::GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        let entries: Vec<(&str, &str, &str, &str)> = vec![
+            ("", "ConfigMap", "v1", "configmaps"),
+            ("apps", "Deployment", "v1", "deployments"),
+            ("apps", "StatefulSet", "v1", "statefulsets"),
+            ("apps", "DaemonSet", "v1", "daemonsets"),
+            ("apps", "ReplicaSet", "v1", "replicasets"),
+            ("batch", "Job", "v1", "jobs"),
+            ("batch", "CronJob", "v1", "cronjobs"),
+            ("", "Pod", "v1", "pods"),
+            ("gateway.networking.k8s.io", "Gateway", "v1", "gateways"),
+        ];
+        for (group, kind, version, plural) in entries {
+            gk.insert(
+                (group.to_string(), kind.to_string()),
+                crate::kube::discovery::KindInfo {
+                    group: group.to_string(),
+                    version: version.to_string(),
+                    plural: plural.to_string(),
+                    namespaced: true,
+                    listable: true,
+                },
+            );
+        }
+        gk
+    }
+
+    fn test_spec() -> DeleteResourceSpec {
+        DeleteResourceSpec {
+            group: "".to_string(),
+            kind: "ConfigMap".to_string(),
+            namespace: Some("ns".to_string()),
+            name: "cm1".to_string(),
+        }
+    }
+
+    fn empty_plan() -> crate::teardown::planner::TeardownPlan {
+        crate::teardown::planner::TeardownPlan {
+            targets: vec![],
+            preflight: crate::teardown::planner::Preflight { checks: vec![] },
+            phases: vec![],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+            explicit_deletes: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_404_one_request_not_found() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(status_response(404, "NotFound"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let result =
+            resolve_explicit_delete_targets(&client, &[test_spec()], &empty_plan(), &test_gk_map())
+                .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "404 must not retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_403_one_request_fails() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(status_response(403, "Forbidden"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let result =
+            resolve_explicit_delete_targets(&client, &[test_spec()], &empty_plan(), &test_gk_map())
+                .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "403 must not retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_500_then_200_recovers() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                let uri = req.uri().to_string();
+                if uri.contains("configmaps") && !uri.contains('?') {
+                    if n == 0 {
+                        send.send_response(status_response(500, "InternalServerError"));
+                    } else {
+                        send.send_response(json_response(serde_json::json!({
+                            "apiVersion": "v1", "kind": "ConfigMap",
+                            "metadata": {"name": "cm1", "namespace": "ns", "uid": "cm-uid-1"}
+                        })));
+                    }
+                } else {
+                    // LIST for ref scan — return empty
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "List",
+                        "metadata": {"resourceVersion": "1"}, "items": []
+                    })));
+                }
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let result =
+            resolve_explicit_delete_targets(&client, &[test_spec()], &empty_plan(), &test_gk_map())
+                .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_ok(), "500→200 must recover: {:?}", result.err());
+        let targets = result.unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].uid, "cm-uid-1");
+        assert!(
+            request_count.load(Ordering::SeqCst) >= 2,
+            "500→200 must use at least 2 requests (GET retry + ref scan LISTs)"
+        );
     }
 }
