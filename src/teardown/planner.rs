@@ -6194,6 +6194,7 @@ mod tests {
             approve_resources: vec![],
             keep_resources: vec![],
             phases: vec![],
+            explicit_deletes: vec![],
         };
         let dir = std::env::temp_dir().join(format!("test-empty-pkg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
@@ -6231,6 +6232,7 @@ mod tests {
             approve_resources: vec![],
             keep_resources: vec![],
             phases: vec![],
+            explicit_deletes: vec![],
         };
         let dir = std::env::temp_dir().join(format!("test-ws-pkg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
@@ -6297,6 +6299,7 @@ mod tests {
             approve_resources: vec![],
             keep_resources: vec![],
             phases: vec![],
+            explicit_deletes: vec![],
         };
         let dir = std::env::temp_dir().join(format!("test-lead-ws-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
@@ -6308,6 +6311,195 @@ mod tests {
             result.is_err(),
             "Leading whitespace package must be rejected"
         );
+    }
+
+    // ── Explicit delete validation ──
+
+    #[test]
+    fn load_execution_plan_rejects_explicit_delete_forbidden_kind() {
+        use crate::teardown::plan::*;
+        let mut plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "".into(),
+                kind: "Namespace".into(),
+                namespace: None,
+                name: "bad-ns".into(),
+                uid: "uid-x".into(),
+                reason: "test".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-forbidden-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Namespace as explicit delete must be rejected"
+        );
+
+        // Also test CRD
+        plan.explicit_deletes[0].kind = "CustomResourceDefinition".into();
+        let dir2 =
+            std::env::temp_dir().join(format!("test-expl-forbidden2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir2);
+        let path2 = dir2.join("plan.json");
+        save_execution_plan(&plan, path2.to_str().unwrap()).unwrap();
+        let result2 = load_execution_plan(path2.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir2);
+        assert!(result2.is_err(), "CRD as explicit delete must be rejected");
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_explicit_delete_empty_uid() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "apps".into(),
+                kind: "Deployment".into(),
+                namespace: Some("ns".into()),
+                name: "my-deploy".into(),
+                uid: "".into(),
+                reason: "test".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-uid-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "Empty UID on explicit delete must fail");
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_incomplete_scan() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "apps".into(),
+                kind: "Deployment".into(),
+                namespace: Some("ns".into()),
+                name: "my-deploy".into(),
+                uid: "uid-valid".into(),
+                reason: "test".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec!["apps/Deployment".into()],
+                    scan_complete: false,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-scan-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "Incomplete scan must be rejected on load");
+    }
+
+    #[test]
+    fn load_execution_plan_accepts_valid_explicit_delete() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "apps".into(),
+                kind: "Deployment".into(),
+                namespace: Some("ns".into()),
+                name: "my-deploy".into(),
+                uid: "uid-valid".into(),
+                reason: "config explicit".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-valid-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "Valid explicit delete should be accepted");
+        assert_eq!(result.unwrap().explicit_deletes.len(), 1);
     }
 
     // ── Phase assignment: is_bulk_label_only_decision ──

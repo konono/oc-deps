@@ -86,6 +86,86 @@ struct ApplySetDefaults {
     non_interactive: bool,
 }
 
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteResourceSpec {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+}
+
+impl DeleteResourceSpec {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.kind.trim().is_empty() || self.kind != self.kind.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid kind {:?} (empty or whitespace)",
+                self.kind
+            );
+        }
+        if self.name.trim().is_empty() || self.name != self.name.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid name {:?} (empty or whitespace)",
+                self.name
+            );
+        }
+        if self.group != self.group.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid group {:?} (whitespace)",
+                self.group
+            );
+        }
+        const FORBIDDEN: &[&str] = &[
+            "Namespace",
+            "PersistentVolume",
+            "PersistentVolumeClaim",
+            "CustomResourceDefinition",
+            "APIService",
+        ];
+        if FORBIDDEN.contains(&self.kind.as_str()) {
+            anyhow::bail!(
+                "delete_resources: kind {} is forbidden (use --prune-crds for CRDs)",
+                self.kind
+            );
+        }
+        Ok(())
+    }
+
+    pub fn to_cli_arg(&self) -> String {
+        let ns = self.namespace.as_deref().unwrap_or("-");
+        if self.group.is_empty() {
+            format!("{}/{}/{}", self.kind, ns, self.name)
+        } else {
+            format!("{}/{}/{}/{}", self.group, self.kind, ns, self.name)
+        }
+    }
+
+    pub fn parse_cli_arg(s: &str) -> anyhow::Result<Self> {
+        let parts: Vec<&str> = s.split('/').collect();
+        let (group, kind, ns_str, name) = match parts.len() {
+            3 => ("", parts[0], parts[1], parts[2]),
+            4 => (parts[0], parts[1], parts[2], parts[3]),
+            _ => anyhow::bail!(
+                "Invalid delete-resource spec '{}': expected Kind/ns/name or group/Kind/ns/name",
+                s
+            ),
+        };
+        let namespace = if ns_str == "-" {
+            None
+        } else {
+            Some(ns_str.to_string())
+        };
+        let spec = Self {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            namespace,
+            name: name.to_string(),
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplySetEntry {
@@ -96,12 +176,15 @@ struct ApplySetEntry {
     preserve: Vec<String>,
     #[serde(default)]
     non_interactive: Option<bool>,
+    #[serde(default)]
+    delete_resources: Vec<DeleteResourceSpec>,
 }
 
 struct EffectiveApplySetOptions {
     approve_delete: Vec<String>,
     preserve: Vec<String>,
     non_interactive: bool,
+    delete_resources: Vec<DeleteResourceSpec>,
 }
 
 impl ApplySetEntry {
@@ -120,6 +203,7 @@ impl ApplySetEntry {
             approve_delete,
             preserve,
             non_interactive: self.non_interactive.unwrap_or(defaults.non_interactive),
+            delete_resources: self.delete_resources.clone(),
         }
     }
 }
@@ -674,6 +758,127 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
     }
 }
 
+async fn resolve_explicit_delete_targets(
+    client: &::kube::Client,
+    specs: &[DeleteResourceSpec],
+    exec_plan: &crate::teardown::plan::ExecutionPlan,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<Vec<crate::teardown::plan::ExplicitDeleteTarget>> {
+    use crate::teardown::ref_guard;
+    use ::kube::api::{Api, DynamicObject};
+
+    let deletion_closure = ref_guard::build_deletion_closure(&exec_plan.phases, specs);
+    let mut targets = Vec::new();
+
+    for spec in specs {
+        let gk = (spec.group.clone(), spec.kind.clone());
+        let Some(info) = gk_map.get(&gk) else {
+            bail!(
+                "delete-resource: {}/{} not found in API discovery (group={:?})",
+                spec.kind,
+                spec.name,
+                spec.group
+            );
+        };
+
+        if info.namespaced && spec.namespace.is_none() {
+            bail!(
+                "delete-resource: {}/{} is namespaced but no namespace specified",
+                spec.kind,
+                spec.name
+            );
+        }
+        if !info.namespaced && spec.namespace.is_some() {
+            bail!(
+                "delete-resource: {}/{} is cluster-scoped but namespace {:?} specified",
+                spec.kind,
+                spec.name,
+                spec.namespace
+            );
+        }
+
+        let gvk = ::kube::api::GroupVersionKind {
+            group: info.group.clone(),
+            version: info.version.clone(),
+            kind: spec.kind.clone(),
+        };
+        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+
+        let api: Api<DynamicObject> = if let Some(ref ns) = spec.namespace {
+            Api::namespaced_with(client.clone(), ns, &ar)
+        } else {
+            Api::all_with(client.clone(), &ar)
+        };
+
+        let obj = api.get(&spec.name).await.with_context(|| {
+            format!(
+                "delete-resource: {}/{} not found in cluster",
+                spec.kind, spec.name
+            )
+        })?;
+
+        let uid = obj
+            .metadata
+            .uid
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!("delete-resource: {}/{} has no UID", spec.kind, spec.name)
+            })?
+            .to_string();
+
+        let target_rid = crate::kube::resource::ResourceId {
+            group: spec.group.clone(),
+            version: info.version.clone(),
+            kind: spec.kind.clone(),
+            namespace: spec.namespace.clone(),
+            name: spec.name.clone(),
+            uid: Some(uid.clone()),
+        };
+
+        let scan =
+            ref_guard::check_inbound_refs(client, &target_rid, &deletion_closure, gk_map).await?;
+
+        if !scan.blockers.is_empty() {
+            let blocker_list: Vec<String> = scan
+                .blockers
+                .iter()
+                .map(|b| format!("{}/{}({})", b.resource.kind, b.resource.name, b.ref_field))
+                .collect();
+            bail!(
+                "delete-resource: {}/{} is referenced by {} resource(s) outside the deletion plan: {}. \
+                 Cannot safely delete a shared resource.",
+                spec.kind,
+                spec.name,
+                scan.blockers.len(),
+                blocker_list.join(", ")
+            );
+        }
+
+        if !scan.coverage.scan_complete {
+            bail!(
+                "delete-resource: inbound reference scan for {}/{} is incomplete — cannot verify safety",
+                spec.kind,
+                spec.name
+            );
+        }
+
+        let inbound_refs = ref_guard::to_inbound_ref_identities(&scan);
+
+        targets.push(crate::teardown::plan::ExplicitDeleteTarget {
+            group: spec.group.clone(),
+            kind: spec.kind.clone(),
+            namespace: spec.namespace.clone(),
+            name: spec.name.clone(),
+            uid,
+            reason: "config explicit".to_string(),
+            inbound_refs_at_plan: inbound_refs,
+            ref_scan_coverage: scan.coverage,
+        });
+    }
+
+    Ok(targets)
+}
+
 fn build_execution_plan_from_teardown(
     plan: &crate::teardown::planner::TeardownPlan,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
@@ -754,6 +959,7 @@ fn build_execution_plan_from_teardown(
         approve_resources: approve_resource.to_vec(),
         keep_resources: keep_resource.to_vec(),
         phases: exec_phases,
+        explicit_deletes: Vec::new(),
     })
 }
 
@@ -1178,6 +1384,7 @@ async fn main() -> Result<()> {
                     approve_scope,
                     approve_resource,
                     keep_resource,
+                    delete_resource,
                     file: save_plan_path,
                 } => {
                     let no_cache = refresh_discovery;
@@ -1228,10 +1435,34 @@ async fn main() -> Result<()> {
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                     }
 
+                    // Parse and validate explicit delete-resource specs
+                    let explicit_specs: Vec<DeleteResourceSpec> = delete_resource
+                        .iter()
+                        .map(|s| DeleteResourceSpec::parse_cli_arg(s))
+                        .collect::<Result<Vec<_>>>()?;
+                    for spec in &explicit_specs {
+                        spec.validate()?;
+                    }
+                    // Check duplicates
+                    {
+                        let mut seen = HashSet::new();
+                        for spec in &explicit_specs {
+                            let key = (
+                                spec.group.clone(),
+                                spec.kind.clone(),
+                                spec.namespace.clone(),
+                                spec.name.clone(),
+                            );
+                            if !seen.insert(key) {
+                                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
+                            }
+                        }
+                    }
+
                     // Build and save ExecutionPlan
                     if let Some(ref save_path) = save_plan_path {
                         let cluster_identity = journal::fetch_cluster_identity(&client).await?;
-                        let exec_plan = build_execution_plan_from_teardown(
+                        let mut exec_plan = build_execution_plan_from_teardown(
                             &plan,
                             &target_operators,
                             &cluster_identity,
@@ -1240,6 +1471,58 @@ async fn main() -> Result<()> {
                             &approve_resource,
                             &keep_resource,
                         )?;
+
+                        // Resolve explicit delete targets
+                        if !explicit_specs.is_empty() {
+                            let explicit_targets = resolve_explicit_delete_targets(
+                                &client,
+                                &explicit_specs,
+                                &exec_plan,
+                                &gk_map,
+                            )
+                            .await?;
+
+                            // Add explicit cleanup phase after controller removal
+                            let next_phase =
+                                exec_plan.phases.iter().map(|p| p.phase).max().unwrap_or(0) + 1;
+
+                            // Insert before the last 2 phases (CRD preserve + Namespace preserve)
+                            let insert_idx = if exec_plan.phases.len() >= 2 {
+                                exec_plan.phases.len() - 2
+                            } else {
+                                exec_plan.phases.len()
+                            };
+
+                            let explicit_resources: Vec<crate::teardown::plan::ExecutionResource> =
+                                explicit_targets
+                                    .iter()
+                                    .map(|t| crate::teardown::plan::ExecutionResource {
+                                        group: t.group.clone(),
+                                        kind: t.kind.clone(),
+                                        namespace: t.namespace.clone(),
+                                        name: t.name.clone(),
+                                        uid: Some(t.uid.clone()),
+                                        action: crate::teardown::plan::ExecutionAction::Delete,
+                                    })
+                                    .collect();
+
+                            exec_plan.phases.insert(
+                                insert_idx,
+                                crate::teardown::plan::ExecutionPhase {
+                                    phase: next_phase,
+                                    name: "Explicit cleanup".to_string(),
+                                    resources: explicit_resources,
+                                },
+                            );
+
+                            // Renumber phases
+                            for (i, phase) in exec_plan.phases.iter_mut().enumerate() {
+                                phase.phase = (i + 1) as u32;
+                            }
+
+                            exec_plan.explicit_deletes = explicit_targets;
+                        }
+
                         crate::teardown::plan::save_execution_plan(&exec_plan, save_path)?;
                         eprintln!("📄 Execution plan saved to {}", save_path);
                     }
@@ -4215,6 +4498,9 @@ async fn main() -> Result<()> {
                             }
                             for p in &options.preserve {
                                 cmd.arg("--keep-resource").arg(p);
+                            }
+                            for dr in &options.delete_resources {
+                                cmd.arg("--delete-resource").arg(dr.to_cli_arg());
                             }
                             cmd.arg("--file").arg(&plan_path);
 
@@ -9154,5 +9440,132 @@ mod basis_drift_tests {
         assert_eq!(backends[1]["weight"], 2);
         let matches1 = backends[1]["ruleMatches"].as_array().unwrap();
         assert_eq!(matches1[0]["method"], "GET");
+    }
+
+    #[test]
+    fn delete_resource_spec_parse_core_group() {
+        let spec = DeleteResourceSpec::parse_cli_arg("ConfigMap/ns-a/my-cm").unwrap();
+        assert_eq!(spec.group, "");
+        assert_eq!(spec.kind, "ConfigMap");
+        assert_eq!(spec.namespace, Some("ns-a".to_string()));
+        assert_eq!(spec.name, "my-cm");
+    }
+
+    #[test]
+    fn delete_resource_spec_parse_with_group() {
+        let spec =
+            DeleteResourceSpec::parse_cli_arg("gateway.networking.k8s.io/Gateway/ns-a/my-gw")
+                .unwrap();
+        assert_eq!(spec.group, "gateway.networking.k8s.io");
+        assert_eq!(spec.kind, "Gateway");
+        assert_eq!(spec.namespace, Some("ns-a".to_string()));
+        assert_eq!(spec.name, "my-gw");
+    }
+
+    #[test]
+    fn delete_resource_spec_parse_cluster_scoped() {
+        let spec =
+            DeleteResourceSpec::parse_cli_arg("console.openshift.io/ConsolePlugin/-/my-plugin")
+                .unwrap();
+        assert_eq!(spec.group, "console.openshift.io");
+        assert_eq!(spec.kind, "ConsolePlugin");
+        assert_eq!(spec.namespace, None);
+        assert_eq!(spec.name, "my-plugin");
+    }
+
+    #[test]
+    fn delete_resource_spec_rejects_forbidden_kinds() {
+        assert!(DeleteResourceSpec::parse_cli_arg("Namespace/-/my-ns").is_err());
+        assert!(DeleteResourceSpec::parse_cli_arg("PersistentVolume/-/pv1").is_err());
+        assert!(DeleteResourceSpec::parse_cli_arg("PersistentVolumeClaim/ns/pvc1").is_err());
+        assert!(
+            DeleteResourceSpec::parse_cli_arg(
+                "apiextensions.k8s.io/CustomResourceDefinition/-/foo"
+            )
+            .is_err()
+        );
+        assert!(DeleteResourceSpec::parse_cli_arg("APIService/-/v1.foo").is_err());
+    }
+
+    #[test]
+    fn delete_resource_spec_rejects_empty_fields() {
+        assert!(DeleteResourceSpec::parse_cli_arg("/ns/name").is_err());
+        assert!(DeleteResourceSpec::parse_cli_arg("ConfigMap/ns/").is_err());
+    }
+
+    #[test]
+    fn delete_resource_spec_rejects_whitespace() {
+        let spec = DeleteResourceSpec {
+            group: "".into(),
+            kind: " ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm".into(),
+        };
+        assert!(spec.validate().is_err());
+
+        let spec2 = DeleteResourceSpec {
+            group: "".into(),
+            kind: "ConfigMap".into(),
+            namespace: Some("ns".into()),
+            name: "cm ".into(),
+        };
+        assert!(spec2.validate().is_err());
+    }
+
+    #[test]
+    fn batch_config_parses_delete_resources() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{
+                    "name": "my-op",
+                    "delete_resources": [
+                        {"group": "apps", "kind": "Deployment", "namespace": "ns-a", "name": "my-deploy"},
+                        {"group": "", "kind": "ConfigMap", "namespace": "ns-a", "name": "my-cm"}
+                    ]
+                }]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.operators[0].delete_resources.len(), 2);
+        assert_eq!(config.operators[0].delete_resources[0].kind, "Deployment");
+        assert_eq!(config.operators[0].delete_resources[1].group, "");
+    }
+
+    #[test]
+    fn batch_config_without_delete_resources_ok() {
+        let config: ApplySetConfig = serde_json::from_str(
+            r#"{
+                "operators": [{"name": "my-op"}]
+            }"#,
+        )
+        .unwrap();
+        assert!(config.operators[0].delete_resources.is_empty());
+    }
+
+    #[test]
+    fn delete_resource_to_cli_arg_roundtrip() {
+        let spec = DeleteResourceSpec {
+            group: "apps".into(),
+            kind: "Deployment".into(),
+            namespace: Some("ns-a".into()),
+            name: "my-deploy".into(),
+        };
+        let arg = spec.to_cli_arg();
+        assert_eq!(arg, "apps/Deployment/ns-a/my-deploy");
+        let parsed = DeleteResourceSpec::parse_cli_arg(&arg).unwrap();
+        assert_eq!(parsed.group, "apps");
+        assert_eq!(parsed.kind, "Deployment");
+
+        let core_spec = DeleteResourceSpec {
+            group: "".into(),
+            kind: "ConfigMap".into(),
+            namespace: None,
+            name: "cm1".into(),
+        };
+        let core_arg = core_spec.to_cli_arg();
+        assert_eq!(core_arg, "ConfigMap/-/cm1");
+        let core_parsed = DeleteResourceSpec::parse_cli_arg(&core_arg).unwrap();
+        assert_eq!(core_parsed.group, "");
+        assert!(core_parsed.namespace.is_none());
     }
 }

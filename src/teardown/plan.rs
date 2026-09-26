@@ -279,6 +279,40 @@ pub struct ExecutionPlan {
     pub approve_resources: Vec<String>,
     pub keep_resources: Vec<String>,
     pub phases: Vec<ExecutionPhase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub explicit_deletes: Vec<ExplicitDeleteTarget>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplicitDeleteTarget {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub uid: String,
+    pub reason: String,
+    pub inbound_refs_at_plan: Vec<InboundRefIdentity>,
+    pub ref_scan_coverage: RefScanCoverage,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboundRefIdentity {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub uid: String,
+    pub ref_field: String,
+    pub in_deletion_plan: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefScanCoverage {
+    pub kinds_scanned: Vec<String>,
+    pub scan_complete: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -449,6 +483,44 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
                     res.action
                 );
             }
+        }
+    }
+    const FORBIDDEN_EXPLICIT_KINDS: &[&str] = &[
+        "Namespace",
+        "PersistentVolume",
+        "PersistentVolumeClaim",
+        "CustomResourceDefinition",
+        "APIService",
+    ];
+    for target in &plan.explicit_deletes {
+        if target.uid.trim().is_empty() {
+            anyhow::bail!(
+                "Explicit delete target {}/{} has empty UID",
+                target.kind,
+                target.name
+            );
+        }
+        if target.kind.trim().is_empty() || target.name.trim().is_empty() {
+            anyhow::bail!(
+                "Explicit delete target has empty kind or name: kind={:?}, name={:?}",
+                target.kind,
+                target.name
+            );
+        }
+        if FORBIDDEN_EXPLICIT_KINDS.contains(&target.kind.as_str()) {
+            anyhow::bail!(
+                "Explicit delete target {}/{} uses forbidden kind {}",
+                target.kind,
+                target.name,
+                target.kind
+            );
+        }
+        if !target.ref_scan_coverage.scan_complete {
+            anyhow::bail!(
+                "Explicit delete target {}/{} has incomplete reference scan — plan is unsafe",
+                target.kind,
+                target.name
+            );
         }
     }
     Ok(plan)
@@ -680,6 +752,7 @@ mod tests {
                 name: "Phase 1".to_string(),
                 resources: phase_resources,
             }],
+            explicit_deletes: vec![],
         }
     }
 

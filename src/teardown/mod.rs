@@ -9,5 +9,6 @@ pub mod permit;
 pub mod plan;
 pub mod planner;
 pub mod progress;
+pub mod ref_guard;
 pub mod runtime;
 pub mod watch;

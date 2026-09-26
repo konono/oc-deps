@@ -15,10 +15,13 @@
       "name": "rhods-operator",
       "approve_delete": {
         "resources": [
-          "maas.opendatahub.io/Config/-/default",
-          "MLflow/mlflow"
+          "maas.opendatahub.io/Config/-/default"
         ]
-      }
+      },
+      "delete_resources": [
+        {"group": "gateway.networking.k8s.io", "kind": "Gateway", "namespace": "openshift-ingress", "name": "maas-default-gateway"},
+        {"group": "", "kind": "ConfigMap", "namespace": "openshift-ingress", "name": "maas-gateway-options"}
+      ]
     },
     {
       "name": "rhbk-operator"
@@ -42,10 +45,16 @@
       "name": "gpu-operator-certified"
     },
     {
-      "name": "cert-manager-operator"
+      "name": "openshift-cert-manager-operator"
     },
     {
-      "name": "rhcl-operator"
+      "name": "rhcl-operator",
+      "delete_resources": [
+        {"group": "console.openshift.io", "kind": "ConsolePlugin", "namespace": null, "name": "kuadrant-console-plugin"},
+        {"group": "apps", "kind": "Deployment", "namespace": "openshift-rhcl", "name": "kuadrant-console-plugin"},
+        {"group": "", "kind": "Service", "namespace": "openshift-rhcl", "name": "kuadrant-console-plugin"},
+        {"group": "", "kind": "ConfigMap", "namespace": "openshift-rhcl", "name": "kuadrant-console-nginx-conf"}
+      ]
     },
     {
       "name": "authorino-operator"

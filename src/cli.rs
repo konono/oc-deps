@@ -273,6 +273,10 @@ pub enum TeardownAction {
         #[arg(long = "keep-resource", value_name = "SPEC", value_parser = validate_resource_spec)]
         keep_resource: Vec<String>,
 
+        /// Explicitly delete a resource (group/Kind/ns/name or Kind/ns/name for core, repeatable)
+        #[arg(long = "delete-resource", value_name = "SPEC")]
+        delete_resource: Vec<String>,
+
         /// Save the execution plan to file
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
