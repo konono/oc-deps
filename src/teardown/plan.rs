@@ -265,7 +265,7 @@ pub fn validate_package_name(pkg: Option<&str>, csv_name: &str) -> anyhow::Resul
     Ok(p.to_string())
 }
 
-pub const EXECUTION_PLAN_SCHEMA_VERSION: u32 = 1;
+pub const EXECUTION_PLAN_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -529,28 +529,39 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
 /// Validate an execution plan against a freshly generated plan.
 /// Uses sorted Vec of full tuples (phase, name, action, group, kind, ns, name, uid)
 /// to detect additions, removals, UID changes, phase moves, and duplicates.
+pub const EXPLICIT_CLEANUP_PHASE_NAME: &str = "Explicit cleanup";
+
 pub fn validate_execution_plan_against_fresh(
     saved: &ExecutionPlan,
     fresh: &ExecutionPlan,
 ) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
 
-    if saved.phases.len() != fresh.phases.len() {
+    // Exclude explicit cleanup phases — they are not reproduced by fresh plan generation
+    let saved_phases: Vec<&ExecutionPhase> = saved
+        .phases
+        .iter()
+        .filter(|p| p.name != EXPLICIT_CLEANUP_PHASE_NAME)
+        .collect();
+    let fresh_phases: Vec<&ExecutionPhase> = fresh
+        .phases
+        .iter()
+        .filter(|p| p.name != EXPLICIT_CLEANUP_PHASE_NAME)
+        .collect();
+
+    if saved_phases.len() != fresh_phases.len() {
         errors.push(format!(
             "Phase count drift: saved {} phases, fresh {} phases",
-            saved.phases.len(),
-            fresh.phases.len()
+            saved_phases.len(),
+            fresh_phases.len()
         ));
     }
 
-    // Compare phase metadata (number, name) in order — catches empty-phase drift
-    let saved_phase_meta: Vec<(u32, &str)> = saved
-        .phases
+    let saved_phase_meta: Vec<(u32, &str)> = saved_phases
         .iter()
         .map(|p| (p.phase, p.name.as_str()))
         .collect();
-    let fresh_phase_meta: Vec<(u32, &str)> = fresh
-        .phases
+    let fresh_phase_meta: Vec<(u32, &str)> = fresh_phases
         .iter()
         .map(|p| (p.phase, p.name.as_str()))
         .collect();
@@ -582,6 +593,7 @@ pub fn validate_execution_plan_against_fresh(
         let mut tuples: Vec<FullTuple> = plan
             .phases
             .iter()
+            .filter(|p| p.name != EXPLICIT_CLEANUP_PHASE_NAME)
             .flat_map(|p| {
                 p.resources.iter().map(move |r| {
                     (
@@ -894,7 +906,7 @@ mod tests {
     #[test]
     fn deny_unknown_fields_rejects_extra() {
         let json = r#"{
-            "schema_version": 1,
+            "schema_version": 2,
             "cluster_identity": {"api_server": "https://x", "kube_system_uid": "u"},
             "created_at": "2026-01-01",
             "targets": [],
@@ -918,7 +930,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("plan.json");
         let json = r#"{
-            "schema_version": 1,
+            "schema_version": 2,
             "cluster_identity": {"api_server": "https://x", "kube_system_uid": "u"},
             "created_at": "2026-01-01",
             "targets": [],
@@ -964,7 +976,7 @@ mod tests {
         );
         save_execution_plan(&plan, &path.to_string_lossy()).unwrap();
         let loaded = load_execution_plan(&path.to_string_lossy()).unwrap();
-        assert_eq!(loaded.schema_version, 1);
+        assert_eq!(loaded.schema_version, 2);
         assert_eq!(loaded.cluster_identity.kube_system_uid, "uid-1");
         assert_eq!(
             loaded.phases[0].resources[0].action,

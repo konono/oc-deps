@@ -767,7 +767,7 @@ async fn resolve_explicit_delete_targets(
     use crate::teardown::ref_guard;
     use ::kube::api::{Api, DynamicObject};
 
-    let deletion_closure = ref_guard::build_deletion_closure(&exec_plan.phases, specs);
+    let deletion_closure = ref_guard::build_deletion_closure_with_uid(&exec_plan.phases, specs);
     let mut targets = Vec::new();
 
     for spec in specs {
@@ -877,6 +877,144 @@ async fn resolve_explicit_delete_targets(
     }
 
     Ok(targets)
+}
+
+async fn execute_explicit_cleanup(
+    client: &::kube::Client,
+    exec_plan: &crate::teardown::plan::ExecutionPlan,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<()> {
+    use crate::teardown::ref_guard;
+    use ::kube::api::{Api, DeleteParams, DynamicObject};
+
+    eprintln!("\n\x1b[1mExplicit cleanup\x1b[0m");
+
+    let deletion_closure = ref_guard::build_deletion_closure_with_uid(&exec_plan.phases, &[]);
+
+    for target in &exec_plan.explicit_deletes {
+        let gk = (target.group.clone(), target.kind.clone());
+        let Some(info) = gk_map.get(&gk) else {
+            bail!(
+                "Explicit delete: {}/{} not found in API discovery",
+                target.kind,
+                target.name
+            );
+        };
+
+        let gvk = ::kube::api::GroupVersionKind {
+            group: info.group.clone(),
+            version: info.version.clone(),
+            kind: target.kind.clone(),
+        };
+        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+
+        let api: Api<DynamicObject> = if let Some(ref ns) = target.namespace {
+            Api::namespaced_with(client.clone(), ns, &ar)
+        } else {
+            Api::all_with(client.clone(), &ar)
+        };
+
+        // Revalidate: GET live object, verify UID matches
+        let live = match api.get(&target.name).await {
+            Ok(obj) => obj,
+            Err(::kube::Error::Api(ae)) if ae.code == 404 => {
+                eprintln!(
+                    "  \x1b[2mALREADY GONE\x1b[0m  {}/{}",
+                    target.kind, target.name
+                );
+                continue;
+            }
+            Err(e) => {
+                bail!(
+                    "Explicit delete: failed to GET {}/{}: {}",
+                    target.kind,
+                    target.name,
+                    e
+                );
+            }
+        };
+
+        let live_uid = live.metadata.uid.as_deref().unwrap_or("");
+        if live_uid != target.uid {
+            bail!(
+                "Explicit delete: {}/{} UID drift — plan={}, live={}. Object was recreated.",
+                target.kind,
+                target.name,
+                target.uid,
+                live_uid
+            );
+        }
+
+        // Re-run inbound reference guard
+        let target_rid = crate::kube::resource::ResourceId {
+            group: target.group.clone(),
+            version: info.version.clone(),
+            kind: target.kind.clone(),
+            namespace: target.namespace.clone(),
+            name: target.name.clone(),
+            uid: Some(target.uid.clone()),
+        };
+
+        let scan =
+            ref_guard::check_inbound_refs(client, &target_rid, &deletion_closure, gk_map).await?;
+
+        if !scan.blockers.is_empty() {
+            let blocker_list: Vec<String> = scan
+                .blockers
+                .iter()
+                .map(|b| format!("{}/{}", b.resource.kind, b.resource.name))
+                .collect();
+            bail!(
+                "Explicit delete: {}/{} has new outside-plan references at apply time: {}",
+                target.kind,
+                target.name,
+                blocker_list.join(", ")
+            );
+        }
+
+        if !scan.coverage.scan_complete {
+            bail!(
+                "Explicit delete: inbound reference scan for {}/{} failed at apply time",
+                target.kind,
+                target.name
+            );
+        }
+
+        // Delete
+        let ns_display = target
+            .namespace
+            .as_deref()
+            .map(|ns| format!("(ns: {})", ns))
+            .unwrap_or_else(|| "(cluster-scoped)".to_string());
+        match api.delete(&target.name, &DeleteParams::default()).await {
+            Ok(_) => {
+                eprintln!(
+                    "  \x1b[31mDELETED\x1b[0m  {}/{}  \x1b[2m{}\x1b[0m",
+                    target.kind, target.name, ns_display
+                );
+            }
+            Err(::kube::Error::Api(ae)) if ae.code == 404 => {
+                eprintln!(
+                    "  \x1b[2mALREADY GONE\x1b[0m  {}/{}",
+                    target.kind, target.name
+                );
+            }
+            Err(e) => {
+                bail!(
+                    "Explicit delete: failed to delete {}/{}: {}",
+                    target.kind,
+                    target.name,
+                    e
+                );
+            }
+        }
+    }
+
+    eprintln!(
+        "  \x1b[32m✅ Explicit cleanup complete\x1b[0m ({} target(s))",
+        exec_plan.explicit_deletes.len()
+    );
+    Ok(())
 }
 
 fn build_execution_plan_from_teardown(
@@ -1388,6 +1526,30 @@ async fn main() -> Result<()> {
                     file: save_plan_path,
                 } => {
                     let no_cache = refresh_discovery;
+
+                    // Early validation of delete-resource specs (before discovery)
+                    let explicit_specs: Vec<DeleteResourceSpec> = delete_resource
+                        .iter()
+                        .map(|s| DeleteResourceSpec::parse_cli_arg(s))
+                        .collect::<Result<Vec<_>>>()?;
+                    for spec in &explicit_specs {
+                        spec.validate()?;
+                    }
+                    {
+                        let mut seen = HashSet::new();
+                        for spec in &explicit_specs {
+                            let key = (
+                                spec.group.clone(),
+                                spec.kind.clone(),
+                                spec.namespace.clone(),
+                                spec.name.clone(),
+                            );
+                            if !seen.insert(key) {
+                                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
+                            }
+                        }
+                    }
+
                     let mut approve_delete: Vec<String> = approve_scope
                         .iter()
                         .map(|s| s.cli_arg().to_string())
@@ -1433,30 +1595,6 @@ async fn main() -> Result<()> {
                     match save_plan_to_file(&plan) {
                         Ok(path) => eprintln!("📄 Plan saved to {}", path),
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
-                    }
-
-                    // Parse and validate explicit delete-resource specs
-                    let explicit_specs: Vec<DeleteResourceSpec> = delete_resource
-                        .iter()
-                        .map(|s| DeleteResourceSpec::parse_cli_arg(s))
-                        .collect::<Result<Vec<_>>>()?;
-                    for spec in &explicit_specs {
-                        spec.validate()?;
-                    }
-                    // Check duplicates
-                    {
-                        let mut seen = HashSet::new();
-                        for spec in &explicit_specs {
-                            let key = (
-                                spec.group.clone(),
-                                spec.kind.clone(),
-                                spec.namespace.clone(),
-                                spec.name.clone(),
-                            );
-                            if !seen.insert(key) {
-                                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
-                            }
-                        }
                     }
 
                     // Build and save ExecutionPlan
@@ -2501,6 +2639,31 @@ async fn main() -> Result<()> {
                             }
 
                             print_execution_result(&result);
+
+                            // Execute explicit cleanup phase if present
+                            if !exec_plan.explicit_deletes.is_empty()
+                                && result.failed.is_empty()
+                                && result.barrier_timeout.is_none()
+                                && result.phases_completed == result.phases_total
+                                && !dry_run
+                            {
+                                if let Err(e) =
+                                    execute_explicit_cleanup(&client, &exec_plan, &gk_map).await
+                                {
+                                    eprintln!("\n⛔ Explicit cleanup failed: {}", e);
+                                    if let Some(store) = &journal_store {
+                                        let _ = store.update(|j| j.state = RunState::Failed).await;
+                                    }
+                                    return Err(e);
+                                }
+                            } else if !exec_plan.explicit_deletes.is_empty() && dry_run {
+                                eprintln!("\n📋 Explicit cleanup (dry-run):");
+                                for t in &exec_plan.explicit_deletes {
+                                    let ns = t.namespace.as_deref().unwrap_or("cluster-scoped");
+                                    eprintln!("  DELETE  {}/{}  ({})", t.kind, t.name, ns);
+                                }
+                            }
+
                             let mut cleanup_failure: Option<String> = None;
 
                             // Run post-apply residual audit (only if apply succeeded and operator is Absent)

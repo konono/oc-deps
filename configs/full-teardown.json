@@ -15,7 +15,8 @@
       "name": "rhods-operator",
       "approve_delete": {
         "resources": [
-          "maas.opendatahub.io/Config/-/default"
+          "maas.opendatahub.io/Config/-/default",
+          "MLflow/mlflow"
         ]
       },
       "delete_resources": [
