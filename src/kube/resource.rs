@@ -29,6 +29,9 @@ pub enum ScanWarning {
         message: String,
         retries: usize,
     },
+    NotFound {
+        gvr: String,
+    },
     Other {
         gvr: String,
         message: String,
@@ -44,6 +47,7 @@ impl ScanWarning {
         };
         match err {
             kube::Error::Api(resp) => match resp.code {
+                404 => ScanWarning::NotFound { gvr },
                 401 => ScanWarning::Forbidden { gvr, status: 401 },
                 403 => ScanWarning::Forbidden { gvr, status: 403 },
                 408 => ScanWarning::Timeout {
@@ -87,6 +91,10 @@ impl ScanWarning {
         )
     }
 
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, ScanWarning::NotFound { .. })
+    }
+
     pub fn set_retries(&mut self, count: usize) {
         match self {
             ScanWarning::Timeout { retries, .. } => *retries = count,
@@ -100,6 +108,7 @@ impl ScanWarning {
 impl fmt::Display for ScanWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ScanWarning::NotFound { gvr } => write!(f, "{} (404 Not Found)", gvr),
             ScanWarning::Forbidden { gvr, status } => {
                 let label = if *status == 401 {
                     "Unauthorized"

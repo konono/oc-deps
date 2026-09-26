@@ -835,12 +835,32 @@ async fn resolve_explicit_delete_targets(
             Api::all_with(client.clone(), &ar)
         };
 
-        let obj = api.get(&spec.name).await.with_context(|| {
-            format!(
-                "delete-resource: {}/{} not found in cluster",
-                spec.kind, spec.name
-            )
-        })?;
+        let obj = match crate::kube::scanner::get_with_retry(
+            &api,
+            &spec.name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err(w) if w.is_not_found() => {
+                bail!(
+                    "delete-resource: {}/{} not found in cluster",
+                    spec.kind,
+                    spec.name
+                );
+            }
+            Err(w) => {
+                bail!(
+                    "delete-resource: failed to GET {}/{}: {}",
+                    spec.kind,
+                    spec.name,
+                    w
+                );
+            }
+        };
 
         let uid = obj
             .metadata
@@ -925,28 +945,43 @@ async fn resolve_explicit_delete_targets(
     Ok(targets)
 }
 
+fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
+    user_requested || explicit_target_count > 0
+}
+
 fn inject_explicit_phase_into_teardown_plan(
     plan: &mut crate::teardown::planner::TeardownPlan,
     explicit_deletes: &[crate::teardown::plan::ExplicitDeleteTarget],
-) {
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> anyhow::Result<()> {
     use crate::teardown::planner::{Action, Barrier, PlanPhase};
     if explicit_deletes.is_empty() {
-        return;
+        return Ok(());
     }
-    let actions: Vec<Action> = explicit_deletes
-        .iter()
-        .map(|t| Action::Delete {
+    let mut actions: Vec<Action> = Vec::with_capacity(explicit_deletes.len());
+    for t in explicit_deletes {
+        let version = gk_map
+            .get(&(t.group.clone(), t.kind.clone()))
+            .map(|info| info.version.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Explicit target {}/{} not found in API discovery — cannot determine version",
+                    t.kind,
+                    t.name
+                )
+            })?;
+        actions.push(Action::Delete {
             resource: crate::kube::resource::ResourceId {
                 group: t.group.clone(),
-                version: String::new(),
+                version,
                 kind: t.kind.clone(),
                 namespace: t.namespace.clone(),
                 name: t.name.clone(),
                 uid: Some(t.uid.clone()),
             },
             reason: t.reason.clone(),
-        })
-        .collect();
+        });
+    }
 
     // Insert before the last 2 phases (CRDs preserve + Namespace preserve)
     let insert_idx = if plan.phases.len() >= 2 {
@@ -971,6 +1006,7 @@ fn inject_explicit_phase_into_teardown_plan(
         },
     );
     plan.explicit_deletes = explicit_deletes.to_vec();
+    Ok(())
 }
 
 fn build_execution_plan_from_teardown(
@@ -1481,8 +1517,6 @@ async fn main() -> Result<()> {
                     delete_resource,
                     file: save_plan_path,
                 } => {
-                    let no_cache = refresh_discovery;
-
                     // Early validation of delete-resource specs (before discovery)
                     let explicit_specs: Vec<DeleteResourceSpec> = delete_resource
                         .iter()
@@ -1505,6 +1539,9 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
+
+                    let no_cache =
+                        should_refresh_discovery(refresh_discovery, explicit_specs.len());
 
                     let mut approve_delete: Vec<String> = approve_scope
                         .iter()
@@ -1555,7 +1592,7 @@ async fn main() -> Result<()> {
                             &gk_map,
                         )
                         .await?;
-                        inject_explicit_phase_into_teardown_plan(&mut plan, &targets);
+                        inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
                         targets
                     } else {
                         Vec::new()
@@ -1600,15 +1637,19 @@ async fn main() -> Result<()> {
                     refresh_discovery,
                     dry_run,
                     non_interactive,
+                    yes,
                     script,
                     tui: use_tui,
                 } => {
                     let force = false; // advisory warnings always shown
                     let approve_finalizer_recovery = true; // always enabled
-                    let no_cache = refresh_discovery;
 
                     // Load execution plan
                     let exec_plan = crate::teardown::plan::load_execution_plan(&plan_file)?;
+                    let no_cache = should_refresh_discovery(
+                        refresh_discovery,
+                        exec_plan.explicit_deletes.len(),
+                    );
                     eprintln!("📄 Loaded execution plan from {}", plan_file);
 
                     // P0: Validate cluster identity via kube-system UID (hard fail)
@@ -1806,29 +1847,28 @@ async fn main() -> Result<()> {
                             resolve_explicit_delete_targets(&client, &fresh_specs, &plan, &gk_map)
                                 .await?;
 
-                        // Validate saved targets match fresh
-                        if fresh_targets.len() != exec_plan.explicit_deletes.len() {
+                        // Canonical authority validation: order-independent, full-field, duplicate-rejecting
+                        if let Err(drift_errors) =
+                            crate::teardown::plan::validate_explicit_targets_authority(
+                                &exec_plan.explicit_deletes,
+                                &fresh_targets,
+                                &exec_plan.phases,
+                            )
+                        {
+                            for e in &drift_errors {
+                                eprintln!("❌ {}", e);
+                            }
                             bail!(
-                                "Explicit delete count changed: saved {}, fresh {}",
-                                exec_plan.explicit_deletes.len(),
-                                fresh_targets.len()
+                                "{} explicit target authority error(s). Re-run `teardown plan`.",
+                                drift_errors.len()
                             );
                         }
-                        for (saved, fresh) in
-                            exec_plan.explicit_deletes.iter().zip(fresh_targets.iter())
-                        {
-                            if saved.uid != fresh.uid {
-                                bail!(
-                                    "Explicit target {}/{} UID drift: saved={}, fresh={}",
-                                    saved.kind,
-                                    saved.name,
-                                    saved.uid,
-                                    fresh.uid
-                                );
-                            }
-                        }
 
-                        inject_explicit_phase_into_teardown_plan(&mut plan, &fresh_targets);
+                        inject_explicit_phase_into_teardown_plan(
+                            &mut plan,
+                            &fresh_targets,
+                            &gk_map,
+                        )?;
                     }
 
                     #[allow(unused)]
@@ -2566,8 +2606,8 @@ async fn main() -> Result<()> {
                         force,
                         journal_store.as_deref(),
                         Some(&gate),
-                        0,     // start from phase 0 (fresh execution)
-                        false, // prompt for confirmation
+                        0,   // start from phase 0 (fresh execution)
+                        yes, // skip confirmation when --yes is passed
                     )
                     .await;
 
@@ -9672,5 +9712,260 @@ mod basis_drift_tests {
         let core_parsed = DeleteResourceSpec::parse_cli_arg(&core_arg).unwrap();
         assert_eq!(core_parsed.group, "");
         assert!(core_parsed.namespace.is_none());
+    }
+
+    #[test]
+    fn inject_explicit_phase_errors_on_missing_gk() {
+        use crate::teardown::plan::{ExplicitDeleteTarget, RefScanCoverage};
+        use crate::teardown::planner::TeardownPlan;
+        let mut plan = TeardownPlan {
+            targets: vec![],
+            preflight: crate::teardown::planner::Preflight { checks: vec![] },
+            phases: vec![],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+            explicit_deletes: vec![],
+        };
+        let targets = vec![ExplicitDeleteTarget {
+            group: "nonexistent.io".into(),
+            kind: "Widget".into(),
+            namespace: Some("ns".into()),
+            name: "w1".into(),
+            uid: "uid-1".into(),
+            reason: "config".into(),
+            inbound_refs_at_plan: vec![],
+            ref_scan_coverage: RefScanCoverage {
+                kinds_scanned: vec![],
+                scan_complete: true,
+            },
+        }];
+        let gk_map = std::collections::HashMap::new();
+        let result = inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map);
+        assert!(result.is_err(), "missing GK must error");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found in API discovery"),
+            "error should mention API discovery"
+        );
+    }
+
+    #[test]
+    fn should_refresh_discovery_logic() {
+        assert!(
+            !should_refresh_discovery(false, 0),
+            "no flag, no targets = use cache"
+        );
+        assert!(
+            should_refresh_discovery(true, 0),
+            "user --refresh-discovery = refresh"
+        );
+        assert!(
+            should_refresh_discovery(false, 1),
+            "explicit targets present = force refresh even without flag"
+        );
+        assert!(
+            should_refresh_discovery(true, 3),
+            "both flag and targets = refresh"
+        );
+    }
+}
+
+#[cfg(test)]
+mod resolve_explicit_target_tests {
+    use super::*;
+    use ::kube::client::Body;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "apiVersion": "v1", "kind": "Status",
+            "metadata": {},
+            "status": "Failure",
+            "reason": reason,
+            "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn test_gk_map() -> crate::kube::discovery::GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        let entries: Vec<(&str, &str, &str, &str)> = vec![
+            ("", "ConfigMap", "v1", "configmaps"),
+            ("apps", "Deployment", "v1", "deployments"),
+            ("apps", "StatefulSet", "v1", "statefulsets"),
+            ("apps", "DaemonSet", "v1", "daemonsets"),
+            ("apps", "ReplicaSet", "v1", "replicasets"),
+            ("batch", "Job", "v1", "jobs"),
+            ("batch", "CronJob", "v1", "cronjobs"),
+            ("", "Pod", "v1", "pods"),
+            ("gateway.networking.k8s.io", "Gateway", "v1", "gateways"),
+        ];
+        for (group, kind, version, plural) in entries {
+            gk.insert(
+                (group.to_string(), kind.to_string()),
+                crate::kube::discovery::KindInfo {
+                    group: group.to_string(),
+                    version: version.to_string(),
+                    plural: plural.to_string(),
+                    namespaced: true,
+                    listable: true,
+                },
+            );
+        }
+        gk
+    }
+
+    fn test_spec() -> DeleteResourceSpec {
+        DeleteResourceSpec {
+            group: "".to_string(),
+            kind: "ConfigMap".to_string(),
+            namespace: Some("ns".to_string()),
+            name: "cm1".to_string(),
+        }
+    }
+
+    fn empty_plan() -> crate::teardown::planner::TeardownPlan {
+        crate::teardown::planner::TeardownPlan {
+            targets: vec![],
+            preflight: crate::teardown::planner::Preflight { checks: vec![] },
+            phases: vec![],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "".into(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+            explicit_deletes: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_404_one_request_not_found() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(status_response(404, "NotFound"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let result =
+            resolve_explicit_delete_targets(&client, &[test_spec()], &empty_plan(), &test_gk_map())
+                .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "404 must not retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_403_one_request_fails() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(status_response(403, "Forbidden"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let result =
+            resolve_explicit_delete_targets(&client, &[test_spec()], &empty_plan(), &test_gk_map())
+                .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "403 must not retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_500_then_200_recovers() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                let uri = req.uri().to_string();
+                if uri.contains("configmaps") && !uri.contains('?') {
+                    if n == 0 {
+                        send.send_response(status_response(500, "InternalServerError"));
+                    } else {
+                        send.send_response(json_response(serde_json::json!({
+                            "apiVersion": "v1", "kind": "ConfigMap",
+                            "metadata": {"name": "cm1", "namespace": "ns", "uid": "cm-uid-1"}
+                        })));
+                    }
+                } else {
+                    // LIST for ref scan — return empty
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "List",
+                        "metadata": {"resourceVersion": "1"}, "items": []
+                    })));
+                }
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let result =
+            resolve_explicit_delete_targets(&client, &[test_spec()], &empty_plan(), &test_gk_map())
+                .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_ok(), "500→200 must recover: {:?}", result.err());
+        let targets = result.unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].uid, "cm-uid-1");
+        assert!(
+            request_count.load(Ordering::SeqCst) >= 2,
+            "500→200 must use at least 2 requests (GET retry + ref scan LISTs)"
+        );
     }
 }

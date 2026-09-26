@@ -761,6 +761,202 @@ pub fn validate_execution_plan_against_fresh(
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Explicit target authority validation
+// ──────────────────────────────────────────────────────────────
+
+type ExplicitTargetKey = (
+    String,         // group
+    String,         // kind
+    Option<String>, // namespace
+    String,         // name
+    String,         // uid
+    String,         // reason
+);
+
+fn explicit_target_canonical_key(t: &ExplicitDeleteTarget) -> ExplicitTargetKey {
+    (
+        t.group.clone(),
+        t.kind.clone(),
+        t.namespace.clone(),
+        t.name.clone(),
+        t.uid.clone(),
+        t.reason.clone(),
+    )
+}
+
+type CanonicalInboundRef = (String, String, Option<String>, String, String, String, bool);
+
+fn canonical_inbound_refs(refs: &[InboundRefIdentity]) -> Vec<CanonicalInboundRef> {
+    let mut sorted: Vec<_> = refs
+        .iter()
+        .map(|r| {
+            (
+                r.group.clone(),
+                r.kind.clone(),
+                r.namespace.clone(),
+                r.name.clone(),
+                r.uid.clone(),
+                r.ref_field.clone(),
+                r.in_deletion_plan,
+            )
+        })
+        .collect();
+    sorted.sort();
+    sorted
+}
+
+fn canonical_coverage(c: &RefScanCoverage) -> (bool, Vec<String>) {
+    let mut kinds = c.kinds_scanned.clone();
+    kinds.sort();
+    (c.scan_complete, kinds)
+}
+
+pub fn validate_explicit_targets_authority(
+    saved: &[ExplicitDeleteTarget],
+    fresh: &[ExplicitDeleteTarget],
+    plan_phases: &[ExecutionPhase],
+) -> Result<(), Vec<String>> {
+    use std::collections::HashMap;
+    let mut errors = Vec::new();
+
+    // 1. Reject duplicate identities in saved
+    {
+        let mut seen: HashMap<(String, String, Option<String>, String), usize> = HashMap::new();
+        for t in saved {
+            let id = (
+                t.group.clone(),
+                t.kind.clone(),
+                t.namespace.clone(),
+                t.name.clone(),
+            );
+            *seen.entry(id).or_default() += 1;
+        }
+        for ((g, k, ns, n), count) in &seen {
+            if *count > 1 {
+                errors.push(format!(
+                    "Duplicate explicit target in saved metadata: {}/{} ns={:?} name={} (×{})",
+                    g, k, ns, n, count
+                ));
+            }
+        }
+    }
+
+    // 2. Count check
+    if saved.len() != fresh.len() {
+        errors.push(format!(
+            "Explicit target count mismatch: saved {}, fresh {}",
+            saved.len(),
+            fresh.len()
+        ));
+        return Err(errors);
+    }
+
+    // 3. Order-independent multiset comparison of full canonical representation
+    type CanonicalTarget = (
+        ExplicitTargetKey,
+        Vec<CanonicalInboundRef>,
+        (bool, Vec<String>),
+    );
+
+    let canonicalize = |targets: &[ExplicitDeleteTarget]| -> Vec<CanonicalTarget> {
+        let mut result: Vec<CanonicalTarget> = targets
+            .iter()
+            .map(|t| {
+                (
+                    explicit_target_canonical_key(t),
+                    canonical_inbound_refs(&t.inbound_refs_at_plan),
+                    canonical_coverage(&t.ref_scan_coverage),
+                )
+            })
+            .collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    };
+
+    let saved_canonical = canonicalize(saved);
+    let fresh_canonical = canonicalize(fresh);
+
+    for (i, (s, f)) in saved_canonical
+        .iter()
+        .zip(fresh_canonical.iter())
+        .enumerate()
+    {
+        if s.0 != f.0 {
+            errors.push(format!(
+                "Explicit target identity mismatch at [{}]: saved ({}/{} uid={}) vs fresh ({}/{} uid={})",
+                i, (s.0).1, (s.0).3, (s.0).4, (f.0).1, (f.0).3, (f.0).4
+            ));
+        }
+        if s.1 != f.1 {
+            errors.push(format!(
+                "Explicit target inbound_refs mismatch for {}/{}: saved {} refs vs fresh {} refs",
+                (s.0).1,
+                (s.0).3,
+                s.1.len(),
+                f.1.len()
+            ));
+        }
+        if s.2 != f.2 {
+            errors.push(format!(
+                "Explicit target coverage mismatch for {}/{}: saved complete={} vs fresh complete={}",
+                (s.0).1, (s.0).3, (s.2).0, (f.2).0
+            ));
+        }
+    }
+
+    // 4. Cross-check: explicit_deletes metadata must match Explicit cleanup phase DELETE actions 1:1
+    let phase_explicit_actions: Vec<(String, String, Option<String>, String)> = plan_phases
+        .iter()
+        .filter(|p| p.name == EXPLICIT_CLEANUP_PHASE_NAME)
+        .flat_map(|p| {
+            p.resources.iter().filter_map(|r| {
+                if r.action == ExecutionAction::Delete {
+                    Some((
+                        r.group.clone(),
+                        r.kind.clone(),
+                        r.namespace.clone(),
+                        r.name.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    let metadata_identities: Vec<(String, String, Option<String>, String)> = saved
+        .iter()
+        .map(|t| {
+            (
+                t.group.clone(),
+                t.kind.clone(),
+                t.namespace.clone(),
+                t.name.clone(),
+            )
+        })
+        .collect();
+
+    let mut meta_sorted = metadata_identities.clone();
+    meta_sorted.sort();
+    let mut phase_sorted = phase_explicit_actions.clone();
+    phase_sorted.sort();
+
+    if meta_sorted != phase_sorted {
+        errors.push(format!(
+            "Explicit cleanup phase actions ({}) do not match metadata explicit_deletes ({})",
+            phase_sorted.len(),
+            meta_sorted.len()
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 //  PlannedPreserved — for ExecutionResult kept/reviewed tracking
 // ──────────────────────────────────────────────────────────────
 
@@ -772,6 +968,7 @@ pub struct PlannedPreserved {
 }
 
 #[cfg(test)]
+#[allow(clippy::cloned_ref_to_slice_refs)]
 mod tests {
     use super::*;
 
@@ -1536,5 +1733,229 @@ mod tests {
             !csv_name_matches("", "rhbk-operator.v26.6.7-opr.1"),
             "empty must not match"
         );
+    }
+
+    // ── Explicit target authority tests ──
+
+    fn make_explicit_target(kind: &str, name: &str, uid: &str) -> ExplicitDeleteTarget {
+        ExplicitDeleteTarget {
+            group: "".to_string(),
+            kind: kind.to_string(),
+            namespace: Some("ns".to_string()),
+            name: name.to_string(),
+            uid: uid.to_string(),
+            reason: "config".to_string(),
+            inbound_refs_at_plan: vec![],
+            ref_scan_coverage: RefScanCoverage {
+                kinds_scanned: vec!["apps/Deployment".to_string()],
+                scan_complete: true,
+            },
+        }
+    }
+
+    fn make_explicit_phase(targets: &[&ExplicitDeleteTarget]) -> ExecutionPhase {
+        ExecutionPhase {
+            phase: 99,
+            name: EXPLICIT_CLEANUP_PHASE_NAME.to_string(),
+            resources: targets
+                .iter()
+                .map(|t| ExecutionResource {
+                    group: t.group.clone(),
+                    kind: t.kind.clone(),
+                    namespace: t.namespace.clone(),
+                    name: t.name.clone(),
+                    uid: Some(t.uid.clone()),
+                    action: ExecutionAction::Delete,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn authority_identical_passes() {
+        let t = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let phase = make_explicit_phase(&[&t]);
+        let result = validate_explicit_targets_authority(&[t.clone()], &[t], &[phase]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn authority_uid_mutation_rejected() {
+        let saved = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let mut fresh = saved.clone();
+        fresh.uid = "uid-2".to_string();
+        let phase = make_explicit_phase(&[&saved]);
+        let result = validate_explicit_targets_authority(&[saved], &[fresh], &[phase]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("identity mismatch"))
+        );
+    }
+
+    #[test]
+    fn authority_group_kind_ns_name_mutation_rejected() {
+        let saved = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let mut fresh = saved.clone();
+        fresh.kind = "Secret".to_string();
+        let phase = make_explicit_phase(&[&saved]);
+        let result = validate_explicit_targets_authority(&[saved], &[fresh], &[phase]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn authority_inbound_ref_mutation_rejected() {
+        let mut saved = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        saved.inbound_refs_at_plan.push(InboundRefIdentity {
+            group: "apps".to_string(),
+            kind: "Deployment".to_string(),
+            namespace: Some("ns".to_string()),
+            name: "dep1".to_string(),
+            uid: "dep-uid".to_string(),
+            ref_field: "spec.volumes".to_string(),
+            in_deletion_plan: true,
+        });
+        let mut fresh = saved.clone();
+        fresh.inbound_refs_at_plan[0].uid = "different-uid".to_string();
+        let phase = make_explicit_phase(&[&saved]);
+        let result = validate_explicit_targets_authority(&[saved], &[fresh], &[phase]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("inbound_refs"))
+        );
+    }
+
+    #[test]
+    fn authority_inbound_ref_field_mutation_rejected() {
+        let mut saved = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        saved.inbound_refs_at_plan.push(InboundRefIdentity {
+            group: "apps".to_string(),
+            kind: "Deployment".to_string(),
+            namespace: Some("ns".to_string()),
+            name: "dep1".to_string(),
+            uid: "dep-uid".to_string(),
+            ref_field: "spec.volumes".to_string(),
+            in_deletion_plan: true,
+        });
+        let mut fresh = saved.clone();
+        fresh.inbound_refs_at_plan[0].in_deletion_plan = false;
+        let phase = make_explicit_phase(&[&saved]);
+        let result = validate_explicit_targets_authority(&[saved], &[fresh], &[phase]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn authority_coverage_mutation_rejected() {
+        let saved = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let mut fresh = saved.clone();
+        fresh.ref_scan_coverage.scan_complete = false;
+        let phase = make_explicit_phase(&[&saved]);
+        let result = validate_explicit_targets_authority(&[saved], &[fresh], &[phase]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().iter().any(|e| e.contains("coverage")));
+    }
+
+    #[test]
+    fn authority_coverage_kinds_mutation_rejected() {
+        let saved = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let mut fresh = saved.clone();
+        fresh
+            .ref_scan_coverage
+            .kinds_scanned
+            .push("extra/Kind".to_string());
+        let phase = make_explicit_phase(&[&saved]);
+        let result = validate_explicit_targets_authority(&[saved], &[fresh], &[phase]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn authority_duplicate_saved_rejected() {
+        let t = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let phase = make_explicit_phase(&[&t, &t]);
+        let result =
+            validate_explicit_targets_authority(&[t.clone(), t.clone()], &[t.clone(), t], &[phase]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().iter().any(|e| e.contains("Duplicate")));
+    }
+
+    #[test]
+    fn authority_metadata_add_rejected() {
+        let t1 = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let t2 = make_explicit_target("ConfigMap", "cm2", "uid-2");
+        let phase = make_explicit_phase(&[&t1]);
+        let result =
+            validate_explicit_targets_authority(&[t1.clone(), t2], &[t1.clone()], &[phase]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn authority_metadata_remove_rejected() {
+        let t1 = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let t2 = make_explicit_target("ConfigMap", "cm2", "uid-2");
+        let phase = make_explicit_phase(&[&t1, &t2]);
+        let result =
+            validate_explicit_targets_authority(&[t1.clone()], &[t1.clone(), t2], &[phase]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn authority_phase_mismatch_rejected() {
+        let t1 = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let t2 = make_explicit_target("ConfigMap", "cm2", "uid-2");
+        // metadata has t1, phase has t1+t2
+        let phase = make_explicit_phase(&[&t1, &t2]);
+        let result = validate_explicit_targets_authority(&[t1.clone()], &[t1], &[phase]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("phase actions"))
+        );
+    }
+
+    #[test]
+    fn authority_both_metadata_and_phase_replaced_rejected() {
+        let t1 = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let mut t2 = t1.clone();
+        t2.name = "cm2".to_string();
+        t2.uid = "uid-2".to_string();
+        let phase = make_explicit_phase(&[&t1]);
+        // saved has t1, fresh has t2 (different identity)
+        let result = validate_explicit_targets_authority(&[t1], &[t2], &[phase]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn authority_same_target_in_both_metadata_and_extra_phase() {
+        let t1 = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        // Phase has duplicate
+        let mut phase = make_explicit_phase(&[&t1]);
+        phase.resources.push(phase.resources[0].clone());
+        let result = validate_explicit_targets_authority(&[t1.clone()], &[t1], &[phase]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("phase actions"))
+        );
+    }
+
+    #[test]
+    fn authority_order_independent() {
+        let t1 = make_explicit_target("ConfigMap", "cm1", "uid-1");
+        let mut t2 = make_explicit_target("Service", "svc1", "uid-2");
+        t2.group = "".to_string();
+        let phase = make_explicit_phase(&[&t1, &t2]);
+        // saved in reverse order
+        let result =
+            validate_explicit_targets_authority(&[t2.clone(), t1.clone()], &[t1, t2], &[phase]);
+        assert!(result.is_ok(), "order should not matter");
     }
 }

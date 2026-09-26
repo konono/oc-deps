@@ -3995,6 +3995,26 @@ fn print_plan_tree(plan: &TeardownPlan) {
         }
     }
 
+    // Build lookup for explicit target evidence display
+    let explicit_evidence: std::collections::HashMap<
+        (String, String, Option<String>, String),
+        &crate::teardown::plan::ExplicitDeleteTarget,
+    > = plan
+        .explicit_deletes
+        .iter()
+        .map(|t| {
+            (
+                (
+                    t.group.clone(),
+                    t.kind.clone(),
+                    t.namespace.clone(),
+                    t.name.clone(),
+                ),
+                t,
+            )
+        })
+        .collect();
+
     for (i, phase) in plan.phases.iter().enumerate() {
         println!("\n\x1b[1mPhase {}  {}\x1b[0m", i, phase.name);
 
@@ -4002,6 +4022,8 @@ fn print_plan_tree(plan: &TeardownPlan) {
             println!("  (none)");
             continue;
         }
+
+        let is_explicit_phase = phase.name == crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME;
 
         for action in &phase.actions {
             match action {
@@ -4013,6 +4035,51 @@ fn print_plan_tree(plan: &TeardownPlan) {
                         scope_suffix(resource)
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
+                    if is_explicit_phase {
+                        let key = (
+                            resource.group.clone(),
+                            resource.kind.clone(),
+                            resource.namespace.clone(),
+                            resource.name.clone(),
+                        );
+                        if let Some(evidence) = explicit_evidence.get(&key) {
+                            if evidence.inbound_refs_at_plan.is_empty() {
+                                println!(
+                                    "         \x1b[36m↳ no typed inbound refs at plan time\x1b[0m"
+                                );
+                            } else {
+                                for r in &evidence.inbound_refs_at_plan {
+                                    let status = if r.in_deletion_plan {
+                                        "in-plan"
+                                    } else {
+                                        "EXTERNAL"
+                                    };
+                                    println!(
+                                        "         \x1b[36m↳ ref: {}/{}{} uid={} field={} ({})\x1b[0m",
+                                        r.kind,
+                                        r.name,
+                                        r.namespace
+                                            .as_deref()
+                                            .map(|n| format!("@{n}"))
+                                            .unwrap_or_default(),
+                                        &r.uid[..r.uid.len().min(8)],
+                                        r.ref_field,
+                                        status
+                                    );
+                                }
+                            }
+                            let kinds_str = evidence.ref_scan_coverage.kinds_scanned.join(", ");
+                            let complete = if evidence.ref_scan_coverage.scan_complete {
+                                "✓"
+                            } else {
+                                "✗"
+                            };
+                            println!(
+                                "         \x1b[36m↳ coverage: {} [{}]\x1b[0m",
+                                complete, kinds_str
+                            );
+                        }
+                    }
                 }
                 Action::ExpectGone { resource, reason } => {
                     println!(

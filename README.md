@@ -448,6 +448,42 @@ The plan is read-only — nothing is deleted. It generates a phased deletion seq
 | 4 | APIs | KEEP CRDs by default (DELETE with `--prune-crds`); APIServices always KEEP |
 | 5 | Namespaces | KEEP (manual verification required) |
 
+### Explicit resource cleanup (`--delete-resource`)
+
+Some operator residuals (e.g. Gateway, ConfigMap, ConsolePlugin bundles) are not owned via ownerReferences and survive operator teardown. Use `--delete-resource` to explicitly include them in the plan:
+
+```bash
+oc-deps teardown plan rhods-operator \
+  --delete-resource gateway.networking.k8s.io/Gateway/openshift-ingress/maas-default-gateway \
+  --delete-resource ConfigMap/openshift-ingress/maas-gateway-options \
+  --file plan.json
+```
+
+**Syntax:** `group/Kind/ns/name` or `Kind/ns/name` (core group) or `Kind/-/name` (cluster-scoped).
+
+**Supported target kinds:** Gateway, ConfigMap, Service, ConsolePlugin, Deployment.
+**Forbidden kinds:** Namespace, PersistentVolume, PersistentVolumeClaim, CustomResourceDefinition, APIService.
+
+**Safety guarantees:**
+
+- **Typed inbound reference scan** — at plan time AND apply time, the tool lists all known referrer kinds for each target and checks whether any live object outside the deletion closure references it. If any external reference exists, the target is blocked.
+- **Fail-closed** — if a required referrer API LIST fails (RBAC, timeout, server error), the scan is incomplete and the target is blocked. Optional APIs (e.g. Gateway routes on non-Gateway clusters) are skipped when not served.
+- **UID precondition** — every explicit DELETE uses a UID precondition to prevent deleting a recreated resource.
+- **Apply-time revalidation** — the full ref scan re-runs at apply time (including dry-run) with fresh cluster state. New external referrers introduced after `plan` will block `apply`.
+- **Canonical authority comparison** — apply compares saved plan evidence (identity, inbound refs, coverage) against fresh resolution. Any drift (UID change, new refs, coverage change) is rejected.
+
+**Reference coverage per target kind:**
+
+| Target | Referrer kinds scanned |
+|--------|----------------------|
+| Gateway | HTTPRoute, GRPCRoute, TCPRoute, TLSRoute, UDPRoute (parentRefs) |
+| ConfigMap | Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, Pod (volumes, projected, envFrom, env valueFrom); Gateway (parametersRef) |
+| Service | ConsolePlugin (backend), HTTPRoute/GRPCRoute/TCPRoute/TLSRoute/UDPRoute (backendRefs), Ingress (defaultBackend, rules), Route (spec.to, alternateBackends) |
+| ConsolePlugin | Console (spec.plugins) |
+| Deployment | HorizontalPodAutoscaler (scaleTargetRef) |
+
+The Explicit cleanup phase executes after controller removal and before API/namespace phases, ensuring controllers are gone before their residual resources are cleaned up.
+
 ### Check resource status
 
 ```bash

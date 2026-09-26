@@ -273,7 +273,12 @@ pub enum TeardownAction {
         #[arg(long = "keep-resource", value_name = "SPEC", value_parser = validate_resource_spec)]
         keep_resource: Vec<String>,
 
-        /// Explicitly delete a resource (group/Kind/ns/name or Kind/ns/name for core, repeatable)
+        /// Explicitly delete a resource after operator removal.
+        ///
+        /// Format: group/Kind/ns/name or Kind/ns/name (core group) or Kind/-/name (cluster-scoped).
+        /// Supported kinds: Gateway, ConfigMap, Service, ConsolePlugin, Deployment.
+        /// Forbidden: Namespace, PersistentVolume, PersistentVolumeClaim, CRD, APIService.
+        /// Safety: typed inbound ref scan must pass at plan and apply time (fail-closed).
         #[arg(long = "delete-resource", value_name = "SPEC")]
         delete_resource: Vec<String>,
 
@@ -314,6 +319,10 @@ pub enum TeardownAction {
         /// Non-interactive mode
         #[arg(long)]
         non_interactive: bool,
+
+        /// Skip confirmation prompt (auto-approve execution)
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
 
         /// Headless script mode
         #[arg(long, value_name = "PATH")]

@@ -475,7 +475,15 @@ pub async fn execute_plan_with_store(
                     } else {
                         ::kube::api::Api::all_with(client.clone(), &ar)
                     };
-                match api.get(&target.name).await {
+                match crate::kube::scanner::get_with_retry(
+                    &api,
+                    &target.name,
+                    &info.group,
+                    &info.version,
+                    &info.plural,
+                )
+                .await
+                {
                     Ok(obj) => {
                         let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
                         if live_uid != target.uid {
@@ -488,20 +496,21 @@ pub async fn execute_plan_with_store(
                             );
                         }
                     }
-                    Err(::kube::Error::Api(ae)) if ae.code == 404 => {
+                    Err(w) if w.is_not_found() => {
                         eprintln!("  ✅ {}/{} already gone", target.kind, target.name);
                         continue;
                     }
-                    Err(e) => {
+                    Err(w) => {
                         anyhow::bail!(
                             "Explicit cleanup: failed to GET {}/{}: {}",
                             target.kind,
                             target.name,
-                            e
+                            w
                         );
                     }
                 }
-                if !dry_run {
+                // Ref scan runs in both real apply and dry-run (read-only safety check)
+                {
                     let target_rid = crate::kube::resource::ResourceId {
                         group: target.group.clone(),
                         version: info.version.clone(),
@@ -8486,5 +8495,237 @@ mod tests {
         .await;
 
         assert!(!result, "EXPECT with different UID must not be deferred");
+    }
+
+    // ── Explicit cleanup dry-run and new-ref blocker tests ──
+
+    fn explicit_cleanup_gk_map() -> GroupKindMap {
+        let mut gk = std::collections::HashMap::new();
+        let entries: Vec<(&str, &str, &str, &str)> = vec![
+            ("", "ConfigMap", "v1", "configmaps"),
+            ("apps", "Deployment", "v1", "deployments"),
+            ("apps", "StatefulSet", "v1", "statefulsets"),
+            ("apps", "DaemonSet", "v1", "daemonsets"),
+            ("apps", "ReplicaSet", "v1", "replicasets"),
+            ("batch", "Job", "v1", "jobs"),
+            ("batch", "CronJob", "v1", "cronjobs"),
+            ("", "Pod", "v1", "pods"),
+            ("gateway.networking.k8s.io", "Gateway", "v1", "gateways"),
+        ];
+        for (group, kind, version, plural) in entries {
+            gk.insert(
+                (group.to_string(), kind.to_string()),
+                crate::kube::discovery::KindInfo {
+                    group: group.to_string(),
+                    version: version.to_string(),
+                    plural: plural.to_string(),
+                    namespaced: true,
+                    listable: true,
+                },
+            );
+        }
+        gk
+    }
+
+    fn make_explicit_cleanup_plan(
+        has_new_referrer: bool,
+    ) -> (
+        TeardownPlan,
+        GroupKindMap,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use crate::teardown::plan::{
+            EXPLICIT_CLEANUP_PHASE_NAME, ExplicitDeleteTarget, RefScanCoverage,
+        };
+
+        let cm_res = ResourceId {
+            group: "".to_string(),
+            version: "v1".to_string(),
+            kind: "ConfigMap".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: "target-cm".to_string(),
+            uid: Some("cm-uid-1".to_string()),
+        };
+
+        let plan = TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![PlanPhase {
+                name: EXPLICIT_CLEANUP_PHASE_NAME.to_string(),
+                description: "".to_string(),
+                actions: vec![Action::Delete {
+                    resource: cm_res.clone(),
+                    reason: "config".to_string(),
+                }],
+                barrier: None,
+            }],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "".to_string(),
+                kind: "ConfigMap".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: "target-cm".to_string(),
+                uid: "cm-uid-1".to_string(),
+                reason: "config".to_string(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![
+                        "apps/Deployment".to_string(),
+                        "apps/StatefulSet".to_string(),
+                        "apps/DaemonSet".to_string(),
+                        "gateway.networking.k8s.io/Gateway".to_string(),
+                    ],
+                    scan_complete: true,
+                },
+            }],
+        };
+
+        let list_request_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let gk = explicit_cleanup_gk_map();
+        let _ = has_new_referrer;
+        (plan, gk, list_request_count)
+    }
+
+    async fn run_explicit_cleanup_test(
+        dry_run: bool,
+        inject_referrer: bool,
+    ) -> Result<ExecutionResult> {
+        use std::sync::atomic::Ordering;
+
+        let (plan, gk, list_count) = make_explicit_cleanup_plan(inject_referrer);
+        let list_cnt = list_count.clone();
+        let km = std::collections::HashMap::new();
+        let gvk_map = std::collections::HashMap::new();
+        let gvr_map = std::collections::HashMap::new();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = std::pin::pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let uri = req.uri().to_string();
+                let method = req.method().clone();
+
+                if uri.contains("configmaps") && method == http::Method::GET && !uri.contains('?') {
+                    // GET target ConfigMap — return with matching UID
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1",
+                        "kind": "ConfigMap",
+                        "metadata": {
+                            "name": "target-cm",
+                            "namespace": "test-ns",
+                            "uid": "cm-uid-1",
+                            "resourceVersion": "1"
+                        }
+                    })));
+                } else if uri.contains("deployments")
+                    && (uri.contains('?') || method == http::Method::GET)
+                {
+                    list_cnt.fetch_add(1, Ordering::SeqCst);
+                    if inject_referrer {
+                        // Return a Deployment that references target-cm via volume
+                        send.send_response(json_response(serde_json::json!({
+                            "apiVersion": "apps/v1",
+                            "kind": "DeploymentList",
+                            "metadata": {"resourceVersion": "1"},
+                            "items": [{
+                                "apiVersion": "apps/v1",
+                                "kind": "Deployment",
+                                "metadata": {
+                                    "name": "new-referrer",
+                                    "namespace": "test-ns",
+                                    "uid": "dep-uid-new"
+                                },
+                                "spec": {
+                                    "template": {
+                                        "spec": {
+                                            "volumes": [{
+                                                "name": "cfg",
+                                                "configMap": {"name": "target-cm"}
+                                            }]
+                                        }
+                                    }
+                                }
+                            }]
+                        })));
+                    } else {
+                        send.send_response(json_response(serde_json::json!({
+                            "apiVersion": "apps/v1",
+                            "kind": "DeploymentList",
+                            "metadata": {"resourceVersion": "1"},
+                            "items": []
+                        })));
+                    }
+                } else if method == http::Method::DELETE {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "Status", "metadata": {},
+                        "status": "Success"
+                    })));
+                } else {
+                    // All other LISTs return empty
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1",
+                        "kind": "List",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": []
+                    })));
+                }
+            }
+        });
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = execute_plan_with_store(
+            &client, &plan, &km, &gk, &gvk_map, &gvr_map, dry_run, true, None, None, 0, true, None,
+        )
+        .await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(
+            list_count.load(Ordering::SeqCst) >= 1,
+            "Ref scan LIST must run (dry_run={})",
+            dry_run
+        );
+
+        result
+    }
+
+    #[tokio::test]
+    async fn explicit_cleanup_new_ref_blocks_apply() {
+        match run_explicit_cleanup_test(false, true).await {
+            Ok(_) => panic!("New outside-plan referrer must block apply"),
+            Err(e) => assert!(
+                e.to_string().contains("outside-plan references"),
+                "Error must mention outside-plan references: {}",
+                e
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_cleanup_new_ref_blocks_dry_run() {
+        match run_explicit_cleanup_test(true, true).await {
+            Ok(_) => panic!("New outside-plan referrer must block dry-run too"),
+            Err(e) => assert!(
+                e.to_string().contains("outside-plan references"),
+                "Dry-run error must mention outside-plan references: {}",
+                e
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_cleanup_no_ref_passes_dry_run() {
+        let result = run_explicit_cleanup_test(true, false).await;
+        if let Err(e) = &result {
+            panic!("No referrer + dry-run must succeed: {}", e);
+        }
     }
 }
