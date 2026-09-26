@@ -523,6 +523,70 @@ pub fn load_execution_plan(path: &str) -> anyhow::Result<ExecutionPlan> {
             );
         }
     }
+    // Tamper check: explicit_deletes must exactly match Explicit cleanup phase actions
+    #[allow(clippy::type_complexity)]
+    let explicit_phase_actions: Vec<(&str, &str, Option<&str>, &str, Option<&str>)> = plan
+        .phases
+        .iter()
+        .filter(|p| p.name == EXPLICIT_CLEANUP_PHASE_NAME)
+        .flat_map(|p| &p.resources)
+        .filter(|r| r.action == ExecutionAction::Delete)
+        .map(|r| {
+            (
+                r.group.as_str(),
+                r.kind.as_str(),
+                r.namespace.as_deref(),
+                r.name.as_str(),
+                r.uid.as_deref(),
+            )
+        })
+        .collect();
+    let explicit_delete_specs: Vec<(&str, &str, Option<&str>, &str, &str)> = plan
+        .explicit_deletes
+        .iter()
+        .map(|t| {
+            (
+                t.group.as_str(),
+                t.kind.as_str(),
+                t.namespace.as_deref(),
+                t.name.as_str(),
+                t.uid.as_str(),
+            )
+        })
+        .collect();
+    if explicit_delete_specs.len() != explicit_phase_actions.len() {
+        anyhow::bail!(
+            "Explicit delete count mismatch: {} explicit_deletes vs {} Explicit cleanup actions — plan may be tampered",
+            explicit_delete_specs.len(),
+            explicit_phase_actions.len()
+        );
+    }
+    for (i, spec) in explicit_delete_specs.iter().enumerate() {
+        let matching = explicit_phase_actions.iter().any(|a| {
+            a.0 == spec.0 && a.1 == spec.1 && a.2 == spec.2 && a.3 == spec.3 && a.4 == Some(spec.4)
+        });
+        if !matching {
+            anyhow::bail!(
+                "Explicit delete {} ({}/{}) has no matching Explicit cleanup phase action — plan may be tampered",
+                i,
+                plan.explicit_deletes[i].kind,
+                plan.explicit_deletes[i].name
+            );
+        }
+    }
+    // Also check no extra actions in explicit phase
+    for action in &explicit_phase_actions {
+        let matching = explicit_delete_specs
+            .iter()
+            .any(|s| s.0 == action.0 && s.1 == action.1 && s.2 == action.2 && s.3 == action.3);
+        if !matching {
+            anyhow::bail!(
+                "Explicit cleanup phase has action {}/{} with no matching explicit_delete — plan may be tampered",
+                action.1,
+                action.3
+            );
+        }
+    }
     Ok(plan)
 }
 

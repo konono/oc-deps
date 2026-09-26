@@ -6477,7 +6477,18 @@ mod tests {
             approve_scopes: vec![],
             approve_resources: vec![],
             keep_resources: vec![],
-            phases: vec![],
+            phases: vec![ExecutionPhase {
+                phase: 1,
+                name: "Explicit cleanup".into(),
+                resources: vec![ExecutionResource {
+                    group: "apps".into(),
+                    kind: "Deployment".into(),
+                    namespace: Some("ns".into()),
+                    name: "my-deploy".into(),
+                    uid: Some("uid-valid".into()),
+                    action: ExecutionAction::Delete,
+                }],
+            }],
             explicit_deletes: vec![ExplicitDeleteTarget {
                 group: "apps".into(),
                 kind: "Deployment".into(),
@@ -6500,6 +6511,101 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(result.is_ok(), "Valid explicit delete should be accepted");
         assert_eq!(result.unwrap().explicit_deletes.len(), 1);
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_tampered_extra_explicit_delete() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "".into(),
+                kind: "ConfigMap".into(),
+                namespace: Some("ns".into()),
+                name: "injected".into(),
+                uid: "uid-x".into(),
+                reason: "tampered".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-tamper-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Extra explicit_delete without matching phase action must be rejected"
+        );
+        assert!(
+            format!("{}", result.unwrap_err()).contains("tampered"),
+            "Error should mention tampering"
+        );
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_tampered_extra_phase_action() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![ExecutionPhase {
+                phase: 1,
+                name: "Explicit cleanup".into(),
+                resources: vec![ExecutionResource {
+                    group: "".into(),
+                    kind: "ConfigMap".into(),
+                    namespace: Some("ns".into()),
+                    name: "injected".into(),
+                    uid: Some("uid-x".into()),
+                    action: ExecutionAction::Delete,
+                }],
+            }],
+            explicit_deletes: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-tamper2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Extra phase action without matching explicit_delete must be rejected"
+        );
     }
 
     // ── Phase assignment: is_bulk_label_only_decision ──

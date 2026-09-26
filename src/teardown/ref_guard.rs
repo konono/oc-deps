@@ -37,6 +37,7 @@ pub fn deletion_key(group: &str, kind: &str, ns: Option<&str>, name: &str) -> De
 
 pub type DeletionClosureWithUid = HashMap<DeletionKey, String>;
 
+#[cfg(test)]
 pub fn build_deletion_closure_with_uid(
     phases: &[crate::teardown::plan::ExecutionPhase],
     explicit_targets: &[crate::DeleteResourceSpec],

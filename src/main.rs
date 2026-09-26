@@ -758,16 +758,42 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
     }
 }
 
+fn build_deletion_closure_from_teardown_plan(
+    plan: &crate::teardown::planner::TeardownPlan,
+    explicit_specs: &[DeleteResourceSpec],
+) -> crate::teardown::ref_guard::DeletionClosureWithUid {
+    use crate::teardown::planner::Action;
+    use crate::teardown::ref_guard::{DeletionClosureWithUid, deletion_key};
+    let mut closure = DeletionClosureWithUid::new();
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            let rid = match action {
+                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => resource,
+                _ => continue,
+            };
+            let key = deletion_key(&rid.group, &rid.kind, rid.namespace.as_deref(), &rid.name);
+            if let Some(uid) = &rid.uid {
+                closure.insert(key, uid.clone());
+            }
+        }
+    }
+    for t in explicit_specs {
+        let key = deletion_key(&t.group, &t.kind, t.namespace.as_deref(), &t.name);
+        closure.entry(key).or_default();
+    }
+    closure
+}
+
 async fn resolve_explicit_delete_targets(
     client: &::kube::Client,
     specs: &[DeleteResourceSpec],
-    exec_plan: &crate::teardown::plan::ExecutionPlan,
+    plan: &crate::teardown::planner::TeardownPlan,
     gk_map: &crate::kube::discovery::GroupKindMap,
 ) -> Result<Vec<crate::teardown::plan::ExplicitDeleteTarget>> {
     use crate::teardown::ref_guard;
     use ::kube::api::{Api, DynamicObject};
 
-    let deletion_closure = ref_guard::build_deletion_closure_with_uid(&exec_plan.phases, specs);
+    let deletion_closure = build_deletion_closure_from_teardown_plan(plan, specs);
     let mut targets = Vec::new();
 
     for spec in specs {
@@ -879,142 +905,51 @@ async fn resolve_explicit_delete_targets(
     Ok(targets)
 }
 
-async fn execute_explicit_cleanup(
-    client: &::kube::Client,
-    exec_plan: &crate::teardown::plan::ExecutionPlan,
-    gk_map: &crate::kube::discovery::GroupKindMap,
-) -> Result<()> {
-    use crate::teardown::ref_guard;
-    use ::kube::api::{Api, DeleteParams, DynamicObject};
-
-    eprintln!("\n\x1b[1mExplicit cleanup\x1b[0m");
-
-    let deletion_closure = ref_guard::build_deletion_closure_with_uid(&exec_plan.phases, &[]);
-
-    for target in &exec_plan.explicit_deletes {
-        let gk = (target.group.clone(), target.kind.clone());
-        let Some(info) = gk_map.get(&gk) else {
-            bail!(
-                "Explicit delete: {}/{} not found in API discovery",
-                target.kind,
-                target.name
-            );
-        };
-
-        let gvk = ::kube::api::GroupVersionKind {
-            group: info.group.clone(),
-            version: info.version.clone(),
-            kind: target.kind.clone(),
-        };
-        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-
-        let api: Api<DynamicObject> = if let Some(ref ns) = target.namespace {
-            Api::namespaced_with(client.clone(), ns, &ar)
-        } else {
-            Api::all_with(client.clone(), &ar)
-        };
-
-        // Revalidate: GET live object, verify UID matches
-        let live = match api.get(&target.name).await {
-            Ok(obj) => obj,
-            Err(::kube::Error::Api(ae)) if ae.code == 404 => {
-                eprintln!(
-                    "  \x1b[2mALREADY GONE\x1b[0m  {}/{}",
-                    target.kind, target.name
-                );
-                continue;
-            }
-            Err(e) => {
-                bail!(
-                    "Explicit delete: failed to GET {}/{}: {}",
-                    target.kind,
-                    target.name,
-                    e
-                );
-            }
-        };
-
-        let live_uid = live.metadata.uid.as_deref().unwrap_or("");
-        if live_uid != target.uid {
-            bail!(
-                "Explicit delete: {}/{} UID drift — plan={}, live={}. Object was recreated.",
-                target.kind,
-                target.name,
-                target.uid,
-                live_uid
-            );
-        }
-
-        // Re-run inbound reference guard
-        let target_rid = crate::kube::resource::ResourceId {
-            group: target.group.clone(),
-            version: info.version.clone(),
-            kind: target.kind.clone(),
-            namespace: target.namespace.clone(),
-            name: target.name.clone(),
-            uid: Some(target.uid.clone()),
-        };
-
-        let scan =
-            ref_guard::check_inbound_refs(client, &target_rid, &deletion_closure, gk_map).await?;
-
-        if !scan.blockers.is_empty() {
-            let blocker_list: Vec<String> = scan
-                .blockers
-                .iter()
-                .map(|b| format!("{}/{}", b.resource.kind, b.resource.name))
-                .collect();
-            bail!(
-                "Explicit delete: {}/{} has new outside-plan references at apply time: {}",
-                target.kind,
-                target.name,
-                blocker_list.join(", ")
-            );
-        }
-
-        if !scan.coverage.scan_complete {
-            bail!(
-                "Explicit delete: inbound reference scan for {}/{} failed at apply time",
-                target.kind,
-                target.name
-            );
-        }
-
-        // Delete
-        let ns_display = target
-            .namespace
-            .as_deref()
-            .map(|ns| format!("(ns: {})", ns))
-            .unwrap_or_else(|| "(cluster-scoped)".to_string());
-        match api.delete(&target.name, &DeleteParams::default()).await {
-            Ok(_) => {
-                eprintln!(
-                    "  \x1b[31mDELETED\x1b[0m  {}/{}  \x1b[2m{}\x1b[0m",
-                    target.kind, target.name, ns_display
-                );
-            }
-            Err(::kube::Error::Api(ae)) if ae.code == 404 => {
-                eprintln!(
-                    "  \x1b[2mALREADY GONE\x1b[0m  {}/{}",
-                    target.kind, target.name
-                );
-            }
-            Err(e) => {
-                bail!(
-                    "Explicit delete: failed to delete {}/{}: {}",
-                    target.kind,
-                    target.name,
-                    e
-                );
-            }
-        }
+fn inject_explicit_phase_into_teardown_plan(
+    plan: &mut crate::teardown::planner::TeardownPlan,
+    explicit_deletes: &[crate::teardown::plan::ExplicitDeleteTarget],
+) {
+    use crate::teardown::planner::{Action, Barrier, PlanPhase};
+    if explicit_deletes.is_empty() {
+        return;
     }
+    let actions: Vec<Action> = explicit_deletes
+        .iter()
+        .map(|t| Action::Delete {
+            resource: crate::kube::resource::ResourceId {
+                group: t.group.clone(),
+                version: String::new(),
+                kind: t.kind.clone(),
+                namespace: t.namespace.clone(),
+                name: t.name.clone(),
+                uid: Some(t.uid.clone()),
+            },
+            reason: t.reason.clone(),
+        })
+        .collect();
 
-    eprintln!(
-        "  \x1b[32m✅ Explicit cleanup complete\x1b[0m ({} target(s))",
-        exec_plan.explicit_deletes.len()
+    // Insert before the last 2 phases (CRDs preserve + Namespace preserve)
+    let insert_idx = if plan.phases.len() >= 2 {
+        plan.phases.len() - 2
+    } else {
+        plan.phases.len()
+    };
+
+    plan.phases.insert(
+        insert_idx,
+        PlanPhase {
+            name: crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME.to_string(),
+            description: "Explicit resource cleanup (config-specified)".to_string(),
+            actions,
+            barrier: Some(Barrier {
+                description: "Wait for explicit targets to be fully removed".to_string(),
+                conditions: explicit_deletes
+                    .iter()
+                    .map(|t| format!("{}/{} gone", t.kind, t.name))
+                    .collect(),
+            }),
+        },
     );
-    Ok(())
 }
 
 fn build_execution_plan_from_teardown(
@@ -1589,6 +1524,22 @@ async fn main() -> Result<()> {
                     .await?;
                     let t_plan = t_plan.elapsed();
 
+                    // Resolve explicit delete targets and inject into plan before display
+                    let mut plan = plan;
+                    let explicit_targets = if !explicit_specs.is_empty() {
+                        let targets = resolve_explicit_delete_targets(
+                            &client,
+                            &explicit_specs,
+                            &plan,
+                            &gk_map,
+                        )
+                        .await?;
+                        inject_explicit_phase_into_teardown_plan(&mut plan, &targets);
+                        targets
+                    } else {
+                        Vec::new()
+                    };
+
                     print_teardown_plan(&plan, &output);
 
                     // Save as runtime plan (debug)
@@ -1609,57 +1560,7 @@ async fn main() -> Result<()> {
                             &approve_resource,
                             &keep_resource,
                         )?;
-
-                        // Resolve explicit delete targets
-                        if !explicit_specs.is_empty() {
-                            let explicit_targets = resolve_explicit_delete_targets(
-                                &client,
-                                &explicit_specs,
-                                &exec_plan,
-                                &gk_map,
-                            )
-                            .await?;
-
-                            // Add explicit cleanup phase after controller removal
-                            let next_phase =
-                                exec_plan.phases.iter().map(|p| p.phase).max().unwrap_or(0) + 1;
-
-                            // Insert before the last 2 phases (CRD preserve + Namespace preserve)
-                            let insert_idx = if exec_plan.phases.len() >= 2 {
-                                exec_plan.phases.len() - 2
-                            } else {
-                                exec_plan.phases.len()
-                            };
-
-                            let explicit_resources: Vec<crate::teardown::plan::ExecutionResource> =
-                                explicit_targets
-                                    .iter()
-                                    .map(|t| crate::teardown::plan::ExecutionResource {
-                                        group: t.group.clone(),
-                                        kind: t.kind.clone(),
-                                        namespace: t.namespace.clone(),
-                                        name: t.name.clone(),
-                                        uid: Some(t.uid.clone()),
-                                        action: crate::teardown::plan::ExecutionAction::Delete,
-                                    })
-                                    .collect();
-
-                            exec_plan.phases.insert(
-                                insert_idx,
-                                crate::teardown::plan::ExecutionPhase {
-                                    phase: next_phase,
-                                    name: "Explicit cleanup".to_string(),
-                                    resources: explicit_resources,
-                                },
-                            );
-
-                            // Renumber phases
-                            for (i, phase) in exec_plan.phases.iter_mut().enumerate() {
-                                phase.phase = (i + 1) as u32;
-                            }
-
-                            exec_plan.explicit_deletes = explicit_targets;
-                        }
+                        exec_plan.explicit_deletes = explicit_targets;
 
                         crate::teardown::plan::save_execution_plan(&exec_plan, save_path)?;
                         eprintln!("📄 Execution plan saved to {}", save_path);
@@ -1864,6 +1765,15 @@ async fn main() -> Result<()> {
                             );
                         }
                         eprintln!("✅ Execution plan validated — no drift detected");
+                    }
+
+                    // Inject explicit cleanup phase into runtime TeardownPlan
+                    let mut plan = plan;
+                    if !exec_plan.explicit_deletes.is_empty() {
+                        inject_explicit_phase_into_teardown_plan(
+                            &mut plan,
+                            &exec_plan.explicit_deletes,
+                        );
                     }
 
                     #[allow(unused)]
@@ -2639,30 +2549,6 @@ async fn main() -> Result<()> {
                             }
 
                             print_execution_result(&result);
-
-                            // Execute explicit cleanup phase if present
-                            if !exec_plan.explicit_deletes.is_empty()
-                                && result.failed.is_empty()
-                                && result.barrier_timeout.is_none()
-                                && result.phases_completed == result.phases_total
-                                && !dry_run
-                            {
-                                if let Err(e) =
-                                    execute_explicit_cleanup(&client, &exec_plan, &gk_map).await
-                                {
-                                    eprintln!("\n⛔ Explicit cleanup failed: {}", e);
-                                    if let Some(store) = &journal_store {
-                                        let _ = store.update(|j| j.state = RunState::Failed).await;
-                                    }
-                                    return Err(e);
-                                }
-                            } else if !exec_plan.explicit_deletes.is_empty() && dry_run {
-                                eprintln!("\n📋 Explicit cleanup (dry-run):");
-                                for t in &exec_plan.explicit_deletes {
-                                    let ns = t.namespace.as_deref().unwrap_or("cluster-scoped");
-                                    eprintln!("  DELETE  {}/{}  ({})", t.kind, t.name, ns);
-                                }
-                            }
 
                             let mut cleanup_failure: Option<String> = None;
 
