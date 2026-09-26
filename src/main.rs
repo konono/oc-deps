@@ -760,7 +760,6 @@ fn show_fields_to_tree_opts(show: &[ShowField]) -> TreeDisplayOpts {
 
 fn build_deletion_closure_from_teardown_plan(
     plan: &crate::teardown::planner::TeardownPlan,
-    explicit_specs: &[DeleteResourceSpec],
 ) -> crate::teardown::ref_guard::DeletionClosureWithUid {
     use crate::teardown::planner::Action;
     use crate::teardown::ref_guard::{DeletionClosureWithUid, deletion_key};
@@ -777,10 +776,6 @@ fn build_deletion_closure_from_teardown_plan(
             }
         }
     }
-    for t in explicit_specs {
-        let key = deletion_key(&t.group, &t.kind, t.namespace.as_deref(), &t.name);
-        closure.entry(key).or_default();
-    }
     closure
 }
 
@@ -793,9 +788,13 @@ async fn resolve_explicit_delete_targets(
     use crate::teardown::ref_guard;
     use ::kube::api::{Api, DynamicObject};
 
-    let deletion_closure = build_deletion_closure_from_teardown_plan(plan, specs);
-    let mut targets = Vec::new();
-
+    // Pass 1: GET all explicit targets to capture UIDs
+    struct ResolvedSpec {
+        spec: DeleteResourceSpec,
+        uid: String,
+        version: String,
+    }
+    let mut resolved = Vec::new();
     for spec in specs {
         let gk = (spec.group.clone(), spec.kind.clone());
         let Some(info) = gk_map.get(&gk) else {
@@ -852,13 +851,34 @@ async fn resolve_explicit_delete_targets(
             })?
             .to_string();
 
-        let target_rid = crate::kube::resource::ResourceId {
-            group: spec.group.clone(),
+        resolved.push(ResolvedSpec {
+            spec: spec.clone(),
+            uid,
             version: info.version.clone(),
-            kind: spec.kind.clone(),
-            namespace: spec.namespace.clone(),
-            name: spec.name.clone(),
-            uid: Some(uid.clone()),
+        });
+    }
+
+    // Pass 2: Build closure with bound UIDs, then run ref guard
+    let mut deletion_closure = build_deletion_closure_from_teardown_plan(plan);
+    for r in &resolved {
+        let key = ref_guard::deletion_key(
+            &r.spec.group,
+            &r.spec.kind,
+            r.spec.namespace.as_deref(),
+            &r.spec.name,
+        );
+        deletion_closure.insert(key, r.uid.clone());
+    }
+
+    let mut targets = Vec::new();
+    for r in &resolved {
+        let target_rid = crate::kube::resource::ResourceId {
+            group: r.spec.group.clone(),
+            version: r.version.clone(),
+            kind: r.spec.kind.clone(),
+            namespace: r.spec.namespace.clone(),
+            name: r.spec.name.clone(),
+            uid: Some(r.uid.clone()),
         };
 
         let scan =
@@ -873,8 +893,8 @@ async fn resolve_explicit_delete_targets(
             bail!(
                 "delete-resource: {}/{} is referenced by {} resource(s) outside the deletion plan: {}. \
                  Cannot safely delete a shared resource.",
-                spec.kind,
-                spec.name,
+                r.spec.kind,
+                r.spec.name,
                 scan.blockers.len(),
                 blocker_list.join(", ")
             );
@@ -883,19 +903,19 @@ async fn resolve_explicit_delete_targets(
         if !scan.coverage.scan_complete {
             bail!(
                 "delete-resource: inbound reference scan for {}/{} is incomplete — cannot verify safety",
-                spec.kind,
-                spec.name
+                r.spec.kind,
+                r.spec.name
             );
         }
 
         let inbound_refs = ref_guard::to_inbound_ref_identities(&scan);
 
         targets.push(crate::teardown::plan::ExplicitDeleteTarget {
-            group: spec.group.clone(),
-            kind: spec.kind.clone(),
-            namespace: spec.namespace.clone(),
-            name: spec.name.clone(),
-            uid,
+            group: r.spec.group.clone(),
+            kind: r.spec.kind.clone(),
+            namespace: r.spec.namespace.clone(),
+            name: r.spec.name.clone(),
+            uid: r.uid.clone(),
             reason: "config explicit".to_string(),
             inbound_refs_at_plan: inbound_refs,
             ref_scan_coverage: scan.coverage,

@@ -80,7 +80,8 @@ fn is_owned_by_deletion_closure(obj: &DynamicObject, closure: &DeletionClosureWi
             ];
             for key in &keys {
                 if let Some(closure_uid) = closure.get(key)
-                    && (closure_uid.is_empty() || closure_uid == &oref.uid)
+                    && !closure_uid.is_empty()
+                    && closure_uid == &oref.uid
                 {
                     return true;
                 }
@@ -733,6 +734,16 @@ mod tests {
 
         let empty_closure = DeletionClosureWithUid::new();
         assert!(!is_owned_by_deletion_closure(&obj, &empty_closure));
+
+        let mut empty_uid_closure = DeletionClosureWithUid::new();
+        empty_uid_closure.insert(
+            deletion_key("apps", "Deployment", Some("ns-a"), "my-deploy"),
+            String::new(),
+        );
+        assert!(
+            !is_owned_by_deletion_closure(&obj, &empty_uid_closure),
+            "Empty UID in closure must not match — no wildcard authority"
+        );
     }
 
     #[test]
