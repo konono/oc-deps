@@ -376,6 +376,10 @@ pub struct TeardownPlan {
     /// explicitly approved or preserved. Populated by generate_teardown_plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub explicit_decisions: Vec<crate::teardown::plan::SavedDecision>,
+    /// Explicit delete targets from --delete-resource / config delete_resources.
+    /// Injected after plan generation; empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub explicit_deletes: Vec<crate::teardown::plan::ExplicitDeleteTarget>,
 }
 
 /// A typed dependency edge between operators.
@@ -3485,6 +3489,7 @@ pub async fn generate_teardown_plan(
         dependency_edges,
         operator_inventory,
         explicit_decisions: vec![],
+        explicit_deletes: vec![],
     };
 
     // Invariant: every REVIEW action must have a corresponding ReviewCandidate.
@@ -5061,6 +5066,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
@@ -5114,6 +5120,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
@@ -5163,6 +5170,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
@@ -5294,6 +5302,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5344,6 +5353,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5427,6 +5437,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5481,6 +5492,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5537,6 +5549,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5646,6 +5659,7 @@ mod tests {
                     decisive_evidence: vec![],
                 },
             }],
+            explicit_deletes: vec![],
         };
         let target = SavedOperatorTarget {
             package_name: "test-op".to_string(),
@@ -5699,6 +5713,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5780,6 +5795,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5828,6 +5844,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5882,6 +5899,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,

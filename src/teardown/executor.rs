@@ -428,6 +428,115 @@ pub async fn execute_plan_with_store(
             continue;
         }
 
+        // Pre-explicit cleanup guard: revalidate UIDs and inbound refs
+        if phase.name == crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME
+            && !plan.explicit_deletes.is_empty()
+        {
+            use crate::teardown::ref_guard;
+            eprintln!("  🔒 Revalidating explicit targets...");
+            let closure = {
+                let mut c = ref_guard::DeletionClosureWithUid::new();
+                for p in &plan.phases {
+                    for a in &p.actions {
+                        if let Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } =
+                            a
+                            && let Some(uid) = &resource.uid
+                        {
+                            let key = ref_guard::deletion_key(
+                                &resource.group,
+                                &resource.kind,
+                                resource.namespace.as_deref(),
+                                &resource.name,
+                            );
+                            c.insert(key, uid.clone());
+                        }
+                    }
+                }
+                c
+            };
+            for target in &plan.explicit_deletes {
+                let gk = (target.group.clone(), target.kind.clone());
+                let Some(info) = gk_map.get(&gk) else {
+                    anyhow::bail!(
+                        "Explicit cleanup: {}/{} not found in API discovery",
+                        target.kind,
+                        target.name
+                    );
+                };
+                let gvk = ::kube::api::GroupVersionKind {
+                    group: info.group.clone(),
+                    version: info.version.clone(),
+                    kind: target.kind.clone(),
+                };
+                let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+                let api: ::kube::api::Api<::kube::api::DynamicObject> =
+                    if let Some(ref ns) = target.namespace {
+                        ::kube::api::Api::namespaced_with(client.clone(), ns, &ar)
+                    } else {
+                        ::kube::api::Api::all_with(client.clone(), &ar)
+                    };
+                match api.get(&target.name).await {
+                    Ok(obj) => {
+                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                        if live_uid != target.uid {
+                            anyhow::bail!(
+                                "Explicit cleanup: {}/{} UID drift — plan={}, live={}",
+                                target.kind,
+                                target.name,
+                                target.uid,
+                                live_uid
+                            );
+                        }
+                    }
+                    Err(::kube::Error::Api(ae)) if ae.code == 404 => {
+                        eprintln!("  ✅ {}/{} already gone", target.kind, target.name);
+                        continue;
+                    }
+                    Err(e) => {
+                        anyhow::bail!(
+                            "Explicit cleanup: failed to GET {}/{}: {}",
+                            target.kind,
+                            target.name,
+                            e
+                        );
+                    }
+                }
+                if !dry_run {
+                    let target_rid = crate::kube::resource::ResourceId {
+                        group: target.group.clone(),
+                        version: info.version.clone(),
+                        kind: target.kind.clone(),
+                        namespace: target.namespace.clone(),
+                        name: target.name.clone(),
+                        uid: Some(target.uid.clone()),
+                    };
+                    let scan = ref_guard::check_inbound_refs(client, &target_rid, &closure, gk_map)
+                        .await?;
+                    if !scan.blockers.is_empty() {
+                        let blocker_list: Vec<String> = scan
+                            .blockers
+                            .iter()
+                            .map(|b| format!("{}/{}", b.resource.kind, b.resource.name))
+                            .collect();
+                        anyhow::bail!(
+                            "Explicit cleanup: {}/{} has new outside-plan references: {}",
+                            target.kind,
+                            target.name,
+                            blocker_list.join(", ")
+                        );
+                    }
+                    if !scan.coverage.scan_complete {
+                        anyhow::bail!(
+                            "Explicit cleanup: ref scan for {}/{} failed at apply time",
+                            target.kind,
+                            target.name
+                        );
+                    }
+                }
+            }
+            eprintln!("  ✅ All explicit targets validated");
+        }
+
         // Pre-controller guard: if THIS phase deletes a CSV, check all REVIEW
         // resources for finalizers first. Placed here (phase entry, after gate
         // acquire, after empty-skip) so it runs on resume and across empty phases.
@@ -4249,6 +4358,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         }
     }
 
@@ -5044,6 +5154,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
 
         let mut gk = std::collections::HashMap::new();
@@ -5308,6 +5419,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
 
         let mut gk = std::collections::HashMap::new();
@@ -5474,6 +5586,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let mut gk = std::collections::HashMap::new();
         gk.insert(
@@ -5599,6 +5712,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let mut gk = std::collections::HashMap::new();
         gk.insert(
@@ -5722,6 +5836,7 @@ mod tests {
                 dependency_edges: vec![],
                 operator_inventory: vec![],
                 explicit_decisions: vec![],
+                explicit_deletes: vec![],
             },
             execution: ExecutionRecord::default(),
             last_residual_audit: None,

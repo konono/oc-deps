@@ -970,6 +970,7 @@ fn inject_explicit_phase_into_teardown_plan(
             }),
         },
     );
+    plan.explicit_deletes = explicit_deletes.to_vec();
 }
 
 fn build_execution_plan_from_teardown(
@@ -1790,10 +1791,44 @@ async fn main() -> Result<()> {
                     // Inject explicit cleanup phase into runtime TeardownPlan
                     let mut plan = plan;
                     if !exec_plan.explicit_deletes.is_empty() {
-                        inject_explicit_phase_into_teardown_plan(
-                            &mut plan,
-                            &exec_plan.explicit_deletes,
-                        );
+                        // Re-resolve explicit targets fresh for authority validation
+                        let fresh_specs: Vec<DeleteResourceSpec> = exec_plan
+                            .explicit_deletes
+                            .iter()
+                            .map(|t| DeleteResourceSpec {
+                                group: t.group.clone(),
+                                kind: t.kind.clone(),
+                                namespace: t.namespace.clone(),
+                                name: t.name.clone(),
+                            })
+                            .collect();
+                        let fresh_targets =
+                            resolve_explicit_delete_targets(&client, &fresh_specs, &plan, &gk_map)
+                                .await?;
+
+                        // Validate saved targets match fresh
+                        if fresh_targets.len() != exec_plan.explicit_deletes.len() {
+                            bail!(
+                                "Explicit delete count changed: saved {}, fresh {}",
+                                exec_plan.explicit_deletes.len(),
+                                fresh_targets.len()
+                            );
+                        }
+                        for (saved, fresh) in
+                            exec_plan.explicit_deletes.iter().zip(fresh_targets.iter())
+                        {
+                            if saved.uid != fresh.uid {
+                                bail!(
+                                    "Explicit target {}/{} UID drift: saved={}, fresh={}",
+                                    saved.kind,
+                                    saved.name,
+                                    saved.uid,
+                                    fresh.uid
+                                );
+                            }
+                        }
+
+                        inject_explicit_phase_into_teardown_plan(&mut plan, &fresh_targets);
                     }
 
                     #[allow(unused)]
@@ -8799,6 +8834,7 @@ mod basis_drift_tests {
                 dependency_edges: vec![],
                 operator_inventory: vec![],
                 explicit_decisions: vec![],
+                explicit_deletes: vec![],
             },
             execution: ExecutionRecord {
                 phases_completed,

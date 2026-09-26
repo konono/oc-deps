@@ -2145,6 +2145,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
 
         let mut target_uids: HashSet<String> = HashSet::new();

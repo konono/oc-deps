@@ -1,4 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 
 use ::kube::{
     Client,
@@ -423,8 +425,6 @@ pub async fn check_inbound_refs(
     }
 
     let check_specs = referrer_specs_for_target(&target.kind, &target.group);
-    let closure_keys: HashSet<&DeletionKey> = deletion_closure.keys().collect();
-
     for spec in &check_specs {
         let kind_key = if spec.group.is_empty() {
             spec.kind.to_string()
@@ -475,8 +475,14 @@ pub async fn check_inbound_refs(
                         let referrer_key =
                             deletion_key(&obj_group, &obj_kind, obj_ns.as_deref(), &obj_name);
 
-                        let in_closure = closure_keys.contains(&referrer_key)
-                            || is_owned_by_deletion_closure(obj, deletion_closure);
+                        let direct_match =
+                            if let Some(closure_uid) = deletion_closure.get(&referrer_key) {
+                                !closure_uid.is_empty() && *closure_uid == obj_uid
+                            } else {
+                                false
+                            };
+                        let in_closure =
+                            direct_match || is_owned_by_deletion_closure(obj, deletion_closure);
 
                         let referrer = InboundReferrer {
                             resource: ResourceId {
