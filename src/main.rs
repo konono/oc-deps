@@ -4550,15 +4550,16 @@ async fn main() -> Result<()> {
                     }
                 }
                 TeardownAction::Batch {
-                    config,
+                    config: config_path,
                     refresh_discovery,
                     dry_run,
+                    skip_missing,
                 } => {
                     let no_cache = refresh_discovery;
-                    let config_content = std::fs::read_to_string(&config)
-                        .with_context(|| format!("Failed to read config: {}", config))?;
+                    let config_content = std::fs::read_to_string(&config_path)
+                        .with_context(|| format!("Failed to read config: {}", config_path))?;
                     let parsed: ApplySetConfig = serde_json::from_str(&config_content)
-                        .with_context(|| format!("Invalid config: {}", config))?;
+                        .with_context(|| format!("Invalid config: {}", config_path))?;
                     let defaults = parsed.defaults;
                     let entries = parsed.operators;
 
@@ -4571,11 +4572,78 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    eprintln!("📋 Batch: {} operator(s) from {}", entries.len(), config);
+                    eprintln!(
+                        "📋 Batch: {} operator(s) from {}",
+                        entries.len(),
+                        config_path
+                    );
                     for (i, entry) in entries.iter().enumerate() {
-                        eprintln!("  {}: {}", i + 1, entry.name);
+                        let dr_count = entry.delete_resources.len();
+                        let suffix = if dr_count > 0 {
+                            format!(" (+{} explicit)", dr_count)
+                        } else {
+                            String::new()
+                        };
+                        eprintln!("  {}: {}{}", i + 1, entry.name, suffix);
                     }
                     eprintln!();
+
+                    // Baseline gate: verify all target operators exist as Succeeded CSVs
+                    eprintln!(
+                        "🔍 Baseline gate: verifying {} target operators...",
+                        entries.len()
+                    );
+                    let (kind_map, _, _, _) =
+                        build_kind_lookup_cached(&client, &config, true).await?;
+                    let all_operators = discover_operators(&client, &kind_map).await?;
+                    let mut baseline_missing: Vec<String> = Vec::new();
+                    let mut skip_indices: std::collections::HashSet<usize> =
+                        std::collections::HashSet::new();
+                    for (idx, entry) in entries.iter().enumerate() {
+                        let found = all_operators.iter().find(|op| {
+                            op.csv.name.starts_with(&format!("{}.", entry.name))
+                                || op.csv.name.starts_with(&format!("{}.v", entry.name))
+                                || op.package_name.as_deref() == Some(&entry.name)
+                                || op.csv.name == entry.name
+                        });
+                        match found {
+                            Some(op) => {
+                                eprintln!(
+                                    "  ✅ {} — {} ({})",
+                                    entry.name, op.csv.name, op.csv_phase
+                                );
+                            }
+                            None => {
+                                if skip_missing {
+                                    eprintln!("  ⏭ {} — not found, will skip", entry.name);
+                                    skip_indices.insert(idx);
+                                } else {
+                                    baseline_missing.push(entry.name.clone());
+                                    eprintln!("  ⛔ {} — NOT FOUND", entry.name);
+                                }
+                            }
+                        }
+                    }
+                    if !baseline_missing.is_empty() {
+                        bail!(
+                            "Baseline gate failed: {} operator(s) not found: {}. \
+                             Use --skip-missing to skip absent operators.",
+                            baseline_missing.len(),
+                            baseline_missing.join(", ")
+                        );
+                    }
+                    let present_count = entries.len() - skip_indices.len();
+                    eprintln!(
+                        "✅ Baseline: {}/{} operators present{}\n",
+                        present_count,
+                        entries.len(),
+                        if skip_indices.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", {} skipped", skip_indices.len())
+                        }
+                    );
+
                     if no_cache {
                         eprintln!("🔄 API discovery: refresh once, then reuse within this batch\n");
                     }
@@ -4603,6 +4671,16 @@ async fn main() -> Result<()> {
 
                     let entry_count = entries.len();
                     for (i, entry) in entries.iter().enumerate() {
+                        if skip_indices.contains(&i) {
+                            eprintln!(
+                                "\n  ⏭ [{}/{}] SKIP {} (not found)",
+                                i + 1,
+                                entry_count,
+                                entry.name
+                            );
+                            results.push((entry.name.clone(), 0));
+                            continue;
+                        }
                         let op_name = &entry.name;
                         let options = entry.effective_options(&defaults);
                         eprintln!(
