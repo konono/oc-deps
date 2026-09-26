@@ -393,10 +393,6 @@ pub enum TeardownAction {
         /// Dry run — validate config and show plan without executing
         #[arg(long)]
         dry_run: bool,
-
-        /// Skip operators not found in the cluster instead of failing
-        #[arg(long)]
-        skip_missing: bool,
     },
 
     /// Show teardown run journal for an operator (with live residual audit)
