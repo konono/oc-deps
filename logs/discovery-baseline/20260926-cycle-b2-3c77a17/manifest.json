@@ -1,0 +1,217 @@
+{
+  "session": "phase0-cycle-b2-replacement",
+  "status": "CORPUS FINAL \u2014 all tests PASS, deterministic, cluster deleted",
+  "git": {
+    "branch": "cli-v2-phase4",
+    "head": "3c77a17a606d9030def827b0fd8dd1d7e2e43b44",
+    "dirty": false
+  },
+  "config": {
+    "path": "configs/full-teardown.json",
+    "sha256": "428eeb789b97227ff1950d120bbf20b0baa0ab5e35ee72c23933c533b3211263"
+  },
+  "binary": {
+    "path": "target/release/oc-deps",
+    "sha256": "029f0eea4ad7fd7ac84a8302fec7e2c95206c4a1e605416b232af0c4f1bd4db6"
+  },
+  "cluster": {
+    "context": "default/api-sno-disconnected-sandbox3768-opentlc-com:6443/kube:admin",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "corpus_gates": {
+    "a_canonical_gvr": "PASSED \u2014 538 GVRs from raw /api + /apis all served versions, spot-checked 6 types",
+    "b_operator_resources_15": "PASSED \u2014 15/15 exit 0, valid non-empty JSON, all pre-delete",
+    "c_plans_15": "PASSED \u2014 15/15 ExecutionPlans + plan tree JSON",
+    "d_pre_inventory_0_failures": "PASSED \u2014 17786 raw objects, 0 LIST failures",
+    "e_batch_blocked_until_abcd_pass": "ENFORCED",
+    "f_post_inventory_with_diff": "PASSED \u2014 14761 raw, 0 failures, diff+analysis complete"
+  },
+  "tools": {
+    "collector": {
+      "path": "tools-collect-inventory.py",
+      "sha256": "102a795f48fbf7db79e4baf382e8fa1a14beaa9a417777b7535563076ae4d2f0"
+    },
+    "validator": {
+      "path": "tools-validate-pre-inventory.py",
+      "sha256": "5cb38d3da018ebb1cae688fa5d59851782356b470e9ef461bc691bc800ba13c9"
+    },
+    "post_analysis": {
+      "path": "tools-post-analysis.py",
+      "sha256": "fb21020a469ad29f1c947a81bf46e36fa3118abc4f1fe924aa4236e2d2a9d968",
+      "invocation": "python3 tools-post-analysis.py <pre.jsonl> <post.jsonl> <batch-plans-dir> <golden.json> <gvr-catalog.json> [output.json]",
+      "tests": "synthetic=7/7 golden=25/25(+apiVersion mutation) invariants=PASS deterministic=byte-identical"
+    },
+    "specref_parser": {
+      "path": "tools-parse-specref-dangling.py",
+      "sha256": "2cfa237ffed03cebda4fc0e67bbbe18974f484b2b43824df5ad93c966aec02f3"
+    }
+  },
+  "pre_inventory": {
+    "catalog_gvrs": 538,
+    "raw_objects": 17786,
+    "logical_identities": 17668,
+    "uid_null_collisions": 22,
+    "note_uid_null": "PackageManifest aggregator returns UID-null same-name objects with different catalog labels. Raw rows preserved; normalizer must record collision fingerprint.",
+    "redacted_gvrs": 3,
+    "redacted_detail": [
+      {
+        "resource": "oauthaccesstokens",
+        "count": 1
+      },
+      {
+        "resource": "oauthauthorizetokens",
+        "count": 0
+      },
+      {
+        "resource": "useroauthaccesstokens",
+        "count": 1
+      }
+    ],
+    "secret_rows": 986,
+    "token_rows": 0,
+    "golden_validation": "PASSED \u2014 all foreign-owner/managed-by/annotation assertions OK"
+  },
+  "known_defects": {
+    "limitador_namespace_misparse": {
+      "description": "spec.limits[0].namespace='redhat-ai-gateway-infra/maas-api-route' misidentified as K8s namespace. 271 scan warnings in operator resources.",
+      "impact": "Limitador operator resources scope incomplete (false namespace added)",
+      "phase": "Phase 3 fixpoint scope expansion"
+    }
+  },
+  "linked_artifacts": [
+    "../source-study-go-operators.md",
+    "../discovery-improvement-plan.md"
+  ],
+  "batch_execution": {
+    "attempt1": {
+      "exit_code": 1,
+      "reason": "drift: OGX/default-ogx appeared during plan-apply gap (RHOAI operator reconciliation)",
+      "operators_completed": 0,
+      "artifacts": [
+        "batch-stdout-attempt1.txt",
+        "batch-stderr-attempt1.txt"
+      ]
+    },
+    "attempt2": {
+      "exit_code": 0,
+      "operators_completed": 15,
+      "operators_failed": 0,
+      "operators_skipped": 0,
+      "plans_captured": 15,
+      "stderr_lines": 2868,
+      "final_summary_present": true,
+      "artifacts": [
+        "batch-stdout.txt",
+        "batch-stderr.txt",
+        "batch-plans/"
+      ]
+    }
+  },
+  "post_inventory": {
+    "layers": {
+      "raw": {
+        "pre": 17786,
+        "post": 14761
+      },
+      "logical": {
+        "pre": 17668,
+        "post": 14719,
+        "disappeared": 3408,
+        "appeared": 459
+      },
+      "physical_uid": {
+        "pre": 11716,
+        "post": 9165,
+        "removed": 2784,
+        "added": 233
+      },
+      "uid_null": {
+        "pre_observations": 820,
+        "post_observations": 731,
+        "logical_name_collisions": 22,
+        "fingerprint_collision_groups": 0,
+        "note": "22 PackageManifest name collisions from different catalogs; fingerprints are distinct (different labels)"
+      }
+    },
+    "recreated": {
+      "physical_objects": 2,
+      "api_logical_identities": 3
+    },
+    "physical_uid_classification": {
+      "direct_delete": 91,
+      "expect_gone": 72,
+      "planned_ownerref_descendant": 1282,
+      "owner_disappeared_unlinked": 10,
+      "derived_side_effect": 2,
+      "other_removed": 1327
+    },
+    "closure": {
+      "delete_seed": 91,
+      "total": 1460,
+      "removed_in_closure": 1445
+    },
+    "self_test": "ALL INVARIANTS PASS",
+    "protected_transitive": 4,
+    "terminating": {
+      "newly": 0,
+      "preexisting_retained": 3
+    },
+    "orphan_non_terminating": 1,
+    "golden_false_attribution": 25,
+    "cross_operator_collisions": 17,
+    "collision_metrics": {
+      "uid_with_multiple_action_entries": 16,
+      "uid_used_by_multiple_operators": 1,
+      "logical_identity_with_multiple_action_entries": 17,
+      "logical_identity_used_by_multiple_operators": 2
+    }
+  },
+  "golden": {
+    "path": "golden-false-attribution.json",
+    "sha256": "46e52134c0d6047ac7e021fc50ade460fc3f5478c6af2bf8c25836ba5f02c5db",
+    "schema_version": 1,
+    "cases": 25
+  },
+  "spec_ref": {
+    "path": "post-specref-map.json",
+    "invocation": "./target/release/oc-deps map -A -o json",
+    "exit_code": 0,
+    "namespaces": 99,
+    "complete": 99,
+    "incomplete": 0,
+    "retry_events": 5,
+    "final_scan_warnings": 0,
+    "resources": 4504,
+    "trees": 2107,
+    "dangling": {
+      "edges": 12,
+      "targets": 2,
+      "details": [
+        "ConfigMap/model-catalog-kube-rbac-proxy-config (3 edges)",
+        "Secret/model-catalog-postgres (9 edges)"
+      ]
+    },
+    "coverage": {
+      "namespaced": "99/99 complete",
+      "cluster_scoped": "NOT covered",
+      "generic_refs": "heuristic name-match"
+    }
+  },
+  "outputs": {
+    "post_analysis": {
+      "sha256": "67aba3a1529bd21de87b789198be7ea09f17ce0053d0435324b1a8e1e1799bcc",
+      "deterministic": true
+    },
+    "specref_dangling": {
+      "sha256": "4018f5a38370c6ff140b753e22294c89c5b49ca36312d500b7a8100c8bf2ecf5",
+      "total_specref_edges": 2587,
+      "typed": 2155,
+      "heuristic": 432,
+      "dangling_edges": 12,
+      "distinct_removed_targets": 2
+    },
+    "specref_summary": {
+      "sha256": "2e0c8fec18e709d981dec795234190f3e16ba18010d9e1f48b2cc7f45e7c0ade"
+    }
+  }
+}

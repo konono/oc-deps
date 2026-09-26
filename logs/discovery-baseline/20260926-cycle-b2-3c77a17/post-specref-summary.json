@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "invocation": "./target/release/oc-deps map -A -o json",
+  "namespaces_scanned": 99,
+  "namespaces_complete": 99,
+  "namespaces_incomplete": 0,
+  "retry_events": 5,
+  "final_scan_warnings": 0,
+  "resources": 4504,
+  "trees": 2107,
+  "scan_time_seconds": 435.7,
+  "dangling": {
+    "edges": 12,
+    "distinct_removed_targets": 2,
+    "targets": [
+      "ConfigMap/rhoai-model-registries/model-catalog-kube-rbac-proxy-config (3 edges)",
+      "Secret/rhoai-model-registries/model-catalog-postgres (9 edges)"
+    ]
+  },
+  "coverage": {
+    "namespaced": "99/99 complete",
+    "cluster_scoped": "NOT covered (map -A is namespaced-only)",
+    "generic_spec_refs": "heuristic name-match only, not GVK-typed"
+  }
+}

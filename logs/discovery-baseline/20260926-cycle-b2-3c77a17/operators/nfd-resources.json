@@ -1,0 +1,364 @@
+{
+  "operator_name": "nfd",
+  "csv_name": "nfd.4.22.0-202609151747",
+  "install_namespace": "openshift-nfd",
+  "subscription_name": "nfd",
+  "owned_crds": [
+    "nodefeaturediscoveries.nfd.openshift.io",
+    "nodefeaturegroups.nfd.k8s-sigs.io",
+    "nodefeaturerules.nfd.k8s-sigs.io",
+    "nodefeaturerules.nfd.openshift.io",
+    "nodefeatures.nfd.k8s-sigs.io",
+    "nodefeatures.nfd.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-nfd",
+            "name": "nfd",
+            "uid": "92b66591-ffb9-4f1f-98a8-f750c8181409"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-nfd",
+            "name": "nfd.4.22.0-202609151747",
+            "uid": "6ead4ed9-76ff-4bf4-a28f-1d2c8a180ed6"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-nfd",
+            "name": "nfd-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-nfd",
+            "name": "nfd-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-nfd",
+            "name": "nfd-controller-manager-c85889c94-872rc",
+            "uid": "dc89e9d9-ee5b-480a-b7cb-4c109f195caf"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "nfd.openshift.io",
+            "version": "v1",
+            "kind": "NodeFeatureDiscovery",
+            "namespace": "openshift-nfd",
+            "name": "nfd-instance",
+            "uid": "7114dad8-f33a-47ec-9c5d-7cbfbae4ed79"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "nfd.k8s-sigs.io",
+            "version": "v1alpha1",
+            "kind": "NodeFeature",
+            "namespace": "openshift-nfd",
+            "name": "ip-10-0-23-226.us-east-2.compute.internal",
+            "uid": "de13c2af-f42d-41e4-a6b7-6cbdea177561"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-nfd",
+            "name": "nfd-gc",
+            "uid": "e9ed0ade-78bb-4b4b-b4bb-056880f3c9dd"
+          },
+          "source_id": {
+            "group": "nfd.openshift.io",
+            "version": "v1",
+            "kind": "NodeFeatureDiscovery",
+            "namespace": "openshift-nfd",
+            "name": "nfd-instance",
+            "uid": "7114dad8-f33a-47ec-9c5d-7cbfbae4ed79"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of NodeFeatureDiscovery/nfd-instance",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-nfd",
+            "name": "nfd-worker-cwb75",
+            "uid": "f8c43636-601d-4c70-9ea1-5f7c26634a7c"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-worker",
+            "uid": "a79932db-440c-40f9-ac69-70f7b68c0a32"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nfd-worker",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-gc-7df65f9876",
+            "uid": "4653b860-f8c6-4a7b-9fe6-3f320049d457"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-nfd",
+            "name": "nfd-gc",
+            "uid": "e9ed0ade-78bb-4b4b-b4bb-056880f3c9dd"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/nfd-gc",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "openshift-nfd",
+            "name": "nfd-worker",
+            "uid": "488f5231-8ca6-4925-83b0-942bf471cba2"
+          },
+          "source_id": {
+            "group": "nfd.openshift.io",
+            "version": "v1",
+            "kind": "NodeFeatureDiscovery",
+            "namespace": "openshift-nfd",
+            "name": "nfd-instance",
+            "uid": "7114dad8-f33a-47ec-9c5d-7cbfbae4ed79"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of NodeFeatureDiscovery/nfd-instance",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "openshift-nfd",
+            "name": "nfd-worker-55b66cfbc7",
+            "uid": "df76a46a-b319-438c-9e3f-5be3e1a97bae"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-worker",
+            "uid": "a79932db-440c-40f9-ac69-70f7b68c0a32"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nfd-worker",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-worker",
+            "uid": "a79932db-440c-40f9-ac69-70f7b68c0a32"
+          },
+          "source_id": {
+            "group": "nfd.openshift.io",
+            "version": "v1",
+            "kind": "NodeFeatureDiscovery",
+            "namespace": "openshift-nfd",
+            "name": "nfd-instance",
+            "uid": "7114dad8-f33a-47ec-9c5d-7cbfbae4ed79"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of NodeFeatureDiscovery/nfd-instance",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-nfd",
+            "name": "nfd-gc-7df65f9876-gwnqj",
+            "uid": "9fea248d-bdbe-46b1-b1bd-b1440ea9d08b"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-gc-7df65f9876",
+            "uid": "4653b860-f8c6-4a7b-9fe6-3f320049d457"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ReplicaSet/nfd-gc-7df65f9876",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-master-56f459b98b",
+            "uid": "996d78cc-b61d-485b-acf6-84e6e8ba7167"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-nfd",
+            "name": "nfd-master",
+            "uid": "0ea407cf-3a87-48ab-a938-d7a6305e3f4a"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/nfd-master",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-nfd",
+            "name": "nfd-master",
+            "uid": "0ea407cf-3a87-48ab-a938-d7a6305e3f4a"
+          },
+          "source_id": {
+            "group": "nfd.openshift.io",
+            "version": "v1",
+            "kind": "NodeFeatureDiscovery",
+            "namespace": "openshift-nfd",
+            "name": "nfd-instance",
+            "uid": "7114dad8-f33a-47ec-9c5d-7cbfbae4ed79"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of NodeFeatureDiscovery/nfd-instance",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-nfd",
+            "name": "nfd-master-56f459b98b-rxl6g",
+            "uid": "fba5e6b8-6c6e-4b6e-ad61-937a17d5d2b2"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-nfd",
+            "name": "nfd-master-56f459b98b",
+            "uid": "996d78cc-b61d-485b-acf6-84e6e8ba7167"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ReplicaSet/nfd-master-56f459b98b",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-nfd",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus",
+        {
+          "OwnedCrdInstance": {
+            "crd": "NodeFeatureDiscovery"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "NodeFeature"
+          }
+        }
+      ]
+    },
+    {
+      "namespace": "y",
+      "evidence": [
+        {
+          "SpecNamespaceRef": {
+            "source_kind": "NodeFeature",
+            "source_name": "ip-10-0-23-226.us-east-2.compute.internal",
+            "field": "features.attributes.kernel.config.elements.NAMESPACES"
+          }
+        }
+      ]
+    }
+  ],
+  "scan_warning_count": 0
+}

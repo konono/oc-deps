@@ -1,0 +1,35 @@
+🔍 Discovering API resources...
+   Discovery: 32.2s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 13 instances
+🔍 Discovering related CRDs...
+ found 94 related instances
+🔍 Discovering namespace scope...
+
+ found 7 candidate namespaces
+🔍 Scanning 7 additional namespace(s)...
+[namespace 1/7: redhat-ods-applications] elapsed 0s
+✅ Scanned 270 resource types in 12.8s
+   redhat-ods-applications — 679 resources
+[namespace 2/7: redhat-ods-monitoring] elapsed 12s
+✅ Scanned 270 resource types in 9.1s
+   redhat-ods-monitoring — 27 resources
+[namespace 3/7: ai-tenants] elapsed 21s
+✅ Scanned 270 resource types in 15.4s
+   ai-tenants — 26 resources
+[namespace 4/7: models-as-a-service] elapsed 37s
+✅ Scanned 270 resource types in 12.8s
+   models-as-a-service — 32 resources
+[namespace 5/7: rhods-notebooks] elapsed 50s
+✅ Scanned 270 resource types in 13.8s
+   rhods-notebooks — 25 resources
+[namespace 6/7: redhat-ods-operator] elapsed 63s
+✅ Scanned 270 resource types in 12.3s
+   redhat-ods-operator — 46 resources
+[namespace 7/7: rhoai-model-registries] elapsed 76s
+✅ Scanned 270 resource types in 11.5s
+   rhoai-model-registries — 54 resources
+   Scanned 7 namespace(s), 889 total resources
+   Found 210 ownerRef descendants in scanned namespaces

@@ -1,0 +1,551 @@
+{
+  "operator_name": "authorino-operator",
+  "csv_name": "authorino-operator.v1.4.3",
+  "install_namespace": "openshift-rhcl",
+  "subscription_name": "authorino-operator-stable-redhat-operators-openshift-marketplace",
+  "owned_crds": [
+    "authconfigs.authorino.kuadrant.io",
+    "authorinos.operator.authorino.kuadrant.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator-stable-redhat-operators-openshift-marketplace",
+            "uid": "5c0a122e-a515-4b59-8616-76ebbda933f4"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator.v1.4.3",
+            "uid": "49a54ec9-dfb7-440b-88c4-cf391a88962c"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator-68fdfdc8cc-mnc5q",
+            "uid": "c1aa3a0b-9fcf-4bc4-bbc7-802f8afe04fb"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "002268263f8bb03204567714a8f374dbaf67e0353162e6d450af43df8900c427",
+            "uid": "ae275951-63ac-48be-be99-8b1ba21df0e8"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "32c5926417ce74d07104e03d2afed39d36dfb3e0cd65e94a5f8f1e7b85163a98",
+            "uid": "f9cac037-0c50-4386-83e3-821319a81abd"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "77d78fccf2af9dd49c04b2afd9490521a51584cb63af0ecef56e9bae12d430c1",
+            "uid": "026cd839-527f-4b4c-8707-207b6d1644eb"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "9a9b0d8c5f8335cb2f5af8be2bef8c1a7ef8846ba736ea4a7135bd4b966f4f63",
+            "uid": "c0bebf73-16a2-4a2e-8298-87cab6cb8e7b"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "b44bd77e-63ee-4833-83cd-4511c57a1018"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-leader-election-role",
+            "uid": "b5915c61-4fbf-42a8-be4b-4e89505b3aef"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-dockercfg-4wxhr",
+            "uid": "624ca4bd-c586-4a67-a3a5-b90fb52ca443"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino",
+            "uid": "769b7c24-9c00-4442-a780-d6d57b8d902b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/authorino-authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-56fb4cd749-m78zw",
+            "uid": "10ccd5da-a516-4c68-83b7-a36f70cca3d0"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-56fb4cd749",
+            "uid": "6c53c756-16dc-43f9-a704-6724bb3b370b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ReplicaSet/authorino-56fb4cd749",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-oidc",
+            "uid": "d9ab9827-f0d2-4236-ad18-d83ef02833ea"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-leader-election",
+            "uid": "093c8bdf-87c6-436d-9cd3-c58bc3462ea9"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-56fb4cd749",
+            "uid": "6c53c756-16dc-43f9-a704-6724bb3b370b"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "b44bd77e-63ee-4833-83cd-4511c57a1018"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization-k4nvc",
+            "uid": "0e6be4ed-07a8-4953-a66a-bc5153340c5e"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization",
+            "uid": "e4624aba-8661-44b1-b1ca-3135c3f294dd"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-authorino-authorization",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-57f7f8659f",
+            "uid": "61964a76-cafa-4b50-86e1-4910c2345901"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "b44bd77e-63ee-4833-83cd-4511c57a1018"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-controller-metrics",
+            "uid": "d438f055-b33b-4adf-9af5-cb3fc0342076"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-controller-metrics-cjpxs",
+            "uid": "b3c1c145-c49b-43d2-99a5-6e7c84a78979"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-controller-metrics",
+            "uid": "d438f055-b33b-4adf-9af5-cb3fc0342076"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-controller-metrics",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-6dd76875b5",
+            "uid": "442d61f8-279b-43c6-aac3-0fd7f99cd276"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "b44bd77e-63ee-4833-83cd-4511c57a1018"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-56c6c9ddd5",
+            "uid": "3a0dab32-e495-4a9b-9b1b-38b251a34a08"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "b44bd77e-63ee-4833-83cd-4511c57a1018"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino",
+            "uid": "769b7c24-9c00-4442-a780-d6d57b8d902b"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization",
+            "uid": "e4624aba-8661-44b1-b1ca-3135c3f294dd"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "56cea9bc-bdf5-4244-b407-924e63687db5"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-server-cert",
+            "uid": "7bcb0cb3-11ab-4dd7-b589-01f4a9da1102"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization",
+            "uid": "e4624aba-8661-44b1-b1ca-3135c3f294dd"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-authorino-authorization",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-oidc-qcfqc",
+            "uid": "79e73716-ad32-4ec1-bf4a-dc1a2b3c2c30"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-oidc",
+            "uid": "d9ab9827-f0d2-4236-ad18-d83ef02833ea"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-authorino-oidc",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-rhcl",
+      "evidence": [
+        "InstallNamespace",
+        {
+          "OwnedCrdInstance": {
+            "crd": "Authorino"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        }
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

@@ -1,0 +1,434 @@
+{
+  "operator_name": "rhbk-operator",
+  "csv_name": "rhbk-operator.v26.6.7-opr.1",
+  "install_namespace": "keycloak",
+  "subscription_name": "rhbk-operator",
+  "owned_crds": [
+    "keycloakrealmimports.k8s.keycloak.org",
+    "keycloaks.k8s.keycloak.org",
+    "keycloakrealmimports.k8s.keycloak.org",
+    "keycloaks.k8s.keycloak.org"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "keycloak",
+            "name": "rhbk-operator",
+            "uid": "dcd31321-a821-43b8-b89d-42a32c3cca02"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "keycloak",
+            "name": "rhbk-operator.v26.6.7-opr.1",
+            "uid": "40b7921e-d780-4c55-adc8-837996765ab9"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "keycloak",
+            "name": "rhbk-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "keycloak",
+            "name": "rhbk-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "keycloak",
+            "name": "rhbk-operator-847df79d67-w9z52",
+            "uid": "57846473-9d15-44d4-b025-07a12f640dca"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "KeycloakRealmImport",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "ac2d535d-ceba-409a-9ebe-094b8e105630"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "keycloak",
+            "name": "keycloak-0",
+            "uid": "4d7c6b33-02ef-4bbc-9754-dce2866dd1c6"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "ef103d7b-c286-477e-9caa-c06ebfc9cc33"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of StatefulSet/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "batch",
+            "version": "v1",
+            "kind": "Job",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "27fd3132-24df-4349-a61a-a0a8012ad6e3"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "KeycloakRealmImport",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "ac2d535d-ceba-409a-9ebe-094b8e105630"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of KeycloakRealmImport/maas-realm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "keycloak",
+            "name": "keycloak-service-9q9j9",
+            "uid": "8b0e2f2a-727d-4338-8df5-a30989a06299"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-service",
+            "uid": "fa09d917-fc29-43a0-aac2-4be0241939ad"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/keycloak-service",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-service",
+            "uid": "fa09d917-fc29-43a0-aac2-4be0241939ad"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-discovery",
+            "uid": "8b62a953-cc6d-4889-b2a4-bbc09dbc50e2"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "keycloak",
+            "name": "keycloak-maas-realm",
+            "uid": "aed44e84-58c9-411b-996f-43ab3f8ccbe3"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "KeycloakRealmImport",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "ac2d535d-ceba-409a-9ebe-094b8e105630"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of KeycloakRealmImport/maas-realm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "ef103d7b-c286-477e-9caa-c06ebfc9cc33"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "keycloak",
+            "name": "keycloak-tls",
+            "uid": "85227eb1-026b-4f7f-9317-e8e6599c97af"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-service",
+            "uid": "fa09d917-fc29-43a0-aac2-4be0241939ad"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/keycloak-service",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "keycloak",
+            "name": "keycloak-discovery-jvz6p",
+            "uid": "07a65904-ea8a-427c-bd79-5648d273ab58"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-discovery",
+            "uid": "8b62a953-cc6d-4889-b2a4-bbc09dbc50e2"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/keycloak-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "keycloak",
+            "name": "maas-realm-r8zw6",
+            "uid": "b3f755a2-f631-49a5-95a8-1aa2a3bd0f8e"
+          },
+          "source_id": {
+            "group": "batch",
+            "version": "v1",
+            "kind": "Job",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "27fd3132-24df-4349-a61a-a0a8012ad6e3"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Job/maas-realm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "keycloak",
+            "name": "keycloak-5544969b94",
+            "uid": "dd5ee0ed-7bcd-4389-a122-8cb5e9d7ad87"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "ef103d7b-c286-477e-9caa-c06ebfc9cc33"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of StatefulSet/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "networking.k8s.io",
+            "version": "v1",
+            "kind": "NetworkPolicy",
+            "namespace": "keycloak",
+            "name": "keycloak-network-policy",
+            "uid": "033309f7-436b-43b1-ae9c-1fe827ada9a5"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "keycloak",
+            "name": "keycloak-initial-admin",
+            "uid": "64e0d26b-3445-4ad8-9d18-944f1ac67bd3"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "keycloak",
+            "name": "keycloak-7788d7f74c",
+            "uid": "1a395f6d-1d13-42da-b3ee-c53ed554361e"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "ef103d7b-c286-477e-9caa-c06ebfc9cc33"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of StatefulSet/keycloak",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "keycloak",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus",
+        {
+          "OwnedCrdInstance": {
+            "crd": "Keycloak"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "KeycloakRealmImport"
+          }
+        }
+      ]
+    }
+  ],
+  "scan_warning_count": 0
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "group": "oauth.openshift.io",
+    "version": "v1",
+    "resource": "oauthaccesstokens",
+    "kind": "OAuthAccessToken",
+    "count": 1,
+    "identity_redacted": true,
+    "reason": "metadata.name contains bearer token format"
+  },
+  {
+    "group": "oauth.openshift.io",
+    "version": "v1",
+    "resource": "oauthauthorizetokens",
+    "kind": "OAuthAuthorizeToken",
+    "count": 0,
+    "identity_redacted": true,
+    "reason": "metadata.name contains bearer token format"
+  },
+  {
+    "group": "oauth.openshift.io",
+    "version": "v1",
+    "resource": "useroauthaccesstokens",
+    "kind": "UserOAuthAccessToken",
+    "count": 1,
+    "identity_redacted": true,
+    "reason": "metadata.name contains bearer token format"
+  }
+]

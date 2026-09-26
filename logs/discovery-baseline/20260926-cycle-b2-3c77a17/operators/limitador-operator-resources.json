@@ -1,0 +1,579 @@
+{
+  "operator_name": "limitador-operator",
+  "csv_name": "limitador-operator.v1.4.2",
+  "install_namespace": "openshift-rhcl",
+  "subscription_name": "limitador-operator-stable-redhat-operators-openshift-marketplace",
+  "owned_crds": [
+    "limitadors.limitador.kuadrant.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-operator-stable-redhat-operators-openshift-marketplace",
+            "uid": "5084455c-b051-49bb-8707-ac339af5f404"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-operator.v1.4.2",
+            "uid": "39c65fb8-b70a-400f-8a38-2fefa9a13615"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-56fb4cd749-m78zw",
+            "uid": "10ccd5da-a516-4c68-83b7-a36f70cca3d0"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "kuadrant-operator-controller-manager-765bf6d864-zxwjf",
+            "uid": "6cb71a78-ff7a-485e-a343-4f0a5bb9c497"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-operator-controller-manager-8586b4c7c5-7lg9q",
+            "uid": "3f3bc726-4d25-4533-b8a5-e1224e84f0fa"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "limitador.kuadrant.io",
+            "version": "v1alpha1",
+            "kind": "Limitador",
+            "namespace": "openshift-rhcl",
+            "name": "limitador",
+            "uid": "0cbd4c02-2ca0-4d02-8480-783f99743dee"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador-7c9b87d574-dfjnp",
+            "uid": "a70d4c11-b022-43f3-a8fc-d10ce986cf0b"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador-7c9b87d574",
+            "uid": "7891bdba-6693-4c25-a911-8891aca8f30d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ReplicaSet/limitador-limitador-7c9b87d574",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limits-config-limitador",
+            "uid": "8dafa040-72cc-4ad5-af12-0ab893145f52"
+          },
+          "source_id": {
+            "group": "limitador.kuadrant.io",
+            "version": "v1alpha1",
+            "kind": "Limitador",
+            "namespace": "openshift-rhcl",
+            "name": "limitador",
+            "uid": "0cbd4c02-2ca0-4d02-8480-783f99743dee"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Limitador/limitador",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador",
+            "uid": "101aef97-ef56-479e-9e67-7d65d3c032b2"
+          },
+          "source_id": {
+            "group": "limitador.kuadrant.io",
+            "version": "v1alpha1",
+            "kind": "Limitador",
+            "namespace": "openshift-rhcl",
+            "name": "limitador",
+            "uid": "0cbd4c02-2ca0-4d02-8480-783f99743dee"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Limitador/limitador",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador",
+            "uid": "42e71f3c-1418-4f43-b65f-4630d039a33d"
+          },
+          "source_id": {
+            "group": "limitador.kuadrant.io",
+            "version": "v1alpha1",
+            "kind": "Limitador",
+            "namespace": "openshift-rhcl",
+            "name": "limitador",
+            "uid": "0cbd4c02-2ca0-4d02-8480-783f99743dee"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Limitador/limitador",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador-7c9b87d574",
+            "uid": "7891bdba-6693-4c25-a911-8891aca8f30d"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador",
+            "uid": "101aef97-ef56-479e-9e67-7d65d3c032b2"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/limitador-limitador",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador-74dfcfb894",
+            "uid": "ae1b059e-87bc-4c77-8e30-23dfd7a61667"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador",
+            "uid": "101aef97-ef56-479e-9e67-7d65d3c032b2"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/limitador-limitador",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador-hxw2j",
+            "uid": "1783cbfc-c3cb-4076-861e-ae053ccb1dcc"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "limitador-limitador",
+            "uid": "42e71f3c-1418-4f43-b65f-4630d039a33d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/limitador-limitador",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-rhcl",
+      "evidence": [
+        "InstallNamespace",
+        {
+          "OwnedCrdInstance": {
+            "crd": "Limitador"
+          }
+        }
+      ]
+    },
+    {
+      "namespace": "redhat-ai-gateway-infra/maas-api-route",
+      "evidence": [
+        {
+          "SpecNamespaceRef": {
+            "source_kind": "Limitador",
+            "source_name": "limitador",
+            "field": "limits[0].namespace"
+          }
+        }
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "warnings": [
+    "ceph.rook.io/v1/cephobjectzonegroups (404 Not Found)",
+    "nfd.k8s-sigs.io/v1alpha1/nodefeatures (404 Not Found)",
+    "k8s.keycloak.org/v2beta1/keycloakrealmimports (404 Not Found)",
+    "k8s.ovn.org/v1/egressservices (404 Not Found)",
+    "serving.kserve.io/v1alpha2/llminferenceservices (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/publications (404 Not Found)",
+    "csi.ceph.io/v1/clientprofilemappings (404 Not Found)",
+    "csi.ceph.io/v1/operatorconfigs (404 Not Found)",
+    "kuadrant.io/v1/dnspolicies (404 Not Found)",
+    "batch/v1/jobs (404 Not Found)",
+    "llm-d.ai/v1alpha2/inferencemodelrewrites (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/subscriptions (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/tenants (404 Not Found)",
+    "noobaa.io/v1alpha1/bucketclasses (404 Not Found)",
+    "security.istio.io/v1/authorizationpolicies (404 Not Found)",
+    "networking.istio.io/v1/sidecars (404 Not Found)",
+    "cloudcredential.openshift.io/v1/credentialsrequests (404 Not Found)",
+    "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediationtemplates (404 Not Found)",
+    "ocs.openshift.io/v1/storageautoscalers (404 Not Found)",
+    "whereabouts.cni.cncf.io/v1alpha1/overlappingrangeipreservations (404 Not Found)",
+    "gateway.networking.k8s.io/v1/backendtlspolicies (404 Not Found)",
+    "perses.dev/v1alpha2/persesdashboards (404 Not Found)",
+    "tuned.openshift.io/v1/profiles (404 Not Found)",
+    "noobaa.io/v1alpha1/namespacestores (404 Not Found)",
+    "csiaddons.openshift.io/v1alpha1/reclaimspacejobs (404 Not Found)",
+    "ogx.io/v1beta1/ogxservers (404 Not Found)",
+    "trustyai.opendatahub.io/v1alpha1/guardrailsorchestrators (404 Not Found)",
+    "v1/secrets (404 Not Found)",
+    "operators.coreos.com/v1/operatorgroups (404 Not Found)",
+    "operators.coreos.com/v1alpha1/installplans (404 Not Found)",
+    "acme.cert-manager.io/v1/challenges (404 Not Found)",
+    "telemetry.istio.io/v1/telemetries (404 Not Found)",
+    "resource.nvidia.com/v1beta1/computedomains (404 Not Found)",
+    "kubeflow.org/v1/jaxjobs (404 Not Found)",
+    "kubeflow.org/v1/notebooks (404 Not Found)",
+    "redhatcop.redhat.io/v1alpha1/groupsyncs (404 Not Found)",
+    "extensions.istio.io/v1alpha1/wasmplugins (404 Not Found)",
+    "argoproj.io/v1alpha1/cronworkflows (404 Not Found)",
+    "networking.istio.io/v1beta1/proxyconfigs (404 Not Found)",
+    "kuadrant.io/v1alpha1/dnshealthcheckprobes (404 Not Found)",
+    "kubeflow.org/v1/tfjobs (404 Not Found)",
+    "k8s.ovn.org/v1/egressfirewalls (404 Not Found)",
+    "nfd.k8s-sigs.io/v1alpha1/nodefeaturerules (404 Not Found)",
+    "monitoring.rhobs/v1alpha1/thanosqueriers (404 Not Found)",
+    "csiaddons.openshift.io/v1alpha1/csiaddonsnodes (404 Not Found)",
+    "k8s.ovn.org/v1/egressqoses (404 Not Found)",
+    "monitoring.coreos.com/v1beta1/alertmanagerconfigs (404 Not Found)",
+    "apps/v1/replicasets (404 Not Found)",
+    "operators.coreos.com/v1alpha1/clusterserviceversions (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/imagecatalogs (404 Not Found)",
+    "objectbucket.io/v1alpha1/objectbucketclaims (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/maassubscriptions (404 Not Found)",
+    "devportal.kuadrant.io/v1alpha1/apikeyapprovals (404 Not Found)",
+    "security.istio.io/v1/peerauthentications (404 Not Found)",
+    "v1/services (404 Not Found)",
+    "ray.io/v1/rayclusters (404 Not Found)",
+    "kubeflow.org/v1/xgboostjobs (404 Not Found)",
+    "quota.openshift.io/v1/appliedclusterresourcequotas (404 Not Found)",
+    "networking.istio.io/v1/destinationrules (404 Not Found)",
+    "config.openshift.io/v1/imagepolicies (404 Not Found)",
+    "monitoring.rhobs/v1/prometheusrules (404 Not Found)",
+    "ray.io/v1/rayservices (404 Not Found)",
+    "trainer.kubeflow.org/v1alpha1/trainingruntimes (404 Not Found)",
+    "tuned.openshift.io/v1/tuneds (404 Not Found)",
+    "monitoring.rhobs/v1/thanosrulers (404 Not Found)",
+    "app.k8s.io/v1beta1/applications (404 Not Found)",
+    "rbac.authorization.k8s.io/v1/roles (404 Not Found)",
+    "machine.openshift.io/v1beta1/machines (404 Not Found)",
+    "jobset.x-k8s.io/v1alpha2/jobsets (404 Not Found)",
+    "route.openshift.io/v1/routes (404 Not Found)",
+    "nim.opendatahub.io/v1/accounts (404 Not Found)",
+    "v1/configmaps (404 Not Found)",
+    "argoproj.io/v1alpha1/workflowartifactgctasks (404 Not Found)",
+    "monitoring.openshift.io/v1/alertingrules (404 Not Found)",
+    "opentelemetry.io/v1alpha1/targetallocators (404 Not Found)",
+    "template.openshift.io/v1/templateinstances (404 Not Found)",
+    "ocs.openshift.io/v1alpha1/storageconsumers (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/maasmodelrefs (404 Not Found)",
+    "ceph.rook.io/v1/cephobjectstoreaccounts (404 Not Found)",
+    "cert-manager.io/v1/certificaterequests (404 Not Found)",
+    "monitoring.rhobs/v1/podmonitors (404 Not Found)",
+    "rbac.authorization.k8s.io/v1/rolebindings (404 Not Found)",
+    "snapshot.storage.k8s.io/v1/volumesnapshots (404 Not Found)",
+    "metal3.io/v1alpha1/hostfirmwarecomponents (404 Not Found)",
+    "autoscaling/v2/horizontalpodautoscalers (404 Not Found)",
+    "gateway.networking.k8s.io/v1/httproutes (404 Not Found)",
+    "ceph.rook.io/v1/cephbucketnotifications (404 Not Found)",
+    "whereabouts.cni.cncf.io/v1alpha1/ippools (404 Not Found)",
+    "ceph.rook.io/v1/cephobjectzones (404 Not Found)",
+    "policy/v1/poddisruptionbudgets (404 Not Found)",
+    "metal3.io/v1alpha1/preprovisioningimages (404 Not Found)",
+    "infrastructure.opendatahub.io/v1/hardwareprofiles (404 Not Found)",
+    "template.openshift.io/v1/templates (404 Not Found)",
+    "monitoring.rhobs/v1alpha1/prometheusagents (404 Not Found)",
+    "operator.openshift.io/v1alpha1/istiocsrs (404 Not Found)",
+    "serving.kserve.io/v1alpha2/llminferenceserviceconfigs (404 Not Found)",
+    "kuadrant.io/v1beta1/kuadrants (404 Not Found)",
+    "ceph.rook.io/v1/cephobjectstoreusers (404 Not Found)",
+    "gateway.networking.k8s.io/v1beta1/referencegrants (404 Not Found)",
+    "helm.openshift.io/v1beta1/projecthelmchartrepositories (404 Not Found)",
+    "noobaa.io/v1alpha1/backingstores (404 Not Found)",
+    "datasciencepipelinesapplications.opendatahub.io/v1/datasciencepipelinesapplications (404 Not Found)",
+    "machine.openshift.io/v1/controlplanemachinesets (404 Not Found)",
+    "argoproj.io/v1alpha1/workfloweventbindings (404 Not Found)",
+    "opentelemetry.io/v1beta1/opentelemetrycollectors (404 Not Found)",
+    "extensions.kuadrant.io/v1alpha1/planpolicies (404 Not Found)",
+    "argoproj.io/v1alpha1/workflowtemplates (404 Not Found)",
+    "replication.storage.openshift.io/v1alpha1/volumereplications (404 Not Found)",
+    "discovery.k8s.io/v1/endpointslices (404 Not Found)",
+    "image.openshift.io/v1/imagetags (404 Not Found)",
+    "operators.coreos.com/v1alpha1/catalogsources (404 Not Found)",
+    "networking.istio.io/v1alpha3/envoyfilters (404 Not Found)",
+    "monitoring.rhobs/v1alpha1/monitoringstacks (404 Not Found)",
+    "inference.opendatahub.io/v1alpha1/externalproviders (404 Not Found)",
+    "ramendr.openshift.io/v1alpha1/recipes (404 Not Found)",
+    "feast.dev/v1/featurestores (404 Not Found)",
+    "k8s.keycloak.org/v2beta1/keycloaks (404 Not Found)",
+    "apps.openshift.io/v1/deploymentconfigs (404 Not Found)",
+    "extensions.istio.io/v1alpha1/trafficextensions (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/failoverquorums (404 Not Found)",
+    "nfd.openshift.io/v1/nodefeaturediscoveries (404 Not Found)",
+    "trustyai.opendatahub.io/v1alpha1/nemoguardrails (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/backups (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/aitenants (404 Not Found)",
+    "v1/serviceaccounts (404 Not Found)",
+    "csiaddons.openshift.io/v1alpha1/reclaimspacecronjobs (404 Not Found)",
+    "noobaa.io/v1alpha1/noobaaaccounts (404 Not Found)",
+    "metal3.io/v1alpha1/dataimages (404 Not Found)",
+    "ceph.rook.io/v1/cephclusters (404 Not Found)",
+    "networking.istio.io/v1/workloadentries (404 Not Found)",
+    "v1/persistentvolumeclaims (404 Not Found)",
+    "operator.openshift.io/v1/ingresscontrollers (404 Not Found)",
+    "networking.k8s.io/v1/ingresses (404 Not Found)",
+    "devportal.kuadrant.io/v1alpha1/apiproducts (404 Not Found)",
+    "dashboard.opendatahub.io/v1/odhapplications (404 Not Found)",
+    "ceph.rook.io/v1/cephobjectrealms (404 Not Found)",
+    "metal3.io/v1alpha1/hostfirmwaresettings (404 Not Found)",
+    "trainer.kubeflow.org/v1alpha1/trainjobs (404 Not Found)",
+    "monitoring.openshift.io/v1/alertrelabelconfigs (404 Not Found)",
+    "v1/resourcequotas (404 Not Found)",
+    "pipelines.kubeflow.org/v2beta1/pipelineversions (404 Not Found)",
+    "ceph.rook.io/v1/cephblockpoolradosnamespaces (404 Not Found)",
+    "ceph.rook.io/v1/cephfilesystemmirrors (404 Not Found)",
+    "autoscaling.openshift.io/v1beta1/machineautoscalers (404 Not Found)",
+    "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationcronjobs (404 Not Found)",
+    "groupsnapshot.storage.openshift.io/v1beta1/volumegroupsnapshots (404 Not Found)",
+    "monitoring.rhobs/v1/servicemonitors (404 Not Found)",
+    "ingress.operator.openshift.io/v1/dnsrecords (404 Not Found)",
+    "build.openshift.io/v1/buildconfigs (404 Not Found)",
+    "metrics.k8s.io/v1beta1/pods (404 Not Found)",
+    "ray.io/v1/rayjobs (404 Not Found)",
+    "v1/podtemplates (404 Not Found)",
+    "apps/v1/controllerrevisions (404 Not Found)",
+    "networking.istio.io/v1/workloadgroups (404 Not Found)",
+    "v1/pods (404 Not Found)",
+    "kuadrant.io/v1/tlspolicies (404 Not Found)",
+    "build.openshift.io/v1/builds (404 Not Found)",
+    "image.openshift.io/v1/imagestreams (404 Not Found)",
+    "trustyai.opendatahub.io/v1/trustyaiservices (404 Not Found)",
+    "ceph.rook.io/v1/cephblockpools (404 Not Found)",
+    "limitador.kuadrant.io/v1alpha1/limitadors (404 Not Found)",
+    "networking.istio.io/v1/virtualservices (404 Not Found)",
+    "kuadrant.io/v1alpha1/tokenratelimitpolicies (404 Not Found)",
+    "kuadrant.io/v1/authpolicies (404 Not Found)",
+    "batch/v1/cronjobs (404 Not Found)",
+    "resource.nvidia.com/v1beta1/computedomaincliques (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/databases (404 Not Found)",
+    "ceph.rook.io/v1/cephnfses (404 Not Found)",
+    "console.openshift.io/v1/odhquickstarts (404 Not Found)",
+    "llm-d.ai/v1alpha2/inferenceobjectives (404 Not Found)",
+    "v1/replicationcontrollers (404 Not Found)",
+    "argoproj.io/v1alpha1/workflowtaskresults (404 Not Found)",
+    "dashboard.opendatahub.io/v1/odhdocuments (404 Not Found)",
+    "argoproj.io/v1alpha1/workflows (404 Not Found)",
+    "nfd.k8s-sigs.io/v1alpha1/nodefeaturegroups (404 Not Found)",
+    "metal3.io/v1alpha1/baremetalhosts (404 Not Found)",
+    "ceph.rook.io/v1/cephrbdmirrors (404 Not Found)",
+    "coordination.k8s.io/v1/leases (404 Not Found)",
+    "opentelemetry.io/v1alpha1/opampbridges (404 Not Found)",
+    "k8s.cni.cncf.io/v1/network-attachment-definitions (404 Not Found)",
+    "k8s.ovn.org/v1/userdefinednetworks (404 Not Found)",
+    "inference.networking.k8s.io/v1/inferencepools (404 Not Found)",
+    "operator.authorino.kuadrant.io/v1beta1/authorinos (404 Not Found)",
+    "argoproj.io/v1alpha1/workflowtasksets (404 Not Found)",
+    "resource.k8s.io/v1/resourceclaimtemplates (404 Not Found)",
+    "monitoring.rhobs/v1/alertmanagers (404 Not Found)",
+    "ocs.openshift.io/v1/tlsprofiles (404 Not Found)",
+    "ocs.openshift.io/v1/storageclusterpeers (404 Not Found)",
+    "k8s.cni.cncf.io/v1alpha1/ipamclaims (404 Not Found)",
+    "serving.kserve.io/v1beta1/inferenceservices (404 Not Found)",
+    "operators.coreos.com/v2/operatorconditions (404 Not Found)",
+    "acme.cert-manager.io/v1/orders (404 Not Found)",
+    "extensions.kuadrant.io/v1alpha1/oidcpolicies (404 Not Found)",
+    "network.operator.openshift.io/v1/egressrouters (404 Not Found)",
+    "observability.openshift.io/v1alpha1/observabilityinstallers (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/externalmodels (404 Not Found)",
+    "apps/v1/statefulsets (404 Not Found)",
+    "ocs.openshift.io/v1/ocsinitializations (404 Not Found)",
+    "metal3.io/v1alpha1/bmceventsubscriptions (404 Not Found)",
+    "authorization.openshift.io/v1/rolebindingrestrictions (404 Not Found)",
+    "ceph.rook.io/v1/cephclients (404 Not Found)",
+    "cert-manager.io/v1/issuers (404 Not Found)",
+    "csi.ceph.io/v1/drivers (404 Not Found)",
+    "ceph.rook.io/v1/cephnvmeofgateways (404 Not Found)",
+    "kubeflow.org/v1beta1/scheduledworkflows (404 Not Found)",
+    "pipelines.kubeflow.org/v2beta1/pipelines (404 Not Found)",
+    "serving.kserve.io/v1alpha1/trainedmodels (404 Not Found)",
+    "kubeflow.org/v1/mpijobs (404 Not Found)",
+    "ipam.cluster.x-k8s.io/v1beta1/ipaddresses (404 Not Found)",
+    "gateway.networking.k8s.io/v1/gateways (404 Not Found)",
+    "ceph.rook.io/v1/cephfilesystemsubvolumegroups (404 Not Found)",
+    "v1/endpoints (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/maasauthpolicies (404 Not Found)",
+    "resource.k8s.io/v1/resourceclaims (404 Not Found)",
+    "monitoring.rhobs/v1/probes (404 Not Found)",
+    "csi.ceph.io/v1/clientprofiles (404 Not Found)",
+    "gateway.networking.k8s.io/v1/grpcroutes (404 Not Found)",
+    "cert-manager.io/v1/certificates (404 Not Found)",
+    "replication.storage.openshift.io/v1alpha1/volumegroupreplications (404 Not Found)",
+    "ocs.openshift.io/v1/storageclusters (404 Not Found)",
+    "ceph.rook.io/v1/cephobjectstores (404 Not Found)",
+    "modelregistry.opendatahub.io/v1beta1/modelregistries (404 Not Found)",
+    "machine.openshift.io/v1beta1/machinehealthchecks (404 Not Found)",
+    "kubeflow.org/v1/paddlejobs (404 Not Found)",
+    "image.openshift.io/v1/imagestreamtags (404 Not Found)",
+    "networking.istio.io/v1/serviceentries (404 Not Found)",
+    "opendatahub.io/v1alpha/odhdashboardconfigs (404 Not Found)",
+    "devportal.kuadrant.io/v1alpha1/apikeys (404 Not Found)",
+    "serving.kserve.io/v1alpha1/servingruntimes (404 Not Found)",
+    "ipam.cluster.x-k8s.io/v1beta1/ipaddressclaims (404 Not Found)",
+    "kubeflow.org/v1beta1/viewers (404 Not Found)",
+    "csi.ceph.io/v1/cephconnections (404 Not Found)",
+    "metal3.io/v1alpha1/firmwareschemas (404 Not Found)",
+    "network.operator.openshift.io/v1/operatorpkis (404 Not Found)",
+    "maas.opendatahub.io/v1alpha1/maastenantconfigs (404 Not Found)",
+    "networking.k8s.io/v1/networkpolicies (404 Not Found)",
+    "apps/v1/deployments (404 Not Found)",
+    "apps/v1/daemonsets (404 Not Found)",
+    "perses.dev/v1alpha2/perses (404 Not Found)",
+    "mlflow.kubeflow.org/v1/mlflowconfigs (404 Not Found)",
+    "whereabouts.cni.cncf.io/v1alpha1/nodeslicepools (404 Not Found)",
+    "metal3.io/v1alpha1/hardwaredata (404 Not Found)",
+    "devportal.kuadrant.io/v1alpha1/apikeyrequests (404 Not Found)",
+    "monitoring.rhobs/v1alpha1/scrapeconfigs (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/poolers (404 Not Found)",
+    "kuadrant.io/v1/ratelimitpolicies (404 Not Found)",
+    "trustyai.opendatahub.io/v1/evalhubs (404 Not Found)",
+    "extensions.kuadrant.io/v1alpha1/telemetrypolicies (404 Not Found)",
+    "kubeflow.org/v1/pytorchjobs (404 Not Found)",
+    "ceph.rook.io/v1/cephfilesystems (404 Not Found)",
+    "packages.operators.coreos.com/v1/packagemanifests (404 Not Found)",
+    "ceph.rook.io/v1/cephbuckettopics (404 Not Found)",
+    "ray.io/v1/raycronjobs (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/clusters (404 Not Found)",
+    "trustyai.opendatahub.io/v1alpha1/lmevaljobs (404 Not Found)",
+    "perses.dev/v1alpha2/persesdatasources (404 Not Found)",
+    "authorino.kuadrant.io/v1beta3/authconfigs (404 Not Found)",
+    "opentelemetry.io/v1alpha1/instrumentations (404 Not Found)",
+    "v1/limitranges (404 Not Found)",
+    "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediations (404 Not Found)",
+    "monitoring.rhobs/v1/prometheuses (404 Not Found)",
+    "storage.k8s.io/v1/csistoragecapacities (404 Not Found)",
+    "postgresql.cnpg.noobaa.io/v1/scheduledbackups (404 Not Found)",
+    "serving.kserve.io/v1alpha1/inferencegraphs (404 Not Found)",
+    "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationjobs (404 Not Found)",
+    "noobaa.io/v1alpha1/noobaas (404 Not Found)",
+    "metal3.io/v1alpha1/hostupdatepolicies (404 Not Found)",
+    "controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks (404 Not Found)",
+    "ceph.rook.io/v1/cephcosidrivers (404 Not Found)",
+    "machine.openshift.io/v1beta1/machinesets (404 Not Found)",
+    "security.istio.io/v1/requestauthentications (404 Not Found)"
+  ],
+  "scan_warning_count": 271
+}

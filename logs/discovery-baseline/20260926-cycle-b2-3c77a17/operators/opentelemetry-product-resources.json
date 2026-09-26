@@ -1,0 +1,140 @@
+{
+  "operator_name": "opentelemetry-product",
+  "csv_name": "opentelemetry-operator.v0.158.0-2",
+  "install_namespace": "openshift-opentelemetry-operator",
+  "subscription_name": "opentelemetry-product",
+  "owned_crds": [
+    "instrumentations.opentelemetry.io",
+    "opampbridges.opentelemetry.io",
+    "opentelemetrycollectors.opentelemetry.io",
+    "targetallocators.opentelemetry.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-product",
+            "uid": "c01fdbda-fda1-4bc2-9076-d06a89f0b6af"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator.v0.158.0-2",
+            "uid": "61cbf874-a311-4505-8be8-11dcd1f3e341"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator-webhook",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator-controller-manager-9f87ddf79-j799k",
+            "uid": "5670495b-4651-4cf5-a29d-07402c24a806"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator-webhook-6b6797f9cb-6mrzd",
+            "uid": "728588eb-30bf-4ee1-983d-e7835b492ac0"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-opentelemetry-operator",
+            "name": "opentelemetry-operator-webhook-6b6797f9cb-hmjn5",
+            "uid": "05a300bb-b83e-41e9-8498-6d605c6c7cda"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-opentelemetry-operator",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

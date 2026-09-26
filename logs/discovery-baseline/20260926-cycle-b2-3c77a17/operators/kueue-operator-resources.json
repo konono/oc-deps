@@ -1,0 +1,111 @@
+{
+  "operator_name": "kueue-operator",
+  "csv_name": "kueue-operator.v1.4.2",
+  "install_namespace": "openshift-kueue",
+  "subscription_name": "kueue-operator",
+  "owned_crds": [
+    "kueues.kueue.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-kueue",
+            "name": "kueue-operator",
+            "uid": "dd7d5ed2-a4b3-4794-8c47-181c09141b50"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-kueue",
+            "name": "kueue-operator.v1.4.2",
+            "uid": "69858f02-3d1f-48dd-8539-c7dc9868cfdc"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator-7c654676dc-hc8r5",
+            "uid": "d420f5cd-bf25-46df-aa67-62bc099b566d"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator-7c654676dc-vpsjg",
+            "uid": "af58c209-fe3f-4878-a51c-012e61fea98d"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-kueue",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

@@ -1,0 +1,235 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-26T17:38:22.996075065+00:00",
+  "targets": [
+    {
+      "package_name": "openshift-cert-manager-operator",
+      "install_namespace": "cert-manager-operator",
+      "csv_name_pattern": "cert-manager-operator.v1.20.0"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "cert-manager-operator",
+          "name": "openshift-cert-manager-operator",
+          "uid": "67f52a78-62ed-4667-b8f6-36ef7801131c",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "cert-manager-operator",
+          "name": "cert-manager-operator.v1.20.0",
+          "uid": "09915fd9-96a4-4b16-89ca-1fddee71672d",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "cert-manager.io",
+          "kind": "Certificate",
+          "namespace": "openshift-jobset",
+          "name": "jobset-metrics-cert",
+          "uid": "85774c00-b2ff-4327-a8d9-7be9046de196",
+          "action": "DELETE"
+        },
+        {
+          "group": "cert-manager.io",
+          "kind": "Certificate",
+          "namespace": "openshift-jobset",
+          "name": "jobset-serving-cert",
+          "uid": "33a8ea64-4083-4936-8f76-b8f148f679e4",
+          "action": "DELETE"
+        },
+        {
+          "group": "operator.openshift.io",
+          "kind": "CertManager",
+          "namespace": null,
+          "name": "cluster",
+          "uid": "d5768113-11d0-4e0f-9269-9142ffb5bf41",
+          "action": "DELETE"
+        },
+        {
+          "group": "cert-manager.io",
+          "kind": "Issuer",
+          "namespace": "openshift-jobset",
+          "name": "jobset-selfsigned-issuer",
+          "uid": "9625301a-bb64-451b-be5f-e4ed067bd5aa",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "cert-manager-operator",
+          "name": "cert-manager-operator.v1.20.0",
+          "uid": "09915fd9-96a4-4b16-89ca-1fddee71672d",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "cert-manager-operator",
+          "name": "openshift-cert-manager-operator",
+          "uid": "b00de490-dc9e-4582-9cfa-37579ead6152",
+          "action": "DELETE"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "cert-manager-operator",
+          "name": "cert-manager-operator-lock",
+          "uid": "813ad357-ae27-414a-aad6-79957e085757",
+          "action": "REVIEW"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "cert-manager-operator",
+          "name": "cert-manager-operator-trusted-ca-bundle",
+          "uid": "dd5ddf96-75f1-4fc2-a46c-bbeb9abddb35",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "bundles.trust.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "certificaterequests.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "certificates.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "certmanagers.operator.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "challenges.acme.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "clusterissuers.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "issuers.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "istiocsrs.operator.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "orders.acme.cert-manager.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "trustmanagers.operator.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "cert-manager-operator",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

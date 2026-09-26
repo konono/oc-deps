@@ -1,0 +1,1171 @@
+[1mTargets[0m
+  rhods-operator.3.5.1 (ns: redhat-ods-operator) (Subscription/rhods-operator@redhat-ods-operator)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (rhods-operator.3.5.1) — Subscription/rhods-operator found — will be deleted in Phase 0
+  [32m✓[0m CSV health (rhods-operator.3.5.1) — phase=Succeeded
+  [32m✓[0m Controller available (rhods-operator.3.5.1) — rhods-operator: Available (3)
+  [33m![0m Provenance — 107 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/rhods-operator  [2m(ns: redhat-ods-operator)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/rhods-operator.3.5.1  [2m(ns: redhat-ods-operator)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m DataScienceCluster/default-dsc  [2m(cluster-scoped)[0m
+         [2mroot CR approved via --approve-scope root[0m
+  [31mDELETE[0m DSCInitialization/default-dsci  [2m(cluster-scoped)[0m
+         [2mroot CR approved via --approve-scope root[0m
+  [31mDELETE[0m Config/default  [2m(cluster-scoped)[0m
+         [2mlabel-related root CR explicitly approved for deletion[0m
+  [33mEXPECT[0m DataSciencePipelines/default-datasciencepipelines  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m TrustyAI/default-trustyai  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m GatewayConfig/default-gateway  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m Ray/default-ray  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m HardwareProfile/default-profile  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ModelRegistry/default-modelregistry  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m Trainer/default-trainer  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m Monitoring/default-monitoring  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m TrainingOperator/default-trainingoperator  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m AITenant/models-as-a-service  [2m(ns: ai-tenants)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m AIGateway/default-aigateway  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m FeastOperator/default-feastoperator  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m Kserve/default-kserve  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m Workbenches/default-workbenches  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m Dashboard/default-dashboard  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/torch-distributed  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/torch-distributed-cpu  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/torch-distributed-cpu-torch211-py312  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/torch-distributed-cuda130-torch211-py312  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/torch-distributed-rocm  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/torch-distributed-rocm714-torch211-py312  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/training-hub  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/training-hub-cpu  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/training-hub-rocm  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/training-hub-th09-cpu-torch211-py312  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/training-hub-th09-cuda130-torch211-py312  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterTrainingRuntime/training-hub-th09-rocm714-torch211-py312  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m MaasTenantConfig/default-tenant  [2m(ns: models-as-a-service)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m MLflowOperator/default-mlflowoperator  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-a2a-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-autogen-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-crewai-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-google-adk-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-hitl-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-langflow-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-langgraph-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-llamaindex-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-memory-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-rag-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/agentic-starter-kits-vanilla-python-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/jupyter-install-python-packages  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/jupyter-update-server-settings  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/jupyter-use-s3-bucket-data  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/jupyter-view-installed-packages  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/openvino-ovms-serving  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/pachyderm-beginner-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/pachyderm-house-pricing-tutorial  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/rhoai-documentation  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/rhoai-tutorial-fraud  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/starburst-enterprise-requirements  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/starburst-openshift-deployment  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/starburst-openshift-overview  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhDocument/watson-x-use-case  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OGX/default-ogx  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m ClusterStorageContainer/default  [2m(cluster-scoped)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhQuickStart/create-aikit-notebook  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhQuickStart/create-jupyter-notebook  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhQuickStart/deploy-python-model  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhQuickStart/openvino-inference-notebook  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhQuickStart/pachyderm-beginner-tutorial-notebook  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhQuickStart/using-starburst-enterprise  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/agentic-starter-kits  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/aikit  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/elastic  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/jupyter  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/mlflow  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/nvidia-nim  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/openvino  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/pachyderm  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/pgvector  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/rhoai  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/starburstenterprise  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [33mEXPECT[0m OdhApplication/watson-x-ai  [2m(ns: redhat-ods-applications)[0m
+         [2mmanaged descendant; controller expected to remove[0m
+  [31mDELETE[0m Auth/auth  [2m(cluster-scoped)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+  [31mDELETE[0m HardwareProfile/nvidia-gpu-1  [2m(ns: redhat-ods-applications)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+  [31mDELETE[0m MLflow/mlflow  [2m(cluster-scoped)[0m
+         [2mlabel-related CR explicitly approved for deletion[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  [31mDELETE[0m OdhDashboardConfig/odh-dashboard-config  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m OGXServer/ogx-server  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m MaaSAuthPolicy/admin-auth-policy  [2m(ns: models-as-a-service)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m MaaSAuthPolicy/maas-qwen3-06b-users-auth-policy  [2m(ns: models-as-a-service)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m MaaSSubscription/maas-admins-subscription  [2m(ns: models-as-a-service)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m MaaSSubscription/maas-qwen3-06b-users-subscription  [2m(ns: models-as-a-service)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m NemoGuardrails/nemo-guardrails  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m MaasTenantConfig/default-tenant  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-template  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-worker-data-parallel  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-pd-template-nvidia-cuda  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-template-nvidia-cuda  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-template  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-worker-data-parallel  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-router-route  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler-latency-predictor  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-pd-template-nvidia-cuda  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-template-nvidia-cuda  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-amd-rocm  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-ppc64le  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-s390x  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-x86  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-intel-gaudi  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tokenizer  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tracing  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+  [31mDELETE[0m LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-worker-data-parallel  [2m(ns: redhat-ods-applications)[0m
+         [2mlabel-related CR approved via --approve-scope label-only[0m
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/rhods-operator.3.5.1  [2m(ns: redhat-ods-operator)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/rhods-operator  [2m(ns: redhat-ods-operator)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/07ed84f7.opendatahub.io  [2m(ns: redhat-ods-operator)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  Explicit cleanup[0m
+  [31mDELETE[0m Gateway/maas-default-gateway  [2m(ns: openshift-ingress)[0m
+         [2mconfig explicit[0m
+         [36m↳ ref: HTTPRoute/maas-api-route@redhat-ai-gateway-infra uid=99cc2269 field=spec.parentRefs[0] (in-plan)[0m
+         [36m↳ coverage: ✓ [gateway.networking.k8s.io/HTTPRoute, gateway.networking.k8s.io/GRPCRoute, gateway.networking.k8s.io/TCPRoute, gateway.networking.k8s.io/TLSRoute, gateway.networking.k8s.io/UDPRoute][0m
+  [31mDELETE[0m ConfigMap/maas-gateway-options  [2m(ns: openshift-ingress)[0m
+         [2mconfig explicit[0m
+         [36m↳ ref: Gateway/maas-default-gateway@openshift-ingress uid=d37b41b0 field=spec.infrastructure.parametersRef (in-plan)[0m
+         [36m↳ coverage: ✓ [apps/Deployment, apps/StatefulSet, apps/DaemonSet, apps/ReplicaSet, batch/Job, batch/CronJob, Pod, gateway.networking.k8s.io/Gateway][0m
+
+  [1;33mBARRIER[0m Wait for explicit targets to be fully removed
+
+[1mPhase 6  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/auths.services.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/datascienceclusters.datasciencecluster.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/datasciencepipelines.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/dscinitializations.dscinitialization.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/featuretrackers.features.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/gatewayconfigs.services.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/hardwareprofiles.infrastructure.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/kueues.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/modelregistries.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/monitorings.services.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/platforms.config.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/rays.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/sparkoperators.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/trainers.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/trainingoperators.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/trustyais.components.platform.opendatahub.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 7  Namespaces[0m
+  [32mKEEP  [0m Namespace/redhat-ods-operator  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  107 CRs have uncertain provenance (owned API, but origin unknown)
+  16 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 39 DELETE, 73 EXPECT-GONE, 18 KEEP, 1 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  rhbk-operator.v26.6.7-opr.1 (ns: keycloak) (Subscription/rhbk-operator@keycloak)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (rhbk-operator.v26.6.7-opr.1) — Subscription/rhbk-operator found — will be deleted in Phase 0
+  [32m✓[0m CSV health (rhbk-operator.v26.6.7-opr.1) — phase=Succeeded
+  [32m✓[0m Controller available (rhbk-operator.v26.6.7-opr.1) — rhbk-operator: Available (1)
+  [33m![0m Provenance — 2 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/rhbk-operator  [2m(ns: keycloak)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  [2m(ns: keycloak)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m KeycloakRealmImport/maas-realm  [2m(ns: keycloak)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+  [31mDELETE[0m Keycloak/keycloak  [2m(ns: keycloak)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  [2m(ns: keycloak)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/rhbk-operator  [2m(ns: keycloak)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/keycloaks.k8s.keycloak.org  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/keycloak  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  2 CRs have uncertain provenance (owned API, but origin unknown)
+  2 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 5 DELETE, 0 EXPECT-GONE, 4 KEEP, 0 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  leader-worker-set.v1.0.1 (ns: openshift-leaderworkerset) (Subscription/leader-worker-set@openshift-leaderworkerset)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (leader-worker-set.v1.0.1) — Subscription/leader-worker-set found — will be deleted in Phase 0
+  [32m✓[0m CSV health (leader-worker-set.v1.0.1) — phase=Succeeded
+  [32m✓[0m Controller available (leader-worker-set.v1.0.1) — openshift-lws-operator: Available (1)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/leader-worker-set  [2m(ns: openshift-leaderworkerset)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/leader-worker-set.v1.0.1  [2m(ns: openshift-leaderworkerset)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/leader-worker-set.v1.0.1  [2m(ns: openshift-leaderworkerset)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/leader-worker-set  [2m(ns: openshift-leaderworkerset)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/openshift-lws-operator-lock  [2m(ns: openshift-leaderworkerset)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-leaderworkerset  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 3 DELETE, 0 EXPECT-GONE, 3 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  jobset-operator.v1.0.1 (ns: openshift-jobset) (Subscription/job-set@openshift-jobset)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (jobset-operator.v1.0.1) — Subscription/job-set found — will be deleted in Phase 0
+  [32m✓[0m CSV health (jobset-operator.v1.0.1) — phase=Succeeded
+  [32m✓[0m Controller available (jobset-operator.v1.0.1) — jobset-operator: Available (1)
+  [33m![0m Provenance — 1 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/job-set  [2m(ns: openshift-jobset)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/jobset-operator.v1.0.1  [2m(ns: openshift-jobset)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m JobSetOperator/cluster  [2m(cluster-scoped)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/jobset-operator.v1.0.1  [2m(ns: openshift-jobset)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/job-set  [2m(ns: openshift-jobset)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/openshift-jobset-operator-lock  [2m(ns: openshift-jobset)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/jobsetoperators.operator.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-jobset  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  1 CRs have uncertain provenance (owned API, but origin unknown)
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 4 DELETE, 0 EXPECT-GONE, 3 KEEP, 1 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  kueue-operator.v1.4.2 (ns: openshift-kueue) (Subscription/kueue-operator@openshift-kueue)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (kueue-operator.v1.4.2) — Subscription/kueue-operator found — will be deleted in Phase 0
+  [32m✓[0m CSV health (kueue-operator.v1.4.2) — phase=Succeeded
+  [32m✓[0m Controller available (kueue-operator.v1.4.2) — openshift-kueue-operator: Available (2)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/kueue-operator  [2m(ns: openshift-kueue)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/kueue-operator.v1.4.2  [2m(ns: openshift-kueue)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/kueue-operator.v1.4.2  [2m(ns: openshift-kueue)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/kueue-operator  [2m(ns: openshift-kueue)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/openshift-kueue-operator-lock  [2m(ns: openshift-kueue)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/kueues.kueue.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-kueue  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 3 DELETE, 0 EXPECT-GONE, 3 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  servicemeshoperator3.v3.4.2 (ns: openshift-servicemesh) (Subscription/servicemeshoperator3@openshift-servicemesh)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (servicemeshoperator3.v3.4.2) — Subscription/servicemeshoperator3 found — will be deleted in Phase 0
+  [32m✓[0m CSV health (servicemeshoperator3.v3.4.2) — phase=Succeeded
+  [32m✓[0m Controller available (servicemeshoperator3.v3.4.2) — servicemesh-operator3: Available (1)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/servicemeshoperator3  [2m(ns: openshift-servicemesh)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/servicemeshoperator3.v3.4.2  [2m(ns: openshift-servicemesh)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/servicemeshoperator3.v3.4.2  [2m(ns: openshift-servicemesh)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/servicemeshoperator3  [2m(ns: openshift-servicemesh)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/sail-operator-lock  [2m(ns: openshift-servicemesh)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/trafficextensions.extensions.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/wasmplugins.extensions.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/destinationrules.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/envoyfilters.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/gateways.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/proxyconfigs.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/serviceentries.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/sidecars.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/virtualservices.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/workloadentries.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/workloadgroups.networking.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/ztunnels.sailoperator.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/authorizationpolicies.security.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/peerauthentications.security.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/requestauthentications.security.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/telemetries.telemetry.istio.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/istiocnis.sailoperator.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/istiorevisions.sailoperator.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/istiorevisiontags.sailoperator.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/istios.sailoperator.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-servicemesh  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  20 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 3 DELETE, 0 EXPECT-GONE, 22 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  nfd.4.22.0-202609151747 (ns: openshift-nfd) (Subscription/nfd@openshift-nfd)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (nfd.4.22.0-202609151747) — Subscription/nfd found — will be deleted in Phase 0
+  [32m✓[0m CSV health (nfd.4.22.0-202609151747) — phase=Succeeded
+  [32m✓[0m Controller available (nfd.4.22.0-202609151747) — nfd-controller-manager: Available (1)
+  [33m![0m Provenance — 2 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/nfd  [2m(ns: openshift-nfd)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/nfd.4.22.0-202609151747  [2m(ns: openshift-nfd)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m NodeFeatureDiscovery/nfd-instance  [2m(ns: openshift-nfd)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+  [31mDELETE[0m NodeFeature/ip-10-0-23-226.us-east-2.compute.internal  [2m(ns: openshift-nfd)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/nfd.4.22.0-202609151747  [2m(ns: openshift-nfd)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/nfd  [2m(ns: openshift-nfd)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io  [2m(ns: openshift-nfd)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+  [35mREVIEW[0m ConfigMap/nfd-manager-config  [2m(ns: openshift-nfd)[0m
+         [2moperator-related ConfigMap — verify before deleting[0m
+  [35mREVIEW[0m ConfigMap/nfd-worker  [2m(ns: openshift-nfd)[0m
+         [2moperator-related ConfigMap — verify before deleting[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/nodefeaturerules.nfd.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/nodefeatures.nfd.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-nfd  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  2 CRs have uncertain provenance (owned API, but origin unknown)
+  6 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 5 DELETE, 0 EXPECT-GONE, 8 KEEP, 3 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  gpu-operator-certified.v26.7.1 (ns: nvidia-gpu-operator) (Subscription/gpu-operator-certified@nvidia-gpu-operator)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (gpu-operator-certified.v26.7.1) — Subscription/gpu-operator-certified found — will be deleted in Phase 0
+  [32m✓[0m CSV health (gpu-operator-certified.v26.7.1) — phase=Succeeded
+  [32m✓[0m Controller available (gpu-operator-certified.v26.7.1) — gpu-operator: Available (1)
+  [33m![0m Provenance — 1 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/gpu-operator-certified  [2m(ns: nvidia-gpu-operator)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/gpu-operator-certified.v26.7.1  [2m(ns: nvidia-gpu-operator)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m ClusterPolicy/gpu-cluster-policy  [2m(cluster-scoped)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/gpu-operator-certified.v26.7.1  [2m(ns: nvidia-gpu-operator)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/gpu-operator-certified  [2m(ns: nvidia-gpu-operator)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/53822513.nvidia.com  [2m(ns: nvidia-gpu-operator)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/nvidiadrivers.nvidia.com  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/gpuclusters.nvidia.com  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/computedomains.resource.nvidia.com  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/computedomaincliques.resource.nvidia.com  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/clusterpolicies.nvidia.com  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/nvidia-gpu-operator  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  1 CRs have uncertain provenance (owned API, but origin unknown)
+  5 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 4 DELETE, 0 EXPECT-GONE, 7 KEEP, 1 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  cert-manager-operator.v1.20.0 (ns: cert-manager-operator) (Subscription/openshift-cert-manager-operator@cert-manager-operator)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (cert-manager-operator.v1.20.0) — Subscription/openshift-cert-manager-operator found — will be deleted in Phase 0
+  [32m✓[0m CSV health (cert-manager-operator.v1.20.0) — phase=Succeeded
+  [32m✓[0m Controller available (cert-manager-operator.v1.20.0) — cert-manager-operator-controller-manager: Available (1)
+  [33m![0m Provenance — 1 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/openshift-cert-manager-operator  [2m(ns: cert-manager-operator)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/cert-manager-operator.v1.20.0  [2m(ns: cert-manager-operator)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m CertManager/cluster  [2m(cluster-scoped)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/cert-manager-operator.v1.20.0  [2m(ns: cert-manager-operator)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/openshift-cert-manager-operator  [2m(ns: cert-manager-operator)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/cert-manager-operator-lock  [2m(ns: cert-manager-operator)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+  [35mREVIEW[0m ConfigMap/cert-manager-operator-trusted-ca-bundle  [2m(ns: cert-manager-operator)[0m
+         [2moperator-related ConfigMap — verify before deleting[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/bundles.trust.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/certificaterequests.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/certificates.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/certmanagers.operator.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/challenges.acme.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/clusterissuers.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/issuers.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/istiocsrs.operator.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/orders.acme.cert-manager.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/trustmanagers.operator.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/cert-manager-operator  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  1 CRs have uncertain provenance (owned API, but origin unknown)
+  10 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 4 DELETE, 0 EXPECT-GONE, 12 KEEP, 2 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  rhcl-operator.v1.4.3 (ns: openshift-rhcl) (Subscription/rhcl-operator@openshift-rhcl)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (rhcl-operator.v1.4.3) — Subscription/rhcl-operator found — will be deleted in Phase 0
+  [32m✓[0m CSV health (rhcl-operator.v1.4.3) — phase=Succeeded
+  [32m✓[0m Controller available (rhcl-operator.v1.4.3) — kuadrant-operator-controller-manager: Available (1)
+  [33m![0m Provenance — 2 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/rhcl-operator  [2m(ns: openshift-rhcl)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/rhcl-operator.v1.4.3  [2m(ns: openshift-rhcl)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  [31mDELETE[0m AuthPolicy/maas-gateway-auth  [2m(ns: openshift-ingress)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+  [31mDELETE[0m Kuadrant/kuadrant  [2m(ns: openshift-rhcl)[0m
+         [2mindependent CR approved via --approve-scope independent[0m
+
+  [1;33mBARRIER[0m All operands removed (deleted + expected)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/rhcl-operator.v1.4.3  [2m(ns: openshift-rhcl)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [32mKEEP  [0m OperatorGroup/rhcl-operator  [2m(ns: openshift-rhcl)[0m
+         [2mother operators remain in namespace[0m
+  [35mREVIEW[0m Lease/f139389e.kuadrant.io  [2m(ns: openshift-rhcl)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  Explicit cleanup[0m
+  [31mDELETE[0m ConsolePlugin/kuadrant-console-plugin  [2m(cluster-scoped)[0m
+         [2mconfig explicit[0m
+         [36m↳ no typed inbound refs at plan time[0m
+         [36m↳ coverage: ✓ [operator.openshift.io/Console][0m
+  [31mDELETE[0m Deployment/kuadrant-console-plugin  [2m(ns: openshift-rhcl)[0m
+         [2mconfig explicit[0m
+         [36m↳ no typed inbound refs at plan time[0m
+         [36m↳ coverage: ✓ [autoscaling/HorizontalPodAutoscaler][0m
+  [31mDELETE[0m Service/kuadrant-console-plugin  [2m(ns: openshift-rhcl)[0m
+         [2mconfig explicit[0m
+         [36m↳ ref: ConsolePlugin/kuadrant-console-plugin uid=c17ca115 field=spec.backend.service.name (in-plan)[0m
+         [36m↳ coverage: ✓ [console.openshift.io/ConsolePlugin, gateway.networking.k8s.io/HTTPRoute, gateway.networking.k8s.io/GRPCRoute, gateway.networking.k8s.io/TCPRoute, gateway.networking.k8s.io/TLSRoute, gateway.networking.k8s.io/UDPRoute, networking.k8s.io/Ingress, route.openshift.io/Route][0m
+  [31mDELETE[0m ConfigMap/kuadrant-console-nginx-conf  [2m(ns: openshift-rhcl)[0m
+         [2mconfig explicit[0m
+         [36m↳ ref: Deployment/kuadrant-console-plugin@openshift-rhcl uid=76df864b field=spec.template.spec.volumes[1].configMap.name (in-plan)[0m
+         [36m↳ ref: ReplicaSet/kuadrant-console-plugin-7d64bff6cd@openshift-rhcl uid=c06c331f field=spec.template.spec.volumes[1].configMap.name (in-plan)[0m
+         [36m↳ ref: Pod/kuadrant-console-plugin-7d64bff6cd-7546q@openshift-rhcl uid=0f8b9779 field=spec.volumes[1].configMap.name (in-plan)[0m
+         [36m↳ coverage: ✓ [apps/Deployment, apps/StatefulSet, apps/DaemonSet, apps/ReplicaSet, batch/Job, batch/CronJob, Pod, gateway.networking.k8s.io/Gateway][0m
+
+  [1;33mBARRIER[0m Wait for explicit targets to be fully removed
+
+[1mPhase 6  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/apikeyapprovals.devportal.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/apikeyrequests.devportal.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/apikeys.devportal.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/apiproducts.devportal.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/authpolicies.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/dnspolicies.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/kuadrants.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/oidcpolicies.extensions.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/planpolicies.extensions.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/ratelimitpolicies.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/telemetrypolicies.extensions.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/tlspolicies.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/tokenratelimitpolicies.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 7  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-rhcl  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  2 CRs have uncertain provenance (owned API, but origin unknown)
+  13 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 8 DELETE, 0 EXPECT-GONE, 16 KEEP, 1 REVIEW
+  0 blockers, 2 warnings
+[1mTargets[0m
+  authorino-operator.v1.4.3 (ns: openshift-rhcl) (Subscription/authorino-operator-stable-redhat-operators-openshift-marketplace@openshift-rhcl)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (authorino-operator.v1.4.3) — Subscription/authorino-operator-stable-redhat-operators-openshift-marketplace found — will be deleted in Phase 0
+  [32m✓[0m CSV health (authorino-operator.v1.4.3) — phase=Succeeded
+  [32m✓[0m Controller available (authorino-operator.v1.4.3) — authorino-operator: Available (1)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/authorino-operator-stable-redhat-operators-openshift-marketplace  [2m(ns: openshift-rhcl)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/authorino-operator.v1.4.3  [2m(ns: openshift-rhcl)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/authorino-operator.v1.4.3  [2m(ns: openshift-rhcl)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [32mKEEP  [0m OperatorGroup/rhcl-operator  [2m(ns: openshift-rhcl)[0m
+         [2mother operators remain in namespace[0m
+  [35mREVIEW[0m Lease/aac3a15d.authorino.kuadrant.io  [2m(ns: openshift-rhcl)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/authconfigs.authorino.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/authorinos.operator.authorino.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-rhcl  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  2 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 2 DELETE, 0 EXPECT-GONE, 5 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  dns-operator.v1.4.2 (ns: openshift-rhcl) (Subscription/dns-operator-stable-redhat-operators-openshift-marketplace@openshift-rhcl)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (dns-operator.v1.4.2) — Subscription/dns-operator-stable-redhat-operators-openshift-marketplace found — will be deleted in Phase 0
+  [32m✓[0m CSV health (dns-operator.v1.4.2) — phase=Succeeded
+  [32m✓[0m Controller available (dns-operator.v1.4.2) — dns-operator-controller-manager: Available (1)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/dns-operator-stable-redhat-operators-openshift-marketplace  [2m(ns: openshift-rhcl)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/dns-operator.v1.4.2  [2m(ns: openshift-rhcl)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/dns-operator.v1.4.2  [2m(ns: openshift-rhcl)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [32mKEEP  [0m OperatorGroup/rhcl-operator  [2m(ns: openshift-rhcl)[0m
+         [2mother operators remain in namespace[0m
+  [35mREVIEW[0m Lease/a3f98d6c.kuadrant.io  [2m(ns: openshift-rhcl)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+  [35mREVIEW[0m ConfigMap/dns-operator-controller-env  [2m(ns: openshift-rhcl)[0m
+         [2moperator-related ConfigMap — verify before deleting[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/dnshealthcheckprobes.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/dnsrecords.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-rhcl  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  2 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 2 DELETE, 0 EXPECT-GONE, 5 KEEP, 2 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  limitador-operator.v1.4.2 (ns: openshift-rhcl) (Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace@openshift-rhcl)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (limitador-operator.v1.4.2) — Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace found — will be deleted in Phase 0
+  [32m✓[0m CSV health (limitador-operator.v1.4.2) — phase=Succeeded
+  [32m✓[0m Controller available (limitador-operator.v1.4.2) — limitador-operator-controller-manager: Available (1)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace  [2m(ns: openshift-rhcl)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/limitador-operator.v1.4.2  [2m(ns: openshift-rhcl)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/limitador-operator.v1.4.2  [2m(ns: openshift-rhcl)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/rhcl-operator  [2m(ns: openshift-rhcl)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/3745a16e.kuadrant.io  [2m(ns: openshift-rhcl)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+  [35mREVIEW[0m ConfigMap/limitador-operator-manager-config  [2m(ns: openshift-rhcl)[0m
+         [2moperator-related ConfigMap — verify before deleting[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/limitadors.limitador.kuadrant.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-rhcl  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 3 DELETE, 0 EXPECT-GONE, 3 KEEP, 2 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  cluster-observability-operator.v1.5.2 (ns: openshift-cluster-observability-operator) (Subscription/cluster-observability-operator@openshift-cluster-observability-operator)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (cluster-observability-operator.v1.5.2) — Subscription/cluster-observability-operator found — will be deleted in Phase 0
+  [32m✓[0m CSV health (cluster-observability-operator.v1.5.2) — phase=Succeeded
+  [32m✓[0m Controller available (cluster-observability-operator.v1.5.2) — obo-prometheus-operator: Available (1); obo-prometheus-operator-admission-webhook: Available (2); observability-operator: Available (1); perses-operator: Available (1)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/cluster-observability-operator  [2m(ns: openshift-cluster-observability-operator)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/cluster-observability-operator.v1.5.2  [2m(ns: openshift-cluster-observability-operator)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/cluster-observability-operator.v1.5.2  [2m(ns: openshift-cluster-observability-operator)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/cluster-observability-operator  [2m(ns: openshift-cluster-observability-operator)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/alertmanagers.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/monitoringstacks.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/observabilityinstallers.observability.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/perses.perses.dev  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/persesdashboards.perses.dev  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/persesdatasources.perses.dev  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/persesglobaldatasources.perses.dev  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/podmonitors.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/probes.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/prometheusagents.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/prometheuses.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/prometheusrules.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/scrapeconfigs.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/servicemonitors.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/thanosqueriers.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/thanosrulers.monitoring.rhobs  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/uiplugins.observability.openshift.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-cluster-observability-operator  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  18 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 3 DELETE, 0 EXPECT-GONE, 20 KEEP, 0 REVIEW
+  0 blockers, 1 warnings
+[1mTargets[0m
+  opentelemetry-operator.v0.158.0-2 (ns: openshift-opentelemetry-operator) (Subscription/opentelemetry-product@openshift-opentelemetry-operator)
+
+[1mPreflight[0m
+  [32m✓[0m Subscription resolved (opentelemetry-operator.v0.158.0-2) — Subscription/opentelemetry-product found — will be deleted in Phase 0
+  [32m✓[0m CSV health (opentelemetry-operator.v0.158.0-2) — phase=Succeeded
+  [32m✓[0m Controller available (opentelemetry-operator.v0.158.0-2) — opentelemetry-operator-controller-manager: Available (1); opentelemetry-operator-webhook: Available (2)
+
+[1mPhase 0  Freeze OLM[0m
+  [31mDELETE[0m Subscription/opentelemetry-product  [2m(ns: openshift-opentelemetry-operator)[0m
+         [2mfreeze OLM to prevent re-install[0m
+  [32mKEEP  [0m ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  [2m(ns: openshift-opentelemetry-operator)[0m
+         [2mcontroller needed for operand cleanup[0m
+
+  [1;33mBARRIER[0m Subscriptions deleted, controllers verified available
+
+[1mPhase 1  Trigger operand cleanup[0m
+  (none)
+
+[1mPhase 2  Remaining cleanup[0m
+  (none)
+
+[1mPhase 3  Remove Operator controllers[0m
+  [31mDELETE[0m ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  [2m(ns: openshift-opentelemetry-operator)[0m
+         [2moperator controller no longer needed[0m
+
+  [1;33mBARRIER[0m Layer 0 CSVs deleted
+
+[1mPhase 4  Namespace cleanup[0m
+  [31mDELETE[0m OperatorGroup/opentelemetry-product  [2m(ns: openshift-opentelemetry-operator)[0m
+         [2moperator group approved via --approve-scope operator-group[0m
+  [35mREVIEW[0m Lease/9f7554c3.opentelemetry.io  [2m(ns: openshift-opentelemetry-operator)[0m
+         [2mleader election lease (holder references operator deployment)[0m
+
+[1mPhase 5  APIs[0m
+  [32mKEEP  [0m CustomResourceDefinition/instrumentations.opentelemetry.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/opampbridges.opentelemetry.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/opentelemetrycollectors.opentelemetry.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+  [32mKEEP  [0m CustomResourceDefinition/targetallocators.opentelemetry.io  [2m(cluster-scoped)[0m
+         [2meligible for prune (use --prune-crds to remove)[0m
+
+[1mPhase 6  Namespaces[0m
+  [32mKEEP  [0m Namespace/openshift-opentelemetry-operator  [2m(cluster-scoped)[0m
+         [2mnamespace cleanup requires manual verification[0m
+
+[1;33mWarnings[0m
+  4 CRDs eligible for removal but kept by default (use --prune-crds)
+
+[1mSummary[0m: 3 DELETE, 0 EXPECT-GONE, 6 KEEP, 1 REVIEW
+  0 blockers, 1 warnings

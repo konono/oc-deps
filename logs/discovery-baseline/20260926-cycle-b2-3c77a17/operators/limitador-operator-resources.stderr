@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-rhcl] elapsed 0s
+✅ Scanned 271 resource types in 11.4s
+   openshift-rhcl — 143 resources
+[namespace 2/2: redhat-ai-gateway-infra/maas-api-route] elapsed 11s
+✅ Scanned 271 resource types in 1.1s
+   redhat-ai-gateway-infra/maas-api-route — 0 resources
+   Scanned 2 namespace(s), 143 total resources
+   Found 7 ownerRef descendants in scanned namespaces

@@ -1,0 +1,327 @@
+{
+  "operator_name": "cluster-observability-operator",
+  "csv_name": "cluster-observability-operator.v1.5.2",
+  "install_namespace": "openshift-cluster-observability-operator",
+  "subscription_name": "cluster-observability-operator",
+  "owned_crds": [
+    "alertmanagerconfigs.monitoring.rhobs",
+    "alertmanagers.monitoring.rhobs",
+    "monitoringstacks.monitoring.rhobs",
+    "observabilityinstallers.observability.openshift.io",
+    "perses.perses.dev",
+    "persesdashboards.perses.dev",
+    "persesdatasources.perses.dev",
+    "persesglobaldatasources.perses.dev",
+    "podmonitors.monitoring.rhobs",
+    "probes.monitoring.rhobs",
+    "prometheusagents.monitoring.rhobs",
+    "prometheuses.monitoring.rhobs",
+    "prometheusrules.monitoring.rhobs",
+    "scrapeconfigs.monitoring.rhobs",
+    "servicemonitors.monitoring.rhobs",
+    "thanosqueriers.monitoring.rhobs",
+    "thanosrulers.monitoring.rhobs",
+    "uiplugins.observability.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "cluster-observability-operator",
+            "uid": "95f1d121-1543-4e7e-b0d9-f301375de4b3"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "cluster-observability-operator.v1.5.2",
+            "uid": "393c3d40-8093-4591-9da5-a811e3cad2c4"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator-admission-webhook",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "observability-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "perses-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator-admission-webhook",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "observability-operator-sa",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "perses-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator-5bd6c457f8-wq97w",
+            "uid": "4b81c659-ab4c-4013-9fd6-e5cf5543e522"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator-admission-webhook-6c56b76dfb-dlp9h",
+            "uid": "ee9e06fa-5e5a-4ebd-9487-fcbc928f6cce"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "obo-prometheus-operator-admission-webhook-6c56b76dfb-j8zjh",
+            "uid": "2a2c8dd8-f180-45eb-80ce-0c4fe3636f0f"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "observability-operator-5bfddf4c89-tx5ft",
+            "uid": "a105a68f-6878-4dfd-9c0e-a17b112a304e"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-cluster-observability-operator",
+            "name": "perses-operator-5665f4c77-vdtmw",
+            "uid": "36f658b6-d20b-4675-a457-df52a50e1fd5"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "perses.dev",
+            "version": "v1alpha2",
+            "kind": "PersesDashboard",
+            "namespace": "redhat-ods-monitoring",
+            "name": "dashboard-2-llm-d-traffic-admin",
+            "uid": "0a3150ee-8d6f-4c15-834c-9976fd91b534"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "perses.dev",
+            "version": "v1alpha2",
+            "kind": "PersesDashboard",
+            "namespace": "redhat-ods-monitoring",
+            "name": "dashboard-3-llm-d-utilization-admin",
+            "uid": "eb10a5dd-1998-406a-9ee1-20e8bd1faa04"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "perses.dev",
+            "version": "v1alpha2",
+            "kind": "PersesDashboard",
+            "namespace": "redhat-ods-monitoring",
+            "name": "dashboard-3-maas-usage-admin",
+            "uid": "0d3e8186-abb9-4832-8754-bfecdf876c0f"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "perses.dev",
+            "version": "v1alpha2",
+            "kind": "PersesDashboard",
+            "namespace": "redhat-ods-monitoring",
+            "name": "dashboard-4-llm-d-performance-admin",
+            "uid": "de1081b7-cf03-4dd1-86cf-2d31d54778c2"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-cluster-observability-operator",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    },
+    {
+      "namespace": "redhat-ods-monitoring",
+      "evidence": [
+        {
+          "OwnedCrdInstance": {
+            "crd": "PersesDashboard"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "PersesDashboard"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "PersesDashboard"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "PersesDashboard"
+          }
+        }
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

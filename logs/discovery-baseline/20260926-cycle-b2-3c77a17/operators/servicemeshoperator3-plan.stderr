@@ -1,0 +1,12 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 10 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-servicemeshoperator3.v3.4.2-2026-09-26T17-33-00.512555064_00-00.json
+📄 Execution plan saved to logs/discovery-baseline/20260926-cycle-b2-3c77a17/plans/servicemeshoperator3-plan.json
+
+⏱ Discovery: 0.0s, OLM: 3.9s, Plan: 17.3s, Total: 21.4s

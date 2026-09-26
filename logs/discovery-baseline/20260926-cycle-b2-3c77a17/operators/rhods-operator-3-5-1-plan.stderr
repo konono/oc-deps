@@ -1,0 +1,13 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 13 direct instances
+🔍 Discovering related CRD instances...
+ 71 CRDs, 94 instances
+  62 linked, 32 unlinked (independent REVIEW)
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhods-operator.3.5.1-2026-09-26T17-24-22.086881820_00-00.json
+📄 Execution plan saved to logs/discovery-baseline/20260926-cycle-b2-3c77a17/plans/rhods-operator-3-5-1-plan.json
+
+⏱ Discovery: 32.4s, OLM: 1.8s, Plan: 40.4s, Total: 82.9s

@@ -1,0 +1,308 @@
+{
+  "operator_name": "servicemeshoperator3",
+  "csv_name": "servicemeshoperator3.v3.4.2",
+  "install_namespace": "openshift-servicemesh",
+  "subscription_name": "servicemeshoperator3",
+  "owned_crds": [
+    "trafficextensions.extensions.istio.io",
+    "wasmplugins.extensions.istio.io",
+    "destinationrules.networking.istio.io",
+    "envoyfilters.networking.istio.io",
+    "gateways.networking.istio.io",
+    "proxyconfigs.networking.istio.io",
+    "serviceentries.networking.istio.io",
+    "sidecars.networking.istio.io",
+    "virtualservices.networking.istio.io",
+    "workloadentries.networking.istio.io",
+    "workloadgroups.networking.istio.io",
+    "ztunnels.sailoperator.io",
+    "authorizationpolicies.security.istio.io",
+    "peerauthentications.security.istio.io",
+    "requestauthentications.security.istio.io",
+    "telemetries.telemetry.istio.io",
+    "istiocnis.sailoperator.io",
+    "istiorevisions.sailoperator.io",
+    "istiorevisiontags.sailoperator.io",
+    "istios.sailoperator.io",
+    "ztunnels.sailoperator.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-servicemesh",
+            "name": "servicemeshoperator3",
+            "uid": "7ec50fe6-b3b8-4d18-ac26-497503bdac7c"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-servicemesh",
+            "name": "servicemeshoperator3.v3.4.2",
+            "uid": "ae31c8d2-2060-4cbf-beb9-649909c35ba1"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-servicemesh",
+            "name": "servicemesh-operator3",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-servicemesh",
+            "name": "servicemesh-operator3",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-servicemesh",
+            "name": "servicemesh-operator3-7cbb48884c-z7c9r",
+            "uid": "6c17ba4d-1112-4b82-83e3-574f919aa350"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1",
+            "kind": "DestinationRule",
+            "namespace": "openshift-ingress",
+            "name": "data-science-tls-rule",
+            "uid": "d1936577-66a3-4e12-9856-baa31b7da3fb"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1",
+            "kind": "DestinationRule",
+            "namespace": "openshift-ingress",
+            "name": "maas-api-backend-tls",
+            "uid": "99d606c6-f258-4473-9130-50933fde1c65"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1",
+            "kind": "DestinationRule",
+            "namespace": "openshift-ingress",
+            "name": "payload-pre-processing",
+            "uid": "8af94bdf-c658-4fab-9a61-ea24d8281314"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1",
+            "kind": "DestinationRule",
+            "namespace": "openshift-ingress",
+            "name": "payload-processing",
+            "uid": "c1757dc2-5a55-4491-994e-358e1c20fa2b"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1alpha3",
+            "kind": "EnvoyFilter",
+            "namespace": "openshift-ingress",
+            "name": "data-science-authn-filter",
+            "uid": "caacf04c-ff1a-4b6d-befa-1ec0b61197f5"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1alpha3",
+            "kind": "EnvoyFilter",
+            "namespace": "openshift-ingress",
+            "name": "kuadrant-auth-maas-default-gateway",
+            "uid": "cc32ed35-bd89-4d12-ac7a-bec07c4d85e1"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1alpha3",
+            "kind": "EnvoyFilter",
+            "namespace": "openshift-ingress",
+            "name": "kuadrant-maas-default-gateway",
+            "uid": "add64e23-9f7d-42a4-9de4-42d65e84622b"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1alpha3",
+            "kind": "EnvoyFilter",
+            "namespace": "openshift-ingress",
+            "name": "kuadrant-ratelimiting-maas-default-gateway",
+            "uid": "e0f9d008-365a-49b1-9d88-5411ed93ea56"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1alpha3",
+            "kind": "EnvoyFilter",
+            "namespace": "openshift-ingress",
+            "name": "maas-default-gateway-authn-ssl",
+            "uid": "eaee3614-2e04-49b2-b738-9ae0172fe5f9"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.istio.io",
+            "version": "v1alpha3",
+            "kind": "EnvoyFilter",
+            "namespace": "openshift-ingress",
+            "name": "payload-processing",
+            "uid": "9f722732-ace5-41d9-8bb9-547c2ca7450c"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-ingress",
+      "evidence": [
+        {
+          "OwnedCrdInstance": {
+            "crd": "DestinationRule"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "DestinationRule"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "DestinationRule"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "DestinationRule"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "EnvoyFilter"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "EnvoyFilter"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "EnvoyFilter"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "EnvoyFilter"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "EnvoyFilter"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "EnvoyFilter"
+          }
+        }
+      ]
+    },
+    {
+      "namespace": "openshift-servicemesh",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

@@ -1,0 +1,534 @@
+{
+  "operator_name": "job-set",
+  "csv_name": "jobset-operator.v1.0.1",
+  "install_namespace": "openshift-jobset",
+  "subscription_name": "job-set",
+  "owned_crds": [
+    "jobsetoperators.operator.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-jobset",
+            "name": "job-set",
+            "uid": "8b1c95f4-9004-4b9a-b522-0533779c6219"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-jobset",
+            "name": "jobset-operator.v1.0.1",
+            "uid": "71cb91ec-aa47-4b0f-93fe-91f3442d03ab"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-jobset",
+            "name": "jobset-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-jobset",
+            "name": "jobset-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-jobset",
+            "name": "jobset-operator-56df9f9987-qtnzb",
+            "uid": "f400f414-8c5a-4873-8d32-b5f6e97bb4a1"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-metrics-service-srw2p",
+            "uid": "c552844c-4097-4e24-b11c-6c1a3b6af5bf"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-metrics-service",
+            "uid": "a35bd5f6-013d-44e8-b538-d781aff8ea90"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/jobset-controller-manager-metrics-service",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "openshift-jobset",
+            "name": "jobset-leader-election-role",
+            "uid": "29d4c8aa-b835-4cc9-98e7-081a74491a00"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "openshift-jobset",
+            "name": "jobset-prometheus-k8s",
+            "uid": "0da30c8a-0e43-4022-a970-eba695951573"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager",
+            "uid": "f4623eef-ec94-4a4d-8446-698272cf353f"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-dockercfg-xpn9h",
+            "uid": "17a4cb95-fc49-4127-bcc3-14bf39268fd7"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager",
+            "uid": "13a6126c-f50c-4345-94fa-4f77524fd427"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/jobset-controller-manager",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "openshift-jobset",
+            "name": "jobset-leader-election-rolebinding",
+            "uid": "581587cb-b803-4b8a-86ab-a8917641ca11"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-694dbf59bc-l8z68",
+            "uid": "d59a5b1b-a9ef-4e8e-9126-e1f0d5fe50d5"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-694dbf59bc",
+            "uid": "9f3bc2eb-7836-4a20-84a6-c174ec1faf86"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ReplicaSet/jobset-controller-manager-694dbf59bc",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "ServiceMonitor",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-metrics-monitor",
+            "uid": "9193385e-f77e-495f-a70f-523fba24244d"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "openshift-jobset",
+            "name": "jobset-manager-config",
+            "uid": "b3d36a87-9d0e-411b-8bf0-d6e6ff9c56c9"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-jobset",
+            "name": "jobset-webhook-service-qqlmw",
+            "uid": "f607043b-bcac-4e60-8813-a06fa3452487"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-jobset",
+            "name": "jobset-webhook-service",
+            "uid": "0ea664e4-2e28-4e8b-b7a0-2334b7125adc"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/jobset-webhook-service",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-694dbf59bc",
+            "uid": "9f3bc2eb-7836-4a20-84a6-c174ec1faf86"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager",
+            "uid": "f4623eef-ec94-4a4d-8446-698272cf353f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/jobset-controller-manager",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-jobset",
+            "name": "jobset-webhook-service",
+            "uid": "0ea664e4-2e28-4e8b-b7a0-2334b7125adc"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "openshift-jobset",
+            "name": "jobset-manager-secrets-rolebinding",
+            "uid": "fb0d0bdc-8994-478f-8a58-c3ef5bed5485"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "openshift-jobset",
+            "name": "jobset-prometheus-k8s",
+            "uid": "88bf959d-5ac6-4899-82a5-1a591d5fef40"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "cert-manager.io",
+            "version": "v1",
+            "kind": "Certificate",
+            "namespace": "openshift-jobset",
+            "name": "jobset-serving-cert",
+            "uid": "33a8ea64-4083-4936-8f76-b8f148f679e4"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "openshift-jobset",
+            "name": "jobset-manager-secrets-role",
+            "uid": "ebf2b4c2-64f8-49f3-a734-34fff961154d"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager-metrics-service",
+            "uid": "a35bd5f6-013d-44e8-b538-d781aff8ea90"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-jobset",
+            "name": "jobset-controller-manager",
+            "uid": "13a6126c-f50c-4345-94fa-4f77524fd427"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "cert-manager.io",
+            "version": "v1",
+            "kind": "Certificate",
+            "namespace": "openshift-jobset",
+            "name": "jobset-metrics-cert",
+            "uid": "85774c00-b2ff-4327-a8d9-7be9046de196"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "cert-manager.io",
+            "version": "v1",
+            "kind": "Issuer",
+            "namespace": "openshift-jobset",
+            "name": "jobset-selfsigned-issuer",
+            "uid": "9625301a-bb64-451b-be5f-e4ed067bd5aa"
+          },
+          "source_id": {
+            "group": "operator.openshift.io",
+            "version": "v1",
+            "kind": "JobSetOperator",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of JobSetOperator/cluster",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-jobset",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus"
+      ]
+    }
+  ],
+  "scan_warning_count": 0
+}

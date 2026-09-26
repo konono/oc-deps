@@ -1,0 +1,184 @@
+{
+  "operator_name": "openshift-cert-manager-operator",
+  "csv_name": "cert-manager-operator.v1.20.0",
+  "install_namespace": "cert-manager-operator",
+  "subscription_name": "openshift-cert-manager-operator",
+  "owned_crds": [
+    "bundles.trust.cert-manager.io",
+    "certificaterequests.cert-manager.io",
+    "certificates.cert-manager.io",
+    "certmanagers.operator.openshift.io",
+    "challenges.acme.cert-manager.io",
+    "clusterissuers.cert-manager.io",
+    "issuers.cert-manager.io",
+    "istiocsrs.operator.openshift.io",
+    "orders.acme.cert-manager.io",
+    "trustmanagers.operator.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "cert-manager-operator",
+            "name": "openshift-cert-manager-operator",
+            "uid": "67f52a78-62ed-4667-b8f6-36ef7801131c"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "cert-manager-operator",
+            "name": "cert-manager-operator.v1.20.0",
+            "uid": "09915fd9-96a4-4b16-89ca-1fddee71672d"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "cert-manager-operator",
+            "name": "cert-manager-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "cert-manager-operator",
+            "name": "cert-manager-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "cert-manager-operator",
+            "name": "cert-manager-operator-controller-manager-8945b8c4b-dhcj4",
+            "uid": "0adf9bd4-6206-4129-8b47-43494017dacc"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "cert-manager.io",
+            "version": "v1",
+            "kind": "Certificate",
+            "namespace": "openshift-jobset",
+            "name": "jobset-metrics-cert",
+            "uid": "85774c00-b2ff-4327-a8d9-7be9046de196"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "cert-manager.io",
+            "version": "v1",
+            "kind": "Certificate",
+            "namespace": "openshift-jobset",
+            "name": "jobset-serving-cert",
+            "uid": "33a8ea64-4083-4936-8f76-b8f148f679e4"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "operator.openshift.io",
+            "version": "v1alpha1",
+            "kind": "CertManager",
+            "namespace": null,
+            "name": "cluster",
+            "uid": "d5768113-11d0-4e0f-9269-9142ffb5bf41"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "cert-manager.io",
+            "version": "v1",
+            "kind": "Issuer",
+            "namespace": "openshift-jobset",
+            "name": "jobset-selfsigned-issuer",
+            "uid": "9625301a-bb64-451b-be5f-e4ed067bd5aa"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "cert-manager-operator",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    },
+    {
+      "namespace": "openshift-jobset",
+      "evidence": [
+        {
+          "OwnedCrdInstance": {
+            "crd": "Certificate"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "Certificate"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "Issuer"
+          }
+        }
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

@@ -1,0 +1,696 @@
+{
+  "targets": [
+    {
+      "subscription": {
+        "group": "operators.coreos.com",
+        "version": "v1alpha1",
+        "kind": "Subscription",
+        "namespace": "keycloak",
+        "name": "rhbk-operator",
+        "uid": "dcd31321-a821-43b8-b89d-42a32c3cca02"
+      },
+      "csv": {
+        "group": "operators.coreos.com",
+        "version": "v1alpha1",
+        "kind": "ClusterServiceVersion",
+        "namespace": "keycloak",
+        "name": "rhbk-operator.v26.6.7-opr.1",
+        "uid": "40b7921e-d780-4c55-adc8-837996765ab9"
+      },
+      "install_namespace": "keycloak"
+    }
+  ],
+  "preflight": {
+    "checks": [
+      {
+        "name": "Subscription resolved (rhbk-operator.v26.6.7-opr.1)",
+        "severity": "Warning",
+        "passed": true,
+        "detail": "Subscription/rhbk-operator found — will be deleted in Phase 0"
+      },
+      {
+        "name": "CSV health (rhbk-operator.v26.6.7-opr.1)",
+        "severity": "Warning",
+        "passed": true,
+        "detail": "phase=Succeeded"
+      },
+      {
+        "name": "Controller available (rhbk-operator.v26.6.7-opr.1)",
+        "severity": "Warning",
+        "passed": true,
+        "detail": "rhbk-operator: Available (1)"
+      },
+      {
+        "name": "Provenance",
+        "severity": "Warning",
+        "passed": false,
+        "detail": "2 CRs have uncertain provenance (will be marked REVIEW if independent)"
+      }
+    ]
+  },
+  "phases": [
+    {
+      "name": "Freeze OLM",
+      "description": "Delete Subscriptions to prevent OLM from re-installing operators",
+      "actions": [
+        {
+          "Delete": {
+            "resource": {
+              "group": "operators.coreos.com",
+              "version": "v1alpha1",
+              "kind": "Subscription",
+              "namespace": "keycloak",
+              "name": "rhbk-operator",
+              "uid": "dcd31321-a821-43b8-b89d-42a32c3cca02"
+            },
+            "reason": "freeze OLM to prevent re-install"
+          }
+        },
+        {
+          "Keep": {
+            "resource": {
+              "group": "operators.coreos.com",
+              "version": "v1alpha1",
+              "kind": "ClusterServiceVersion",
+              "namespace": "keycloak",
+              "name": "rhbk-operator.v26.6.7-opr.1",
+              "uid": "40b7921e-d780-4c55-adc8-837996765ab9"
+            },
+            "reason": "controller needed for operand cleanup"
+          }
+        }
+      ],
+      "barrier": {
+        "description": "Subscriptions deleted, controllers verified available",
+        "conditions": [
+          "Subscription/rhbk-operator is gone"
+        ]
+      }
+    },
+    {
+      "name": "Trigger operand cleanup",
+      "description": "Delete root CRs to trigger controller cleanup; expect managed descendants to vanish",
+      "actions": [
+        {
+          "Delete": {
+            "resource": {
+              "group": "k8s.keycloak.org",
+              "version": "v2beta1",
+              "kind": "KeycloakRealmImport",
+              "namespace": "keycloak",
+              "name": "maas-realm",
+              "uid": "ac2d535d-ceba-409a-9ebe-094b8e105630"
+            },
+            "reason": "independent CR approved via --approve-scope independent"
+          }
+        },
+        {
+          "Delete": {
+            "resource": {
+              "group": "k8s.keycloak.org",
+              "version": "v2beta1",
+              "kind": "Keycloak",
+              "namespace": "keycloak",
+              "name": "keycloak",
+              "uid": "be18739e-aff5-4d79-9146-601ef802606e"
+            },
+            "reason": "independent CR approved via --approve-scope independent"
+          }
+        }
+      ],
+      "barrier": {
+        "description": "All operands removed (deleted + expected)",
+        "conditions": [
+          "KeycloakRealmImport/maas-realm is gone",
+          "Keycloak/keycloak is gone"
+        ]
+      }
+    },
+    {
+      "name": "Remaining cleanup",
+      "description": "Delete label-only approved CRs after controller cleanup completes",
+      "actions": [],
+      "barrier": null
+    },
+    {
+      "name": "Remove Operator controllers",
+      "description": "Delete CSVs (GC will remove controller Deployments)",
+      "actions": [
+        {
+          "Delete": {
+            "resource": {
+              "group": "operators.coreos.com",
+              "version": "v1alpha1",
+              "kind": "ClusterServiceVersion",
+              "namespace": "keycloak",
+              "name": "rhbk-operator.v26.6.7-opr.1",
+              "uid": "40b7921e-d780-4c55-adc8-837996765ab9"
+            },
+            "reason": "operator controller no longer needed"
+          }
+        }
+      ],
+      "barrier": {
+        "description": "Layer 0 CSVs deleted",
+        "conditions": [
+          "ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1 is gone"
+        ]
+      }
+    },
+    {
+      "name": "Namespace cleanup",
+      "description": "Remove operator namespace resources (OperatorGroup, Leases, operator ConfigMaps)",
+      "actions": [
+        {
+          "Delete": {
+            "resource": {
+              "group": "operators.coreos.com",
+              "version": "v1",
+              "kind": "OperatorGroup",
+              "namespace": "keycloak",
+              "name": "rhbk-operator",
+              "uid": "13701b62-2a79-4777-b9c6-e630d9716dfd"
+            },
+            "reason": "operator group approved via --approve-scope operator-group"
+          }
+        }
+      ],
+      "barrier": null
+    },
+    {
+      "name": "APIs",
+      "description": "CRDs kept by default — use --prune-crds to remove",
+      "actions": [
+        {
+          "Keep": {
+            "resource": {
+              "group": "apiextensions.k8s.io",
+              "version": "v1",
+              "kind": "CustomResourceDefinition",
+              "namespace": null,
+              "name": "keycloakrealmimports.k8s.keycloak.org",
+              "uid": null
+            },
+            "reason": "eligible for prune (use --prune-crds to remove)"
+          }
+        },
+        {
+          "Keep": {
+            "resource": {
+              "group": "apiextensions.k8s.io",
+              "version": "v1",
+              "kind": "CustomResourceDefinition",
+              "namespace": null,
+              "name": "keycloaks.k8s.keycloak.org",
+              "uid": null
+            },
+            "reason": "eligible for prune (use --prune-crds to remove)"
+          }
+        }
+      ],
+      "barrier": null
+    },
+    {
+      "name": "Namespaces",
+      "description": "Namespaces are kept by default — verify manually before deleting",
+      "actions": [
+        {
+          "Keep": {
+            "resource": {
+              "group": "",
+              "version": "v1",
+              "kind": "Namespace",
+              "namespace": null,
+              "name": "keycloak",
+              "uid": null
+            },
+            "reason": "namespace cleanup requires manual verification"
+          }
+        }
+      ],
+      "barrier": null
+    }
+  ],
+  "blockers": [],
+  "warnings": [
+    {
+      "message": "2 CRs have uncertain provenance (owned API, but origin unknown)",
+      "resource": null
+    },
+    {
+      "message": "2 CRDs eligible for removal but kept by default (use --prune-crds)",
+      "resource": null
+    }
+  ],
+  "snapshot_taken_at": "2026-09-26T17:25:33.929204019+00:00",
+  "dependency_edges": [],
+  "operator_inventory": [
+    {
+      "csv_name": "authorino-operator.v1.4.3",
+      "namespace": "openshift-rhcl",
+      "owned_crds": [
+        "authconfigs.authorino.kuadrant.io",
+        "authorinos.operator.authorino.kuadrant.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "cephcsi-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "cephconnections.csi.ceph.io",
+        "cephconnections.csi.ceph.io",
+        "clientprofilemappings.csi.ceph.io",
+        "clientprofilemappings.csi.ceph.io",
+        "clientprofiles.csi.ceph.io",
+        "clientprofiles.csi.ceph.io",
+        "drivers.csi.ceph.io",
+        "drivers.csi.ceph.io",
+        "operatorconfigs.csi.ceph.io",
+        "operatorconfigs.csi.ceph.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "cert-manager-operator.v1.20.0",
+      "namespace": "cert-manager-operator",
+      "owned_crds": [
+        "bundles.trust.cert-manager.io",
+        "certificaterequests.cert-manager.io",
+        "certificates.cert-manager.io",
+        "certmanagers.operator.openshift.io",
+        "challenges.acme.cert-manager.io",
+        "clusterissuers.cert-manager.io",
+        "issuers.cert-manager.io",
+        "istiocsrs.operator.openshift.io",
+        "orders.acme.cert-manager.io",
+        "trustmanagers.operator.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "cluster-observability-operator.v1.5.2",
+      "namespace": "openshift-cluster-observability-operator",
+      "owned_crds": [
+        "alertmanagerconfigs.monitoring.rhobs",
+        "alertmanagers.monitoring.rhobs",
+        "monitoringstacks.monitoring.rhobs",
+        "observabilityinstallers.observability.openshift.io",
+        "perses.perses.dev",
+        "perses.perses.dev",
+        "persesdashboards.perses.dev",
+        "persesdashboards.perses.dev",
+        "persesdatasources.perses.dev",
+        "persesdatasources.perses.dev",
+        "persesglobaldatasources.perses.dev",
+        "podmonitors.monitoring.rhobs",
+        "probes.monitoring.rhobs",
+        "prometheusagents.monitoring.rhobs",
+        "prometheuses.monitoring.rhobs",
+        "prometheusrules.monitoring.rhobs",
+        "scrapeconfigs.monitoring.rhobs",
+        "servicemonitors.monitoring.rhobs",
+        "thanosqueriers.monitoring.rhobs",
+        "thanosrulers.monitoring.rhobs",
+        "uiplugins.observability.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "dns-operator.v1.4.2",
+      "namespace": "openshift-rhcl",
+      "owned_crds": [
+        "dnshealthcheckprobes.kuadrant.io",
+        "dnsrecords.kuadrant.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "gpu-operator-certified.v26.7.1",
+      "namespace": "nvidia-gpu-operator",
+      "owned_crds": [
+        "nvidiadrivers.nvidia.com",
+        "gpuclusters.nvidia.com",
+        "computedomains.resource.nvidia.com",
+        "computedomaincliques.resource.nvidia.com",
+        "clusterpolicies.nvidia.com"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "group-sync-operator.v0.0.36",
+      "namespace": "group-sync-operator",
+      "owned_crds": [
+        "groupsyncs.redhatcop.redhat.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "jobset-operator.v1.0.1",
+      "namespace": "openshift-jobset",
+      "owned_crds": [
+        "jobsetoperators.operator.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "kueue-operator.v1.4.2",
+      "namespace": "openshift-kueue",
+      "owned_crds": [
+        "kueues.kueue.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "leader-worker-set.v1.0.1",
+      "namespace": "openshift-leaderworkerset",
+      "owned_crds": [
+        "leaderworkersetoperators.operator.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "limitador-operator.v1.4.2",
+      "namespace": "openshift-rhcl",
+      "owned_crds": [
+        "limitadors.limitador.kuadrant.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "mcg-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "noobaas.noobaa.io",
+        "backingstores.noobaa.io",
+        "namespacestores.noobaa.io",
+        "bucketclasses.noobaa.io",
+        "noobaaaccounts.noobaa.io",
+        "objectbucketclaims.objectbucket.io",
+        "objectbuckets.objectbucket.io",
+        "backups.postgresql.cnpg.noobaa.io",
+        "clusterimagecatalogs.postgresql.cnpg.noobaa.io",
+        "clusters.postgresql.cnpg.noobaa.io",
+        "databases.postgresql.cnpg.noobaa.io",
+        "failoverquorums.postgresql.cnpg.noobaa.io",
+        "imagecatalogs.postgresql.cnpg.noobaa.io",
+        "poolers.postgresql.cnpg.noobaa.io",
+        "publications.postgresql.cnpg.noobaa.io",
+        "scheduledbackups.postgresql.cnpg.noobaa.io",
+        "subscriptions.postgresql.cnpg.noobaa.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "nfd.4.22.0-202609151747",
+      "namespace": "openshift-nfd",
+      "owned_crds": [
+        "nodefeaturediscoveries.nfd.openshift.io",
+        "nodefeaturegroups.nfd.k8s-sigs.io",
+        "nodefeaturerules.nfd.k8s-sigs.io",
+        "nodefeaturerules.nfd.openshift.io",
+        "nodefeatures.nfd.k8s-sigs.io",
+        "nodefeatures.nfd.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "ocs-client-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "storageclients.ocs.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "ocs-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "ocsinitializations.ocs.openshift.io",
+        "storageautoscalers.ocs.openshift.io",
+        "storageclusterpeers.ocs.openshift.io",
+        "storageclusters.ocs.openshift.io",
+        "storageconsumers.ocs.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "ocs-tls-profiles.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "tlsprofiles.ocs.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "odf-csi-addons-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "csiaddonsnodes.csiaddons.openshift.io",
+        "encryptionkeyrotationcronjobs.csiaddons.openshift.io",
+        "encryptionkeyrotationjobs.csiaddons.openshift.io",
+        "networkfenceclasses.csiaddons.openshift.io",
+        "networkfences.csiaddons.openshift.io",
+        "reclaimspacecronjobs.csiaddons.openshift.io",
+        "reclaimspacejobs.csiaddons.openshift.io",
+        "volumegroupreplicationclasses.replication.storage.openshift.io",
+        "volumegroupreplicationcontents.replication.storage.openshift.io",
+        "volumegroupreplications.replication.storage.openshift.io",
+        "volumereplicationclasses.replication.storage.openshift.io",
+        "volumereplications.replication.storage.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "odf-dependencies.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [],
+      "required_crds": []
+    },
+    {
+      "csv_name": "odf-external-snapshotter-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "volumegroupsnapshotclasses.groupsnapshot.storage.openshift.io",
+        "volumegroupsnapshotcontents.groupsnapshot.storage.openshift.io",
+        "volumegroupsnapshots.groupsnapshot.storage.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "odf-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [],
+      "required_crds": []
+    },
+    {
+      "csv_name": "odf-prometheus-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [],
+      "required_crds": []
+    },
+    {
+      "csv_name": "opentelemetry-operator.v0.158.0-2",
+      "namespace": "openshift-opentelemetry-operator",
+      "owned_crds": [
+        "instrumentations.opentelemetry.io",
+        "opampbridges.opentelemetry.io",
+        "opentelemetrycollectors.opentelemetry.io",
+        "opentelemetrycollectors.opentelemetry.io",
+        "targetallocators.opentelemetry.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "packageserver",
+      "namespace": "openshift-operator-lifecycle-manager",
+      "owned_crds": [],
+      "required_crds": []
+    },
+    {
+      "csv_name": "recipe.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "recipes.ramendr.openshift.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "rhbk-operator.v26.6.7-opr.1",
+      "namespace": "keycloak",
+      "owned_crds": [
+        "keycloakrealmimports.k8s.keycloak.org",
+        "keycloaks.k8s.keycloak.org",
+        "keycloakrealmimports.k8s.keycloak.org",
+        "keycloaks.k8s.keycloak.org"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "rhcl-operator.v1.4.3",
+      "namespace": "openshift-rhcl",
+      "owned_crds": [
+        "apikeyapprovals.devportal.kuadrant.io",
+        "apikeyrequests.devportal.kuadrant.io",
+        "apikeys.devportal.kuadrant.io",
+        "apiproducts.devportal.kuadrant.io",
+        "authpolicies.kuadrant.io",
+        "dnspolicies.kuadrant.io",
+        "kuadrants.kuadrant.io",
+        "oidcpolicies.extensions.kuadrant.io",
+        "planpolicies.extensions.kuadrant.io",
+        "ratelimitpolicies.kuadrant.io",
+        "telemetrypolicies.extensions.kuadrant.io",
+        "tlspolicies.kuadrant.io",
+        "tokenratelimitpolicies.kuadrant.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "rhods-operator.3.5.1",
+      "namespace": "redhat-ods-operator",
+      "owned_crds": [
+        "auths.services.platform.opendatahub.io",
+        "datascienceclusters.datasciencecluster.opendatahub.io",
+        "datascienceclusters.datasciencecluster.opendatahub.io",
+        "datasciencepipelines.components.platform.opendatahub.io",
+        "dscinitializations.dscinitialization.opendatahub.io",
+        "dscinitializations.dscinitialization.opendatahub.io",
+        "featuretrackers.features.opendatahub.io",
+        "gatewayconfigs.services.platform.opendatahub.io",
+        "hardwareprofiles.infrastructure.opendatahub.io",
+        "hardwareprofiles.infrastructure.opendatahub.io",
+        "kueues.components.platform.opendatahub.io",
+        "modelregistries.components.platform.opendatahub.io",
+        "monitorings.services.platform.opendatahub.io",
+        "platforms.config.opendatahub.io",
+        "rays.components.platform.opendatahub.io",
+        "sparkoperators.components.platform.opendatahub.io",
+        "trainers.components.platform.opendatahub.io",
+        "trainingoperators.components.platform.opendatahub.io",
+        "trustyais.components.platform.opendatahub.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "rook-ceph-operator.v4.22.4-rhodf",
+      "namespace": "openshift-storage",
+      "owned_crds": [
+        "cephclusters.ceph.rook.io",
+        "cephblockpools.ceph.rook.io",
+        "cephobjectstores.ceph.rook.io",
+        "cephobjectstoreusers.ceph.rook.io",
+        "cephnfses.ceph.rook.io",
+        "cephclients.ceph.rook.io",
+        "cephfilesystems.ceph.rook.io",
+        "cephfilesystemmirrors.ceph.rook.io",
+        "cephrbdmirrors.ceph.rook.io",
+        "cephobjectrealms.ceph.rook.io",
+        "cephobjectzonegroups.ceph.rook.io",
+        "cephobjectzones.ceph.rook.io",
+        "cephbucketnotifications.ceph.rook.io",
+        "cephbuckettopics.ceph.rook.io",
+        "cephfilesystemsubvolumegroups.ceph.rook.io",
+        "cephblockpoolradosnamespaces.ceph.rook.io",
+        "cephcosidrivers.ceph.rook.io"
+      ],
+      "required_crds": []
+    },
+    {
+      "csv_name": "servicemeshoperator3.v3.4.2",
+      "namespace": "openshift-servicemesh",
+      "owned_crds": [
+        "trafficextensions.extensions.istio.io",
+        "wasmplugins.extensions.istio.io",
+        "destinationrules.networking.istio.io",
+        "destinationrules.networking.istio.io",
+        "destinationrules.networking.istio.io",
+        "envoyfilters.networking.istio.io",
+        "gateways.networking.istio.io",
+        "gateways.networking.istio.io",
+        "gateways.networking.istio.io",
+        "proxyconfigs.networking.istio.io",
+        "serviceentries.networking.istio.io",
+        "serviceentries.networking.istio.io",
+        "serviceentries.networking.istio.io",
+        "sidecars.networking.istio.io",
+        "sidecars.networking.istio.io",
+        "sidecars.networking.istio.io",
+        "virtualservices.networking.istio.io",
+        "virtualservices.networking.istio.io",
+        "virtualservices.networking.istio.io",
+        "workloadentries.networking.istio.io",
+        "workloadentries.networking.istio.io",
+        "workloadentries.networking.istio.io",
+        "workloadgroups.networking.istio.io",
+        "workloadgroups.networking.istio.io",
+        "workloadgroups.networking.istio.io",
+        "ztunnels.sailoperator.io",
+        "authorizationpolicies.security.istio.io",
+        "authorizationpolicies.security.istio.io",
+        "peerauthentications.security.istio.io",
+        "peerauthentications.security.istio.io",
+        "requestauthentications.security.istio.io",
+        "requestauthentications.security.istio.io",
+        "telemetries.telemetry.istio.io",
+        "telemetries.telemetry.istio.io",
+        "istiocnis.sailoperator.io",
+        "istiorevisions.sailoperator.io",
+        "istiorevisiontags.sailoperator.io",
+        "istios.sailoperator.io",
+        "ztunnels.sailoperator.io"
+      ],
+      "required_crds": []
+    }
+  ],
+  "explicit_decisions": [
+    {
+      "match_spec": {
+        "group": "k8s.keycloak.org",
+        "kind": "KeycloakRealmImport",
+        "namespace": "keycloak",
+        "name": "maas-realm"
+      },
+      "action": "Delete",
+      "approval": "ExplicitUnattributed",
+      "basis": {
+        "provenance": "Unknown",
+        "review_category": "OperandIndependent",
+        "discovery_source": "Direct",
+        "decisive_evidence": []
+      }
+    },
+    {
+      "match_spec": {
+        "group": "operators.coreos.com",
+        "kind": "OperatorGroup",
+        "namespace": "keycloak",
+        "name": "rhbk-operator"
+      },
+      "action": "Delete",
+      "approval": "ExplicitUnattributed",
+      "basis": {
+        "provenance": null,
+        "review_category": null,
+        "discovery_source": null,
+        "decisive_evidence": []
+      }
+    },
+    {
+      "match_spec": {
+        "group": "k8s.keycloak.org",
+        "kind": "Keycloak",
+        "namespace": "keycloak",
+        "name": "keycloak"
+      },
+      "action": "Delete",
+      "approval": "ExplicitUnattributed",
+      "basis": {
+        "provenance": "Unknown",
+        "review_category": "OperandIndependent",
+        "discovery_source": "Direct",
+        "decisive_evidence": []
+      }
+    }
+  ]
+}

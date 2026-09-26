@@ -1,0 +1,79 @@
+📋 Batch: 15 operator(s) from configs/full-teardown.json
+  1: rhods-operator (+2 explicit)
+  2: rhbk-operator
+  3: leader-worker-set
+  4: job-set
+  5: kueue-operator
+  6: servicemeshoperator3
+  7: nfd
+  8: gpu-operator-certified
+  9: openshift-cert-manager-operator
+  10: rhcl-operator (+4 explicit)
+  11: authorino-operator
+  12: dns-operator
+  13: limitador-operator
+  14: cluster-observability-operator
+  15: opentelemetry-product
+
+🔍 Baseline gate: verifying 15 target operators...
+  ✅ rhods-operator — rhods-operator.3.5.1 (Succeeded)
+  ✅ rhbk-operator — rhbk-operator.v26.6.7-opr.1 (Succeeded)
+  ✅ leader-worker-set — leader-worker-set.v1.0.1 (Succeeded)
+  ✅ job-set — jobset-operator.v1.0.1 (Succeeded)
+  ✅ kueue-operator — kueue-operator.v1.4.2 (Succeeded)
+  ✅ servicemeshoperator3 — servicemeshoperator3.v3.4.2 (Succeeded)
+  ✅ nfd — nfd.4.22.0-202609151747 (Succeeded)
+  ✅ gpu-operator-certified — gpu-operator-certified.v26.7.1 (Succeeded)
+  ✅ openshift-cert-manager-operator — cert-manager-operator.v1.20.0 (Succeeded)
+  ✅ rhcl-operator — rhcl-operator.v1.4.3 (Succeeded)
+  ✅ authorino-operator — authorino-operator.v1.4.3 (Succeeded)
+  ✅ dns-operator — dns-operator.v1.4.2 (Succeeded)
+  ✅ limitador-operator — limitador-operator.v1.4.2 (Succeeded)
+  ✅ cluster-observability-operator — cluster-observability-operator.v1.5.2 (Succeeded)
+  ✅ opentelemetry-product — opentelemetry-operator.v0.158.0-2 (Succeeded)
+✅ Baseline: 15/15 operators present
+
+🔄 API discovery: refresh once, then reuse within this batch
+
+
+============================================================
+  [1/15] TEARDOWN rhods-operator
+============================================================
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 13 direct instances
+🔍 Discovering related CRD instances...
+ 71 CRDs, 93 instances
+  61 linked, 32 unlinked (independent REVIEW)
+  ⚠ 4 API type(s) could not be enumerated
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhods-operator.3.5.1-2026-09-26T18-29-59.414725539_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-832797/0-rhods-operator.json
+
+⏱ Discovery: 35.4s, OLM: 2.0s, Plan: 37.8s, Total: 89.7s
+📄 Loaded execution plan from /tmp/oc-deps-batch-832797/0-rhods-operator.json
+🔍 Discovering API resources...
+   Discovery: 33.5s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 13 direct instances
+🔍 Discovering related CRD instances...
+ 71 CRDs, 94 instances
+  62 linked, 32 unlinked (independent REVIEW)
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+
+⛔ Execution plan drift detected:
+  - Resource count drift: saved 128, fresh 129
+  - Resource added since plan: phase 2/Trigger operand cleanup EXPECT OGX/default-ogx uid=Some("0701aa2d-4371-425b-94d5-cb3977fe5dea") (×1)
+Error: 2 drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.
+
+⛔ rhods-operator apply failed (exit 1). Stopping batch.
+
+📊 Batch results:
+  ⛔ rhods-operator (exit 1)
+  ⏭ 14 operator(s) not run (stopped on failure)
+
+  0 succeeded, 0 skipped, 1 failed, 14 not run

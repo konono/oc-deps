@@ -1,0 +1,130 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-26T18:54:44.455999579+00:00",
+  "targets": [
+    {
+      "package_name": "authorino-operator",
+      "install_namespace": "openshift-rhcl",
+      "csv_name_pattern": "authorino-operator.v1.4.3"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-rhcl",
+          "name": "authorino-operator-stable-redhat-operators-openshift-marketplace",
+          "uid": "5c0a122e-a515-4b59-8616-76ebbda933f4",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "authorino-operator.v1.4.3",
+          "uid": "49a54ec9-dfb7-440b-88c4-cf391a88962c",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": []
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "authorino-operator.v1.4.3",
+          "uid": "49a54ec9-dfb7-440b-88c4-cf391a88962c",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator",
+          "uid": "835a3fee-4c69-46de-b80f-089f689ac634",
+          "action": "KEEP"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-rhcl",
+          "name": "aac3a15d.authorino.kuadrant.io",
+          "uid": "b64d0a1c-7a71-4988-a70f-5a41c3aa3823",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "authconfigs.authorino.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "authorinos.operator.authorino.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-rhcl",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

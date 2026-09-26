@@ -1,0 +1,99 @@
+{
+  "operator_name": "dns-operator",
+  "csv_name": "dns-operator.v1.4.2",
+  "install_namespace": "openshift-rhcl",
+  "subscription_name": "dns-operator-stable-redhat-operators-openshift-marketplace",
+  "owned_crds": [
+    "dnshealthcheckprobes.kuadrant.io",
+    "dnsrecords.kuadrant.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-rhcl",
+            "name": "dns-operator-stable-redhat-operators-openshift-marketplace",
+            "uid": "92276178-c4b6-4d6a-9fa7-ebc4e6efc1fb"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-rhcl",
+            "name": "dns-operator.v1.4.2",
+            "uid": "8637cc3c-8a47-4624-9201-1dba6d726079"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "dns-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "dns-operator-controller-manager",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "dns-operator-controller-manager-8466f47698-ljhxm",
+            "uid": "dce1ac43-f1bf-4283-9093-f0ddcfb4dc54"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-rhcl",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0
+}

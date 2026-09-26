@@ -1,0 +1,2008 @@
+{
+  "operator_name": "gpu-operator-certified",
+  "csv_name": "gpu-operator-certified.v26.7.1",
+  "install_namespace": "nvidia-gpu-operator",
+  "subscription_name": "gpu-operator-certified",
+  "owned_crds": [
+    "nvidiadrivers.nvidia.com",
+    "gpuclusters.nvidia.com",
+    "computedomains.resource.nvidia.com",
+    "computedomaincliques.resource.nvidia.com",
+    "clusterpolicies.nvidia.com"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-certified",
+            "uid": "a2106f7b-8c24-46a0-bb6e-a6c5f6946732"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-certified.v26.7.1",
+            "uid": "c8e0360a-a8cd-4529-ab9f-138e3c9deaea"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-6f47785c9b-kcqfc",
+            "uid": "e3e401af-e57b-4710-b8d3-c206d980862b"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-6557f58dcf",
+            "uid": "f960bcf4-18d5-456d-96b5-6c4283fa71ee"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "6407fbf9-ba83-442b-85c5-b1870d7d94bf"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "e0527bfd-0e3e-4a2c-8342-b7a954a3965e"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery-6c7bb984b",
+            "uid": "ac2c9d6c-5c49-4928-91e3-a90c5666ef38"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery",
+            "uid": "334b9135-a1ce-4642-9b5d-a8d3be345ef7"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/gpu-feature-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "c4b6299c-1cbd-453b-b749-c9d0b0836a35"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "1e125b81-dab2-4432-a8e7-d0f1e1f3ee34"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "1ae2c9b1-e9bd-47f3-bef9-3284e1fc8679"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "cf4bd0d3-c323-42d7-8012-cab8739fa7b1"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "df52357e-c416-4bb5-89e4-ec459c719372"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "prometheus-k8s",
+            "uid": "78481a21-08e0-4a17-94e3-eceab2f2948d"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "410441b6-75f3-48f4-80df-fff05c146f30"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "c55ca378-9ccc-494a-9a6e-575c1c2e917e"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-startup-probe",
+            "uid": "ad6342d8-4789-49a8-89c8-690e76d88839"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-dockercfg-hwj5h",
+            "uid": "af8e258d-d6b9-41c6-859c-4b3ca1d429cf"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "f9cb13fd-4c55-4a19-b123-ec099b99a9c9"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset-5grrz",
+            "uid": "a7f266b8-1ead-4210-8066-8a37d52444a1"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset",
+            "uid": "d1b39c85-35b2-4c55-8a74-fa6449d400dc"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-container-toolkit-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-dockercfg-p9z28",
+            "uid": "7ee20520-9acb-47ca-913f-9e14d5ed354e"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "82d09717-4fdf-4465-b3ed-c7ba914b383d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-container-toolkit",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0-mfffn",
+            "uid": "a980a173-ead4-470b-98ce-5fe9a374563f"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0",
+            "uid": "dceee95c-ba1e-46ac-911d-0802ef3abd46"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-driver-daemonset-9.8.20260908-0",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-q56jt",
+            "uid": "99db996b-47c5-48df-993b-36d975c7e267"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "b2a022f7-b39e-4d3f-8926-e1ab48a83211"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "2b3df81a-863f-4064-b73d-7b244d290753"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon-dockercfg-dnkmg",
+            "uid": "b286ac3e-d912-4e1b-9bb8-c0eb1bab7f8c"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "e5fa6a2a-181a-4c95-8c74-376fcc01fd18"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-device-plugin-mps-control-daemon",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-dockercfg-c8zkr",
+            "uid": "67447efe-5acb-4057-b466-bdd85b0a8c62"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "c33ed8d1-6f35-4f7c-a257-a3d84791ab48"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-device-plugin",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-entrypoint",
+            "uid": "b43855db-ab74-4547-9797-2ddb5d3c9627"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "prometheus-k8s",
+            "uid": "0c61ab3b-4c9c-40b4-b604-6523586d4035"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "82d09717-4fdf-4465-b3ed-c7ba914b383d"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "cf6210c5-52da-496b-94ba-c95a43d9e0ce"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "e5fa6a2a-181a-4c95-8c74-376fcc01fd18"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "f5cfabca-49ad-49fc-9337-92103b6a20e0"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "f4d10fc9-a1f4-4571-a78a-7aac3007a421"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-entrypoint",
+            "uid": "a0a658e4-5ec5-47fd-b488-7329d25e2564"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "ca06f776-4925-4bfa-8dbc-97ed9f4ef761"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "1388a821-fa8b-4d34-9b56-dd84104bc740"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "50496016-0e02-4fcb-a0ca-a48eb4a17a54"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager-entrypoint",
+            "uid": "b2404e87-648b-4e74-b1c3-ee8463964595"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset",
+            "uid": "a5209b20-cc5a-47bb-9d9e-947b9915523f"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "9fc66734-6c31-4b93-bc0c-574ef60185fe"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "6407fbf9-ba83-442b-85c5-b1870d7d94bf"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "PrometheusRule",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-alerts",
+            "uid": "79f29aa4-d606-4c50-9f6d-e30c057bfcba"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "24082276-4e23-48ea-958b-232d5a7d1a69"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "f9cb13fd-4c55-4a19-b123-ec099b99a9c9"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset",
+            "uid": "d1b39c85-35b2-4c55-8a74-fa6449d400dc"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery-2ktxl",
+            "uid": "4b8858ce-02ba-4cb3-826e-e8ebbc2a8893"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery",
+            "uid": "334b9135-a1ce-4642-9b5d-a8d3be345ef7"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/gpu-feature-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-q5xvz",
+            "uid": "e9fbff44-6caa-4212-85f8-0871fea53c79"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": "936bef5c-bfd5-4aed-bdf9-7bb80663702b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/gpu-operator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "6f8516f9-b895-465f-ab80-4c52d7d94d45"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "ServiceMonitor",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "040171f4-bea5-4f3a-bec2-e6fc1f8fc398"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager-646f9ddf9f",
+            "uid": "cf6577ec-abee-4d1a-935f-878005b6853e"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "ca06f776-4925-4bfa-8dbc-97ed9f4ef761"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-mig-manager",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-nvhbd",
+            "uid": "6c3a4f28-8b6d-4ffc-a128-24707556a83d"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "a52710e5-e9f8-4006-8aa6-ecc0d7789fda"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset-68fc9c98df",
+            "uid": "e3051fc4-4802-4f77-b631-9e98c8dff82e"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset",
+            "uid": "d1b39c85-35b2-4c55-8a74-fa6449d400dc"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-container-toolkit-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "b2a022f7-b39e-4d3f-8926-e1ab48a83211"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-2g74x",
+            "uid": "23288011-8dfc-4ced-9efc-779f5111972f"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "6407fbf9-ba83-442b-85c5-b1870d7d94bf"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset-57ztj",
+            "uid": "c8bccc45-f5b5-4336-80ff-3cbf71bc81ff"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset",
+            "uid": "a5209b20-cc5a-47bb-9d9e-947b9915523f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-device-plugin-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-x4g8r",
+            "uid": "e774fd3f-fdf5-4624-84f8-c80e416bf48c"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "410441b6-75f3-48f4-80df-fff05c146f30"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "054b0291-8fe5-472a-bc83-4295c71e4cfa"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0",
+            "uid": "dceee95c-ba1e-46ac-911d-0802ef3abd46"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "PrometheusRule",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "b1305e3e-f9e1-4f71-848c-ecd94cee1a30"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-f6b8b7769",
+            "uid": "b1f0dc52-2e7b-4e7a-a37d-6a0a5ba7f8db"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "a52710e5-e9f8-4006-8aa6-ecc0d7789fda"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset-5d859fb4bd",
+            "uid": "0d5a4799-3d18-4c3e-863b-205338103e93"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset",
+            "uid": "a5209b20-cc5a-47bb-9d9e-947b9915523f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-device-plugin-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-dockercfg-9k5b6",
+            "uid": "38a89500-41e5-438b-825e-df3316fc0fe1"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "cf4bd0d3-c323-42d7-8012-cab8739fa7b1"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "b2f3d42f-fb16-40ca-85a5-7a492e3cb262"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "da858bdd-ec4d-4800-9729-310e6cf1e458"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "ea4561ca-886a-4154-b5b0-f1be341fc97f"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "default-gpu-clients",
+            "uid": "d4680f9e-c61d-43b3-9360-2dd6beed59b0"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0-64c5cc5d87",
+            "uid": "d9697bb1-5d42-4c88-8f2e-062416726be1"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0",
+            "uid": "dceee95c-ba1e-46ac-911d-0802ef3abd46"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-driver-daemonset-9.8.20260908-0",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-6fdb89ccdf",
+            "uid": "fd8f8020-1454-4726-b055-c26e8f2af0d7"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "410441b6-75f3-48f4-80df-fff05c146f30"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": "936bef5c-bfd5-4aed-bdf9-7bb80663702b"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "d775df71-2f89-4231-8e54-37462757c3cb"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "2ff357b3-5c2f-4307-b329-ef5e19e479b7"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator-dockercfg-tq2cd",
+            "uid": "757b5970-10a4-4304-9ada-4736e3377b81"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "8d609fcc-09b2-4e5f-bb72-0cbf96f246ed"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-operator-validator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "347b894d-5e6e-4e6b-97d3-e73dce15b734"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-dockercfg-2ds84",
+            "uid": "25c76e0a-f8dc-4149-ad97-0ce829ed0def"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "c4b6299c-1cbd-453b-b749-c9d0b0836a35"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-driver",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-79h75",
+            "uid": "537c8bb9-0882-4658-97f2-32afd3b32508"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "2ff357b3-5c2f-4307-b329-ef5e19e479b7"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "ServiceMonitor",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": "fc251283-6afe-43a8-8d1d-d9ea62c351ae"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "default-mig-parted-config",
+            "uid": "72d1334f-10de-4c73-b561-75c090533baa"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "a52710e5-e9f8-4006-8aa6-ecc0d7789fda"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon-77d699845b",
+            "uid": "ca0444c4-02e9-4e79-a7a8-ef9db7a1a3a3"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "e0527bfd-0e3e-4a2c-8342-b7a954a3965e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-device-plugin-mps-control-daemon",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-5fktb",
+            "uid": "9ea154fe-2edb-4027-a411-646d907f499a"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "2d2135e2-8f86-44ad-aa5b-c87491e33f1e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "8d609fcc-09b2-4e5f-bb72-0cbf96f246ed"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator-584f874d56",
+            "uid": "769bf263-fd83-41ef-ab2f-1b7480d51c93"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "347b894d-5e6e-4e6b-97d3-e73dce15b734"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-operator-validator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-dockercfg-d7c4m",
+            "uid": "f7bf6668-7ab5-41dc-b274-aa1f1b740387"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "d775df71-2f89-4231-8e54-37462757c3cb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager-dockercfg-z9s62",
+            "uid": "f48d1ed9-ff6a-4a24-a1a5-e25e78e087db"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "7983afa2-a9fc-4806-9217-d97829813d02"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-mig-manager",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-cuda-validator-wf7t4",
+            "uid": "0b3fd22a-12b2-4337-a225-9ae575b22776"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "95eb5cba-7a0b-487f-ab65-af4aedaf95fe"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "c33ed8d1-6f35-4f7c-a257-a3d84791ab48"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery",
+            "uid": "334b9135-a1ce-4642-9b5d-a8d3be345ef7"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "PrometheusRule",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-operator-metrics",
+            "uid": "77849949-6770-4156-b6cd-d5d70dd4a9ea"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "be16acd6-b1b0-450d-8aa7-9b93583a6cc6"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "ef9d17aa-8b95-442d-a18e-f0ed940d7cb4"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "2d2135e2-8f86-44ad-aa5b-c87491e33f1e"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "8d6af086-40c2-4ba5-986b-e412ccc03e4b"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery-dockercfg-b5drs",
+            "uid": "1ee73ad5-e0af-4df0-8038-1a0d14e98a2b"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "c55ca378-9ccc-494a-9a6e-575c1c2e917e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-gpu-feature-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "7983afa2-a9fc-4806-9217-d97829813d02"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator-2fvt6",
+            "uid": "24216aaa-5682-4eb1-9c9c-8b86b00e38c4"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "347b894d-5e6e-4e6b-97d3-e73dce15b734"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-operator-validator",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "nvidia-gpu-operator",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus"
+      ]
+    }
+  ],
+  "scan_warning_count": 0
+}

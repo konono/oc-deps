@@ -1,0 +1,96 @@
+{
+  "operator_name": "leader-worker-set",
+  "csv_name": "leader-worker-set.v1.0.1",
+  "install_namespace": "openshift-leaderworkerset",
+  "subscription_name": "leader-worker-set",
+  "owned_crds": [
+    "leaderworkersetoperators.operator.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-leaderworkerset",
+            "name": "leader-worker-set",
+            "uid": "c737043f-b559-4a55-b622-3dac47962642"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-leaderworkerset",
+            "name": "leader-worker-set.v1.0.1",
+            "uid": "c5b5f061-2ead-415f-928c-32a7dab53ad2"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-leaderworkerset",
+            "name": "openshift-lws-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-leaderworkerset",
+            "name": "openshift-lws-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-leaderworkerset",
+            "name": "openshift-lws-operator-8669c49545-wvj2p",
+            "uid": "525ca913-44dc-489c-9e6d-0d501d5c9316"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-leaderworkerset",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus"
+      ]
+    }
+  ],
+  "scan_warning_count": 0
+}

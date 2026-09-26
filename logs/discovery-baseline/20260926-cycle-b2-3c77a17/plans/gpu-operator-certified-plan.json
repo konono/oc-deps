@@ -1,0 +1,163 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-26T17:36:02.020867412+00:00",
+  "targets": [
+    {
+      "package_name": "gpu-operator-certified",
+      "install_namespace": "nvidia-gpu-operator",
+      "csv_name_pattern": "gpu-operator-certified.v26.7.1"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "nvidia-gpu-operator",
+          "name": "gpu-operator-certified",
+          "uid": "a2106f7b-8c24-46a0-bb6e-a6c5f6946732",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "nvidia-gpu-operator",
+          "name": "gpu-operator-certified.v26.7.1",
+          "uid": "c8e0360a-a8cd-4529-ab9f-138e3c9deaea",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "nvidia.com",
+          "kind": "ClusterPolicy",
+          "namespace": null,
+          "name": "gpu-cluster-policy",
+          "uid": "cfe68d9f-5449-4c08-9aa5-0c362aab74bb",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "nvidia-gpu-operator",
+          "name": "gpu-operator-certified.v26.7.1",
+          "uid": "c8e0360a-a8cd-4529-ab9f-138e3c9deaea",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "nvidia-gpu-operator",
+          "name": "gpu-operator-certified",
+          "uid": "8449f80e-7520-42c6-aae4-436c6aac5acc",
+          "action": "DELETE"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "nvidia-gpu-operator",
+          "name": "53822513.nvidia.com",
+          "uid": "2b20a221-8bd3-463f-ad0a-156d459e09f9",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nvidiadrivers.nvidia.com",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "gpuclusters.nvidia.com",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "computedomains.resource.nvidia.com",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "computedomaincliques.resource.nvidia.com",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "clusterpolicies.nvidia.com",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "nvidia-gpu-operator",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

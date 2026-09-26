@@ -1,0 +1,178 @@
+Discovering canonical GVRs from raw API...
+Found 537 listable GVRs (all served versions)
+SPOT CHECK OK: configmaps /v1/ConfigMap ns=True
+SPOT CHECK OK: deployments apps/v1/Deployment ns=True
+SPOT CHECK OK: persesdashboards perses.dev/v1alpha2/PersesDashboard ns=True
+SPOT CHECK OK: authpolicies kuadrant.io/v1/AuthPolicy ns=True
+SPOT CHECK OK: tokenratelimitpolicies kuadrant.io/v1alpha1/TokenRateLimitPolicy ns=True
+SPOT CHECK OK: envoyfilters networking.istio.io/v1alpha3/EnvoyFilter ns=True
+Catalog saved: 537 GVRs
+Collecting inventory...
+  /v1/componentstatuses: 3
+  /v1/configmaps: 802
+  /v1/endpoints: 117
+  /v1/events: 1654
+  /v1/namespaces: 99
+  /v1/nodes: 1
+  /v1/persistentvolumeclaims: 8
+  /v1/persistentvolumes: 7
+  /v1/pods: 156
+  /v1/resourcequotas: 1
+  /v1/secrets: 868
+  /v1/serviceaccounts: 560
+  /v1/services: 119
+  admissionregistration.k8s.io/v1/mutatingwebhookconfigurations: 10
+  admissionregistration.k8s.io/v1/validatingadmissionpolicies: 12
+  admissionregistration.k8s.io/v1/validatingadmissionpolicybindings: 12
+  admissionregistration.k8s.io/v1/validatingwebhookconfigurations: 19
+  apiextensions.k8s.io/v1/customresourcedefinitions: 394
+  apiregistration.k8s.io/v1/apiservices: 171
+  apps/v1/controllerrevisions: 29
+  apps/v1/daemonsets: 18
+  apps/v1/deployments: 87
+  apps/v1/replicasets: 138
+  apps/v1/statefulsets: 6
+  authorization.openshift.io/v1/clusterrolebindings: 304
+  authorization.openshift.io/v1/clusterroles: 1228
+  authorization.openshift.io/v1/rolebindings: 577
+  authorization.openshift.io/v1/roles: 251
+  batch/v1/cronjobs: 1
+  batch/v1/jobs: 52
+  cloudcredential.openshift.io/v1/credentialsrequests: 45
+  config.openshift.io/v1/apiservers: 1
+  config.openshift.io/v1/authentications: 1
+  config.openshift.io/v1/builds: 1
+  config.openshift.io/v1/clusterimagepolicies: 1
+  config.openshift.io/v1/clusteroperators: 34
+  config.openshift.io/v1/clusterversions: 1
+  config.openshift.io/v1/consoles: 1
+  config.openshift.io/v1/dnses: 1
+  config.openshift.io/v1/featuregates: 1
+  config.openshift.io/v1/imagedigestmirrorsets: 1
+  config.openshift.io/v1/images: 1
+  config.openshift.io/v1/infrastructures: 1
+  config.openshift.io/v1/ingresses: 1
+  config.openshift.io/v1/insightsdatagathers: 1
+  config.openshift.io/v1/networks: 1
+  config.openshift.io/v1/nodes: 1
+  config.openshift.io/v1/oauths: 1
+  config.openshift.io/v1/operatorhubs: 1
+  config.openshift.io/v1/projects: 1
+  config.openshift.io/v1/proxies: 1
+  config.openshift.io/v1/schedulers: 1
+  console.openshift.io/v1/consoleclidownloads: 5
+  console.openshift.io/v1/consoleplugins: 3
+  console.openshift.io/v1/consolequickstarts: 29
+  console.openshift.io/v1/consoleyamlsamples: 3
+  controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks: 9
+  coordination.k8s.io/v1/leases: 100
+  discovery.k8s.io/v1/endpointslices: 117
+  events.k8s.io/v1/events: 1654
+  flowcontrol.apiserver.k8s.io/v1/flowschemas: 23
+  flowcontrol.apiserver.k8s.io/v1/prioritylevelconfigurations: 9
+  gateway.networking.k8s.io/v1/httproutes: 1
+  gateway.networking.k8s.io/v1beta1/httproutes: 1
+  gateway.networking.k8s.io/v1beta1/referencegrants: 1
+  helm.openshift.io/v1beta1/helmchartrepositories: 1
+  image.openshift.io/v1/images: 328
+  image.openshift.io/v1/imagestreams: 88
+  image.openshift.io/v1/imagestreamtags: 366
+  image.openshift.io/v1/imagetags: 366
+  imageregistry.operator.openshift.io/v1/configs: 1
+  imageregistry.operator.openshift.io/v1/imagepruners: 1
+  ingress.operator.openshift.io/v1/dnsrecords: 1
+  insights.openshift.io/v1/datagathers: 13
+  k8s.cni.cncf.io/v1/network-attachment-definitions: 1
+  machine.openshift.io/v1beta1/machinehealthchecks: 1
+  machine.openshift.io/v1beta1/machines: 1
+  machine.openshift.io/v1beta1/machinesets: 3
+  machineconfiguration.openshift.io/v1/controllerconfigs: 1
+  machineconfiguration.openshift.io/v1/machineconfignodes: 1
+  machineconfiguration.openshift.io/v1/machineconfigpools: 2
+  machineconfiguration.openshift.io/v1/machineconfigs: 16
+  metrics.k8s.io/v1beta1/nodes: 1
+  metrics.k8s.io/v1beta1/pods: 110
+  migration.k8s.io/v1alpha1/storageversionmigrations: 7
+  monitoring.coreos.com/v1/alertmanagers: 1
+  monitoring.coreos.com/v1/podmonitors: 3
+  monitoring.coreos.com/v1/prometheuses: 1
+  monitoring.coreos.com/v1/prometheusrules: 47
+  monitoring.coreos.com/v1/servicemonitors: 74
+  network.operator.openshift.io/v1/operatorpkis: 3
+  networking.k8s.io/v1/ingressclasses: 1
+  networking.k8s.io/v1/ipaddresses: 94
+  networking.k8s.io/v1/networkpolicies: 144
+  networking.k8s.io/v1/servicecidrs: 1
+  noobaa.io/v1alpha1/backingstores: 1
+  noobaa.io/v1alpha1/bucketclasses: 1
+  noobaa.io/v1alpha1/noobaas: 1
+  oauth.openshift.io/v1/oauthaccesstokens: 1 (REDACTED)
+  oauth.openshift.io/v1/oauthauthorizetokens: 0 (REDACTED)
+  oauth.openshift.io/v1/oauthclients: 5
+  oauth.openshift.io/v1/useroauthaccesstokens: 1 (REDACTED)
+  objectbucket.io/v1alpha1/objectbucketclaims: 2
+  objectbucket.io/v1alpha1/objectbuckets: 2
+  olm.operatorframework.io/v1/clustercatalogs: 3
+  operator.openshift.io/v1/authentications: 1
+  operator.openshift.io/v1/cloudcredentials: 1
+  operator.openshift.io/v1/clustercsidrivers: 1
+  operator.openshift.io/v1/configs: 1
+  operator.openshift.io/v1/consoles: 1
+  operator.openshift.io/v1/csisnapshotcontrollers: 1
+  operator.openshift.io/v1/dnses: 1
+  operator.openshift.io/v1/etcds: 1
+  operator.openshift.io/v1/ingresscontrollers: 1
+  operator.openshift.io/v1/insightsoperators: 1
+  operator.openshift.io/v1/kubeapiservers: 1
+  operator.openshift.io/v1/kubecontrollermanagers: 1
+  operator.openshift.io/v1/kubeschedulers: 1
+  operator.openshift.io/v1/kubestorageversionmigrators: 1
+  operator.openshift.io/v1/machineconfigurations: 1
+  operator.openshift.io/v1/networks: 1
+  operator.openshift.io/v1/olms: 1
+  operator.openshift.io/v1/openshiftapiservers: 1
+  operator.openshift.io/v1/openshiftcontrollermanagers: 1
+  operator.openshift.io/v1/servicecas: 1
+  operator.openshift.io/v1/storages: 1
+  operators.coreos.com/v1/olmconfigs: 1
+  operators.coreos.com/v1/operatorconditions: 14
+  operators.coreos.com/v1/operatorgroups: 5
+  operators.coreos.com/v1/operators: 29
+  operators.coreos.com/v1alpha1/catalogsources: 3
+  operators.coreos.com/v1alpha1/clusterserviceversions: 14
+  operators.coreos.com/v1alpha1/installplans: 4
+  operators.coreos.com/v1alpha1/subscriptions: 13
+  operators.coreos.com/v1alpha2/operatorgroups: 5
+  operators.coreos.com/v2/operatorconditions: 14
+  packages.operators.coreos.com/v1/packagemanifests: 617
+  policy/v1/poddisruptionbudgets: 6
+  project.openshift.io/v1/projects: 99
+  rbac.authorization.k8s.io/v1/clusterrolebindings: 304
+  rbac.authorization.k8s.io/v1/clusterroles: 1228
+  rbac.authorization.k8s.io/v1/rolebindings: 577
+  rbac.authorization.k8s.io/v1/roles: 251
+  redhatcop.redhat.io/v1alpha1/groupsyncs: 1
+  route.openshift.io/v1/routes: 15
+  samples.operator.openshift.io/v1/configs: 1
+  scheduling.k8s.io/v1/priorityclasses: 3
+  security.internal.openshift.io/v1/rangeallocations: 1
+  security.openshift.io/v1/securitycontextconstraints: 19
+  services.platform.opendatahub.io/v1alpha1/servicemeshes: 1
+  snapshot.storage.k8s.io/v1/volumesnapshotclasses: 1
+  storage.k8s.io/v1/csidrivers: 1
+  storage.k8s.io/v1/csinodes: 1
+  storage.k8s.io/v1/storageclasses: 3
+  storage.k8s.io/v1/volumeattachments: 4
+  template.openshift.io/v1/templates: 51
+  tuned.openshift.io/v1/profiles: 1
+  tuned.openshift.io/v1/tuneds: 1
+  user.openshift.io/v1/groups: 1
+Done: 14761 objects, 0 failures, 3 redacted GVRs
+  REDACTED: oauthaccesstokens count=1
+  REDACTED: oauthauthorizetokens count=0
+  REDACTED: useroauthaccesstokens count=1
+Assertions: Secret rows=868, finalizers=True, token rows=0
+Annotation policy smoke test PASS
+Virtual endpoint smoke test PASS
+Security smoke test PASS
+All post-assertions PASS
