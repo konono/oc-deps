@@ -162,7 +162,11 @@ fn referrer_specs_for_target(target_kind: &str, target_group: &str) -> Vec<Refer
             },
         ],
         ("console.openshift.io", "ConsolePlugin") => vec![],
-        ("apps", "Deployment") => vec![],
+        ("apps", "Deployment") => vec![ReferrerSpec {
+            group: "autoscaling",
+            kind: "HorizontalPodAutoscaler",
+            required: false,
+        }],
         _ => vec![],
     }
 }
@@ -219,7 +223,16 @@ fn extract_gateway_parent_refs(
     fields
 }
 
-fn extract_configmap_refs(obj: &DynamicObject, target_name: &str) -> Vec<String> {
+fn extract_configmap_refs(
+    obj: &DynamicObject,
+    target_name: &str,
+    target_ns: Option<&str>,
+) -> Vec<String> {
+    if let Some(target_ns) = target_ns
+        && obj.metadata.namespace.as_deref() != Some(target_ns)
+    {
+        return Vec::new();
+    }
     let mut fields = Vec::new();
     let spec = match obj.data.get("spec") {
         Some(s) => s,
@@ -326,6 +339,32 @@ fn extract_console_plugin_service_ref(
     fields
 }
 
+fn extract_hpa_scale_target_ref(
+    hpa: &DynamicObject,
+    target_name: &str,
+    target_kind: &str,
+    target_group: &str,
+) -> Vec<String> {
+    let mut fields = Vec::new();
+    if let Some(scale_ref) = hpa.data.get("spec").and_then(|s| s.get("scaleTargetRef")) {
+        let name = scale_ref.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let kind = scale_ref.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        let api_version = scale_ref
+            .get("apiVersion")
+            .and_then(|a| a.as_str())
+            .unwrap_or("apps/v1");
+        let group = if let Some(idx) = api_version.find('/') {
+            &api_version[..idx]
+        } else {
+            ""
+        };
+        if name == target_name && kind == target_kind && group == target_group {
+            fields.push("spec.scaleTargetRef".to_string());
+        }
+    }
+    fields
+}
+
 fn extract_refs_for_target(
     obj: &DynamicObject,
     referrer_group: &str,
@@ -339,13 +378,19 @@ fn extract_refs_for_target(
         ("gateway.networking.k8s.io", "Gateway") => {
             extract_gateway_parent_refs(obj, target_name, target_ns)
         }
-        ("", "ConfigMap") => extract_configmap_refs(obj, target_name),
+        ("", "ConfigMap") => extract_configmap_refs(obj, target_name, target_ns),
         ("", "Service") => match (referrer_group, referrer_kind) {
             ("console.openshift.io", "ConsolePlugin") => {
                 extract_console_plugin_service_ref(obj, target_name, target_ns)
             }
             ("gateway.networking.k8s.io", "HTTPRoute" | "GRPCRoute") => {
                 extract_service_backend_refs(obj, target_name, target_ns)
+            }
+            _ => vec![],
+        },
+        ("apps", "Deployment") => match (referrer_group, referrer_kind) {
+            ("autoscaling", "HorizontalPodAutoscaler") => {
+                extract_hpa_scale_target_ref(obj, target_name, target_kind, target_group)
             }
             _ => vec![],
         },
@@ -601,10 +646,15 @@ mod tests {
             }
         });
         let obj: DynamicObject = serde_json::from_value(deploy_json).unwrap();
-        let fields = extract_configmap_refs(&obj, "my-cm");
+        let fields = extract_configmap_refs(&obj, "my-cm", Some("ns"));
         assert_eq!(fields, vec!["spec.template.spec.volumes[0].configMap.name"]);
-        let fields2 = extract_configmap_refs(&obj, "no-match");
+        let fields2 = extract_configmap_refs(&obj, "no-match", Some("ns"));
         assert!(fields2.is_empty());
+        let fields3 = extract_configmap_refs(&obj, "my-cm", Some("other-ns"));
+        assert!(
+            fields3.is_empty(),
+            "Cross-namespace ConfigMap ref should not match"
+        );
     }
 
     #[test]
