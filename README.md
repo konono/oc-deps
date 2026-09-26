@@ -548,8 +548,8 @@ Resources are matched by logical identity (group/kind/namespace/name). UID chang
 | Tier | Condition | Override |
 |------|-----------|----------|
 | **Blocker** | External operator depends on target CRD | Cannot override |
-| **Critical preflight** | CSV not Succeeded, controller unavailable | Cannot override |
-| **Non-critical preflight** | Uncertain CR provenance | Warn and continue |
+| **Critical preflight** | Ambiguous Subscription authority, incomplete required API/CRD discovery | Cannot override |
+| **Advisory preflight** | CSV not Succeeded, controller unavailable, uncertain CR provenance | Warn and continue |
 | **REVIEW items** | Resources with unknown provenance | Preserve unless explicitly approved |
 | **Confirmation** | Interactive y/N prompt | User types `y` |
 | **Barrier** | Resources must vanish before next phase | Times out after 300s or stalls after 120s |
@@ -613,6 +613,16 @@ Each scope is opt-in. If a scope is omitted, matching REVIEW resources remain pr
 structured form intentionally has no `all` scope; use `root` and `independent` explicitly.
 Operator-level approvals and keeps are added to the defaults. Operator-level
 `non_interactive` values override their defaults. `resources` contains exact approvals only.
+
+### Batch baseline gate
+
+Before starting any destructive operations, `teardown batch` verifies that every operator in the config is **present** in the cluster (has a discoverable CSV). CSV phase (Succeeded, Failed, Pending) is shown for diagnostics but does not block teardown — operators in any phase are allowed to proceed, though cleanup of non-Succeeded operators may rely on finalizer recovery and advisory warnings should be reviewed.
+
+Missing operators fail the baseline gate by default. Use `--skip-missing` to skip absent operators; skipped entries are reported as `⏭ SKIPPED` in the summary and are never counted as successful.
+
+### CSV health and controller availability
+
+Teardown preflight reports CSV health and controller availability as advisory warnings. A Failed or unavailable operator can still be torn down — the plan and apply proceed normally. Only true safety failures block execution: ambiguous Subscription authority, incomplete required API discovery, plan identity/drift mismatch, and explicit-delete reference guard failures.
 
 ## Build
 

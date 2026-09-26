@@ -87,6 +87,16 @@ enum LiveCount {
     Unknown(String),
 }
 
+pub(crate) fn blocking_preflight_failures(
+    checks: &[crate::teardown::planner::PreflightCheck],
+) -> Vec<&str> {
+    checks
+        .iter()
+        .filter(|c| !c.passed && c.severity == PreflightSeverity::Critical)
+        .map(|c| c.name.as_str())
+        .collect()
+}
+
 fn count_actions(plan: &TeardownPlan) -> (usize, usize, usize, usize) {
     let mut delete_count = 0;
     let mut expect_count = 0;
@@ -244,13 +254,7 @@ pub async fn execute_plan_with_store(
         bail!("Plan has blockers. Resolve external dependencies before applying.");
     }
 
-    let critical_failures: Vec<&str> = plan
-        .preflight
-        .checks
-        .iter()
-        .filter(|c| !c.passed && c.severity == PreflightSeverity::Critical)
-        .map(|c| c.name.as_str())
-        .collect();
+    let critical_failures = blocking_preflight_failures(&plan.preflight.checks);
     if !critical_failures.is_empty() && !dry_run {
         eprintln!(
             "\x1b[1;31m⛔ Critical preflight failed — {} check(s):\x1b[0m",
@@ -4411,6 +4415,32 @@ mod tests {
         let plan = make_plan_with_actions(vec![]);
         let (d, e, k, r) = count_actions(&plan);
         assert_eq!((d, e, k, r), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn csv_health_warning_does_not_block_via_helper() {
+        let health_checks = crate::teardown::planner::health_preflight_checks(
+            "test-op.v1",
+            (false, "CSV phase: Failed".to_string()),
+            (false, "0/1 controllers available".to_string()),
+        );
+        let blockers = blocking_preflight_failures(&health_checks);
+        assert!(
+            blockers.is_empty(),
+            "Health warnings must not produce blocking failures"
+        );
+    }
+
+    #[test]
+    fn safety_critical_preflight_blocks_via_helper() {
+        let checks = vec![crate::teardown::planner::PreflightCheck {
+            name: "CR enumeration (example.com/v1/widgets)".to_string(),
+            severity: PreflightSeverity::Critical,
+            passed: false,
+            detail: "cannot enumerate".to_string(),
+        }];
+        let blockers = blocking_preflight_failures(&checks);
+        assert_eq!(blockers.len(), 1, "Safety-critical failure must block");
     }
 
     #[test]

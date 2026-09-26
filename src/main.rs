@@ -945,6 +945,36 @@ async fn resolve_explicit_delete_targets(
     Ok(targets)
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum BatchOutcome {
+    Succeeded,
+    Skipped,
+    Failed(i32),
+}
+
+fn batch_summary(results: &[(String, BatchOutcome)]) -> (usize, usize, usize) {
+    let s = results
+        .iter()
+        .filter(|(_, o)| *o == BatchOutcome::Succeeded)
+        .count();
+    let sk = results
+        .iter()
+        .filter(|(_, o)| *o == BatchOutcome::Skipped)
+        .count();
+    let f = results
+        .iter()
+        .filter(|(_, o)| matches!(o, BatchOutcome::Failed(_)))
+        .count();
+    (s, sk, f)
+}
+
+fn operator_matches_entry(op: &crate::analyzers::olm::OperatorInstance, entry_name: &str) -> bool {
+    op.csv.name.starts_with(&format!("{}.", entry_name))
+        || op.csv.name.starts_with(&format!("{}.v", entry_name))
+        || op.package_name.as_deref() == Some(entry_name)
+        || op.csv.name == entry_name
+}
+
 fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
     user_requested || explicit_target_count > 0
 }
@@ -4588,7 +4618,7 @@ async fn main() -> Result<()> {
                     }
                     eprintln!();
 
-                    // Baseline gate: verify all target operators exist as Succeeded CSVs
+                    // Baseline gate: verify all target operators are present (phase is informational)
                     eprintln!(
                         "🔍 Baseline gate: verifying {} target operators...",
                         entries.len()
@@ -4600,17 +4630,19 @@ async fn main() -> Result<()> {
                     let mut skip_indices: std::collections::HashSet<usize> =
                         std::collections::HashSet::new();
                     for (idx, entry) in entries.iter().enumerate() {
-                        let found = all_operators.iter().find(|op| {
-                            op.csv.name.starts_with(&format!("{}.", entry.name))
-                                || op.csv.name.starts_with(&format!("{}.v", entry.name))
-                                || op.package_name.as_deref() == Some(&entry.name)
-                                || op.csv.name == entry.name
-                        });
+                        let found = all_operators
+                            .iter()
+                            .find(|op| operator_matches_entry(op, &entry.name));
                         match found {
                             Some(op) => {
+                                let icon = if op.csv_phase == "Succeeded" {
+                                    "✅"
+                                } else {
+                                    "⚠"
+                                };
                                 eprintln!(
-                                    "  ✅ {} — {} ({})",
-                                    entry.name, op.csv.name, op.csv_phase
+                                    "  {} {} — {} ({})",
+                                    icon, entry.name, op.csv.name, op.csv_phase
                                 );
                             }
                             None => {
@@ -4667,7 +4699,7 @@ async fn main() -> Result<()> {
                     }
                     let _batch_guard = BatchDirGuard(batch_dir.clone());
 
-                    let mut results: Vec<(String, i32)> = Vec::new();
+                    let mut results: Vec<(String, BatchOutcome)> = Vec::new();
 
                     let entry_count = entries.len();
                     for (i, entry) in entries.iter().enumerate() {
@@ -4678,7 +4710,7 @@ async fn main() -> Result<()> {
                                 entry_count,
                                 entry.name
                             );
-                            results.push((entry.name.clone(), 0));
+                            results.push((entry.name.clone(), BatchOutcome::Skipped));
                             continue;
                         }
                         let op_name = &entry.name;
@@ -4738,7 +4770,8 @@ async fn main() -> Result<()> {
                                 .with_context(|| format!("Failed to spawn plan for {}", op_name))?;
                             if !status.success() {
                                 let exit_code = status.code().unwrap_or(1);
-                                results.push((op_name.to_string(), exit_code));
+                                results
+                                    .push((op_name.to_string(), BatchOutcome::Failed(exit_code)));
                                 eprintln!(
                                     "\n⛔ {} plan failed (exit {}). Stopping batch.",
                                     op_name, exit_code
@@ -4781,7 +4814,12 @@ async fn main() -> Result<()> {
                             })?;
 
                             let exit_code = status.code().unwrap_or(1);
-                            results.push((op_name.to_string(), exit_code));
+                            let outcome = if exit_code == 0 {
+                                BatchOutcome::Succeeded
+                            } else {
+                                BatchOutcome::Failed(exit_code)
+                            };
+                            results.push((op_name.to_string(), outcome));
 
                             if exit_code != 0 {
                                 eprintln!(
@@ -4795,19 +4833,27 @@ async fn main() -> Result<()> {
                     }
 
                     // Summary
+                    let (s, sk, f) = batch_summary(&results);
                     eprintln!("\n📊 Batch results:");
                     let mut any_failed = false;
-                    for (name, code) in &results {
-                        let status = if *code == 0 { "✅" } else { "⛔" };
-                        eprintln!("  {} {} (exit {})", status, name, code);
-                        if *code != 0 {
-                            any_failed = true;
+                    for (name, outcome) in &results {
+                        match outcome {
+                            BatchOutcome::Succeeded => eprintln!("  ✅ {}", name),
+                            BatchOutcome::Skipped => eprintln!("  ⏭ {} SKIPPED", name),
+                            BatchOutcome::Failed(c) => {
+                                eprintln!("  ⛔ {} (exit {})", name, c);
+                                any_failed = true;
+                            }
                         }
                     }
                     let not_run = entry_count - results.len();
                     if not_run > 0 {
                         eprintln!("  ⏭ {} operator(s) not run (stopped on failure)", not_run);
                     }
+                    eprintln!(
+                        "\n  {} succeeded, {} skipped, {} failed, {} not run",
+                        s, sk, f, not_run
+                    );
 
                     if any_failed {
                         std::process::exit(1);
@@ -9851,6 +9897,145 @@ mod basis_drift_tests {
             should_refresh_discovery(true, 3),
             "both flag and targets = refresh"
         );
+    }
+
+    fn make_test_operator(
+        csv_name: &str,
+        phase: &str,
+        pkg: Option<&str>,
+    ) -> crate::analyzers::olm::OperatorInstance {
+        crate::analyzers::olm::OperatorInstance {
+            subscription: None,
+            csv: crate::kube::resource::ResourceId {
+                group: "operators.coreos.com".to_string(),
+                version: "v1alpha1".to_string(),
+                kind: "ClusterServiceVersion".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: csv_name.to_string(),
+                uid: Some("test-uid".to_string()),
+            },
+            csv_phase: phase.to_string(),
+            owned_crds: vec![],
+            required_crds: vec![],
+            owned_api_service_defs: vec![],
+            required_api_service_defs: vec![],
+            deployments: vec![],
+            service_accounts: vec![],
+            install_namespace: "test-ns".to_string(),
+            package_name: pkg.map(|s| s.to_string()),
+            has_unlinked_subscriptions: false,
+        }
+    }
+
+    #[test]
+    fn presence_gate_succeeded_passes() {
+        let op = make_test_operator("rhods-operator.3.5.1", "Succeeded", Some("rhods-operator"));
+        assert!(operator_matches_entry(&op, "rhods-operator"));
+    }
+
+    #[test]
+    fn presence_gate_failed_passes() {
+        let op = make_test_operator("rhods-operator.3.5.1", "Failed", Some("rhods-operator"));
+        assert!(operator_matches_entry(&op, "rhods-operator"));
+    }
+
+    #[test]
+    fn presence_gate_pending_passes() {
+        let op = make_test_operator(
+            "cert-manager-operator.v1.20.0",
+            "Pending",
+            Some("openshift-cert-manager-operator"),
+        );
+        assert!(operator_matches_entry(
+            &op,
+            "openshift-cert-manager-operator"
+        ));
+    }
+
+    #[test]
+    fn presence_gate_missing_fails() {
+        let operators = [make_test_operator(
+            "rhods-operator.3.5.1",
+            "Succeeded",
+            Some("rhods-operator"),
+        )];
+        let found = operators
+            .iter()
+            .any(|op| operator_matches_entry(op, "nonexistent-operator"));
+        assert!(!found, "Missing operator must not match");
+    }
+
+    #[test]
+    fn batch_summary_counts_outcomes_correctly() {
+        let results = vec![
+            ("op-a".to_string(), BatchOutcome::Succeeded),
+            ("op-b".to_string(), BatchOutcome::Skipped),
+            ("op-c".to_string(), BatchOutcome::Succeeded),
+            ("op-d".to_string(), BatchOutcome::Failed(1)),
+            ("op-e".to_string(), BatchOutcome::Skipped),
+        ];
+        let (s, sk, f) = batch_summary(&results);
+        assert_eq!(s, 2, "succeeded count");
+        assert_eq!(sk, 2, "skipped count");
+        assert_eq!(f, 1, "failed count");
+    }
+
+    #[test]
+    fn batch_skipped_excluded_from_success() {
+        let results = vec![("op-a".to_string(), BatchOutcome::Skipped)];
+        let (s, sk, f) = batch_summary(&results);
+        assert_eq!(s, 0, "skipped must not count as succeeded");
+        assert_eq!(sk, 1);
+        assert_eq!(f, 0, "skipped must not count as failed");
+    }
+
+    #[test]
+    fn health_preflight_produces_warning_not_critical() {
+        use crate::teardown::planner::{PreflightSeverity, health_preflight_checks};
+        let checks = health_preflight_checks(
+            "test-op.v1",
+            (false, "CSV phase: Failed".to_string()),
+            (false, "0/1 controllers available".to_string()),
+        );
+        assert_eq!(checks.len(), 2);
+        for check in &checks {
+            assert_eq!(
+                check.severity,
+                PreflightSeverity::Warning,
+                "{} must be Warning, not Critical",
+                check.name
+            );
+            assert!(!check.passed);
+        }
+    }
+
+    #[test]
+    fn blocking_preflight_filters_critical_only() {
+        use crate::teardown::executor::blocking_preflight_failures;
+        use crate::teardown::planner::{PreflightCheck, PreflightSeverity};
+        let checks = vec![
+            PreflightCheck {
+                name: "CSV health (op.v1)".to_string(),
+                severity: PreflightSeverity::Warning,
+                passed: false,
+                detail: "Failed".to_string(),
+            },
+            PreflightCheck {
+                name: "Controller available (op.v1)".to_string(),
+                severity: PreflightSeverity::Warning,
+                passed: false,
+                detail: "unavailable".to_string(),
+            },
+            PreflightCheck {
+                name: "CR enumeration (widgets)".to_string(),
+                severity: PreflightSeverity::Critical,
+                passed: false,
+                detail: "cannot enumerate".to_string(),
+            },
+        ];
+        let blockers = blocking_preflight_failures(&checks);
+        assert_eq!(blockers.len(), 1, "only Critical should block");
+        assert!(blockers[0].contains("CR enumeration"));
     }
 }
 

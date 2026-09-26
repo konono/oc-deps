@@ -1248,6 +1248,27 @@ pub fn check_subscription_safety(op: &OperatorInstance) -> (bool, PreflightSever
     }
 }
 
+pub(crate) fn health_preflight_checks(
+    csv_name: &str,
+    csv_health: (bool, String),
+    ctrl_health: (bool, String),
+) -> Vec<PreflightCheck> {
+    vec![
+        PreflightCheck {
+            name: format!("CSV health ({})", csv_name),
+            severity: PreflightSeverity::Warning,
+            passed: csv_health.0,
+            detail: csv_health.1,
+        },
+        PreflightCheck {
+            name: format!("Controller available ({})", csv_name),
+            severity: PreflightSeverity::Warning,
+            passed: ctrl_health.0,
+            detail: ctrl_health.1,
+        },
+    ]
+}
+
 async fn run_preflight(
     client: &Client,
     target_operators: &[&OperatorInstance],
@@ -1289,18 +1310,7 @@ async fn run_preflight(
         .await;
 
     for (csv_name, csv_ok, ctrl_ok) in health_results {
-        checks.push(PreflightCheck {
-            name: format!("CSV health ({})", csv_name),
-            severity: PreflightSeverity::Critical,
-            passed: csv_ok.0,
-            detail: csv_ok.1,
-        });
-        checks.push(PreflightCheck {
-            name: format!("Controller available ({})", csv_name),
-            severity: PreflightSeverity::Critical,
-            passed: ctrl_ok.0,
-            detail: ctrl_ok.1,
-        });
+        checks.extend(health_preflight_checks(&csv_name, csv_ok, ctrl_ok));
     }
 
     // 3. Dedup summary
