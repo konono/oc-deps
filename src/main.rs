@@ -42,7 +42,7 @@ use clap::{CommandFactory, Parser};
 use crate::analyzers::inspect::{
     inspect_operator_with_options, print_inspection as print_inspection_top,
 };
-use crate::analyzers::namespace_scope::{discover_operator_namespaces, scan_candidate_namespaces};
+use crate::analyzers::namespace_scope::discover_operator_namespaces;
 use crate::analyzers::olm::{
     WhoManagesInput, compute_operator_dependencies, discover_operators, print_operators,
     print_who_manages, who_manages,
@@ -5050,7 +5050,8 @@ async fn main() -> Result<()> {
                 crate::kube::resource::format_coverage_summary(ledger, verbose);
             }
             if strict
-                && (inspection.strict_failure_count > 0
+                && (inspection.scan_warning_count > 0
+                    || inspection.strict_failure_count > 0
                     || inspection
                         .coverage_ledger
                         .as_ref()
@@ -5104,13 +5105,35 @@ async fn main() -> Result<()> {
                 }
             })?;
 
+            let trace_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
+                std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
+            );
             let (mut index, mut scan_warnings) = if kind_info.namespaced {
-                scan_namespace(&client, &namespace, &kind_map, false, true, false).await?
+                crate::kube::scanner::scan_namespace_with_semaphore(
+                    &client,
+                    &namespace,
+                    &kind_map,
+                    false,
+                    true,
+                    false,
+                    None,
+                    &[],
+                    Some(trace_ledger.clone()),
+                )
+                .await?
             } else {
-                // For cluster-scoped targets, scan the namespace for children
-                // but also fetch the target itself
-                let (idx, warnings) =
-                    scan_namespace(&client, &namespace, &kind_map, false, true, false).await?;
+                let (idx, warnings) = crate::kube::scanner::scan_namespace_with_semaphore(
+                    &client,
+                    &namespace,
+                    &kind_map,
+                    false,
+                    true,
+                    false,
+                    None,
+                    &[],
+                    Some(trace_ledger.clone()),
+                )
+                .await?;
                 (idx, warnings)
             };
             // For cluster-scoped targets, fetch the target via exact GET and insert
@@ -5256,13 +5279,15 @@ async fn main() -> Result<()> {
                         }
                     }
                     scan_warnings.extend(scope_result.scan_failures);
-                    let ns_scan = scan_candidate_namespaces(
-                        &client,
-                        &scope_result.candidates,
-                        &kind_map,
-                        Some(&namespace),
-                    )
-                    .await;
+                    let ns_scan =
+                        crate::analyzers::namespace_scope::scan_candidate_namespaces_with_ledger(
+                            &client,
+                            &scope_result.candidates,
+                            &kind_map,
+                            Some(&namespace),
+                            Some(trace_ledger.clone()),
+                        )
+                        .await;
                     for w in &ns_scan.namespace_warnings {
                         scan_warnings.push(crate::kube::resource::ScanWarning::Other {
                             gvr: "cross-namespace".to_string(),
@@ -5301,6 +5326,13 @@ async fn main() -> Result<()> {
                 "namespace"
             };
             print_trace(&result, &output, scope_str);
+
+            {
+                let ledger = trace_ledger.lock().unwrap();
+                if !ledger.records.is_empty() {
+                    crate::kube::resource::format_coverage_summary(&ledger, verbose);
+                }
+            }
 
             // strict: exit 2 only for actual scan failures (not scope info messages)
             let has_scan_failures = scan_warnings.iter().any(|w| {

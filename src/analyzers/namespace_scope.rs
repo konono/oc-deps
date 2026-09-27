@@ -572,6 +572,7 @@ pub struct MultiNamespaceScanResult {
     pub failed_namespaces: Vec<(String, String)>,
 }
 
+#[allow(dead_code)]
 pub async fn scan_candidate_namespaces(
     client: &Client,
     candidates: &[CandidateNamespace],

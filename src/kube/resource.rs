@@ -298,6 +298,16 @@ impl CoverageLedger {
             .count()
     }
 
+    pub fn sort_records(&mut self) {
+        self.records.sort_by(|a, b| {
+            a.gvr
+                .cmp(&b.gvr)
+                .then(a.namespace.cmp(&b.namespace))
+                .then(a.scope.cmp(&b.scope))
+                .then(a.label_selector.cmp(&b.label_selector))
+        });
+    }
+
     pub fn summary(&self) -> CoverageSummary {
         let total = self.records.len();
         let success = self
@@ -2247,5 +2257,132 @@ mod tests {
         let snap: ClusterSnapshot = serde_json::from_value(json).unwrap();
         assert!(snap.schema_version.is_none());
         assert!(snap.scope.is_none());
+    }
+
+    #[test]
+    fn coverage_ledger_sort_deterministic() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "zoo/v1/zebras".into(),
+            namespace: Some("ns-b".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 1, pages: 1 },
+            elapsed_ms: 10,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".into(),
+            namespace: Some("ns-a".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 2, pages: 1 },
+            elapsed_ms: 20,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 3, pages: 1 },
+            elapsed_ms: 30,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.sort_records();
+        assert_eq!(ledger.records[0].gvr, "apps/v1/deployments");
+        assert_eq!(ledger.records[0].namespace, None);
+        assert_eq!(ledger.records[1].gvr, "apps/v1/deployments");
+        assert_eq!(ledger.records[1].namespace.as_deref(), Some("ns-a"));
+        assert_eq!(ledger.records[2].gvr, "zoo/v1/zebras");
+
+        let json1 = serde_json::to_string(&ledger).unwrap();
+        ledger.sort_records();
+        let json2 = serde_json::to_string(&ledger).unwrap();
+        assert_eq!(json1, json2, "sort is idempotent");
+    }
+
+    #[test]
+    fn strict_failure_excludes_optional_absent() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "v1/pods".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 5, pages: 1 },
+            elapsed_ms: 100,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.record(QueryRecord {
+            gvr: "custom/v1/widgets".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::ApiAbsent,
+            elapsed_ms: 5,
+            requirement: QueryRequirement::Optional,
+        });
+        assert!(
+            !ledger.has_required_failures(),
+            "optional absent should not be a required failure"
+        );
+        assert_eq!(ledger.strict_failure_count(), 0);
+    }
+
+    #[test]
+    fn strict_failure_counts_required_forbidden() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "v1/secrets".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Forbidden { status: 403 },
+            elapsed_ms: 10,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.record(QueryRecord {
+            gvr: "custom/v1/widgets".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Forbidden { status: 403 },
+            elapsed_ms: 10,
+            requirement: QueryRequirement::Optional,
+        });
+        assert!(ledger.has_required_failures());
+        assert_eq!(ledger.strict_failure_count(), 1, "only Required 403 counts");
+    }
+
+    #[test]
+    fn coverage_ledger_json_includes_records() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "v1/pods".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 3, pages: 1 },
+            elapsed_ms: 50,
+            requirement: QueryRequirement::Required,
+        });
+        let json = serde_json::to_value(&ledger).unwrap();
+        let records = json["records"].as_array().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["gvr"], "v1/pods");
+        assert_eq!(records[0]["namespace"], "default");
+        assert_eq!(records[0]["scope"], "namespaced");
+        assert_eq!(records[0]["outcome"]["outcome"], "Success");
+        assert_eq!(records[0]["outcome"]["count"], 3);
+        assert_eq!(records[0]["requirement"], "Required");
     }
 }

@@ -17,7 +17,10 @@ use crate::analyzers::olm::{
 use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
-use crate::kube::resource::{ResourceId, ScanWarning, resolve_api};
+use crate::kube::resource::{
+    QueryOutcome, QueryRequirement, ResourceId, ScanWarning, resolve_api, scan_warning_to_outcome,
+};
+use crate::kube::scanner::SharedLedger;
 
 // ── UID binding result ──
 
@@ -1179,6 +1182,172 @@ pub(crate) async fn list_paginated_with_retry(
     }
     let mut w = last_warning.unwrap();
     w.set_retries(DISCOVERY_MAX_RETRIES);
+    Err(w)
+}
+
+#[allow(clippy::too_many_arguments, dead_code)]
+pub(crate) async fn list_paginated_with_retry_ledger(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    let query_start = std::time::Instant::now();
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let mut last_warning = None;
+    for attempt in 0..=DISCOVERY_MAX_RETRIES {
+        let timeout_duration = std::time::Duration::from_secs(DISCOVERY_REQUEST_TIMEOUT_SECS);
+        match tokio::time::timeout(timeout_duration, list_paginated_inner(api)).await {
+            Ok(Ok(items)) => {
+                if let Some(l) = ledger {
+                    let scope = if namespace.is_some() {
+                        "namespaced"
+                    } else {
+                        "cluster"
+                    };
+                    if let Ok(mut lg) = l.lock() {
+                        lg.record(crate::kube::resource::QueryRecord {
+                            gvr: gvr.clone(),
+                            namespace: namespace.map(|s| s.to_string()),
+                            scope: scope.to_string(),
+                            label_selector: None,
+                            field_selector: None,
+                            outcome: QueryOutcome::Success {
+                                count: items.len(),
+                                pages: 1,
+                            },
+                            elapsed_ms: query_start.elapsed().as_millis() as u64,
+                            requirement: requirement.clone(),
+                        });
+                    }
+                }
+                return Ok(items);
+            }
+            Ok(Err(e)) => {
+                let mut warning = ScanWarning::from_kube_error(&e, group, version, plural);
+                if warning.is_retryable() && attempt < DISCOVERY_MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    let msg = format!(
+                        "{} — attempt {}/{} failed; retrying as {}/{} in {}ms",
+                        gvr,
+                        attempt + 1,
+                        DISCOVERY_MAX_RETRIES + 1,
+                        attempt + 2,
+                        DISCOVERY_MAX_RETRIES + 1,
+                        delay.as_millis()
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    last_warning = Some(warning);
+                    continue;
+                }
+                warning.set_retries(attempt);
+                if let Some(l) = ledger {
+                    let scope = if namespace.is_some() {
+                        "namespaced"
+                    } else {
+                        "cluster"
+                    };
+                    if let Ok(mut lg) = l.lock() {
+                        lg.record(crate::kube::resource::QueryRecord {
+                            gvr: gvr.clone(),
+                            namespace: namespace.map(|s| s.to_string()),
+                            scope: scope.to_string(),
+                            label_selector: None,
+                            field_selector: None,
+                            outcome: scan_warning_to_outcome(&warning),
+                            elapsed_ms: query_start.elapsed().as_millis() as u64,
+                            requirement: requirement.clone(),
+                        });
+                    }
+                }
+                return Err(warning);
+            }
+            Err(_elapsed) => {
+                let warning = ScanWarning::Timeout {
+                    gvr: gvr.clone(),
+                    message: Some(format!(
+                        "request timeout ({}s)",
+                        DISCOVERY_REQUEST_TIMEOUT_SECS
+                    )),
+                    retries: attempt,
+                };
+                if attempt < DISCOVERY_MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                    let msg = format!(
+                        "{} — timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
+                        gvr,
+                        DISCOVERY_REQUEST_TIMEOUT_SECS,
+                        attempt + 1,
+                        DISCOVERY_MAX_RETRIES + 1,
+                        attempt + 2,
+                        DISCOVERY_MAX_RETRIES + 1,
+                    );
+                    if is_tty {
+                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                    } else {
+                        eprintln!("   ⚠ {}", msg);
+                    }
+                    tokio::time::sleep(delay).await;
+                    last_warning = Some(warning);
+                    continue;
+                }
+                if let Some(l) = ledger {
+                    let scope = if namespace.is_some() {
+                        "namespaced"
+                    } else {
+                        "cluster"
+                    };
+                    if let Ok(mut lg) = l.lock() {
+                        lg.record(crate::kube::resource::QueryRecord {
+                            gvr: gvr.clone(),
+                            namespace: namespace.map(|s| s.to_string()),
+                            scope: scope.to_string(),
+                            label_selector: None,
+                            field_selector: None,
+                            outcome: scan_warning_to_outcome(&warning),
+                            elapsed_ms: query_start.elapsed().as_millis() as u64,
+                            requirement: requirement.clone(),
+                        });
+                    }
+                }
+                return Err(warning);
+            }
+        }
+    }
+    let mut w = last_warning.unwrap();
+    w.set_retries(DISCOVERY_MAX_RETRIES);
+    if let Some(l) = ledger {
+        let scope = if namespace.is_some() {
+            "namespaced"
+        } else {
+            "cluster"
+        };
+        if let Ok(mut lg) = l.lock() {
+            lg.record(crate::kube::resource::QueryRecord {
+                gvr: gvr.clone(),
+                namespace: namespace.map(|s| s.to_string()),
+                scope: scope.to_string(),
+                label_selector: None,
+                field_selector: None,
+                outcome: scan_warning_to_outcome(&w),
+                elapsed_ms: query_start.elapsed().as_millis() as u64,
+                requirement,
+            });
+        }
+    }
     Err(w)
 }
 
