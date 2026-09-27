@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::analyzers::olm::OperatorInstance;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::{NamespaceIndex, ScanWarning};
-use crate::teardown::planner::discover_cr_instances;
 
 // ──────────────────────────────────────────────────────────────
 //  Namespace validation
@@ -125,12 +124,24 @@ pub struct NamespaceScopeResult {
     pub rejected_candidates: Vec<RejectedNamespaceCandidate>,
 }
 
+#[allow(dead_code)]
 pub async fn discover_operator_namespaces(
     client: &Client,
     operator: &OperatorInstance,
     kind_map: &KindMap,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
+) -> Result<NamespaceScopeResult> {
+    discover_operator_namespaces_opts(client, operator, kind_map, gvr_map, gk_map, None).await
+}
+
+pub async fn discover_operator_namespaces_opts(
+    client: &Client,
+    operator: &OperatorInstance,
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
+    ledger: Option<crate::kube::scanner::SharedLedger>,
 ) -> Result<NamespaceScopeResult> {
     let mut ns_evidence: HashMap<String, Vec<NamespaceEvidence>> = HashMap::new();
     let mut info_messages = Vec::new();
@@ -145,8 +156,13 @@ pub async fn discover_operator_namespaces(
         .push(NamespaceEvidence::InstallNamespace);
 
     // 2. OperatorGroup in install namespace
-    let og_result =
-        discover_operator_group_targets(client, &operator.install_namespace, kind_map).await;
+    let og_result = discover_operator_group_targets_opts(
+        client,
+        &operator.install_namespace,
+        kind_map,
+        ledger.as_ref(),
+    )
+    .await;
     match og_result {
         Ok(OgTargets::Specific(namespaces, source)) => {
             for ns in namespaces {
@@ -167,7 +183,14 @@ pub async fn discover_operator_namespaces(
 
     // 3. Owned CRD instances — discover which namespaces they live in
     if !operator.owned_crds.is_empty() {
-        let cr_report = discover_cr_instances(client, &operator.owned_crds, gvr_map, gk_map).await;
+        let cr_report = crate::teardown::planner::discover_cr_instances_opts(
+            client,
+            &operator.owned_crds,
+            gvr_map,
+            gk_map,
+            ledger.clone(),
+        )
+        .await;
         scan_failures.extend(cr_report.unavailable_crds);
         for cr in &cr_report.instances {
             if let Some(ns) = &cr.id.namespace {
@@ -182,8 +205,14 @@ pub async fn discover_operator_namespaces(
 
     // 3b. Typed spec namespace references — scan CR instance specs for namespace fields
     if !operator.owned_crds.is_empty() {
-        let (spec_ns, spec_failures, spec_rejected) =
-            discover_spec_namespace_refs(client, &operator.owned_crds, gvr_map, gk_map).await;
+        let (spec_ns, spec_failures, spec_rejected) = discover_spec_namespace_refs_opts(
+            client,
+            &operator.owned_crds,
+            gvr_map,
+            gk_map,
+            ledger.as_ref(),
+        )
+        .await;
         scan_failures.extend(spec_failures);
         rejected_candidates.extend(spec_rejected);
         for (ns, source_kind, source_name, field) in spec_ns {
@@ -201,19 +230,24 @@ pub async fn discover_operator_namespaces(
     }
 
     // 4. Label evidence — discover namespaces from related CRD instances with matching labels
-    let (label_pairs, seed_errors) =
-        crate::teardown::planner::compute_part_of_seeds(&operator.owned_crds, kind_map, client)
-            .await;
+    let (label_pairs, seed_errors) = crate::teardown::planner::compute_part_of_seeds_opts(
+        &operator.owned_crds,
+        kind_map,
+        client,
+        ledger.clone(),
+    )
+    .await;
     scan_failures.extend(seed_errors);
     if !label_pairs.is_empty() {
         let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
-        let related_report = crate::teardown::planner::discover_related_crd_instances(
+        let related_report = crate::teardown::planner::discover_related_crd_instances_opts(
             client,
             &owned_crd_set,
             &label_pairs,
             kind_map,
             gvr_map,
             gk_map,
+            ledger.clone(),
         )
         .await;
         scan_failures.extend(related_report.unavailable_crds);
@@ -293,11 +327,26 @@ pub async fn discover_operator_namespaces(
     })
 }
 
+#[allow(dead_code)]
 async fn discover_spec_namespace_refs(
     client: &Client,
     target_crds: &[String],
     gvr_map: &crate::kube::discovery::GvrMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
+) -> (
+    Vec<(String, String, String, String)>,
+    Vec<ScanWarning>,
+    Vec<RejectedNamespaceCandidate>,
+) {
+    discover_spec_namespace_refs_opts(client, target_crds, gvr_map, gk_map, None).await
+}
+
+async fn discover_spec_namespace_refs_opts(
+    client: &Client,
+    target_crds: &[String],
+    gvr_map: &crate::kube::discovery::GvrMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+    ledger: Option<&crate::kube::scanner::SharedLedger>,
 ) -> (
     Vec<(String, String, String, String)>,
     Vec<ScanWarning>,
@@ -328,11 +377,13 @@ async fn discover_spec_namespace_refs(
         let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
         let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
 
-        let items = match crate::teardown::planner::list_paginated_with_retry(
+        let items = match crate::teardown::planner::list_paginated_with_retry_opts(
             &api,
             &kind_info.group,
             &kind_info.version,
             &kind_info.plural,
+            ledger,
+            Some(crate::kube::resource::QueryRequirement::Optional),
         )
         .await
         {
@@ -503,21 +554,33 @@ enum OgTargets {
     AllNamespaces,
 }
 
+#[allow(dead_code)]
 async fn discover_operator_group_targets(
     client: &Client,
     install_namespace: &str,
     _kind_map: &KindMap,
+) -> std::result::Result<OgTargets, ScanWarning> {
+    discover_operator_group_targets_opts(client, install_namespace, _kind_map, None).await
+}
+
+async fn discover_operator_group_targets_opts(
+    client: &Client,
+    install_namespace: &str,
+    _kind_map: &KindMap,
+    ledger: Option<&crate::kube::scanner::SharedLedger>,
 ) -> std::result::Result<OgTargets, ScanWarning> {
     let og_gvk = GroupVersion::gv("operators.coreos.com", "v1").with_kind("OperatorGroup");
     let og_ar = ApiResource::from_gvk_with_plural(&og_gvk, "operatorgroups");
     let og_api: Api<DynamicObject> =
         Api::namespaced_with(client.clone(), install_namespace, &og_ar);
 
-    let og_items = crate::teardown::planner::list_paginated_with_retry(
+    let og_items = crate::teardown::planner::list_paginated_with_retry_opts(
         &og_api,
         "operators.coreos.com",
         "v1",
         "operatorgroups",
+        ledger,
+        Some(crate::kube::resource::QueryRequirement::Required),
     )
     .await?;
 

@@ -223,6 +223,7 @@ pub enum QueryOutcome {
     RateLimited { retries: usize },
     ServerError { status: u16, retries: usize },
     ListUnsupported,
+    TargetMissing,
     Unknown { message: String },
 }
 
@@ -240,7 +241,7 @@ impl QueryOutcome {
     }
 
     pub fn is_absent(&self) -> bool {
-        matches!(self, QueryOutcome::ApiAbsent)
+        matches!(self, QueryOutcome::ApiAbsent | QueryOutcome::TargetMissing)
     }
 
     pub fn is_incomplete(&self, requirement: &QueryRequirement) -> bool {
@@ -407,8 +408,18 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
                     format!("{} Server Error (retries: {})", status, retries)
                 }
                 QueryOutcome::ListUnsupported => "LIST unsupported".to_string(),
+                QueryOutcome::TargetMissing => "Target missing (404)".to_string(),
                 QueryOutcome::Unknown { message } => format!("Unknown ({})", message),
             };
+            let op_str = match r.operation {
+                QueryOperation::Get => "GET",
+                QueryOperation::List => "LIST",
+            };
+            let target_str = r
+                .target_name
+                .as_ref()
+                .map(|n| format!(" target={}", n))
+                .unwrap_or_default();
             let scope_str = r
                 .namespace
                 .as_ref()
@@ -419,11 +430,35 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
                 .as_ref()
                 .map(|s| format!(" selector={}", s))
                 .unwrap_or_default();
+            let field_sel_str = r
+                .field_selector
+                .as_ref()
+                .map(|s| format!(" field_selector={}", s))
+                .unwrap_or_default();
+            let req_str = match r.requirement {
+                QueryRequirement::Required => "required",
+                QueryRequirement::Optional => "optional",
+            };
             eprintln!(
-                "  {} {}{}{} {}ms",
-                r.gvr, outcome_str, scope_str, selector_str, r.elapsed_ms
+                "  {} {} {}{}{}{}{} {}ms [{}]",
+                r.gvr,
+                op_str,
+                outcome_str,
+                target_str,
+                scope_str,
+                selector_str,
+                field_sel_str,
+                r.elapsed_ms,
+                req_str
             );
         }
+    }
+}
+
+pub fn scan_warning_to_outcome_for_get(w: &ScanWarning) -> QueryOutcome {
+    match w {
+        ScanWarning::NotFound { .. } => QueryOutcome::TargetMissing,
+        _ => scan_warning_to_outcome(w),
     }
 }
 
@@ -2531,6 +2566,17 @@ mod tests {
                 },
                 QueryRequirement::Optional,
                 true,
+            ),
+            // TargetMissing: same as ApiAbsent — Required=incomplete, Optional=complete
+            (
+                QueryOutcome::TargetMissing,
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::TargetMissing,
+                QueryRequirement::Optional,
+                false,
             ),
         ];
         for (i, (outcome, req, expected)) in cases.iter().enumerate() {

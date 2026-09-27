@@ -289,6 +289,7 @@ fn is_transient_list_error(error: &kube::Error) -> bool {
     }
 }
 
+#[allow(dead_code)]
 async fn list_all_paginated(
     api: &Api<DynamicObject>,
     label_selector: Option<&str>,
@@ -296,7 +297,21 @@ async fn list_all_paginated(
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, crate::kube::resource::ScanWarning> {
-    use crate::kube::resource::ScanWarning;
+    list_all_paginated_opts(api, label_selector, group, version, plural, None).await
+}
+
+async fn list_all_paginated_opts(
+    api: &Api<DynamicObject>,
+    label_selector: Option<&str>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&crate::kube::scanner::SharedLedger>,
+) -> std::result::Result<Vec<DynamicObject>, crate::kube::resource::ScanWarning> {
+    use crate::kube::resource::{
+        QueryOperation, QueryOutcome, QueryRecord, QueryRequirement, ScanWarning,
+        scan_warning_to_outcome,
+    };
 
     let gvr = if group.is_empty() {
         format!("{}/{}", version, plural)
@@ -304,8 +319,10 @@ async fn list_all_paginated(
         format!("{}/{}/{}", group, version, plural)
     };
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let query_start = std::time::Instant::now();
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
+    let mut pages: usize = 0;
 
     loop {
         let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
@@ -345,6 +362,22 @@ async fn list_all_paginated(
                 Ok(Err(error)) => {
                     let mut w = ScanWarning::from_kube_error(&error, group, version, plural);
                     w.set_retries(attempt - 1);
+                    if let Some(l) = ledger
+                        && let Ok(mut lg) = l.lock()
+                    {
+                        lg.record(QueryRecord {
+                            gvr: gvr.clone(),
+                            namespace: None,
+                            scope: "cluster".to_string(),
+                            operation: QueryOperation::List,
+                            target_name: None,
+                            label_selector: label_selector.map(|s| s.to_string()),
+                            field_selector: None,
+                            outcome: scan_warning_to_outcome(&w),
+                            elapsed_ms: query_start.elapsed().as_millis() as u64,
+                            requirement: QueryRequirement::Required,
+                        });
+                    }
                     return Err(w);
                 }
                 Err(_elapsed) if attempt < LIST_MAX_ATTEMPTS => {
@@ -366,24 +399,62 @@ async fn list_all_paginated(
                     attempt += 1;
                 }
                 Err(_elapsed) => {
-                    return Err(ScanWarning::Timeout {
+                    let w = ScanWarning::Timeout {
                         gvr: gvr.clone(),
                         message: Some(format!(
                             "LIST timeout (30s) after {} attempts",
                             LIST_MAX_ATTEMPTS
                         )),
                         retries: attempt - 1,
-                    });
+                    };
+                    if let Some(l) = ledger
+                        && let Ok(mut lg) = l.lock()
+                    {
+                        lg.record(QueryRecord {
+                            gvr: gvr.clone(),
+                            namespace: None,
+                            scope: "cluster".to_string(),
+                            operation: QueryOperation::List,
+                            target_name: None,
+                            label_selector: label_selector.map(|s| s.to_string()),
+                            field_selector: None,
+                            outcome: scan_warning_to_outcome(&w),
+                            elapsed_ms: query_start.elapsed().as_millis() as u64,
+                            requirement: QueryRequirement::Required,
+                        });
+                    }
+                    return Err(w);
                 }
             }
         };
         let metadata = list.metadata;
         all_items.extend(list.items);
+        pages += 1;
 
         match metadata.continue_.filter(|t| !t.is_empty()) {
             Some(token) => continue_token = Some(token),
             None => break,
         }
+    }
+
+    if let Some(l) = ledger
+        && let Ok(mut lg) = l.lock()
+    {
+        lg.record(QueryRecord {
+            gvr: gvr.clone(),
+            namespace: None,
+            scope: "cluster".to_string(),
+            operation: QueryOperation::List,
+            target_name: None,
+            label_selector: label_selector.map(|s| s.to_string()),
+            field_selector: None,
+            outcome: QueryOutcome::Success {
+                count: all_items.len(),
+                pages,
+            },
+            elapsed_ms: query_start.elapsed().as_millis() as u64,
+            requirement: QueryRequirement::Required,
+        });
     }
 
     Ok(all_items)
@@ -392,6 +463,14 @@ async fn list_all_paginated(
 pub async fn discover_operators(
     client: &Client,
     kind_map: &KindMap,
+) -> Result<Vec<OperatorInstance>> {
+    discover_operators_opts(client, kind_map, None).await
+}
+
+pub async fn discover_operators_opts(
+    client: &Client,
+    kind_map: &KindMap,
+    ledger: Option<crate::kube::scanner::SharedLedger>,
 ) -> Result<Vec<OperatorInstance>> {
     let csv_info = match kind_map.get("ClusterServiceVersion") {
         Some(info) => info.clone(),
@@ -407,23 +486,22 @@ pub async fn discover_operators(
     let sub_ar = ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
     let sub_api: Api<DynamicObject> = Api::all_with(client.clone(), &sub_ar);
 
-    // AllNamespaces operators create copied CSVs in watched namespaces. They carry
-    // olm.copiedFrom and duplicate the canonical CSV's large install strategy.
-    // Exclude them server-side so discovery transfers only real installations.
     let (csv_result, sub_result) = tokio::join!(
-        list_all_paginated(
+        list_all_paginated_opts(
             &csv_api,
             Some(CANONICAL_CSV_LABEL_SELECTOR),
             &csv_info.group,
             &csv_info.version,
             &csv_info.plural,
+            ledger.as_ref(),
         ),
-        list_all_paginated(
+        list_all_paginated_opts(
             &sub_api,
             None,
             "operators.coreos.com",
             "v1alpha1",
             "subscriptions",
+            ledger.as_ref(),
         ),
     );
     let csv_items = csv_result.map_err(|w| anyhow::anyhow!("{}", w))?;
@@ -1235,6 +1313,13 @@ pub fn infer_operator_from_labels(labels: &HashMap<String, String>) -> Option<(S
 pub async fn who_manages(
     input: &WhoManagesInput<'_>,
 ) -> std::result::Result<WhoManagesResult, WhoManagesError> {
+    who_manages_opts(input, None).await
+}
+
+pub async fn who_manages_opts(
+    input: &WhoManagesInput<'_>,
+    ledger: Option<crate::kube::scanner::SharedLedger>,
+) -> std::result::Result<WhoManagesResult, WhoManagesError> {
     let client = input.client;
     let kind = input.kind;
     let target_group = input.group;
@@ -1283,12 +1368,20 @@ pub async fn who_manages(
             Api::all_with(client.clone(), &ar)
         };
 
-        let obj = match crate::kube::scanner::get_with_retry(
+        let ns_for_ledger = if info.namespaced {
+            Some(current_ns.as_str())
+        } else {
+            None
+        };
+        let obj = match crate::kube::scanner::get_with_retry_ledger(
             &api,
             &current_name,
             &info.group,
             &info.version,
             &info.plural,
+            ledger.as_ref(),
+            ns_for_ledger,
+            crate::kube::resource::QueryRequirement::Required,
         )
         .await
         {
@@ -1394,12 +1487,20 @@ pub async fn who_manages(
                     Api::all_with(client.clone(), &next_ar)
                 };
 
-                match crate::kube::scanner::get_with_retry(
+                let parent_ns_for_ledger = if next_info.namespaced {
+                    Some(current_ns.as_str())
+                } else {
+                    None
+                };
+                match crate::kube::scanner::get_with_retry_ledger(
                     &next_api,
                     &oref.name,
                     &next_info.group,
                     &next_info.version,
                     &next_info.plural,
+                    ledger.as_ref(),
+                    parent_ns_for_ledger,
+                    crate::kube::resource::QueryRequirement::Required,
                 )
                 .await
                 {

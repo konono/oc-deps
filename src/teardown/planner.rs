@@ -1171,12 +1171,12 @@ pub(crate) async fn list_paginated_with_retry_opts(
     for attempt in 0..=DISCOVERY_MAX_RETRIES {
         let timeout_duration = std::time::Duration::from_secs(DISCOVERY_REQUEST_TIMEOUT_SECS);
         match tokio::time::timeout(timeout_duration, list_paginated_inner(api)).await {
-            Ok(Ok(items)) => {
+            Ok(Ok((items, pages))) => {
                 record(
                     ledger,
                     QueryOutcome::Success {
                         count: items.len(),
-                        pages: 1,
+                        pages,
                     },
                     query_start.elapsed(),
                     &requirement,
@@ -1266,9 +1266,10 @@ pub(crate) async fn list_paginated_with_retry_opts(
 
 async fn list_paginated_inner(
     api: &Api<DynamicObject>,
-) -> std::result::Result<Vec<DynamicObject>, kube::Error> {
+) -> std::result::Result<(Vec<DynamicObject>, usize), kube::Error> {
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
+    let mut pages: usize = 0;
 
     loop {
         let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
@@ -1278,6 +1279,7 @@ async fn list_paginated_inner(
         let list = api.list(&lp).await?;
         let metadata = list.metadata;
         all_items.extend(list.items);
+        pages += 1;
 
         match metadata.continue_.filter(|t| !t.is_empty()) {
             Some(token) => continue_token = Some(token),
@@ -1285,7 +1287,7 @@ async fn list_paginated_inner(
         }
     }
 
-    Ok(all_items)
+    Ok((all_items, pages))
 }
 
 /// Check Subscription linkage safety for a single operator.

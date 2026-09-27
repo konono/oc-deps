@@ -10,8 +10,7 @@ use kube::{
 use serde::{Deserialize, Serialize};
 
 use crate::analyzers::namespace_scope::{
-    CandidateNamespace, RejectedNamespaceCandidate, discover_operator_namespaces,
-    scan_candidate_namespaces_with_ledger,
+    CandidateNamespace, RejectedNamespaceCandidate, scan_candidate_namespaces_with_ledger,
 };
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
@@ -101,6 +100,7 @@ impl OperatorInspection {
     }
 }
 
+#[allow(dead_code)]
 pub async fn inspect_operator_with_options(
     client: &Client,
     operator: &OperatorInstance,
@@ -108,6 +108,28 @@ pub async fn inspect_operator_with_options(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     cross_namespace: bool,
+) -> Result<OperatorInspection> {
+    inspect_operator_with_options_ledger(
+        client,
+        operator,
+        kind_map,
+        gvr_map,
+        gk_map,
+        cross_namespace,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn inspect_operator_with_options_ledger(
+    client: &Client,
+    operator: &OperatorInstance,
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
+    cross_namespace: bool,
+    external_ledger: Option<SharedLedger>,
 ) -> Result<OperatorInspection> {
     let mut olm_resources = Vec::new();
     let mut controller_resources = Vec::new();
@@ -118,7 +140,8 @@ pub async fn inspect_operator_with_options(
     let mut all_warnings = Vec::new();
     let mut scan_warning_count = 0usize;
     let mut rejected_namespace_candidates = Vec::new();
-    let shared_ledger: SharedLedger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+    let shared_ledger: SharedLedger =
+        external_ledger.unwrap_or_else(|| Arc::new(std::sync::Mutex::new(CoverageLedger::new())));
 
     // OLM resources
     if let Some(sub) = &operator.subscription {
@@ -269,8 +292,15 @@ pub async fn inspect_operator_with_options(
     // Cross-namespace scope discovery + scan (before building categories so cr_resources can grow)
     if cross_namespace {
         eprint!("🔍 Discovering namespace scope...");
-        let scope_result =
-            discover_operator_namespaces(client, operator, kind_map, gvr_map, gk_map).await?;
+        let scope_result = crate::analyzers::namespace_scope::discover_operator_namespaces_opts(
+            client,
+            operator,
+            kind_map,
+            gvr_map,
+            gk_map,
+            Some(shared_ledger.clone()),
+        )
+        .await?;
         eprintln!(
             " found {} candidate namespaces",
             scope_result.candidates.len()

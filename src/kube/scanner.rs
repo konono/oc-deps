@@ -151,7 +151,7 @@ pub async fn get_with_retry_ledger(
                         QueryOperation::Get,
                         Some(name),
                         None,
-                        scan_warning_to_outcome(&w),
+                        scan_warning_to_outcome_for_get(&w),
                         query_start.elapsed(),
                         requirement,
                     );
@@ -1048,6 +1048,23 @@ pub async fn resolve_missing_parents(
     gk_map: &GroupKindMap,
     show_spec: bool,
 ) -> Vec<ScanWarning> {
+    resolve_missing_parents_opts(
+        index, start_uid, client, namespace, kind_map, gk_map, show_spec, None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn resolve_missing_parents_opts(
+    index: &mut NamespaceIndex,
+    start_uid: &str,
+    client: &Client,
+    namespace: &str,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    show_spec: bool,
+    ledger: Option<SharedLedger>,
+) -> Vec<ScanWarning> {
     let mut warnings = Vec::new();
     let mut current = start_uid.to_string();
     let mut visited = HashSet::new();
@@ -1112,12 +1129,20 @@ pub async fn resolve_missing_parents(
             Api::all_with(client.clone(), &ar)
         };
 
-        match get_with_retry(
+        let ns_for_ledger = if kind_info.namespaced {
+            Some(namespace)
+        } else {
+            None
+        };
+        match get_with_retry_ledger(
             &api,
             &owner.name,
             &kind_info.group,
             &kind_info.version,
             &kind_info.plural,
+            ledger.as_ref(),
+            ns_for_ledger,
+            QueryRequirement::Required,
         )
         .await
         {

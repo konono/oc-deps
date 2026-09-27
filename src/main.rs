@@ -40,12 +40,12 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser};
 
 use crate::analyzers::inspect::{
-    inspect_operator_with_options, print_inspection as print_inspection_top,
+    inspect_operator_with_options_ledger, print_inspection as print_inspection_top,
 };
-use crate::analyzers::namespace_scope::discover_operator_namespaces;
+use crate::analyzers::namespace_scope::discover_operator_namespaces_opts;
 use crate::analyzers::olm::{
-    WhoManagesInput, compute_operator_dependencies, discover_operators, print_operators,
-    print_who_manages, who_manages,
+    WhoManagesInput, compute_operator_dependencies, discover_operators, discover_operators_opts,
+    print_operators, print_who_manages, who_manages, who_manages_opts,
 };
 use crate::analyzers::selector::{
     build_network_inventory, build_service_network_path, evaluate_network_postures,
@@ -5028,20 +5028,26 @@ async fn main() -> Result<()> {
                 build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
+            let cmd_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
+                std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
+            );
+
             eprint!("🔍 Discovering operators...");
-            let all_operators = discover_operators(&client, &kind_map).await?;
+            let all_operators =
+                discover_operators_opts(&client, &kind_map, Some(cmd_ledger.clone())).await?;
             eprintln!(" found {} operators", all_operators.len());
 
             let target_indices = resolve_operator_targets(&[operator_query], &all_operators)?;
             let target_op = &all_operators[target_indices[0]];
 
-            let inspection = inspect_operator_with_options(
+            let inspection = inspect_operator_with_options_ledger(
                 &client,
                 target_op,
                 &kind_map,
                 &gvr_map,
                 &gk_map,
                 cross_namespace,
+                Some(cmd_ledger.clone()),
             )
             .await?;
 
@@ -5137,12 +5143,15 @@ async fn main() -> Result<()> {
                 let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
                 let api: ::kube::Api<::kube::api::DynamicObject> =
                     ::kube::Api::all_with(client.clone(), &ar);
-                match crate::kube::scanner::get_with_retry(
+                match crate::kube::scanner::get_with_retry_ledger(
                     &api,
                     &name,
                     &kind_info.group,
                     &kind_info.version,
                     &kind_info.plural,
+                    Some(&trace_ledger),
+                    None,
+                    crate::kube::resource::QueryRequirement::Required,
                 )
                 .await
                 {
@@ -5196,7 +5205,7 @@ async fn main() -> Result<()> {
             if !uids_with_missing_parents.is_empty() {
                 eprint!("🔗 Resolving cluster-scoped parents...");
                 for uid in &uids_with_missing_parents {
-                    let parent_warnings = resolve_missing_parents(
+                    let parent_warnings = crate::kube::scanner::resolve_missing_parents_opts(
                         &mut index,
                         uid,
                         &client,
@@ -5204,6 +5213,7 @@ async fn main() -> Result<()> {
                         &kind_map,
                         &gk_map_trace,
                         false,
+                        Some(trace_ledger.clone()),
                     )
                     .await;
                     scan_warnings.extend(parent_warnings);
@@ -5214,15 +5224,18 @@ async fn main() -> Result<()> {
             // Determine managing operator via who-manages (for same-operator CRD + cross-ns)
             let mut confirmed_csv: Option<String> = None;
             eprint!("🔍 Tracing ownership...");
-            let wm_result = who_manages(&WhoManagesInput {
-                client: &client,
-                kind: &kind,
-                group: &target_group,
-                name: &name,
-                namespace: &namespace,
-                kind_map: &kind_map,
-                gk_map: &gk_map_trace,
-            })
+            let wm_result = who_manages_opts(
+                &WhoManagesInput {
+                    client: &client,
+                    kind: &kind,
+                    group: &target_group,
+                    name: &name,
+                    namespace: &namespace,
+                    kind_map: &kind_map,
+                    gk_map: &gk_map_trace,
+                },
+                Some(trace_ledger.clone()),
+            )
             .await;
             match wm_result {
                 Ok(wm) => {
@@ -5249,18 +5262,20 @@ async fn main() -> Result<()> {
 
             // Cross-namespace scan using confirmed operator
             if cross_namespace && let Some(csv_name) = &confirmed_csv {
-                let operators = discover_operators(&client, &kind_map).await?;
+                let operators =
+                    discover_operators_opts(&client, &kind_map, Some(trace_ledger.clone())).await?;
                 let csv_query = csv_name.to_string();
                 if let Ok(indices) = resolve_operator_targets(&[csv_query], &operators)
                     && let Some(&idx) = indices.first()
                 {
                     let target_op = &operators[idx];
-                    let scope_result = discover_operator_namespaces(
+                    let scope_result = discover_operator_namespaces_opts(
                         &client,
                         target_op,
                         &kind_map,
                         &gvr_map,
                         &gk_map_trace,
+                        Some(trace_ledger.clone()),
                     )
                     .await?;
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
