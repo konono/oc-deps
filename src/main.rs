@@ -5049,14 +5049,7 @@ async fn main() -> Result<()> {
             if let Some(ref ledger) = inspection.coverage_ledger {
                 crate::kube::resource::format_coverage_summary(ledger, verbose);
             }
-            if strict
-                && (inspection.scan_warning_count > 0
-                    || inspection.strict_failure_count > 0
-                    || inspection
-                        .coverage_ledger
-                        .as_ref()
-                        .is_some_and(|l| l.has_required_failures()))
-            {
+            if strict && inspection.should_exit_strict() {
                 std::process::exit(2);
             }
             return Ok(());
@@ -5325,16 +5318,31 @@ async fn main() -> Result<()> {
             } else {
                 "namespace"
             };
-            print_trace(&result, &output, scope_str);
-
-            {
-                let ledger = trace_ledger.lock().unwrap();
-                if !ledger.records.is_empty() {
-                    crate::kube::resource::format_coverage_summary(&ledger, verbose);
+            let (trace_coverage, trace_coverage_ledger) = {
+                let mut ledger = trace_ledger.lock().unwrap();
+                if ledger.records.is_empty() {
+                    (None, None)
+                } else {
+                    ledger.sort_records();
+                    (Some(ledger.summary()), Some(ledger.clone()))
                 }
+            };
+            print_trace(
+                &result,
+                &output,
+                scope_str,
+                trace_coverage,
+                trace_coverage_ledger.clone(),
+            );
+
+            if let Some(ref ledger) = trace_coverage_ledger {
+                crate::kube::resource::format_coverage_summary(ledger, verbose);
             }
 
-            // strict: exit 2 only for actual scan failures (not scope info messages)
+            // strict: exit 2 for ledger incomplete OR scan failures (excluding info messages)
+            let has_ledger_incomplete = trace_coverage_ledger
+                .as_ref()
+                .is_some_and(|l| l.has_incomplete());
             let has_scan_failures = scan_warnings.iter().any(|w| {
                 !matches!(
                     w,
@@ -5342,7 +5350,7 @@ async fn main() -> Result<()> {
                         if message.starts_with("AllNamespaces operator")
                 )
             });
-            if strict && has_scan_failures {
+            if strict && (has_scan_failures || has_ledger_incomplete) {
                 std::process::exit(2);
             }
             return Ok(());

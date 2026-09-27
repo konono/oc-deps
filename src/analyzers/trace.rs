@@ -58,6 +58,10 @@ pub struct TraceResultJson {
     pub warnings: Vec<serde_json::Value>,
     #[serde(rename = "scanWarningCount")]
     pub scan_warning_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<crate::kube::resource::CoverageSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage_ledger: Option<crate::kube::resource::CoverageLedger>,
 }
 
 pub struct TraceResult {
@@ -256,9 +260,15 @@ pub async fn trace_resource(
     })
 }
 
-pub fn print_trace(result: &TraceResult, output: &OutputFormat, scope: &str) {
+pub fn print_trace(
+    result: &TraceResult,
+    output: &OutputFormat,
+    scope: &str,
+    coverage: Option<crate::kube::resource::CoverageSummary>,
+    coverage_ledger: Option<crate::kube::resource::CoverageLedger>,
+) {
     match output {
-        OutputFormat::Json => print_trace_json(result, scope),
+        OutputFormat::Json => print_trace_json(result, scope, coverage, coverage_ledger),
         OutputFormat::Table => print_trace_table(result),
         OutputFormat::Tree => print_trace_tree(result),
     }
@@ -432,7 +442,12 @@ fn print_trace_table(result: &TraceResult) {
     println!("{}", table);
 }
 
-fn print_trace_json(result: &TraceResult, scope: &str) {
+fn print_trace_json(
+    result: &TraceResult,
+    scope: &str,
+    coverage: Option<crate::kube::resource::CoverageSummary>,
+    coverage_ledger: Option<crate::kube::resource::CoverageLedger>,
+) {
     let descendant_count = result.descendants.len();
     let warning_count = result.scan_failures.len();
     let json_result = TraceResultJson {
@@ -448,6 +463,8 @@ fn print_trace_json(result: &TraceResult, scope: &str) {
             .map(|w| serde_json::to_value(w).unwrap_or_else(|_| serde_json::json!(w.to_string())))
             .collect(),
         scan_warning_count: warning_count,
+        coverage,
+        coverage_ledger,
     };
     println!(
         "{}",
@@ -603,6 +620,8 @@ mod tests {
             warnings: vec![],
             scope: "namespace".into(),
             scan_warning_count: 0,
+            coverage: None,
+            coverage_ledger: None,
         };
         let json = serde_json::to_string_pretty(&result).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

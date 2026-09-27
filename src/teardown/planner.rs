@@ -18,7 +18,8 @@ use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{
-    QueryOutcome, QueryRequirement, ResourceId, ScanWarning, resolve_api, scan_warning_to_outcome,
+    QueryOperation, QueryOutcome, QueryRequirement, ResourceId, ScanWarning, resolve_api,
+    scan_warning_to_outcome,
 };
 use crate::kube::scanner::SharedLedger;
 
@@ -621,6 +622,7 @@ async fn discover_one_crd(
     crd_name: &str,
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
+    ledger: Option<SharedLedger>,
 ) -> CrdDiscoveryResult {
     let (plural, group) = match crd_name.split_once('.') {
         Some((p, g)) => (p, g),
@@ -658,11 +660,13 @@ async fn discover_one_crd(
     let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
 
-    let items = match list_paginated_with_retry(
+    let items = match list_paginated_with_retry_opts(
         &api,
         &kind_info.group,
         &kind_info.version,
         &kind_info.plural,
+        ledger.as_ref(),
+        None,
     )
     .await
     {
@@ -739,6 +743,16 @@ pub async fn discover_cr_instances(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> CrDiscoveryReport {
+    discover_cr_instances_opts(client, target_crds, gvr_map, gk_map, None).await
+}
+
+pub async fn discover_cr_instances_opts(
+    client: &Client,
+    target_crds: &[String],
+    gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
+    ledger: Option<SharedLedger>,
+) -> CrDiscoveryReport {
     let unique_crds: Vec<&String> = {
         let mut seen = HashSet::new();
         target_crds
@@ -759,8 +773,9 @@ pub async fn discover_cr_instances(
         let gvr_map = gvr_map.clone();
         let gk_map = gk_map.clone();
         let discovered = discovered.clone();
+        let ledger = ledger.clone();
         async move {
-            let result = discover_one_crd(&client, &crd_name, &gvr_map, &gk_map).await;
+            let result = discover_one_crd(&client, &crd_name, &gvr_map, &gk_map, ledger).await;
             if is_tty {
                 let count = discovered.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 eprint!("\r\x1b[2K   CRD {}/{}: {}", count, total_crds, crd_name);
@@ -1111,90 +1126,19 @@ pub(crate) async fn list_paginated_with_retry(
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
-    let gvr = if group.is_empty() {
-        format!("{}/{}", version, plural)
-    } else {
-        format!("{}/{}/{}", group, version, plural)
-    };
-    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let mut last_warning = None;
-    for attempt in 0..=DISCOVERY_MAX_RETRIES {
-        let timeout_duration = std::time::Duration::from_secs(DISCOVERY_REQUEST_TIMEOUT_SECS);
-        match tokio::time::timeout(timeout_duration, list_paginated_inner(api)).await {
-            Ok(Ok(items)) => return Ok(items),
-            Ok(Err(e)) => {
-                let mut warning = ScanWarning::from_kube_error(&e, group, version, plural);
-                if warning.is_retryable() && attempt < DISCOVERY_MAX_RETRIES {
-                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    let msg = format!(
-                        "{} — attempt {}/{} failed; retrying as {}/{} in {}ms",
-                        gvr,
-                        attempt + 1,
-                        DISCOVERY_MAX_RETRIES + 1,
-                        attempt + 2,
-                        DISCOVERY_MAX_RETRIES + 1,
-                        delay.as_millis()
-                    );
-                    if is_tty {
-                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
-                    } else {
-                        eprintln!("   ⚠ {}", msg);
-                    }
-                    tokio::time::sleep(delay).await;
-                    last_warning = Some(warning);
-                    continue;
-                }
-                warning.set_retries(attempt);
-                return Err(warning);
-            }
-            Err(_elapsed) => {
-                let warning = ScanWarning::Timeout {
-                    gvr: gvr.clone(),
-                    message: Some(format!(
-                        "request timeout ({}s)",
-                        DISCOVERY_REQUEST_TIMEOUT_SECS
-                    )),
-                    retries: attempt,
-                };
-                if attempt < DISCOVERY_MAX_RETRIES {
-                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    let msg = format!(
-                        "{} — timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
-                        gvr,
-                        DISCOVERY_REQUEST_TIMEOUT_SECS,
-                        attempt + 1,
-                        DISCOVERY_MAX_RETRIES + 1,
-                        attempt + 2,
-                        DISCOVERY_MAX_RETRIES + 1,
-                    );
-                    if is_tty {
-                        eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
-                    } else {
-                        eprintln!("   ⚠ {}", msg);
-                    }
-                    tokio::time::sleep(delay).await;
-                    last_warning = Some(warning);
-                    continue;
-                }
-                return Err(warning);
-            }
-        }
-    }
-    let mut w = last_warning.unwrap();
-    w.set_retries(DISCOVERY_MAX_RETRIES);
-    Err(w)
+    list_paginated_with_retry_opts(api, group, version, plural, None, None).await
 }
 
-#[allow(clippy::too_many_arguments, dead_code)]
-pub(crate) async fn list_paginated_with_retry_ledger(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn list_paginated_with_retry_opts(
     api: &Api<DynamicObject>,
     group: &str,
     version: &str,
     plural: &str,
     ledger: Option<&SharedLedger>,
-    namespace: Option<&str>,
-    requirement: QueryRequirement,
+    requirement: Option<QueryRequirement>,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let requirement = requirement.unwrap_or(QueryRequirement::Required);
     let gvr = if group.is_empty() {
         format!("{}/{}", version, plural)
     } else {
@@ -1202,33 +1146,41 @@ pub(crate) async fn list_paginated_with_retry_ledger(
     };
     let query_start = std::time::Instant::now();
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let record = |ledger: Option<&SharedLedger>,
+                  outcome: QueryOutcome,
+                  elapsed: std::time::Duration,
+                  req: &QueryRequirement| {
+        if let Some(l) = ledger
+            && let Ok(mut lg) = l.lock()
+        {
+            lg.record(crate::kube::resource::QueryRecord {
+                gvr: gvr.clone(),
+                namespace: None,
+                scope: "cluster".to_string(),
+                operation: QueryOperation::List,
+                target_name: None,
+                label_selector: None,
+                field_selector: None,
+                outcome,
+                elapsed_ms: elapsed.as_millis() as u64,
+                requirement: req.clone(),
+            });
+        }
+    };
     let mut last_warning = None;
     for attempt in 0..=DISCOVERY_MAX_RETRIES {
         let timeout_duration = std::time::Duration::from_secs(DISCOVERY_REQUEST_TIMEOUT_SECS);
         match tokio::time::timeout(timeout_duration, list_paginated_inner(api)).await {
             Ok(Ok(items)) => {
-                if let Some(l) = ledger {
-                    let scope = if namespace.is_some() {
-                        "namespaced"
-                    } else {
-                        "cluster"
-                    };
-                    if let Ok(mut lg) = l.lock() {
-                        lg.record(crate::kube::resource::QueryRecord {
-                            gvr: gvr.clone(),
-                            namespace: namespace.map(|s| s.to_string()),
-                            scope: scope.to_string(),
-                            label_selector: None,
-                            field_selector: None,
-                            outcome: QueryOutcome::Success {
-                                count: items.len(),
-                                pages: 1,
-                            },
-                            elapsed_ms: query_start.elapsed().as_millis() as u64,
-                            requirement: requirement.clone(),
-                        });
-                    }
-                }
+                record(
+                    ledger,
+                    QueryOutcome::Success {
+                        count: items.len(),
+                        pages: 1,
+                    },
+                    query_start.elapsed(),
+                    &requirement,
+                );
                 return Ok(items);
             }
             Ok(Err(e)) => {
@@ -1254,25 +1206,12 @@ pub(crate) async fn list_paginated_with_retry_ledger(
                     continue;
                 }
                 warning.set_retries(attempt);
-                if let Some(l) = ledger {
-                    let scope = if namespace.is_some() {
-                        "namespaced"
-                    } else {
-                        "cluster"
-                    };
-                    if let Ok(mut lg) = l.lock() {
-                        lg.record(crate::kube::resource::QueryRecord {
-                            gvr: gvr.clone(),
-                            namespace: namespace.map(|s| s.to_string()),
-                            scope: scope.to_string(),
-                            label_selector: None,
-                            field_selector: None,
-                            outcome: scan_warning_to_outcome(&warning),
-                            elapsed_ms: query_start.elapsed().as_millis() as u64,
-                            requirement: requirement.clone(),
-                        });
-                    }
-                }
+                record(
+                    ledger,
+                    scan_warning_to_outcome(&warning),
+                    query_start.elapsed(),
+                    &requirement,
+                );
                 return Err(warning);
             }
             Err(_elapsed) => {
@@ -1304,50 +1243,24 @@ pub(crate) async fn list_paginated_with_retry_ledger(
                     last_warning = Some(warning);
                     continue;
                 }
-                if let Some(l) = ledger {
-                    let scope = if namespace.is_some() {
-                        "namespaced"
-                    } else {
-                        "cluster"
-                    };
-                    if let Ok(mut lg) = l.lock() {
-                        lg.record(crate::kube::resource::QueryRecord {
-                            gvr: gvr.clone(),
-                            namespace: namespace.map(|s| s.to_string()),
-                            scope: scope.to_string(),
-                            label_selector: None,
-                            field_selector: None,
-                            outcome: scan_warning_to_outcome(&warning),
-                            elapsed_ms: query_start.elapsed().as_millis() as u64,
-                            requirement: requirement.clone(),
-                        });
-                    }
-                }
+                record(
+                    ledger,
+                    scan_warning_to_outcome(&warning),
+                    query_start.elapsed(),
+                    &requirement,
+                );
                 return Err(warning);
             }
         }
     }
     let mut w = last_warning.unwrap();
     w.set_retries(DISCOVERY_MAX_RETRIES);
-    if let Some(l) = ledger {
-        let scope = if namespace.is_some() {
-            "namespaced"
-        } else {
-            "cluster"
-        };
-        if let Ok(mut lg) = l.lock() {
-            lg.record(crate::kube::resource::QueryRecord {
-                gvr: gvr.clone(),
-                namespace: namespace.map(|s| s.to_string()),
-                scope: scope.to_string(),
-                label_selector: None,
-                field_selector: None,
-                outcome: scan_warning_to_outcome(&w),
-                elapsed_ms: query_start.elapsed().as_millis() as u64,
-                requirement,
-            });
-        }
-    }
+    record(
+        ledger,
+        scan_warning_to_outcome(&w),
+        query_start.elapsed(),
+        &requirement,
+    );
     Err(w)
 }
 
@@ -1612,6 +1525,15 @@ pub async fn compute_part_of_seeds(
     kind_map: &KindMap,
     client: &Client,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
+    compute_part_of_seeds_opts(target_crds, kind_map, client, None).await
+}
+
+pub async fn compute_part_of_seeds_opts(
+    target_crds: &[String],
+    kind_map: &KindMap,
+    client: &Client,
+    ledger: Option<SharedLedger>,
+) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
     }
@@ -1637,15 +1559,21 @@ pub async fn compute_part_of_seeds(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let crd_items =
-        match list_paginated_with_retry(&crd_api, &crd_ki.group, &crd_ki.version, &crd_ki.plural)
-            .await
-        {
-            Ok(items) => items,
-            Err(w) => {
-                return (HashSet::new(), vec![w]);
-            }
-        };
+    let crd_items = match list_paginated_with_retry_opts(
+        &crd_api,
+        &crd_ki.group,
+        &crd_ki.version,
+        &crd_ki.plural,
+        ledger.as_ref(),
+        None,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(w) => {
+            return (HashSet::new(), vec![w]);
+        }
+    };
 
     // Discover part-of label key/value pairs from target-owned CRDs.
     // Checks standard app.kubernetes.io/part-of and any */part-of key present on
@@ -1697,6 +1625,28 @@ pub async fn discover_related_crd_instances(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> RelatedCrdReport {
+    discover_related_crd_instances_opts(
+        client,
+        target_crds,
+        target_label_pairs,
+        kind_map,
+        gvr_map,
+        gk_map,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_related_crd_instances_opts(
+    client: &Client,
+    target_crds: &HashSet<&str>,
+    target_label_pairs: &HashSet<(String, String)>,
+    kind_map: &KindMap,
+    gvr_map: &GvrMap,
+    gk_map: &GroupKindMap,
+    ledger: Option<SharedLedger>,
+) -> RelatedCrdReport {
     let mut actions = Vec::new();
 
     // If target operator has no part-of labels, skip related discovery entirely
@@ -1731,11 +1681,13 @@ pub async fn discover_related_crd_instances(
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let all_crds = match list_paginated_with_retry(
+    let all_crds = match list_paginated_with_retry_opts(
         &crd_api,
         &crd_kind_info.group,
         &crd_kind_info.version,
         &crd_kind_info.plural,
+        ledger.as_ref(),
+        None,
     )
     .await
     {
@@ -1785,7 +1737,8 @@ pub async fn discover_related_crd_instances(
     }
 
     let related_crd_names: Vec<String> = related_crd_pairs.keys().cloned().collect();
-    let related_report = discover_cr_instances(client, &related_crd_names, gvr_map, gk_map).await;
+    let related_report =
+        discover_cr_instances_opts(client, &related_crd_names, gvr_map, gk_map, ledger).await;
 
     let crd_count = related_crd_names.len();
     let instance_count = related_report.instances.len();

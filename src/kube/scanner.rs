@@ -28,10 +28,13 @@ fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_to_ledger(
     ledger: &SharedLedger,
     gvr: &str,
     namespace: Option<&str>,
+    operation: QueryOperation,
+    target_name: Option<&str>,
     label_selector: Option<&str>,
     outcome: QueryOutcome,
     elapsed: std::time::Duration,
@@ -47,6 +50,8 @@ fn record_to_ledger(
             gvr: gvr.to_string(),
             namespace: namespace.map(|s| s.to_string()),
             scope: scope.to_string(),
+            operation,
+            target_name: target_name.map(|s| s.to_string()),
             label_selector: label_selector.map(|s| s.to_string()),
             field_selector: None,
             outcome,
@@ -107,6 +112,8 @@ pub async fn get_with_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::Get,
+                        Some(name),
                         None,
                         QueryOutcome::Success { count: 1, pages: 1 },
                         query_start.elapsed(),
@@ -141,6 +148,8 @@ pub async fn get_with_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::Get,
+                        Some(name),
                         None,
                         scan_warning_to_outcome(&w),
                         query_start.elapsed(),
@@ -180,6 +189,8 @@ pub async fn get_with_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::Get,
+                        Some(name),
                         None,
                         scan_warning_to_outcome(&w),
                         query_start.elapsed(),
@@ -199,6 +210,8 @@ pub async fn get_with_retry_ledger(
             l,
             &gvr,
             namespace,
+            QueryOperation::Get,
+            Some(name),
             None,
             scan_warning_to_outcome(&w),
             query_start.elapsed(),
@@ -254,6 +267,8 @@ pub async fn list_with_selector_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::List,
+                        None,
                         Some(selector),
                         QueryOutcome::Success {
                             count: items.len(),
@@ -291,6 +306,8 @@ pub async fn list_with_selector_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::List,
+                        None,
                         Some(selector),
                         scan_warning_to_outcome(&w),
                         query_start.elapsed(),
@@ -330,6 +347,8 @@ pub async fn list_with_selector_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::List,
+                        None,
                         Some(selector),
                         scan_warning_to_outcome(&w),
                         query_start.elapsed(),
@@ -349,6 +368,8 @@ pub async fn list_with_selector_retry_ledger(
             l,
             &gvr,
             namespace,
+            QueryOperation::List,
+            None,
             Some(selector),
             scan_warning_to_outcome(&w),
             query_start.elapsed(),
@@ -429,6 +450,8 @@ pub async fn list_all_with_retry_ledger(
                             l,
                             &gvr,
                             namespace,
+                            QueryOperation::List,
+                            None,
                             None,
                             scan_warning_to_outcome(&w),
                             query_start.elapsed(),
@@ -463,6 +486,8 @@ pub async fn list_all_with_retry_ledger(
                             l,
                             &gvr,
                             namespace,
+                            QueryOperation::List,
+                            None,
                             None,
                             scan_warning_to_outcome(&w),
                             query_start.elapsed(),
@@ -492,6 +517,8 @@ pub async fn list_all_with_retry_ledger(
                         l,
                         &gvr,
                         namespace,
+                        QueryOperation::List,
+                        None,
                         None,
                         scan_warning_to_outcome(&w),
                         query_start.elapsed(),
@@ -507,6 +534,8 @@ pub async fn list_all_with_retry_ledger(
             l,
             &gvr,
             namespace,
+            QueryOperation::List,
+            None,
             None,
             QueryOutcome::Success {
                 count: all_items.len(),
@@ -783,6 +812,8 @@ pub async fn scan_namespace_with_semaphore(
                                 l,
                                 &gvr_canonical,
                                 Some(&ns),
+                                QueryOperation::List,
+                                None,
                                 None,
                                 QueryOutcome::Success {
                                     count: item_count,
@@ -826,6 +857,8 @@ pub async fn scan_namespace_with_semaphore(
                                 l,
                                 &gvr_canonical,
                                 Some(&ns),
+                                QueryOperation::List,
+                                None,
                                 None,
                                 scan_warning_to_outcome(&warning),
                                 query_start.elapsed(),
@@ -867,6 +900,8 @@ pub async fn scan_namespace_with_semaphore(
                                 l,
                                 &gvr_canonical,
                                 Some(&ns),
+                                QueryOperation::List,
+                                None,
                                 None,
                                 scan_warning_to_outcome(&warning),
                                 query_start.elapsed(),
@@ -884,6 +919,8 @@ pub async fn scan_namespace_with_semaphore(
                     l,
                     &gvr_canonical,
                     Some(&ns),
+                    QueryOperation::List,
+                    None,
                     None,
                     scan_warning_to_outcome(&w),
                     query_start.elapsed(),
@@ -2347,11 +2384,8 @@ mod tests {
             other => panic!("expected Forbidden, got {:?}", other),
         }
         assert_eq!(rec.requirement, QueryRequirement::Required);
-        assert!(
-            l.has_required_failures(),
-            "403 should be a required failure"
-        );
-        assert_eq!(l.strict_failure_count(), 1);
+        assert!(l.has_incomplete(), "403 should be a required failure");
+        assert_eq!(l.incomplete_count(), 1);
     }
 
     #[tokio::test]
@@ -2424,8 +2458,8 @@ mod tests {
         let summary = l.summary();
         assert_eq!(summary.total_queries, 2);
         assert_eq!(summary.success, 1);
-        assert_eq!(summary.failures, 1);
-        assert!(l.has_required_failures());
+        assert_eq!(summary.incomplete, 1);
+        assert!(l.has_incomplete());
     }
 
     #[tokio::test]
@@ -2511,7 +2545,7 @@ mod tests {
             QueryOutcome::Forbidden { status: 403 }
         ));
         assert_eq!(l.records[0].requirement, QueryRequirement::Required);
-        assert!(l.has_required_failures());
+        assert!(l.has_incomplete());
     }
 
     #[tokio::test]

@@ -227,6 +227,7 @@ pub enum QueryOutcome {
 }
 
 impl QueryOutcome {
+    #[cfg(test)]
     pub fn is_failure(&self) -> bool {
         matches!(
             self,
@@ -241,12 +242,32 @@ impl QueryOutcome {
     pub fn is_absent(&self) -> bool {
         matches!(self, QueryOutcome::ApiAbsent)
     }
+
+    pub fn is_incomplete(&self, requirement: &QueryRequirement) -> bool {
+        match requirement {
+            QueryRequirement::Required => !matches!(self, QueryOutcome::Success { .. }),
+            QueryRequirement::Optional => matches!(
+                self,
+                QueryOutcome::Forbidden { .. }
+                    | QueryOutcome::Timeout { .. }
+                    | QueryOutcome::RateLimited { .. }
+                    | QueryOutcome::ServerError { .. }
+                    | QueryOutcome::Unknown { .. }
+            ),
+        }
+    }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum QueryRequirement {
     Required,
     Optional,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum QueryOperation {
+    List,
+    Get,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -255,6 +276,9 @@ pub struct QueryRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
     pub scope: String,
+    pub operation: QueryOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_selector: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -285,16 +309,16 @@ impl CoverageLedger {
         self.records.push(record);
     }
 
-    pub fn has_required_failures(&self) -> bool {
+    pub fn has_incomplete(&self) -> bool {
         self.records
             .iter()
-            .any(|r| r.requirement == QueryRequirement::Required && r.outcome.is_failure())
+            .any(|r| r.outcome.is_incomplete(&r.requirement))
     }
 
-    pub fn strict_failure_count(&self) -> usize {
+    pub fn incomplete_count(&self) -> usize {
         self.records
             .iter()
-            .filter(|r| r.requirement == QueryRequirement::Required && r.outcome.is_failure())
+            .filter(|r| r.outcome.is_incomplete(&r.requirement))
             .count()
     }
 
@@ -304,7 +328,11 @@ impl CoverageLedger {
                 .cmp(&b.gvr)
                 .then(a.namespace.cmp(&b.namespace))
                 .then(a.scope.cmp(&b.scope))
+                .then(a.operation.cmp(&b.operation))
+                .then(a.target_name.cmp(&b.target_name))
                 .then(a.label_selector.cmp(&b.label_selector))
+                .then(a.field_selector.cmp(&b.field_selector))
+                .then(a.requirement.cmp(&b.requirement))
         });
     }
 
@@ -315,11 +343,7 @@ impl CoverageLedger {
             .iter()
             .filter(|r| matches!(r.outcome, QueryOutcome::Success { .. }))
             .count();
-        let failures = self
-            .records
-            .iter()
-            .filter(|r| r.outcome.is_failure())
-            .count();
+        let incomplete = self.incomplete_count();
         let absent = self
             .records
             .iter()
@@ -329,7 +353,7 @@ impl CoverageLedger {
         CoverageSummary {
             total_queries: total,
             success,
-            failures,
+            incomplete,
             api_absent: absent,
             total_elapsed_ms,
         }
@@ -340,7 +364,7 @@ impl CoverageLedger {
 pub struct CoverageSummary {
     pub total_queries: usize,
     pub success: usize,
-    pub failures: usize,
+    pub incomplete: usize,
     pub api_absent: usize,
     pub total_elapsed_ms: u64,
 }
@@ -350,19 +374,19 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     if is_tty {
         eprintln!(
-            "\n📊 Coverage: {} queries, {} success, {} failures, {} absent ({:.1}s)",
+            "\n📊 Coverage: {} queries, {} success, {} incomplete, {} absent ({:.1}s)",
             summary.total_queries,
             summary.success,
-            summary.failures,
+            summary.incomplete,
             summary.api_absent,
             summary.total_elapsed_ms as f64 / 1000.0
         );
     } else {
         eprintln!(
-            "\nCoverage: {} queries, {} success, {} failures, {} absent ({:.1}s)",
+            "\nCoverage: {} queries, {} success, {} incomplete, {} absent ({:.1}s)",
             summary.total_queries,
             summary.success,
-            summary.failures,
+            summary.incomplete,
             summary.api_absent,
             summary.total_elapsed_ms as f64 / 1000.0
         );
@@ -1348,6 +1372,8 @@ mod tests {
             gvr: "apps/v1/deployments".into(),
             namespace: Some("default".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 3, pages: 1 },
@@ -1358,6 +1384,8 @@ mod tests {
             gvr: "custom.io/v1/widgets".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::ApiAbsent,
@@ -1368,6 +1396,8 @@ mod tests {
             gvr: "v1/secrets".into(),
             namespace: Some("kube-system".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Forbidden { status: 403 },
@@ -1377,7 +1407,7 @@ mod tests {
         let summary = ledger.summary();
         assert_eq!(summary.total_queries, 3);
         assert_eq!(summary.success, 1);
-        assert_eq!(summary.failures, 1);
+        assert_eq!(summary.incomplete, 1);
         assert_eq!(summary.api_absent, 1);
         assert_eq!(summary.total_elapsed_ms, 115);
     }
@@ -1389,19 +1419,23 @@ mod tests {
             gvr: "apps/v1/deployments".into(),
             namespace: Some("default".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 5, pages: 1 },
             elapsed_ms: 50,
             requirement: QueryRequirement::Required,
         });
-        assert!(!ledger.has_required_failures());
-        assert_eq!(ledger.strict_failure_count(), 0);
+        assert!(!ledger.has_incomplete());
+        assert_eq!(ledger.incomplete_count(), 0);
 
         ledger.record(QueryRecord {
             gvr: "custom.io/v1/widgets".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::ApiAbsent,
@@ -1409,7 +1443,7 @@ mod tests {
             requirement: QueryRequirement::Optional,
         });
         assert!(
-            !ledger.has_required_failures(),
+            !ledger.has_incomplete(),
             "optional ApiAbsent should not be strict failure"
         );
 
@@ -1417,14 +1451,16 @@ mod tests {
             gvr: "v1/secrets".into(),
             namespace: Some("ns".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Forbidden { status: 403 },
             elapsed_ms: 10,
             requirement: QueryRequirement::Required,
         });
-        assert!(ledger.has_required_failures());
-        assert_eq!(ledger.strict_failure_count(), 1);
+        assert!(ledger.has_incomplete());
+        assert_eq!(ledger.incomplete_count(), 1);
     }
 
     #[test]
@@ -1434,14 +1470,16 @@ mod tests {
             gvr: "missing.io/v1/things".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::ApiAbsent,
             elapsed_ms: 2,
             requirement: QueryRequirement::Optional,
         });
-        assert!(!ledger.has_required_failures());
-        assert_eq!(ledger.strict_failure_count(), 0);
+        assert!(!ledger.has_incomplete());
+        assert_eq!(ledger.incomplete_count(), 0);
     }
 
     #[test]
@@ -1479,6 +1517,8 @@ mod tests {
             gvr: "apps/v1/deployments".into(),
             namespace: Some("default".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: Some("app=test".into()),
             field_selector: None,
             outcome: QueryOutcome::Success { count: 1, pages: 1 },
@@ -2266,6 +2306,8 @@ mod tests {
             gvr: "zoo/v1/zebras".into(),
             namespace: Some("ns-b".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 1, pages: 1 },
@@ -2276,6 +2318,8 @@ mod tests {
             gvr: "apps/v1/deployments".into(),
             namespace: Some("ns-a".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 2, pages: 1 },
@@ -2286,6 +2330,8 @@ mod tests {
             gvr: "apps/v1/deployments".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 3, pages: 1 },
@@ -2312,6 +2358,8 @@ mod tests {
             gvr: "v1/pods".into(),
             namespace: Some("default".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 5, pages: 1 },
@@ -2322,6 +2370,8 @@ mod tests {
             gvr: "custom/v1/widgets".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::ApiAbsent,
@@ -2329,19 +2379,21 @@ mod tests {
             requirement: QueryRequirement::Optional,
         });
         assert!(
-            !ledger.has_required_failures(),
+            !ledger.has_incomplete(),
             "optional absent should not be a required failure"
         );
-        assert_eq!(ledger.strict_failure_count(), 0);
+        assert_eq!(ledger.incomplete_count(), 0);
     }
 
     #[test]
-    fn strict_failure_counts_required_forbidden() {
+    fn incomplete_counts_required_forbidden() {
         let mut ledger = CoverageLedger::new();
         ledger.record(QueryRecord {
             gvr: "v1/secrets".into(),
             namespace: Some("default".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Forbidden { status: 403 },
@@ -2352,14 +2404,20 @@ mod tests {
             gvr: "custom/v1/widgets".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Forbidden { status: 403 },
             elapsed_ms: 10,
             requirement: QueryRequirement::Optional,
         });
-        assert!(ledger.has_required_failures());
-        assert_eq!(ledger.strict_failure_count(), 1, "only Required 403 counts");
+        assert!(ledger.has_incomplete());
+        assert_eq!(
+            ledger.incomplete_count(),
+            2,
+            "both Required and Optional 403 are incomplete"
+        );
     }
 
     #[test]
@@ -2369,6 +2427,8 @@ mod tests {
             gvr: "v1/pods".into(),
             namespace: Some("default".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 3, pages: 1 },
@@ -2384,5 +2444,105 @@ mod tests {
         assert_eq!(records[0]["outcome"]["outcome"], "Success");
         assert_eq!(records[0]["outcome"]["count"], 3);
         assert_eq!(records[0]["requirement"], "Required");
+    }
+
+    #[test]
+    fn is_incomplete_truth_table() {
+        let cases = vec![
+            // (outcome, requirement, expected_incomplete)
+            (
+                QueryOutcome::Success { count: 1, pages: 1 },
+                QueryRequirement::Required,
+                false,
+            ),
+            (QueryOutcome::ApiAbsent, QueryRequirement::Required, true),
+            (
+                QueryOutcome::ListUnsupported,
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Forbidden { status: 403 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Timeout { retries: 2 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::RateLimited { retries: 1 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::ServerError {
+                    status: 500,
+                    retries: 2,
+                },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Unknown {
+                    message: "err".into(),
+                },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Success { count: 0, pages: 1 },
+                QueryRequirement::Optional,
+                false,
+            ),
+            (QueryOutcome::ApiAbsent, QueryRequirement::Optional, false),
+            (
+                QueryOutcome::ListUnsupported,
+                QueryRequirement::Optional,
+                false,
+            ),
+            (
+                QueryOutcome::Forbidden { status: 403 },
+                QueryRequirement::Optional,
+                true,
+            ),
+            (
+                QueryOutcome::Timeout { retries: 2 },
+                QueryRequirement::Optional,
+                true,
+            ),
+            (
+                QueryOutcome::RateLimited { retries: 1 },
+                QueryRequirement::Optional,
+                true,
+            ),
+            (
+                QueryOutcome::ServerError {
+                    status: 500,
+                    retries: 2,
+                },
+                QueryRequirement::Optional,
+                true,
+            ),
+            (
+                QueryOutcome::Unknown {
+                    message: "err".into(),
+                },
+                QueryRequirement::Optional,
+                true,
+            ),
+        ];
+        for (i, (outcome, req, expected)) in cases.iter().enumerate() {
+            assert_eq!(
+                outcome.is_incomplete(req),
+                *expected,
+                "case {}: {:?} + {:?} should be incomplete={}",
+                i,
+                outcome,
+                req,
+                expected
+            );
+        }
     }
 }

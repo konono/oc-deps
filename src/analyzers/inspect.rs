@@ -16,14 +16,11 @@ use crate::analyzers::namespace_scope::{
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
-use crate::kube::resource::{
-    CoverageLedger, CoverageSummary, QueryRecord, QueryRequirement, ResourceId, ScanWarning,
-    scan_warning_to_outcome,
-};
+use crate::kube::resource::{CoverageLedger, CoverageSummary, QueryRequirement, ResourceId};
 use crate::kube::scanner::SharedLedger;
 use crate::teardown::planner::{
-    CrInstance, Provenance, compute_part_of_seeds, discover_cr_instances,
-    discover_related_crd_instances,
+    CrInstance, Provenance, compute_part_of_seeds_opts, discover_cr_instances_opts,
+    discover_related_crd_instances_opts,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,9 +85,20 @@ pub struct OperatorInspection {
     pub rejected_namespace_candidates: Vec<RejectedNamespaceCandidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoverageSummary>,
-    pub strict_failure_count: usize,
+    pub incomplete_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage_ledger: Option<CoverageLedger>,
+}
+
+impl OperatorInspection {
+    pub fn should_exit_strict(&self) -> bool {
+        self.scan_warning_count > 0
+            || self.incomplete_count > 0
+            || self
+                .coverage_ledger
+                .as_ref()
+                .is_some_and(|l| l.has_incomplete())
+    }
 }
 
 pub async fn inspect_operator_with_options(
@@ -177,29 +185,26 @@ pub async fn inspect_operator_with_options(
             confidence: Confidence::Attributed,
         });
     }
-    record_warnings_to_ledger(&pod_warnings, &shared_ledger, QueryRequirement::Required);
     for w in &pod_warnings {
         all_warnings.push(format!("{}", w));
-        if !w.is_not_found() {
-            scan_warning_count += 1;
-        }
+        scan_warning_count += 1;
     }
     eprintln!(" found {} pods", pods.len());
 
     // CR instances (owned CRDs)
     eprint!("🔍 Discovering CR instances...");
-    let cr_report = discover_cr_instances(client, &operator.owned_crds, gvr_map, gk_map).await;
+    let cr_report = discover_cr_instances_opts(
+        client,
+        &operator.owned_crds,
+        gvr_map,
+        gk_map,
+        Some(shared_ledger.clone()),
+    )
+    .await;
     eprintln!(" found {} instances", cr_report.instances.len());
-    record_warnings_to_ledger(
-        &cr_report.unavailable_crds,
-        &shared_ledger,
-        QueryRequirement::Required,
-    );
     for w in &cr_report.unavailable_crds {
         all_warnings.push(format!("{}", w));
-        if !w.is_not_found() {
-            scan_warning_count += 1;
-        }
+        scan_warning_count += 1;
     }
     for cr in &cr_report.instances {
         let (rel, ev, conf) = classify_cr_instance(cr);
@@ -215,34 +220,30 @@ pub async fn inspect_operator_with_options(
     // Related CRD instances (label-based)
     eprint!("🔍 Discovering related CRDs...");
     let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
-    let (target_part_of_values, seed_errors) =
-        compute_part_of_seeds(&operator.owned_crds, kind_map, client).await;
-    record_warnings_to_ledger(&seed_errors, &shared_ledger, QueryRequirement::Required);
+    let (target_part_of_values, seed_errors) = compute_part_of_seeds_opts(
+        &operator.owned_crds,
+        kind_map,
+        client,
+        Some(shared_ledger.clone()),
+    )
+    .await;
     for w in &seed_errors {
         all_warnings.push(format!("{}", w));
-        if !w.is_not_found() {
-            scan_warning_count += 1;
-        }
+        scan_warning_count += 1;
     }
-    let related_report = discover_related_crd_instances(
+    let related_report = discover_related_crd_instances_opts(
         client,
         &owned_crd_set,
         &target_part_of_values,
         kind_map,
         gvr_map,
         gk_map,
+        Some(shared_ledger.clone()),
     )
     .await;
-    record_warnings_to_ledger(
-        &related_report.unavailable_crds,
-        &shared_ledger,
-        QueryRequirement::Required,
-    );
     for w in &related_report.unavailable_crds {
         all_warnings.push(format!("{}", w));
-        if !w.is_not_found() {
-            scan_warning_count += 1;
-        }
+        scan_warning_count += 1;
     }
     eprintln!(" found {} related instances", related_report.instance_count);
 
@@ -275,16 +276,9 @@ pub async fn inspect_operator_with_options(
             scope_result.candidates.len()
         );
         scope_warnings = scope_result.info_messages;
-        record_warnings_to_ledger(
-            &scope_result.scan_failures,
-            &shared_ledger,
-            QueryRequirement::Optional,
-        );
         for w in &scope_result.scan_failures {
             all_warnings.push(format!("{}", w));
-            if !w.is_not_found() {
-                scan_warning_count += 1;
-            }
+            scan_warning_count += 1;
         }
         namespace_scope = Some(scope_result.candidates.clone());
         rejected_namespace_candidates = scope_result.rejected_candidates;
@@ -302,9 +296,7 @@ pub async fn inspect_operator_with_options(
         all_warnings.extend(scan_result.namespace_warnings);
         for w in &scan_result.scan_warnings {
             all_warnings.push(format!("{}", w));
-            if !w.is_not_found() {
-                scan_warning_count += 1;
-            }
+            scan_warning_count += 1;
         }
         if !scan_result.scanned_namespaces.is_empty() {
             eprintln!(
@@ -444,7 +436,7 @@ pub async fn inspect_operator_with_options(
                 Some(ledger.summary())
             }
         },
-        strict_failure_count: shared_ledger.lock().unwrap().strict_failure_count(),
+        incomplete_count: shared_ledger.lock().unwrap().incomplete_count(),
         coverage_ledger: {
             let mut ledger = shared_ledger.lock().unwrap();
             if ledger.records.is_empty() {
@@ -455,35 +447,6 @@ pub async fn inspect_operator_with_options(
             }
         },
     })
-}
-
-fn record_warnings_to_ledger(
-    warnings: &[ScanWarning],
-    ledger: &SharedLedger,
-    requirement: QueryRequirement,
-) {
-    if let Ok(mut l) = ledger.lock() {
-        for w in warnings {
-            let gvr = match w {
-                ScanWarning::NotFound { gvr }
-                | ScanWarning::Forbidden { gvr, .. }
-                | ScanWarning::Timeout { gvr, .. }
-                | ScanWarning::RateLimited { gvr, .. }
-                | ScanWarning::ServerError { gvr, .. }
-                | ScanWarning::Other { gvr, .. } => gvr.clone(),
-            };
-            l.record(QueryRecord {
-                gvr,
-                namespace: None,
-                scope: "cluster".to_string(),
-                label_selector: None,
-                field_selector: None,
-                outcome: scan_warning_to_outcome(w),
-                elapsed_ms: 0,
-                requirement: requirement.clone(),
-            });
-        }
-    }
 }
 
 fn classify_cr_instance(cr: &CrInstance) -> (Relationship, String, Confidence) {
@@ -933,7 +896,7 @@ mod tests {
             scan_warning_count: 0,
             rejected_namespace_candidates: vec![],
             coverage: None,
-            strict_failure_count: 0,
+            incomplete_count: 0,
             coverage_ledger: None,
         };
         let json = serde_json::to_string(&inspection).unwrap();
@@ -1022,13 +985,17 @@ mod tests {
 
     #[test]
     fn test_inspection_json_includes_coverage_records() {
-        use crate::kube::resource::{CoverageLedger, QueryOutcome, QueryRecord, QueryRequirement};
+        use crate::kube::resource::{
+            CoverageLedger, QueryOperation, QueryOutcome, QueryRecord, QueryRequirement,
+        };
 
         let mut ledger = CoverageLedger::new();
         ledger.record(QueryRecord {
             gvr: "v1/pods".into(),
             namespace: Some("test-ns".into()),
             scope: "namespaced".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::Success { count: 3, pages: 1 },
@@ -1049,7 +1016,7 @@ mod tests {
             scan_warning_count: 0,
             rejected_namespace_candidates: vec![],
             coverage: Some(ledger.summary()),
-            strict_failure_count: 0,
+            incomplete_count: 0,
             coverage_ledger: Some(ledger),
         };
 
@@ -1087,7 +1054,7 @@ mod tests {
             scan_warning_count: 1,
             rejected_namespace_candidates: vec![],
             coverage: None,
-            strict_failure_count: 0,
+            incomplete_count: 0,
             coverage_ledger: None,
         };
 
@@ -1099,13 +1066,17 @@ mod tests {
 
     #[test]
     fn test_strict_not_triggered_by_optional_absent() {
-        use crate::kube::resource::{CoverageLedger, QueryOutcome, QueryRecord, QueryRequirement};
+        use crate::kube::resource::{
+            CoverageLedger, QueryOperation, QueryOutcome, QueryRecord, QueryRequirement,
+        };
 
         let mut ledger = CoverageLedger::new();
         ledger.record(QueryRecord {
             gvr: "custom/v1/widgets".into(),
             namespace: None,
             scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
             label_selector: None,
             field_selector: None,
             outcome: QueryOutcome::ApiAbsent,
@@ -1126,19 +1097,131 @@ mod tests {
             scan_warning_count: 0,
             rejected_namespace_candidates: vec![],
             coverage: Some(ledger.summary()),
-            strict_failure_count: 0,
+            incomplete_count: 0,
             coverage_ledger: Some(ledger),
         };
 
         assert_eq!(inspection.scan_warning_count, 0);
-        assert_eq!(inspection.strict_failure_count, 0);
+        assert_eq!(inspection.incomplete_count, 0);
         assert!(
             !inspection
                 .coverage_ledger
                 .as_ref()
                 .unwrap()
-                .has_required_failures(),
+                .has_incomplete(),
             "optional absent should not be strict failure"
         );
+        assert!(
+            !inspection.should_exit_strict(),
+            "should_exit_strict must be false for optional absent"
+        );
+    }
+
+    #[test]
+    fn test_should_exit_strict_truth_table() {
+        use crate::kube::resource::{
+            CoverageLedger, QueryOperation, QueryOutcome, QueryRecord, QueryRequirement,
+        };
+
+        let make = |scan_warning_count: usize, records: Vec<(QueryOutcome, QueryRequirement)>| {
+            let mut ledger = CoverageLedger::new();
+            for (outcome, req) in records {
+                ledger.record(QueryRecord {
+                    gvr: "v1/test".into(),
+                    namespace: None,
+                    scope: "cluster".into(),
+                    operation: QueryOperation::List,
+                    target_name: None,
+                    label_selector: None,
+                    field_selector: None,
+                    outcome,
+                    elapsed_ms: 0,
+                    requirement: req,
+                });
+            }
+            let incomplete = ledger.incomplete_count();
+            OperatorInspection {
+                operator_name: "t".into(),
+                csv_name: "t.v1".into(),
+                install_namespace: "ns".into(),
+                subscription_name: None,
+                owned_crds: vec![],
+                categories: vec![],
+                namespace_scope: None,
+                scope_warnings: vec![],
+                warnings: vec![],
+                scan_warning_count,
+                rejected_namespace_candidates: vec![],
+                coverage: Some(ledger.summary()),
+                incomplete_count: incomplete,
+                coverage_ledger: Some(ledger),
+            }
+        };
+
+        // No warnings, no records → no strict
+        let i = make(0, vec![]);
+        assert!(!i.should_exit_strict());
+
+        // Success only → no strict
+        let i = make(
+            0,
+            vec![(
+                QueryOutcome::Success { count: 5, pages: 1 },
+                QueryRequirement::Required,
+            )],
+        );
+        assert!(!i.should_exit_strict());
+
+        // Optional absent → no strict
+        let i = make(
+            0,
+            vec![(QueryOutcome::ApiAbsent, QueryRequirement::Optional)],
+        );
+        assert!(!i.should_exit_strict());
+
+        // Required absent → strict (404 on required query)
+        let i = make(
+            0,
+            vec![(QueryOutcome::ApiAbsent, QueryRequirement::Required)],
+        );
+        assert!(i.should_exit_strict(), "Required 404 must trigger strict");
+
+        // Required forbidden → strict
+        let i = make(
+            0,
+            vec![(
+                QueryOutcome::Forbidden { status: 403 },
+                QueryRequirement::Required,
+            )],
+        );
+        assert!(i.should_exit_strict());
+
+        // Optional forbidden → strict (could not determine)
+        let i = make(
+            0,
+            vec![(
+                QueryOutcome::Forbidden { status: 403 },
+                QueryRequirement::Optional,
+            )],
+        );
+        assert!(i.should_exit_strict());
+
+        // scan_warning_count alone → strict
+        let i = make(1, vec![]);
+        assert!(i.should_exit_strict());
+
+        // Optional ListUnsupported → no strict
+        let i = make(
+            0,
+            vec![(QueryOutcome::ListUnsupported, QueryRequirement::Optional)],
+        );
+        assert!(!i.should_exit_strict());
+
+        // Required ListUnsupported → strict
+        let i = make(
+            0,
+            vec![(QueryOutcome::ListUnsupported, QueryRequirement::Required)],
+        );
+        assert!(i.should_exit_strict());
     }
 }
