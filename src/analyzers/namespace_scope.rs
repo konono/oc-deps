@@ -1097,4 +1097,113 @@ mod tests {
         assert_eq!(r2.value, r.value);
         assert_eq!(r2.reason, r.reason);
     }
+
+    #[tokio::test]
+    async fn test_scan_candidate_namespaces_only_requests_valid_candidates() {
+        use kube::client::Body;
+        use std::pin::pin;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::kube::discovery::KindInfo;
+
+        fn json_response(json: serde_json::Value) -> http::Response<Body> {
+            http::Response::builder()
+                .status(200)
+                .body(Body::from(serde_json::to_vec(&json).unwrap()))
+                .unwrap()
+        }
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "ConfigMap".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        // Step 1: Extract namespace fields — one valid, one invalid
+        let spec = serde_json::json!({
+            "limits": [{ "namespace": "redhat-ai-gateway-infra/maas-api-route" }],
+            "targetNamespace": "valid-ns"
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Limitador", "test", &mut results, &mut rejected);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "valid-ns");
+        assert_eq!(rejected.len(), 1);
+
+        // Step 2: Build candidates from results only (production path)
+        let candidates: Vec<CandidateNamespace> = results
+            .iter()
+            .map(|(ns, _, _, _)| CandidateNamespace {
+                namespace: ns.clone(),
+                evidence: vec![],
+            })
+            .collect();
+
+        // Step 3: Call scan_candidate_namespaces with mock server
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+        let request_namespaces: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rn = request_namespaces.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                rc.fetch_add(1, Ordering::SeqCst);
+                let uri = req.uri().to_string();
+                // Extract namespace from URI like /api/v1/namespaces/valid-ns/configmaps
+                if let Some(ns_start) = uri.find("/namespaces/") {
+                    let rest = &uri[ns_start + "/namespaces/".len()..];
+                    if let Some(ns_end) = rest.find('/') {
+                        rn.lock().unwrap().push(rest[..ns_end].to_string());
+                    }
+                }
+                send.send_response(json_response(serde_json::json!({
+                    "apiVersion": "v1",
+                    "kind": "ConfigMapList",
+                    "metadata": {"resourceVersion": "1"},
+                    "items": []
+                })));
+            }
+        });
+
+        let result = scan_candidate_namespaces(&client, &candidates, &kind_map, None).await;
+        drop(client);
+        spawned.abort();
+
+        assert_eq!(
+            result.scanned_namespaces,
+            vec!["valid-ns"],
+            "only valid-ns should be scanned"
+        );
+        let namespaces_requested = request_namespaces.lock().unwrap();
+        assert!(
+            !namespaces_requested.is_empty(),
+            "should have made requests for valid-ns"
+        );
+        for ns in namespaces_requested.iter() {
+            assert_eq!(
+                ns, "valid-ns",
+                "all requests should target valid-ns, got: {}",
+                ns
+            );
+        }
+        assert!(
+            !namespaces_requested
+                .iter()
+                .any(|ns| ns.contains("redhat-ai-gateway-infra")),
+            "no request should target rejected namespace"
+        );
+    }
 }
