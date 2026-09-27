@@ -1,0 +1,7 @@
+{
+  "deterministic": true,
+  "edges": 5196,
+  "entities": 11716,
+  "multi_alias_entities": 4602,
+  "sha256": "f484d1ec65ce1ffa1d432b42cb234e83a6ab86a8f3bbb794779f737519dec2ca"
+}

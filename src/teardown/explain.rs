@@ -289,7 +289,9 @@ fn format_evidence(evidence: &[Evidence], confidence: &Confidence) -> String {
     let ev = evidence
         .first()
         .map(|e| match e {
-            Evidence::OwnerReference => "OwnerReference".to_string(),
+            Evidence::OwnerReference { kind, name, .. } => {
+                format!("OwnerReference: {}/{}", kind, name)
+            }
             Evidence::CsvOwnedCrd { crd_name } => format!("CsvOwnedCrd: {}", crd_name),
             Evidence::CsvRequiredCrd { crd_name } => format!("CsvRequiredCrd: {}", crd_name),
             Evidence::CsvInstallStrategy => "CsvInstallStrategy".to_string(),
@@ -300,6 +302,9 @@ fn format_evidence(evidence: &[Evidence], confidence: &Confidence) -> String {
             Evidence::StorageBinding => "StorageBinding".to_string(),
             Evidence::WebhookService => "WebhookService".to_string(),
             Evidence::ApiServiceBackend => "ApiServiceBackend".to_string(),
+            Evidence::DeclaredCleanup { source, reason } => {
+                format!("DeclaredCleanup: {:?} ({})", source, reason)
+            }
         })
         .unwrap_or_else(|| "unknown".to_string());
     format!("{}: {}", conf, ev)
