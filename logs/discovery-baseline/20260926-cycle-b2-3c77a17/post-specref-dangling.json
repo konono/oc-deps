@@ -1,0 +1,207 @@
+{
+  "total_unique_specref_edges": 2587,
+  "typed_edges": 2155,
+  "heuristic_edges": 432,
+  "dangling_edges": 12,
+  "distinct_removed_targets": 2,
+  "details": [
+    {
+      "source": {
+        "kind": "Deployment",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog",
+        "uid": "e983d126-bc36-41f0-8a55-070b0df2a405"
+      },
+      "target": {
+        "kind": "ConfigMap",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-kube-rbac-proxy-config"
+      },
+      "fieldPath": "spec.template.spec.volumes.[7].configMap.name",
+      "refSource": "typed",
+      "removed_target_uid": "82a79dce-9354-4030-b603-3e3f5836c23f"
+    },
+    {
+      "source": {
+        "kind": "Pod",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969-bcj7m",
+        "uid": "ea6659ad-4465-4acd-979f-664d01f468b5"
+      },
+      "target": {
+        "kind": "ConfigMap",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-kube-rbac-proxy-config"
+      },
+      "fieldPath": "spec.volumes.[7].configMap.name",
+      "refSource": "typed",
+      "removed_target_uid": "82a79dce-9354-4030-b603-3e3f5836c23f"
+    },
+    {
+      "source": {
+        "kind": "ReplicaSet",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969",
+        "uid": "29b36c5d-d03e-4cce-a873-ff4cdec030ae"
+      },
+      "target": {
+        "kind": "ConfigMap",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-kube-rbac-proxy-config"
+      },
+      "fieldPath": "spec.template.spec.volumes.[7].configMap.name",
+      "refSource": "typed",
+      "removed_target_uid": "82a79dce-9354-4030-b603-3e3f5836c23f"
+    },
+    {
+      "source": {
+        "kind": "Deployment",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog",
+        "uid": "e983d126-bc36-41f0-8a55-070b0df2a405"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.template.spec.containers.[0].env.[1].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "Deployment",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog",
+        "uid": "e983d126-bc36-41f0-8a55-070b0df2a405"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.template.spec.containers.[0].env.[2].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "Deployment",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog",
+        "uid": "e983d126-bc36-41f0-8a55-070b0df2a405"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.template.spec.containers.[0].env.[3].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "Pod",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969-bcj7m",
+        "uid": "ea6659ad-4465-4acd-979f-664d01f468b5"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.containers.[0].env.[1].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "Pod",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969-bcj7m",
+        "uid": "ea6659ad-4465-4acd-979f-664d01f468b5"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.containers.[0].env.[2].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "Pod",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969-bcj7m",
+        "uid": "ea6659ad-4465-4acd-979f-664d01f468b5"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.containers.[0].env.[3].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "ReplicaSet",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969",
+        "uid": "29b36c5d-d03e-4cce-a873-ff4cdec030ae"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.template.spec.containers.[0].env.[1].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "ReplicaSet",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969",
+        "uid": "29b36c5d-d03e-4cce-a873-ff4cdec030ae"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.template.spec.containers.[0].env.[2].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    },
+    {
+      "source": {
+        "kind": "ReplicaSet",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-65df688969",
+        "uid": "29b36c5d-d03e-4cce-a873-ff4cdec030ae"
+      },
+      "target": {
+        "kind": "Secret",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-postgres"
+      },
+      "fieldPath": "spec.template.spec.containers.[0].env.[3].valueFrom.secretKeyRef.name",
+      "refSource": "typed",
+      "removed_target_uid": "2c59f29c-cd9e-419a-b9b4-1c1c6e20565d"
+    }
+  ],
+  "coverage_limitations": {
+    "target_group_version": "NOT available (spec-ref matches kind+name only)",
+    "namespace_inference": "same-namespace assumed for all spec-ref targets",
+    "cluster_scoped": "NOT covered (map -A is namespaced-only)",
+    "generic_refs": "heuristic name-match, not GVK-typed"
+  }
+}
