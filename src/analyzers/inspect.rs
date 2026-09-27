@@ -15,7 +15,9 @@ use crate::analyzers::namespace_scope::{
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
-use crate::kube::resource::ResourceId;
+use crate::kube::resource::{
+    CoverageLedger, CoverageSummary, QueryRecord, ResourceId, scan_warning_to_outcome,
+};
 use crate::teardown::planner::{
     CrInstance, Provenance, compute_part_of_seeds, discover_cr_instances,
     discover_related_crd_instances,
@@ -81,6 +83,8 @@ pub struct OperatorInspection {
     pub scan_warning_count: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rejected_namespace_candidates: Vec<RejectedNamespaceCandidate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<CoverageSummary>,
 }
 
 pub async fn inspect_operator_with_options(
@@ -100,6 +104,7 @@ pub async fn inspect_operator_with_options(
     let mut all_warnings = Vec::new();
     let mut scan_warning_count = 0usize;
     let mut rejected_namespace_candidates = Vec::new();
+    let mut coverage_ledger = CoverageLedger::new();
 
     // OLM resources
     if let Some(sub) = &operator.subscription {
@@ -244,7 +249,18 @@ pub async fn inspect_operator_with_options(
         );
         scope_warnings = scope_result.info_messages;
         scan_warning_count += scope_result.scan_failures.len();
-        all_warnings.extend(scope_result.scan_failures.iter().map(|w| format!("{}", w)));
+        for w in &scope_result.scan_failures {
+            all_warnings.push(format!("{}", w));
+            coverage_ledger.record(QueryRecord {
+                gvr: format!("{}", w),
+                namespace: None,
+                scope: "discovery".to_string(),
+                label_selector: None,
+                field_selector: None,
+                outcome: scan_warning_to_outcome(w),
+                elapsed_ms: 0,
+            });
+        }
         namespace_scope = Some(scope_result.candidates.clone());
         rejected_namespace_candidates = scope_result.rejected_candidates;
 
@@ -254,7 +270,18 @@ pub async fn inspect_operator_with_options(
         scope_warnings.extend(scan_result.namespace_warnings.clone());
         all_warnings.extend(scan_result.namespace_warnings);
         scan_warning_count += scan_result.scan_warnings.len();
-        all_warnings.extend(scan_result.scan_warnings.iter().map(|w| format!("{}", w)));
+        for w in &scan_result.scan_warnings {
+            all_warnings.push(format!("{}", w));
+            coverage_ledger.record(QueryRecord {
+                gvr: format!("{}", w),
+                namespace: None,
+                scope: "namespace-scan".to_string(),
+                label_selector: None,
+                field_selector: None,
+                outcome: scan_warning_to_outcome(w),
+                elapsed_ms: 0,
+            });
+        }
         if !scan_result.scanned_namespaces.is_empty() {
             eprintln!(
                 "   Scanned {} namespace(s), {} total resources",
@@ -385,6 +412,11 @@ pub async fn inspect_operator_with_options(
         warnings: all_warnings,
         scan_warning_count,
         rejected_namespace_candidates,
+        coverage: if coverage_ledger.records.is_empty() {
+            None
+        } else {
+            Some(coverage_ledger.summary())
+        },
     })
 }
 
@@ -826,6 +858,7 @@ mod tests {
             warnings: vec![],
             scan_warning_count: 0,
             rejected_namespace_candidates: vec![],
+            coverage: None,
         };
         let json = serde_json::to_string(&inspection).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

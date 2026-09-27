@@ -215,7 +215,6 @@ pub fn format_scan_warnings(warnings: &[ScanWarning], verbose: bool) {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "outcome")]
-#[allow(dead_code)]
 pub enum QueryOutcome {
     Success { count: usize, pages: usize },
     ApiAbsent,
@@ -226,7 +225,6 @@ pub enum QueryOutcome {
     ListUnsupported,
 }
 
-#[allow(dead_code)]
 impl QueryOutcome {
     pub fn is_failure(&self) -> bool {
         matches!(
@@ -244,7 +242,6 @@ impl QueryOutcome {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct QueryRecord {
     pub gvr: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,18 +255,15 @@ pub struct QueryRecord {
     pub elapsed_ms: u64,
 }
 
-#[allow(dead_code)]
 pub const COVERAGE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct CoverageLedger {
     #[serde(default)]
     pub schema_version: Option<u32>,
     pub records: Vec<QueryRecord>,
 }
 
-#[allow(dead_code)]
 impl CoverageLedger {
     pub fn new() -> Self {
         Self {
@@ -311,7 +305,6 @@ impl CoverageLedger {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct CoverageSummary {
     pub total_queries: usize,
     pub success: usize,
@@ -378,7 +371,6 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
     }
 }
 
-#[allow(dead_code)]
 pub fn scan_warning_to_outcome(w: &ScanWarning) -> QueryOutcome {
     match w {
         ScanWarning::NotFound { .. } => QueryOutcome::ApiAbsent,

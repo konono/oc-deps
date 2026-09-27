@@ -2,12 +2,10 @@
 
 ## 1. Current release boundary
 
-PR #35 is cut at product commit `3c77a17`. This commit passed the complete Cycle B
-teardown with 15/15 operators, zero operator failures, explicit RHOAI/RHCL cleanup, plan
-drift validation, and post-delete inventory collection.
+Workstream 1 (typed evidence graph, PR #36) and CLI v2 Phase 5 (PR #37) are merged to
+master. The production commit is `27b952c`.
 
-Phase 1 experimental graph work is preserved separately on branch
-`wip/discovery-phase1`. Do not merge that branch into PR #35.
+Phase 0 corpus remains canonical at commit `3c77a17`. The Cycle B evidence is unchanged.
 
 The canonical Phase 0 evidence is:
 
@@ -127,24 +125,12 @@ Additional oracles:
 - Phase 0 all-GVR pre/post evidence and deterministic offline analyzer.
 - Go operator source study.
 
-## 5. Experimental Phase 1 status
+## 5. Workstream 1 status (merged)
 
-Branch `wip/discovery-phase1` contains an unmerged typed graph prototype. It includes
-relations such as Owns, ApiStewardship, Creates, References, Watches, and CleansUp;
-resolution states; physical UID entities; and alias preservation.
-
-Before resuming it:
-
-1. Use the provider API operand terminology and schema from the corrected Phase 0 corpus.
-2. Keep the graph observational. Do not connect graph-only `can_authorize_delete` logic
-   to the teardown planner without an explicit policy layer.
-3. Validate all 25 cases as ApiStewardship plus their actual lifecycle evidence.
-4. Require DELETE with independent approval and REVIEW without it.
-5. Preserve exact group/kind/namespace/name/UID matching.
-6. Generate deterministic corpus output twice and compare bytes.
-
-The prototype may be simplified or discarded if it does not improve a measured gap.
-Its existence does not require completing a graph redesign.
+Workstream 1 (typed evidence graph) is merged as PR #36. It includes typed relations
+(Owns, ApiStewardship, Creates, References, Watches, CleansUp), resolution states,
+physical UID entities, and alias preservation. The graph remains observational and is
+not connected to teardown authorization.
 
 ## 6. Remaining work, reduced scope
 
