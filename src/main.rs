@@ -451,6 +451,7 @@ async fn cluster_wide_map(
                 show_spec,
                 Some(sem),
                 &[],
+                None,
             )
             .await;
 
@@ -5045,7 +5046,16 @@ async fn main() -> Result<()> {
             .await?;
 
             print_inspection_top(&inspection, &output, verbose);
-            if strict && inspection.scan_warning_count > 0 {
+            if let Some(ref ledger) = inspection.coverage_ledger {
+                crate::kube::resource::format_coverage_summary(ledger, verbose);
+            }
+            if strict
+                && (inspection.strict_failure_count > 0
+                    || inspection
+                        .coverage_ledger
+                        .as_ref()
+                        .is_some_and(|l| l.has_required_failures()))
+            {
                 std::process::exit(2);
             }
             return Ok(());

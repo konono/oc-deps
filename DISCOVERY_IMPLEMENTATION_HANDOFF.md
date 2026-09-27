@@ -128,9 +128,10 @@ Additional oracles:
 ## 5. Workstream 1 status (merged)
 
 Workstream 1 (typed evidence graph) is merged as PR #36. It includes typed relations
-(Owns, ApiStewardship, Creates, References, Watches, CleansUp), resolution states,
-physical UID entities, and alias preservation. The graph remains observational and is
-not connected to teardown authorization.
+(Owns, ApiStewardship, Creates, References, Selects, RequiresApi, UsesStorage,
+ServesWebhook, UsesServiceAccount, ManagedBy), resolution states (Resolved,
+TargetMissing, IdentityMismatch, Ambiguous, Unresolved), and identity verification.
+The graph remains observational and is not connected to teardown authorization.
 
 ## 6. Remaining work, reduced scope
 

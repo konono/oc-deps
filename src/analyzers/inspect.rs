@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::Result;
 use kube::{
@@ -10,14 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::analyzers::namespace_scope::{
     CandidateNamespace, RejectedNamespaceCandidate, discover_operator_namespaces,
-    scan_candidate_namespaces,
+    scan_candidate_namespaces_with_ledger,
 };
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
-use crate::kube::resource::{
-    CoverageLedger, CoverageSummary, QueryRecord, ResourceId, scan_warning_to_outcome,
-};
+use crate::kube::resource::{CoverageLedger, CoverageSummary, ResourceId};
+use crate::kube::scanner::SharedLedger;
 use crate::teardown::planner::{
     CrInstance, Provenance, compute_part_of_seeds, discover_cr_instances,
     discover_related_crd_instances,
@@ -85,6 +85,9 @@ pub struct OperatorInspection {
     pub rejected_namespace_candidates: Vec<RejectedNamespaceCandidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoverageSummary>,
+    pub strict_failure_count: usize,
+    #[serde(skip)]
+    pub coverage_ledger: Option<CoverageLedger>,
 }
 
 pub async fn inspect_operator_with_options(
@@ -104,7 +107,7 @@ pub async fn inspect_operator_with_options(
     let mut all_warnings = Vec::new();
     let mut scan_warning_count = 0usize;
     let mut rejected_namespace_candidates = Vec::new();
-    let mut coverage_ledger = CoverageLedger::new();
+    let shared_ledger: SharedLedger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
 
     // OLM resources
     if let Some(sub) = &operator.subscription {
@@ -249,39 +252,23 @@ pub async fn inspect_operator_with_options(
         );
         scope_warnings = scope_result.info_messages;
         scan_warning_count += scope_result.scan_failures.len();
-        for w in &scope_result.scan_failures {
-            all_warnings.push(format!("{}", w));
-            coverage_ledger.record(QueryRecord {
-                gvr: format!("{}", w),
-                namespace: None,
-                scope: "discovery".to_string(),
-                label_selector: None,
-                field_selector: None,
-                outcome: scan_warning_to_outcome(w),
-                elapsed_ms: 0,
-            });
-        }
+        all_warnings.extend(scope_result.scan_failures.iter().map(|w| format!("{}", w)));
         namespace_scope = Some(scope_result.candidates.clone());
         rejected_namespace_candidates = scope_result.rejected_candidates;
 
-        let scan_result =
-            scan_candidate_namespaces(client, &scope_result.candidates, kind_map, None).await;
+        let scan_result = scan_candidate_namespaces_with_ledger(
+            client,
+            &scope_result.candidates,
+            kind_map,
+            None,
+            Some(shared_ledger.clone()),
+        )
+        .await;
         scan_warning_count += scan_result.namespace_warnings.len();
         scope_warnings.extend(scan_result.namespace_warnings.clone());
         all_warnings.extend(scan_result.namespace_warnings);
         scan_warning_count += scan_result.scan_warnings.len();
-        for w in &scan_result.scan_warnings {
-            all_warnings.push(format!("{}", w));
-            coverage_ledger.record(QueryRecord {
-                gvr: format!("{}", w),
-                namespace: None,
-                scope: "namespace-scan".to_string(),
-                label_selector: None,
-                field_selector: None,
-                outcome: scan_warning_to_outcome(w),
-                elapsed_ms: 0,
-            });
-        }
+        all_warnings.extend(scan_result.scan_warnings.iter().map(|w| format!("{}", w)));
         if !scan_result.scanned_namespaces.is_empty() {
             eprintln!(
                 "   Scanned {} namespace(s), {} total resources",
@@ -412,10 +399,22 @@ pub async fn inspect_operator_with_options(
         warnings: all_warnings,
         scan_warning_count,
         rejected_namespace_candidates,
-        coverage: if coverage_ledger.records.is_empty() {
-            None
-        } else {
-            Some(coverage_ledger.summary())
+        coverage: {
+            let ledger = shared_ledger.lock().unwrap();
+            if ledger.records.is_empty() {
+                None
+            } else {
+                Some(ledger.summary())
+            }
+        },
+        strict_failure_count: shared_ledger.lock().unwrap().strict_failure_count(),
+        coverage_ledger: {
+            let ledger = shared_ledger.lock().unwrap();
+            if ledger.records.is_empty() {
+                None
+            } else {
+                Some(ledger.clone())
+            }
         },
     })
 }
@@ -859,6 +858,8 @@ mod tests {
             scan_warning_count: 0,
             rejected_namespace_candidates: vec![],
             coverage: None,
+            strict_failure_count: 0,
+            coverage_ledger: None,
         };
         let json = serde_json::to_string(&inspection).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

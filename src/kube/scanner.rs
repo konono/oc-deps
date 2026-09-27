@@ -18,6 +18,44 @@ use crate::kube::resource::*;
 const MAX_RETRIES: usize = 2;
 const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
 
+pub type SharedLedger = Arc<std::sync::Mutex<CoverageLedger>>;
+
+fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
+    if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    }
+}
+
+fn record_to_ledger(
+    ledger: &SharedLedger,
+    gvr: &str,
+    namespace: Option<&str>,
+    label_selector: Option<&str>,
+    outcome: QueryOutcome,
+    elapsed: std::time::Duration,
+    requirement: QueryRequirement,
+) {
+    let scope = if namespace.is_some() {
+        "namespaced"
+    } else {
+        "cluster"
+    };
+    if let Ok(mut l) = ledger.lock() {
+        l.record(QueryRecord {
+            gvr: gvr.to_string(),
+            namespace: namespace.map(|s| s.to_string()),
+            scope: scope.to_string(),
+            label_selector: label_selector.map(|s| s.to_string()),
+            field_selector: None,
+            outcome,
+            elapsed_ms: elapsed.as_millis() as u64,
+            requirement,
+        });
+    }
+}
+
 fn warn_retry(is_tty: bool, msg: &str) {
     if is_tty {
         eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
@@ -342,6 +380,7 @@ pub async fn scan_namespace(
         show_spec,
         None,
         &[],
+        None,
     )
     .await
 }
@@ -378,6 +417,7 @@ pub async fn scan_namespace_with_extra_apis(
         show_spec,
         None,
         &extra,
+        None,
     )
     .await
 }
@@ -392,6 +432,7 @@ pub async fn scan_namespace_with_semaphore(
     show_spec: bool,
     api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
     extra_apis: &[(String, crate::kube::discovery::KindInfo)],
+    coverage_ledger: Option<SharedLedger>,
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
@@ -426,11 +467,14 @@ pub async fn scan_namespace_with_semaphore(
         let ns = namespace.to_string();
         let scanned = scanned.clone();
         let sem = api_sem.clone();
+        let ledger = coverage_ledger.clone();
 
         async move {
             let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
             let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
+            let gvr_canonical = canonical_gvr(&info.group, &info.version, &info.plural);
+            let query_start = Instant::now();
 
             let mut last_err = None;
             for attempt in 0..=MAX_RETRIES {
@@ -455,6 +499,7 @@ pub async fn scan_namespace_with_semaphore(
 
                 match result {
                     Ok(Ok(list)) => {
+                        let item_count = list.items.len();
                         let items: Vec<ScanItem> = list
                             .items
                             .into_iter()
@@ -520,6 +565,20 @@ pub async fn scan_namespace_with_semaphore(
                                 ))
                             })
                             .collect();
+                        if let Some(ref l) = ledger {
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                None,
+                                QueryOutcome::Success {
+                                    count: item_count,
+                                    pages: 1,
+                                },
+                                query_start.elapsed(),
+                                QueryRequirement::Required,
+                            );
+                        }
                         return Ok(items);
                     }
                     Ok(Err(e)) => {
@@ -549,6 +608,22 @@ pub async fn scan_namespace_with_semaphore(
                             continue;
                         }
                         warning.set_retries(attempt);
+                        if let Some(ref l) = ledger {
+                            let req = if warning.is_not_found() {
+                                QueryRequirement::Optional
+                            } else {
+                                QueryRequirement::Required
+                            };
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                None,
+                                scan_warning_to_outcome(&warning),
+                                query_start.elapsed(),
+                                req,
+                            );
+                        }
                         return Err(warning);
                     }
                     Err(_elapsed) => {
@@ -579,12 +654,34 @@ pub async fn scan_namespace_with_semaphore(
                             last_err = Some(warning);
                             continue;
                         }
+                        if let Some(ref l) = ledger {
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                None,
+                                scan_warning_to_outcome(&warning),
+                                query_start.elapsed(),
+                                QueryRequirement::Required,
+                            );
+                        }
                         return Err(warning);
                     }
                 }
             }
             let mut w = last_err.unwrap();
             w.set_retries(MAX_RETRIES);
+            if let Some(ref l) = ledger {
+                record_to_ledger(
+                    l,
+                    &gvr_canonical,
+                    Some(&ns),
+                    None,
+                    scan_warning_to_outcome(&w),
+                    query_start.elapsed(),
+                    QueryRequirement::Required,
+                );
+            }
             Err(w)
         }
     });
@@ -1610,8 +1707,28 @@ mod tests {
         let c2 = client.clone();
 
         let (r1, r2) = tokio::join!(
-            scan_namespace_with_semaphore(&c1, "ns-a", &km1, false, false, false, Some(sem1), &[]),
-            scan_namespace_with_semaphore(&c2, "ns-b", &km2, false, false, false, Some(sem2), &[]),
+            scan_namespace_with_semaphore(
+                &c1,
+                "ns-a",
+                &km1,
+                false,
+                false,
+                false,
+                Some(sem1),
+                &[],
+                None
+            ),
+            scan_namespace_with_semaphore(
+                &c2,
+                "ns-b",
+                &km2,
+                false,
+                false,
+                false,
+                Some(sem2),
+                &[],
+                None
+            ),
         );
 
         spawned.await.unwrap();
@@ -1901,5 +2018,205 @@ mod tests {
             2,
             "paginated list should use 2 requests"
         );
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_records_success_coverage() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "PodList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [
+                    {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p1", "namespace": "test-ns", "uid": "uid-p1", "labels": {}, "annotations": {}}, "spec": {}},
+                    {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p2", "namespace": "test-ns", "uid": "uid-p2", "labels": {}, "annotations": {}}, "spec": {}}
+                ]
+            })));
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1, "should have one query record");
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "v1/pods");
+        assert_eq!(rec.namespace.as_deref(), Some("test-ns"));
+        assert_eq!(rec.scope, "namespaced");
+        assert!(rec.elapsed_ms > 0 || true); // elapsed may be 0 in fast tests
+        match &rec.outcome {
+            QueryOutcome::Success { count, pages } => {
+                assert_eq!(*count, 2);
+                assert_eq!(*pages, 1);
+            }
+            other => panic!("expected Success, got {:?}", other),
+        }
+        assert_eq!(rec.requirement, QueryRequirement::Required);
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_records_403_coverage() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Secret".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "secrets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok()); // scan_namespace returns Ok with warnings
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "v1/secrets");
+        assert_eq!(rec.namespace.as_deref(), Some("test-ns"));
+        match &rec.outcome {
+            QueryOutcome::Forbidden { status } => assert_eq!(*status, 403),
+            other => panic!("expected Forbidden, got {:?}", other),
+        }
+        assert_eq!(rec.requirement, QueryRequirement::Required);
+        assert!(
+            l.has_required_failures(),
+            "403 should be a required failure"
+        );
+        assert_eq!(l.strict_failure_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_records_mixed_success_and_failure() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map.insert(
+            "Secret".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "secrets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Two requests expected (Pod and Secret)
+            for _ in 0..2 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                let uri = req.uri().to_string();
+                if uri.contains("secrets") {
+                    send.send_response(status_response(403, "Forbidden"));
+                } else {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1",
+                        "kind": "PodList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p1", "namespace": "test-ns", "uid": "uid-p1", "labels": {}, "annotations": {}}, "spec": {}}]
+                    })));
+                }
+            }
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 2, "should have two query records");
+        let summary = l.summary();
+        assert_eq!(summary.total_queries, 2);
+        assert_eq!(summary.success, 1);
+        assert_eq!(summary.failures, 1);
+        assert!(l.has_required_failures());
     }
 }

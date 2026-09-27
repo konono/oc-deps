@@ -223,6 +223,7 @@ pub enum QueryOutcome {
     RateLimited { retries: usize },
     ServerError { status: u16, retries: usize },
     ListUnsupported,
+    Unknown { message: String },
 }
 
 impl QueryOutcome {
@@ -233,12 +234,19 @@ impl QueryOutcome {
                 | QueryOutcome::Timeout { .. }
                 | QueryOutcome::RateLimited { .. }
                 | QueryOutcome::ServerError { .. }
+                | QueryOutcome::Unknown { .. }
         )
     }
 
     pub fn is_absent(&self) -> bool {
         matches!(self, QueryOutcome::ApiAbsent)
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum QueryRequirement {
+    Required,
+    Optional,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -253,6 +261,7 @@ pub struct QueryRecord {
     pub field_selector: Option<String>,
     pub outcome: QueryOutcome,
     pub elapsed_ms: u64,
+    pub requirement: QueryRequirement,
 }
 
 pub const COVERAGE_SCHEMA_VERSION: u32 = 1;
@@ -274,6 +283,19 @@ impl CoverageLedger {
 
     pub fn record(&mut self, record: QueryRecord) {
         self.records.push(record);
+    }
+
+    pub fn has_required_failures(&self) -> bool {
+        self.records
+            .iter()
+            .any(|r| r.requirement == QueryRequirement::Required && r.outcome.is_failure())
+    }
+
+    pub fn strict_failure_count(&self) -> usize {
+        self.records
+            .iter()
+            .filter(|r| r.requirement == QueryRequirement::Required && r.outcome.is_failure())
+            .count()
     }
 
     pub fn summary(&self) -> CoverageSummary {
@@ -313,7 +335,6 @@ pub struct CoverageSummary {
     pub total_elapsed_ms: u64,
 }
 
-#[allow(dead_code)]
 pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
     let summary = ledger.summary();
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -352,6 +373,7 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
                     format!("{} Server Error (retries: {})", status, retries)
                 }
                 QueryOutcome::ListUnsupported => "LIST unsupported".to_string(),
+                QueryOutcome::Unknown { message } => format!("Unknown ({})", message),
             };
             let scope_str = r
                 .namespace
@@ -383,9 +405,8 @@ pub fn scan_warning_to_outcome(w: &ScanWarning) -> QueryOutcome {
             status: *status,
             retries: *retries,
         },
-        ScanWarning::Other { .. } => QueryOutcome::ServerError {
-            status: 0,
-            retries: 0,
+        ScanWarning::Other { message, .. } => QueryOutcome::Unknown {
+            message: message.clone(),
         },
     }
 }
@@ -1321,6 +1342,7 @@ mod tests {
             field_selector: None,
             outcome: QueryOutcome::Success { count: 3, pages: 1 },
             elapsed_ms: 100,
+            requirement: QueryRequirement::Required,
         });
         ledger.record(QueryRecord {
             gvr: "custom.io/v1/widgets".into(),
@@ -1330,6 +1352,7 @@ mod tests {
             field_selector: None,
             outcome: QueryOutcome::ApiAbsent,
             elapsed_ms: 5,
+            requirement: QueryRequirement::Optional,
         });
         ledger.record(QueryRecord {
             gvr: "v1/secrets".into(),
@@ -1339,6 +1362,7 @@ mod tests {
             field_selector: None,
             outcome: QueryOutcome::Forbidden { status: 403 },
             elapsed_ms: 10,
+            requirement: QueryRequirement::Required,
         });
         let summary = ledger.summary();
         assert_eq!(summary.total_queries, 3);
@@ -1349,9 +1373,91 @@ mod tests {
     }
 
     #[test]
+    fn coverage_ledger_strict_failures() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 5, pages: 1 },
+            elapsed_ms: 50,
+            requirement: QueryRequirement::Required,
+        });
+        assert!(!ledger.has_required_failures());
+        assert_eq!(ledger.strict_failure_count(), 0);
+
+        ledger.record(QueryRecord {
+            gvr: "custom.io/v1/widgets".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::ApiAbsent,
+            elapsed_ms: 5,
+            requirement: QueryRequirement::Optional,
+        });
+        assert!(
+            !ledger.has_required_failures(),
+            "optional ApiAbsent should not be strict failure"
+        );
+
+        ledger.record(QueryRecord {
+            gvr: "v1/secrets".into(),
+            namespace: Some("ns".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Forbidden { status: 403 },
+            elapsed_ms: 10,
+            requirement: QueryRequirement::Required,
+        });
+        assert!(ledger.has_required_failures());
+        assert_eq!(ledger.strict_failure_count(), 1);
+    }
+
+    #[test]
+    fn coverage_ledger_optional_absent_not_strict() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "missing.io/v1/things".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::ApiAbsent,
+            elapsed_ms: 2,
+            requirement: QueryRequirement::Optional,
+        });
+        assert!(!ledger.has_required_failures());
+        assert_eq!(ledger.strict_failure_count(), 0);
+    }
+
+    #[test]
+    fn query_outcome_unknown_is_failure() {
+        let o = QueryOutcome::Unknown {
+            message: "something weird".into(),
+        };
+        assert!(o.is_failure());
+        assert!(!o.is_absent());
+    }
+
+    #[test]
     fn query_outcome_serialization_roundtrip() {
         let o = QueryOutcome::Timeout { retries: 2 };
         let json = serde_json::to_string(&o).unwrap();
+        let o2: QueryOutcome = serde_json::from_str(&json).unwrap();
+        assert!(o2.is_failure());
+    }
+
+    #[test]
+    fn query_outcome_unknown_serialization() {
+        let o = QueryOutcome::Unknown {
+            message: "test error".into(),
+        };
+        let json = serde_json::to_string(&o).unwrap();
+        assert!(json.contains("Unknown"));
         let o2: QueryOutcome = serde_json::from_str(&json).unwrap();
         assert!(o2.is_failure());
     }
@@ -1367,6 +1473,7 @@ mod tests {
             field_selector: None,
             outcome: QueryOutcome::Success { count: 1, pages: 1 },
             elapsed_ms: 50,
+            requirement: QueryRequirement::Required,
         });
         let json = serde_json::to_string(&ledger).unwrap();
         let ledger2: CoverageLedger = serde_json::from_str(&json).unwrap();
@@ -1395,6 +1502,17 @@ mod tests {
         match scan_warning_to_outcome(&w3) {
             QueryOutcome::Timeout { retries } => assert_eq!(retries, 2),
             other => panic!("expected Timeout, got {:?}", other),
+        }
+
+        let w4 = ScanWarning::Other {
+            gvr: "v1/pods".into(),
+            message: "something went wrong".into(),
+        };
+        match scan_warning_to_outcome(&w4) {
+            QueryOutcome::Unknown { message } => {
+                assert_eq!(message, "something went wrong");
+            }
+            other => panic!("expected Unknown, got {:?}", other),
         }
     }
 

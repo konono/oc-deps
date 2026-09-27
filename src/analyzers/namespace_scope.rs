@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::analyzers::olm::OperatorInstance;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::{NamespaceIndex, ScanWarning};
-use crate::kube::scanner::scan_namespace;
 use crate::teardown::planner::discover_cr_instances;
 
 // ──────────────────────────────────────────────────────────────
@@ -84,6 +83,12 @@ pub struct RejectedNamespaceCandidate {
 //  Namespace evidence
 // ──────────────────────────────────────────────────────────────
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NamespaceSource {
+    TypedField,
+    HeuristicSuffix,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NamespaceEvidence {
     InstallNamespace,
@@ -101,6 +106,7 @@ pub enum NamespaceEvidence {
         source_name: String,
         field: String,
         validation: NamespaceValidation,
+        source: NamespaceSource,
     },
 }
 
@@ -189,6 +195,7 @@ pub async fn discover_operator_namespaces(
                     source_name,
                     field,
                     validation: NamespaceValidation::Valid,
+                    source: NamespaceSource::HeuristicSuffix,
                 });
         }
     }
@@ -247,10 +254,14 @@ pub async fn discover_operator_namespaces(
         );
     }
 
-    // Print rejected namespace candidates to stderr
+    // Print rejected namespace candidates to stderr (dedup by value+reason)
     if !rejected_candidates.is_empty() {
         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+        let mut printed = HashSet::new();
         for r in &rejected_candidates {
+            if !printed.insert((r.value.clone(), r.reason.clone())) {
+                continue;
+            }
             if is_tty {
                 eprintln!(
                     "ℹ Rejected namespace candidate \"{}\" (invalid DNS label: {})",
@@ -355,6 +366,26 @@ fn extract_namespace_fields(
     results: &mut Vec<(String, String, String, String)>,
     rejected: &mut Vec<RejectedNamespaceCandidate>,
 ) {
+    extract_namespace_fields_inner(
+        value,
+        path,
+        source_kind,
+        source_name,
+        results,
+        rejected,
+        false,
+    );
+}
+
+fn extract_namespace_fields_inner(
+    value: &serde_json::Value,
+    path: &str,
+    source_kind: &str,
+    source_name: &str,
+    results: &mut Vec<(String, String, String, String)>,
+    rejected: &mut Vec<RejectedNamespaceCandidate>,
+    in_excluded_context: bool,
+) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, val) in map {
@@ -368,13 +399,22 @@ fn extract_namespace_fields(
                     || key_lower.contains("exclude")
                     || key_lower.contains("ignored")
                     || key_lower.contains("ignore");
-                if !is_negative
+                let child_excluded = in_excluded_context || is_negative;
+                if !child_excluded
                     && (key_lower.ends_with("namespace") || key_lower.ends_with("namespaces"))
                     && !key_lower.contains("install")
                 {
                     match val {
-                        serde_json::Value::String(ns) if !ns.is_empty() => {
-                            if is_valid_k8s_namespace(ns) {
+                        serde_json::Value::String(ns) => {
+                            if ns.is_empty() {
+                                rejected.push(RejectedNamespaceCandidate {
+                                    value: String::new(),
+                                    field_path: field_path.clone(),
+                                    source_kind: source_kind.to_string(),
+                                    source_name: source_name.to_string(),
+                                    reason: "empty string".to_string(),
+                                });
+                            } else if is_valid_k8s_namespace(ns) {
                                 results.push((
                                     ns.clone(),
                                     source_kind.to_string(),
@@ -393,10 +433,16 @@ fn extract_namespace_fields(
                         }
                         serde_json::Value::Array(arr) => {
                             for v in arr {
-                                if let serde_json::Value::String(ns) = v
-                                    && !ns.is_empty()
-                                {
-                                    if is_valid_k8s_namespace(ns) {
+                                if let serde_json::Value::String(ns) = v {
+                                    if ns.is_empty() {
+                                        rejected.push(RejectedNamespaceCandidate {
+                                            value: String::new(),
+                                            field_path: field_path.clone(),
+                                            source_kind: source_kind.to_string(),
+                                            source_name: source_name.to_string(),
+                                            reason: "empty string".to_string(),
+                                        });
+                                    } else if is_valid_k8s_namespace(ns) {
                                         results.push((
                                             ns.clone(),
                                             source_kind.to_string(),
@@ -418,26 +464,28 @@ fn extract_namespace_fields(
                         _ => {}
                     }
                 }
-                extract_namespace_fields(
+                extract_namespace_fields_inner(
                     val,
                     &field_path,
                     source_kind,
                     source_name,
                     results,
                     rejected,
+                    child_excluded,
                 );
             }
         }
         serde_json::Value::Array(arr) => {
             for (i, val) in arr.iter().enumerate() {
                 let field_path = format!("{}[{}]", path, i);
-                extract_namespace_fields(
+                extract_namespace_fields_inner(
                     val,
                     &field_path,
                     source_kind,
                     source_name,
                     results,
                     rejected,
+                    in_excluded_context,
                 );
             }
         }
@@ -530,6 +578,16 @@ pub async fn scan_candidate_namespaces(
     kind_map: &KindMap,
     already_scanned: Option<&str>,
 ) -> MultiNamespaceScanResult {
+    scan_candidate_namespaces_with_ledger(client, candidates, kind_map, already_scanned, None).await
+}
+
+pub async fn scan_candidate_namespaces_with_ledger(
+    client: &Client,
+    candidates: &[CandidateNamespace],
+    kind_map: &KindMap,
+    already_scanned: Option<&str>,
+    coverage_ledger: Option<crate::kube::scanner::SharedLedger>,
+) -> MultiNamespaceScanResult {
     let mut combined_index = NamespaceIndex::new();
     let mut all_scan_warnings = Vec::new();
     let mut namespace_warnings = Vec::new();
@@ -570,7 +628,18 @@ pub async fn scan_candidate_namespaces(
             ns,
             elapsed
         );
-        let result = scan_namespace(client, ns, kind_map, false, true, false).await;
+        let result = crate::kube::scanner::scan_namespace_with_semaphore(
+            client,
+            ns,
+            kind_map,
+            false,
+            true,
+            false,
+            None,
+            &[],
+            coverage_ledger.clone(),
+        )
+        .await;
         match result {
             Ok((index, warnings)) => {
                 let resource_count = index.by_uid.len();
@@ -703,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_namespace_skipped() {
+    fn test_empty_namespace_rejected() {
         let spec = serde_json::json!({
             "targetNamespace": "",
             "otherNamespace": "valid-ns"
@@ -713,7 +782,127 @@ mod tests {
         extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "valid-ns");
-        assert!(rejected.is_empty());
+        assert_eq!(rejected.len(), 1, "empty string should be rejected");
+        assert_eq!(rejected[0].reason, "empty string");
+        assert!(rejected[0].value.is_empty());
+    }
+
+    #[test]
+    fn test_empty_namespace_in_array_rejected() {
+        let spec = serde_json::json!({
+            "targetNamespaces": ["valid-ns", "", "also-valid"]
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert_eq!(results.len(), 2);
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].reason, "empty string");
+    }
+
+    #[test]
+    fn test_nested_excluded_context_skips_namespace() {
+        let spec = serde_json::json!({
+            "excluded": {
+                "namespace": "bad-ns"
+            },
+            "targetNamespace": "good-ns"
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "good-ns");
+    }
+
+    #[test]
+    fn test_deeply_nested_excluded_context() {
+        let spec = serde_json::json!({
+            "ignored": {
+                "deep": {
+                    "targetNamespace": "should-skip"
+                }
+            }
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert!(
+            results.is_empty(),
+            "namespace under ignored context should not be extracted"
+        );
+    }
+
+    #[test]
+    fn test_namespace_source_is_heuristic() {
+        // extract_namespace_fields matches by suffix, so all results are heuristic
+        let spec = serde_json::json!({
+            "registriesNamespace": "rhoai-model-registries"
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(
+            &spec,
+            "",
+            "ModelRegistry",
+            "default",
+            &mut results,
+            &mut rejected,
+        );
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_slash_value_excluded_from_candidates_zero_scan_requests() {
+        // Simulates the Limitador case: spec.limits[].namespace =
+        // "redhat-ai-gateway-infra/maas-api-route" alongside a valid namespace.
+        // After extract_namespace_fields, the slash value must be in rejected,
+        // not in results, so scan_candidate_namespaces never receives it.
+        let spec = serde_json::json!({
+            "limits": [
+                {
+                    "namespace": "redhat-ai-gateway-infra/maas-api-route",
+                    "conditions": ["limit.name == test"]
+                }
+            ],
+            "registriesNamespace": "rhoai-model-registries"
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(
+            &spec,
+            "",
+            "Limitador",
+            "kuadrant-limitador",
+            &mut results,
+            &mut rejected,
+        );
+
+        assert_eq!(
+            results.len(),
+            1,
+            "only valid namespace should be in results"
+        );
+        assert_eq!(results[0].0, "rhoai-model-registries");
+        assert_eq!(rejected.len(), 1, "slash value should be rejected");
+        assert_eq!(rejected[0].value, "redhat-ai-gateway-infra/maas-api-route");
+
+        // Build candidates from results only (the production path)
+        let candidates: Vec<CandidateNamespace> = results
+            .iter()
+            .map(|(ns, _, _, _)| CandidateNamespace {
+                namespace: ns.clone(),
+                evidence: vec![],
+            })
+            .collect();
+
+        // Verify rejected value is NOT in candidates
+        assert!(
+            !candidates.iter().any(|c| c.namespace.contains('/')),
+            "rejected namespace must not appear in scan candidates"
+        );
+        // Since no candidate contains the slash value, scan_candidate_namespaces
+        // will never issue a request for it → 0 API requests to invalid namespace.
     }
 
     #[test]
