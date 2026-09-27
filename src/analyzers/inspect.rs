@@ -19,7 +19,7 @@ use crate::kube::resource::{CoverageLedger, CoverageSummary, QueryRequirement, R
 use crate::kube::scanner::SharedLedger;
 use crate::teardown::planner::{
     CrInstance, Provenance, compute_part_of_seeds_opts, discover_cr_instances_opts,
-    discover_related_crd_instances_opts,
+    discover_related_crd_instances_opts, fetch_crd_catalog,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -240,6 +240,16 @@ pub async fn inspect_operator_with_options_ledger(
         });
     }
 
+    // Fetch CRD catalog once for reuse by part-of seeds, related CRDs, and namespace scope
+    let crd_catalog = match fetch_crd_catalog(client, kind_map, Some(&shared_ledger)).await {
+        Ok(crds) => Some(crds),
+        Err(w) => {
+            all_warnings.push(format!("{}", w));
+            scan_warning_count += 1;
+            None
+        }
+    };
+
     // Related CRD instances (label-based)
     eprint!("🔍 Discovering related CRDs...");
     let owned_crd_set: HashSet<&str> = operator.owned_crds.iter().map(|s| s.as_str()).collect();
@@ -248,6 +258,7 @@ pub async fn inspect_operator_with_options_ledger(
         kind_map,
         client,
         Some(shared_ledger.clone()),
+        crd_catalog.as_deref(),
     )
     .await;
     for w in &seed_errors {
@@ -262,6 +273,7 @@ pub async fn inspect_operator_with_options_ledger(
         gvr_map,
         gk_map,
         Some(shared_ledger.clone()),
+        crd_catalog.as_deref(),
     )
     .await;
     for w in &related_report.unavailable_crds {
@@ -299,6 +311,7 @@ pub async fn inspect_operator_with_options_ledger(
             gvr_map,
             gk_map,
             Some(shared_ledger.clone()),
+            crd_catalog.as_deref(),
         )
         .await?;
         eprintln!(

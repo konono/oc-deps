@@ -5276,6 +5276,7 @@ async fn main() -> Result<()> {
                         &gvr_map,
                         &gk_map_trace,
                         Some(trace_ledger.clone()),
+                        None,
                     )
                     .await?;
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());

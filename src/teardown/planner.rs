@@ -1534,7 +1534,39 @@ pub async fn compute_part_of_seeds(
     kind_map: &KindMap,
     client: &Client,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
-    compute_part_of_seeds_opts(target_crds, kind_map, client, None).await
+    compute_part_of_seeds_opts(target_crds, kind_map, client, None, None).await
+}
+
+/// Fetch the full CRD catalog once, for reuse by `compute_part_of_seeds_opts`
+/// and `discover_related_crd_instances_opts`.
+pub async fn fetch_crd_catalog(
+    client: &Client,
+    kind_map: &KindMap,
+    ledger: Option<&SharedLedger>,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let crd_ki = match kind_map.get("CustomResourceDefinition") {
+        Some(i) => i,
+        None => {
+            return Err(ScanWarning::Other {
+                gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
+                message: "CustomResourceDefinition kind not found in discovery".to_string(),
+            });
+        }
+    };
+    let crd_gvk =
+        GroupVersion::gv(&crd_ki.group, &crd_ki.version).with_kind("CustomResourceDefinition");
+    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
+    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+    list_paginated_with_retry_opts(
+        &crd_api,
+        &crd_ki.group,
+        &crd_ki.version,
+        &crd_ki.plural,
+        ledger,
+        None,
+        None,
+    )
+    .await
 }
 
 pub async fn compute_part_of_seeds_opts(
@@ -1542,6 +1574,7 @@ pub async fn compute_part_of_seeds_opts(
     kind_map: &KindMap,
     client: &Client,
     ledger: Option<SharedLedger>,
+    cached_crds: Option<&[DynamicObject]>,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
@@ -1553,35 +1586,42 @@ pub async fn compute_part_of_seeds_opts(
         .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
         .collect();
 
-    let Some(crd_ki) = kind_map.get("CustomResourceDefinition") else {
-        return (
-            HashSet::new(),
-            vec![ScanWarning::Other {
-                gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
-                message: "CustomResourceDefinition kind not found in discovery".to_string(),
-            }],
-        );
-    };
+    let owned_crds;
+    let crd_items: &[DynamicObject] = match cached_crds {
+        Some(crds) => crds,
+        None => {
+            let Some(crd_ki) = kind_map.get("CustomResourceDefinition") else {
+                return (
+                    HashSet::new(),
+                    vec![ScanWarning::Other {
+                        gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
+                        message: "CustomResourceDefinition kind not found in discovery".to_string(),
+                    }],
+                );
+            };
 
-    let crd_gvk =
-        GroupVersion::gv(&crd_ki.group, &crd_ki.version).with_kind("CustomResourceDefinition");
-    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
-    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+            let crd_gvk = GroupVersion::gv(&crd_ki.group, &crd_ki.version)
+                .with_kind("CustomResourceDefinition");
+            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
+            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let crd_items = match list_paginated_with_retry_opts(
-        &crd_api,
-        &crd_ki.group,
-        &crd_ki.version,
-        &crd_ki.plural,
-        ledger.as_ref(),
-        None,
-        None,
-    )
-    .await
-    {
-        Ok(items) => items,
-        Err(w) => {
-            return (HashSet::new(), vec![w]);
+            owned_crds = match list_paginated_with_retry_opts(
+                &crd_api,
+                &crd_ki.group,
+                &crd_ki.version,
+                &crd_ki.plural,
+                ledger.as_ref(),
+                None,
+                None,
+            )
+            .await
+            {
+                Ok(items) => items,
+                Err(w) => {
+                    return (HashSet::new(), vec![w]);
+                }
+            };
+            &owned_crds
         }
     };
 
@@ -1596,7 +1636,7 @@ pub async fn compute_part_of_seeds_opts(
     ];
 
     let mut values = HashSet::new();
-    for crd in &crd_items {
+    for crd in crd_items {
         let crd_name = crd.metadata.name.as_deref().unwrap_or("");
         let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
 
@@ -1643,6 +1683,7 @@ pub async fn discover_related_crd_instances(
         gvr_map,
         gk_map,
         None,
+        None,
     )
     .await
 }
@@ -1656,6 +1697,7 @@ pub async fn discover_related_crd_instances_opts(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
+    cached_crds: Option<&[DynamicObject]>,
 ) -> RelatedCrdReport {
     let mut actions = Vec::new();
 
@@ -1670,54 +1712,62 @@ pub async fn discover_related_crd_instances_opts(
         };
     }
 
-    let crd_kind_info = match kind_map.get("CustomResourceDefinition") {
-        Some(i) => i,
+    let owned_crds;
+    let all_crds: &[DynamicObject] = match cached_crds {
+        Some(crds) => crds,
         None => {
-            return RelatedCrdReport {
-                actions,
-                instances: vec![],
-                unavailable_crds: vec![ScanWarning::Other {
-                    gvr: "<related-crd-catalog>".to_string(),
-                    message: "CustomResourceDefinition kind not found in discovery".to_string(),
-                }],
-                crd_count: 0,
-                instance_count: 0,
+            let crd_kind_info = match kind_map.get("CustomResourceDefinition") {
+                Some(i) => i,
+                None => {
+                    return RelatedCrdReport {
+                        actions,
+                        instances: vec![],
+                        unavailable_crds: vec![ScanWarning::Other {
+                            gvr: "<related-crd-catalog>".to_string(),
+                            message: "CustomResourceDefinition kind not found in discovery"
+                                .to_string(),
+                        }],
+                        crd_count: 0,
+                        instance_count: 0,
+                    };
+                }
             };
-        }
-    };
 
-    let crd_gvk = GroupVersion::gv(&crd_kind_info.group, &crd_kind_info.version)
-        .with_kind("CustomResourceDefinition");
-    let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
-    let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
+            let crd_gvk = GroupVersion::gv(&crd_kind_info.group, &crd_kind_info.version)
+                .with_kind("CustomResourceDefinition");
+            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
+            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
 
-    let all_crds = match list_paginated_with_retry_opts(
-        &crd_api,
-        &crd_kind_info.group,
-        &crd_kind_info.version,
-        &crd_kind_info.plural,
-        ledger.as_ref(),
-        None,
-        None,
-    )
-    .await
-    {
-        Ok(items) => items,
-        Err(w) => {
-            return RelatedCrdReport {
-                actions,
-                instances: vec![],
-                unavailable_crds: vec![w],
-                crd_count: 0,
-                instance_count: 0,
+            owned_crds = match list_paginated_with_retry_opts(
+                &crd_api,
+                &crd_kind_info.group,
+                &crd_kind_info.version,
+                &crd_kind_info.plural,
+                ledger.as_ref(),
+                None,
+                None,
+            )
+            .await
+            {
+                Ok(items) => items,
+                Err(w) => {
+                    return RelatedCrdReport {
+                        actions,
+                        instances: vec![],
+                        unavailable_crds: vec![w],
+                        crd_count: 0,
+                        instance_count: 0,
+                    };
+                }
             };
+            &owned_crds
         }
     };
 
     // Scope CRD types by label pair match — record which pairs matched per CRD
     let mut related_crd_pairs: std::collections::HashMap<String, Vec<(String, String)>> =
         std::collections::HashMap::new();
-    for crd in &all_crds {
+    for crd in all_crds {
         let crd_name = match &crd.metadata.name {
             Some(n) => n,
             None => continue,

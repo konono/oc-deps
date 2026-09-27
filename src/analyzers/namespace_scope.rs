@@ -132,9 +132,10 @@ pub async fn discover_operator_namespaces(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> Result<NamespaceScopeResult> {
-    discover_operator_namespaces_opts(client, operator, kind_map, gvr_map, gk_map, None).await
+    discover_operator_namespaces_opts(client, operator, kind_map, gvr_map, gk_map, None, None).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn discover_operator_namespaces_opts(
     client: &Client,
     operator: &OperatorInstance,
@@ -142,6 +143,7 @@ pub async fn discover_operator_namespaces_opts(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<crate::kube::scanner::SharedLedger>,
+    cached_crds: Option<&[kube::api::DynamicObject]>,
 ) -> Result<NamespaceScopeResult> {
     let mut ns_evidence: HashMap<String, Vec<NamespaceEvidence>> = HashMap::new();
     let mut info_messages = Vec::new();
@@ -235,6 +237,7 @@ pub async fn discover_operator_namespaces_opts(
         kind_map,
         client,
         ledger.clone(),
+        cached_crds,
     )
     .await;
     scan_failures.extend(seed_errors);
@@ -248,6 +251,7 @@ pub async fn discover_operator_namespaces_opts(
             gvr_map,
             gk_map,
             ledger.clone(),
+            cached_crds,
         )
         .await;
         scan_failures.extend(related_report.unavailable_crds);
