@@ -235,7 +235,7 @@ pub fn csv_package_evidence_is_exclusive(
     evidence_packages.len() == 1 && evidence_packages.contains(expected_pkg)
 }
 
-fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
+pub fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
     let mut packages = Vec::new();
     let annotations = match csv.metadata.annotations.as_ref() {
         Some(a) => a,
@@ -264,6 +264,8 @@ fn extract_annotation_packages(csv: &DynamicObject) -> Vec<String> {
                 };
                 if let Some(pkg_info) = pkg_value
                     && let Some(name) = pkg_info.get("packageName").and_then(|n| n.as_str())
+                    && !name.trim().is_empty()
+                    && name == name.trim()
                     && !packages.contains(&name.to_string())
                 {
                     packages.push(name.to_string());
@@ -429,7 +431,7 @@ pub async fn discover_operators(
 
     // P1-2: key by (sub_namespace, csv_name) so same CSV name in different
     // namespaces via different Subscriptions produces separate installations
-    let mut sub_by_csv: HashMap<String, Vec<&DynamicObject>> = HashMap::new();
+    let mut sub_by_csv: HashMap<(String, String), Vec<&DynamicObject>> = HashMap::new();
     let mut matched_sub_uids: HashSet<String> = HashSet::new();
     for sub in &sub_items {
         let csv_name_from_status = sub.data.get("status").and_then(|s| {
@@ -470,7 +472,7 @@ pub async fn discover_operators(
                     matched_sub_uids.insert(uid.clone());
                 }
                 sub_by_csv
-                    .entry(csv_name.to_string())
+                    .entry((sub_ns.to_string(), csv_name.to_string()))
                     .or_default()
                     .push(sub);
             }
@@ -513,8 +515,18 @@ pub async fn discover_operators(
             }
 
             if matched_csvs.len() == 1 {
+                // Verify annotation evidence doesn't contradict label link
+                let csv_obj = csv_items.iter().find(|c| {
+                    c.metadata.name.as_deref() == Some(&matched_csvs[0])
+                        && c.metadata.namespace.as_deref() == Some(sub_ns)
+                });
+                if let Some(csv_obj) = csv_obj
+                    && !csv_package_evidence_is_exclusive(csv_obj, pkg, sub_ns)
+                {
+                    continue;
+                }
                 sub_by_csv
-                    .entry(matched_csvs[0].clone())
+                    .entry((sub_ns.to_string(), matched_csvs[0].clone()))
                     .or_default()
                     .push(sub);
             }
@@ -548,7 +560,7 @@ pub async fn discover_operators(
         let csv_ns = csv.metadata.namespace.as_deref().unwrap_or("unknown");
 
         // Find matching subscription(s) for this CSV name
-        let matching_subs = sub_by_csv.get(&csv_name);
+        let matching_subs = sub_by_csv.get(&(csv_ns.to_string(), csv_name.clone()));
 
         if let Some(subs) = matching_subs {
             for sub in subs {
@@ -614,7 +626,7 @@ pub async fn discover_operators(
         // 2. No Sub linked but Subs exist in namespace
         // 3. Sub linked but same-package Subs exist that aren't accounted for
         let multiple_subs_for_csv = sub_by_csv
-            .get(csv_name.as_str())
+            .get(&(csv_ns.to_string(), csv_name.clone()))
             .is_some_and(|subs| subs.len() > 1);
 
         let same_pkg_unaccounted_subs = if let Some(pkg) = pkg_name {
@@ -644,9 +656,21 @@ pub async fn discover_operators(
                     .iter()
                     .any(|sub| sub.metadata.namespace.as_deref() == Some(csv_ns.as_str())));
 
+        // Derive package_name: subscription > CSV annotation > None
+        let effective_package_name = if pkg_name.is_some() {
+            pkg_name.clone()
+        } else {
+            let annotation_pkgs = extract_annotation_packages(csv);
+            if annotation_pkgs.len() == 1 {
+                Some(annotation_pkgs[0].clone())
+            } else {
+                None
+            }
+        };
+
         operators.push(OperatorInstance {
             subscription: subscription.clone(),
-            package_name: pkg_name.clone(),
+            package_name: effective_package_name,
             csv: ResourceId {
                 group: csv_info.group.clone(),
                 version: csv_info.version.clone(),
@@ -1854,5 +1878,372 @@ mod tests {
         assert!(!is_transient_list_error(&api_error(400)));
         assert!(!is_transient_list_error(&api_error(403)));
         assert!(!is_transient_list_error(&api_error(404)));
+    }
+
+    fn make_csv_with_annotation(annotation: &str) -> kube::api::DynamicObject {
+        let mut obj = kube::api::DynamicObject::new(
+            "test-csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        obj.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            annotation.to_string(),
+        )]));
+        obj
+    }
+
+    #[test]
+    fn extract_annotation_packages_array_single() {
+        let csv = make_csv_with_annotation(
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"rhods-operator\",\"version\":\"3.5.1\"}"}]"#,
+        );
+        let pkgs = extract_annotation_packages(&csv);
+        assert_eq!(pkgs, vec!["rhods-operator"]);
+    }
+
+    #[test]
+    fn extract_annotation_packages_object_properties() {
+        let csv = make_csv_with_annotation(
+            r#"{"properties":[{"type":"olm.package","value":{"packageName":"my-operator","version":"1.0"}}]}"#,
+        );
+        let pkgs = extract_annotation_packages(&csv);
+        assert_eq!(pkgs, vec!["my-operator"]);
+    }
+
+    #[test]
+    fn extract_annotation_packages_empty_annotation() {
+        let csv = make_csv_with_annotation("[]");
+        let pkgs = extract_annotation_packages(&csv);
+        assert!(pkgs.is_empty());
+    }
+
+    #[test]
+    fn extract_annotation_packages_no_olm_package_type() {
+        let csv =
+            make_csv_with_annotation(r#"[{"type":"olm.gvk","value":{"group":"example.com"}}]"#);
+        let pkgs = extract_annotation_packages(&csv);
+        assert!(pkgs.is_empty());
+    }
+
+    #[test]
+    fn extract_annotation_packages_invalid_json() {
+        let csv = make_csv_with_annotation("not valid json");
+        let pkgs = extract_annotation_packages(&csv);
+        assert!(pkgs.is_empty());
+    }
+
+    #[test]
+    fn extract_annotation_packages_multiple_distinct() {
+        let csv = make_csv_with_annotation(
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"pkg-a\"}"},{"type":"olm.package","value":"{\"packageName\":\"pkg-b\"}"}]"#,
+        );
+        let pkgs = extract_annotation_packages(&csv);
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains(&"pkg-a".to_string()));
+        assert!(pkgs.contains(&"pkg-b".to_string()));
+    }
+
+    #[test]
+    fn extract_annotation_packages_no_annotation() {
+        let obj = kube::api::DynamicObject::new(
+            "test-csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        let pkgs = extract_annotation_packages(&obj);
+        assert!(pkgs.is_empty());
+    }
+
+    // ── discover_operators tower_test mock tests ──
+
+    use http::Response;
+    use kube::Client;
+    use std::pin::pin;
+    use tower_test::mock::Handle;
+
+    fn mock_list_response_olm(items: Vec<serde_json::Value>) -> Response<kube::client::Body> {
+        let body = serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "List",
+            "metadata": {"resourceVersion": "1"},
+            "items": items,
+        });
+        Response::builder()
+            .status(200)
+            .body(kube::client::Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn make_csv_json(
+        name: &str,
+        ns: &str,
+        annotation_pkg: Option<&str>,
+        labels: Vec<(&str, &str)>,
+    ) -> serde_json::Value {
+        let mut label_map = serde_json::Map::new();
+        for (k, v) in labels {
+            label_map.insert(k.to_string(), serde_json::json!(v));
+        }
+        let mut annotations = serde_json::Map::new();
+        if let Some(pkg) = annotation_pkg {
+            let inner = serde_json::json!([{
+                "type": "olm.package",
+                "value": serde_json::json!({"packageName": pkg}).to_string()
+            }]);
+            annotations.insert(
+                "operatorframework.io/properties".to_string(),
+                serde_json::Value::String(inner.to_string()),
+            );
+        }
+        serde_json::json!({
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "metadata": {
+                "name": name,
+                "namespace": ns,
+                "uid": format!("uid-{}-{}", name, ns),
+                "labels": label_map,
+                "annotations": annotations,
+            },
+            "status": {"phase": "Succeeded"},
+            "spec": {"customresourcedefinitions": {"owned": []}, "install": {"spec": {"deployments": []}}}
+        })
+    }
+
+    #[allow(dead_code)]
+    fn make_sub_json(name: &str, ns: &str, pkg: &str, csv: &str) -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {"name": name, "namespace": ns, "uid": format!("uid-sub-{}", name)},
+            "spec": {"name": pkg, "channel": "stable", "source": "redhat-operators", "sourceNamespace": "openshift-marketplace"},
+            "status": {"installedCSV": csv, "currentCSV": csv}
+        })
+    }
+
+    fn olm_kind_map() -> KindMap {
+        let mut km = KindMap::new();
+        km.insert(
+            "ClusterServiceVersion".into(),
+            crate::kube::discovery::KindInfo {
+                group: "operators.coreos.com".into(),
+                version: "v1alpha1".into(),
+                plural: "clusterserviceversions".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        km
+    }
+
+    async fn handle_discover_requests(
+        handle: Handle<http::Request<kube::client::Body>, Response<kube::client::Body>>,
+        csv_items: Vec<serde_json::Value>,
+        sub_items: Vec<serde_json::Value>,
+        request_paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let mut handle = pin!(handle);
+        // tokio::join sends 2 requests concurrently — order is not guaranteed
+        for _ in 0..2 {
+            let (req, send) = handle.next_request().await.expect("expected request");
+            let path = req.uri().path().to_string();
+            request_paths.lock().unwrap().push(path.clone());
+            if path.contains("/clusterserviceversions") {
+                send.send_response(mock_list_response_olm(csv_items.clone()));
+            } else if path.contains("/subscriptions") {
+                send.send_response(mock_list_response_olm(sub_items.clone()));
+            } else {
+                panic!("Unexpected request path: {}", path);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn discover_orphan_csv_single_annotation_package() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = paths.clone();
+
+        let csv = make_csv_json("my-op.v1.0", "ns-a", Some("my-operator"), vec![]);
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], rp));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].package_name, Some("my-operator".to_string()));
+        assert!(ops[0].subscription.is_none());
+        let p = paths.lock().unwrap();
+        assert_eq!(p.len(), 2, "Exactly 2 LIST requests (CSV + Subscription)");
+    }
+
+    #[tokio::test]
+    async fn discover_annotation_no_package_gives_none() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = paths.clone();
+
+        // CSV with no annotation
+        let csv = make_csv_json("orphan.v1", "ns-a", None, vec![]);
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], rp));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].package_name, None, "No annotation → package None");
+    }
+
+    #[tokio::test]
+    async fn discover_annotation_multiple_packages_gives_none() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = paths.clone();
+
+        // CSV with 2 distinct packages in annotation
+        let mut csv = make_csv_json("multi.v1", "ns-a", None, vec![]);
+        csv["metadata"]["annotations"]["operatorframework.io/properties"] = serde_json::json!(
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"pkg-a\"}"},{"type":"olm.package","value":"{\"packageName\":\"pkg-b\"}"}]"#
+        );
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], rp));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(
+            ops[0].package_name, None,
+            "Multiple packages → None (ambiguous)"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_invalid_annotation_gives_none() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let mut csv = make_csv_json("bad.v1", "ns-a", None, vec![]);
+        csv["metadata"]["annotations"]["operatorframework.io/properties"] =
+            serde_json::json!("not valid json at all");
+        let spawned = tokio::spawn(handle_discover_requests(handle, vec![csv], vec![], paths));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].package_name, None, "Invalid annotation → None");
+    }
+
+    #[tokio::test]
+    async fn discover_same_name_csv_different_namespaces() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        // Same CSV name in ns-a and ns-b, each with own Sub
+        let csv_a = make_csv_json(
+            "my-op.v1",
+            "ns-a",
+            Some("pkg-a"),
+            vec![("operators.coreos.com/pkg-a.ns-a", "")],
+        );
+        let csv_b = make_csv_json(
+            "my-op.v1",
+            "ns-b",
+            Some("pkg-b"),
+            vec![("operators.coreos.com/pkg-b.ns-b", "")],
+        );
+        let sub_a = make_sub_json("sub-a", "ns-a", "pkg-a", "my-op.v1");
+        let sub_b = make_sub_json("sub-b", "ns-b", "pkg-b", "my-op.v1");
+
+        let spawned = tokio::spawn(handle_discover_requests(
+            handle,
+            vec![csv_a, csv_b],
+            vec![sub_a, sub_b],
+            paths,
+        ));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 2, "Should have 2 operators (one per namespace)");
+        let op_a = ops.iter().find(|o| o.install_namespace == "ns-a").unwrap();
+        let op_b = ops.iter().find(|o| o.install_namespace == "ns-b").unwrap();
+        assert_eq!(op_a.package_name, Some("pkg-a".into()));
+        assert_eq!(op_b.package_name, Some("pkg-b".into()));
+        assert!(op_a.subscription.is_some());
+        assert!(op_b.subscription.is_some());
+        assert_eq!(
+            op_a.subscription.as_ref().unwrap().namespace,
+            Some("ns-a".into())
+        );
+        assert_eq!(
+            op_b.subscription.as_ref().unwrap().namespace,
+            Some("ns-b".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_status_contradiction_not_restored_by_label() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "default");
+        let km = olm_kind_map();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        // Sub claims pkg-a, but CSV annotation says pkg-b → status link fails.
+        // CSV also has label operators.coreos.com/pkg-a.ns-a → label fallback
+        // should NOT restore link because annotation evidence contradicts.
+        let csv = make_csv_json(
+            "my-op.v1",
+            "ns-a",
+            Some("pkg-b"),
+            vec![("operators.coreos.com/pkg-a.ns-a", "")],
+        );
+        let sub = make_sub_json("sub-a", "ns-a", "pkg-a", "my-op.v1");
+
+        let spawned = tokio::spawn(handle_discover_requests(
+            handle,
+            vec![csv],
+            vec![sub],
+            paths,
+        ));
+
+        let ops = discover_operators(&client, &km).await.unwrap();
+        spawned.await.unwrap();
+
+        assert_eq!(ops.len(), 1);
+        // The CSV should be an orphan because:
+        // 1. Status link: Sub pkg-a, CSV annotation pkg-b → exclusive check fails → no link
+        // 2. Label fallback: label pkg-a, annotation pkg-b → exclusive check fails → no link
+        assert!(
+            ops[0].subscription.is_none(),
+            "Contradicted CSV must not be linked via label fallback"
+        );
     }
 }

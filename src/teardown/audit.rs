@@ -856,7 +856,7 @@ pub async fn run_residual_audit(client: &Client, journal: &RunJournal) -> Result
         Some(gvrs) => {
             for gvr in gvrs {
                 // Check if this GVR's governing CRD was approved for deletion
-                // and confirmed Gone (GoneByCrdRemoval exception for --prune-apis)
+                // and confirmed Gone (GoneByCrdRemoval exception for --prune-crds)
                 let crd_name = format!("{}.{}", gvr.plural, gvr.group);
                 let crd_approved_delete = plan.phases.iter().flat_map(|p| &p.actions).any(|a| {
                     matches!(a, Action::Delete { resource, .. }
@@ -2145,6 +2145,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
 
         let mut target_uids: HashSet<String> = HashSet::new();

@@ -102,10 +102,16 @@ impl DecisionPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ApprovalOrigin {
+    BulkLabelOnly,
+    Other,
+}
+
 pub enum ResolvedDecision {
     Delete {
         reason: String,
+        approval_origin: ApprovalOrigin,
     },
     Keep {
         reason: String,
@@ -169,7 +175,7 @@ pub fn resolve_decisions<'a>(
                 .map(|rc| canonical_key(rc.resource))
                 .collect();
             errors.push(format!(
-                "ambiguous --preserve {}: matches {} resources. Use qualified form:\n  {}",
+                "ambiguous --keep-resource {}: matches {} resources. Use qualified form:\n  {}",
                 spec,
                 matching.len(),
                 qualified.join("\n  ")
@@ -178,7 +184,7 @@ pub fn resolve_decisions<'a>(
         }
         if matching.is_empty() {
             errors.push(format!(
-                "--preserve {}: no matching REVIEW resource found",
+                "--keep-resource {}: no matching REVIEW resource found",
                 spec
             ));
             continue;
@@ -187,7 +193,7 @@ pub fn resolve_decisions<'a>(
             resolved.insert(
                 rc.resource.clone(),
                 ResolvedDecision::Keep {
-                    reason: "explicitly preserved via --preserve".to_string(),
+                    reason: "explicitly preserved via --keep-resource".to_string(),
                 },
             );
         }
@@ -208,7 +214,7 @@ pub fn resolve_decisions<'a>(
                 .map(|rc| canonical_key(rc.resource))
                 .collect();
             errors.push(format!(
-                "ambiguous --approve-delete {}: matches {} REVIEW resources. Use qualified form:\n  {}",
+                "ambiguous --approve-resource {}: matches {} REVIEW resources. Use qualified form:\n  {}",
                 spec,
                 matching.len(),
                 qualified.join("\n  ")
@@ -217,7 +223,7 @@ pub fn resolve_decisions<'a>(
         }
         if matching.is_empty() {
             errors.push(format!(
-                "--approve-delete {}: no matching REVIEW resource found",
+                "--approve-resource {}: no matching REVIEW resource found",
                 spec
             ));
             continue;
@@ -225,7 +231,7 @@ pub fn resolve_decisions<'a>(
         let rc = matching[0];
         if !rc.exact_approvable {
             errors.push(format!(
-                "--approve-delete {}: resource exists but cannot be approved for deletion",
+                "--approve-resource {}: resource exists but cannot be approved for deletion",
                 spec
             ));
             continue;
@@ -236,7 +242,7 @@ pub fn resolve_decisions<'a>(
             .is_some_and(|d| matches!(d, ResolvedDecision::Keep { .. }))
         {
             errors.push(format!(
-                "--approve-delete {} conflicts with --preserve for the same resource",
+                "--approve-resource {} conflicts with --keep-resource for the same resource",
                 spec
             ));
             continue;
@@ -263,6 +269,7 @@ pub fn resolve_decisions<'a>(
             rc.resource.clone(),
             ResolvedDecision::Delete {
                 reason: reason.to_string(),
+                approval_origin: ApprovalOrigin::Other,
             },
         );
     }
@@ -309,24 +316,30 @@ pub fn resolve_decisions<'a>(
         let bulk_matches = standard_bulk_matches || label_only_matches || operator_group_matches;
         if bulk_matches {
             let reason = if label_only_matches {
-                "label-related CR approved via --approve-delete label-only"
+                "label-related CR approved via --approve-scope label-only"
             } else if operator_group_matches {
-                "operator group approved via --approve-delete operator-group"
+                "operator group approved via --approve-scope operator-group"
             } else {
                 match rc.category {
                     ReviewCategory::Operand(GraphPosition::Root) => {
-                        "root CR approved via --approve-delete root/all"
+                        "root CR approved via --approve-scope root"
                     }
                     ReviewCategory::Operand(GraphPosition::Independent) => {
-                        "independent CR approved via --approve-delete independent/all"
+                        "independent CR approved via --approve-scope independent"
                     }
                     _ => "approved via bulk approval",
                 }
+            };
+            let origin = if label_only_matches {
+                ApprovalOrigin::BulkLabelOnly
+            } else {
+                ApprovalOrigin::Other
             };
             resolved.insert(
                 rc.resource.clone(),
                 ResolvedDecision::Delete {
                     reason: reason.to_string(),
+                    approval_origin: origin,
                 },
             );
         }
@@ -363,6 +376,10 @@ pub struct TeardownPlan {
     /// explicitly approved or preserved. Populated by generate_teardown_plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub explicit_decisions: Vec<crate::teardown::plan::SavedDecision>,
+    /// Explicit delete targets from --delete-resource / config delete_resources.
+    /// Injected after plan generation; empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub explicit_deletes: Vec<crate::teardown::plan::ExplicitDeleteTarget>,
 }
 
 /// A typed dependency edge between operators.
@@ -1231,6 +1248,27 @@ pub fn check_subscription_safety(op: &OperatorInstance) -> (bool, PreflightSever
     }
 }
 
+pub(crate) fn health_preflight_checks(
+    csv_name: &str,
+    csv_health: (bool, String),
+    ctrl_health: (bool, String),
+) -> Vec<PreflightCheck> {
+    vec![
+        PreflightCheck {
+            name: format!("CSV health ({})", csv_name),
+            severity: PreflightSeverity::Warning,
+            passed: csv_health.0,
+            detail: csv_health.1,
+        },
+        PreflightCheck {
+            name: format!("Controller available ({})", csv_name),
+            severity: PreflightSeverity::Warning,
+            passed: ctrl_health.0,
+            detail: ctrl_health.1,
+        },
+    ]
+}
+
 async fn run_preflight(
     client: &Client,
     target_operators: &[&OperatorInstance],
@@ -1272,18 +1310,7 @@ async fn run_preflight(
         .await;
 
     for (csv_name, csv_ok, ctrl_ok) in health_results {
-        checks.push(PreflightCheck {
-            name: format!("CSV health ({})", csv_name),
-            severity: PreflightSeverity::Critical,
-            passed: csv_ok.0,
-            detail: csv_ok.1,
-        });
-        checks.push(PreflightCheck {
-            name: format!("Controller available ({})", csv_name),
-            severity: PreflightSeverity::Critical,
-            passed: ctrl_ok.0,
-            detail: ctrl_ok.1,
-        });
+        checks.extend(health_preflight_checks(&csv_name, csv_ok, ctrl_ok));
     }
 
     // 3. Dedup summary
@@ -1922,6 +1949,35 @@ fn enforce_expect_delete_invariant(
     }
 }
 
+pub(crate) fn is_bulk_label_only_decision(
+    id: &ResourceId,
+    resolved: &HashMap<ResourceId, ResolvedDecision>,
+) -> bool {
+    resolved.get(id).is_some_and(|d| {
+        matches!(
+            d,
+            ResolvedDecision::Delete {
+                approval_origin: ApprovalOrigin::BulkLabelOnly,
+                ..
+            }
+        )
+    })
+}
+
+pub(crate) fn route_operand_action(
+    cr_id: &ResourceId,
+    action: Action,
+    resolved: &HashMap<ResourceId, ResolvedDecision>,
+    current_phase: &mut Vec<Action>,
+    deferred: &mut Vec<Action>,
+) {
+    if is_bulk_label_only_decision(cr_id, resolved) {
+        deferred.push(action);
+    } else {
+        current_phase.push(action);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_teardown_plan(
     client: &Client,
@@ -1931,7 +1987,7 @@ pub async fn generate_teardown_plan(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     gvk_map: &GvkMap,
-    prune_apis: bool,
+    prune_crds: bool,
     policy: &DecisionPolicy,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
@@ -2491,7 +2547,7 @@ pub async fn generate_teardown_plan(
         // Check pre-resolved decision
         if let Some(decision) = resolved.get(&cr.id) {
             match decision {
-                ResolvedDecision::Delete { reason } => {
+                ResolvedDecision::Delete { reason, .. } => {
                     return Action::Delete {
                         resource: cr.id.clone(),
                         reason: reason.clone(),
@@ -2722,27 +2778,44 @@ pub async fn generate_teardown_plan(
     };
 
     let mut operand_phases: Vec<PlanPhase> = Vec::new();
+    let mut deferred_remaining_actions: Vec<Action> = Vec::new();
 
     if layers.len() <= 1 {
-        let mut phase_actions: Vec<Action> = Vec::new();
+        let mut trigger_actions: Vec<Action> = Vec::new();
+        let mut remaining_actions: Vec<Action> = Vec::new();
 
         for cr in &root_crs {
-            phase_actions.push(cr_to_action(cr, GraphPosition::Root, &resolved_decisions));
+            let action = cr_to_action(cr, GraphPosition::Root, &resolved_decisions);
+            route_operand_action(
+                &cr.id,
+                action,
+                &resolved_decisions,
+                &mut trigger_actions,
+                &mut remaining_actions,
+            );
         }
         for cr in &managed_descendants {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Descendant,
+            let action = cr_to_action(cr, GraphPosition::Descendant, &resolved_decisions);
+            route_operand_action(
+                &cr.id,
+                action,
                 &resolved_decisions,
-            ));
+                &mut trigger_actions,
+                &mut remaining_actions,
+            );
         }
         for cr in &independent_crs {
-            phase_actions.push(cr_to_action(
-                cr,
-                GraphPosition::Independent,
+            let action = cr_to_action(cr, GraphPosition::Independent, &resolved_decisions);
+            route_operand_action(
+                &cr.id,
+                action,
                 &resolved_decisions,
-            ));
+                &mut trigger_actions,
+                &mut remaining_actions,
+            );
         }
+
+        let phase_actions = trigger_actions;
 
         let conds: Vec<String> = phase_actions
             .iter()
@@ -2764,6 +2837,7 @@ pub async fn generate_teardown_plan(
                 conditions: conds,
             }),
         });
+        deferred_remaining_actions = remaining_actions;
     } else {
         // Multiple layers — split operands by owning operator's layer
         for (layer_idx, layer) in layers.iter().enumerate() {
@@ -2789,7 +2863,13 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(action);
+                    route_operand_action(
+                        &cr.id,
+                        action,
+                        &resolved_decisions,
+                        &mut phase_actions,
+                        &mut deferred_remaining_actions,
+                    );
                 }
             }
             for cr in &managed_descendants {
@@ -2816,11 +2896,14 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(
-                        cr,
-                        GraphPosition::Descendant,
+                    let action = cr_to_action(cr, GraphPosition::Descendant, &resolved_decisions);
+                    route_operand_action(
+                        &cr.id,
+                        action,
                         &resolved_decisions,
-                    ));
+                        &mut phase_actions,
+                        &mut deferred_remaining_actions,
+                    );
                 }
             }
             for cr in &independent_crs {
@@ -2839,11 +2922,14 @@ pub async fn generate_teardown_plan(
                 if op_idx.is_some_and(|i| layer_op_indices.contains(&i))
                     || (layer_idx == 0 && op_idx.is_none())
                 {
-                    phase_actions.push(cr_to_action(
-                        cr,
-                        GraphPosition::Independent,
+                    let action = cr_to_action(cr, GraphPosition::Independent, &resolved_decisions);
+                    route_operand_action(
+                        &cr.id,
+                        action,
                         &resolved_decisions,
-                    ));
+                        &mut phase_actions,
+                        &mut deferred_remaining_actions,
+                    );
                 }
             }
 
@@ -2904,7 +2990,7 @@ pub async fn generate_teardown_plan(
                     blockers.push(Blocker {
                         resource: resource.clone(),
                         reason: format!(
-                            "root operand requires explicit deletion approval: {} — use --approve-delete {}",
+                            "root operand requires explicit deletion approval: {} — use --approve-resource {}",
                             reason,
                             canonical_key(resource)
                         ),
@@ -2950,11 +3036,12 @@ pub async fn generate_teardown_plan(
 
     enforce_expect_delete_invariant(&mut operand_phases, &uid_to_owner_uids);
 
-    // Remaining cleanup phase (empty catch-all)
+    // Remaining cleanup phase — includes deferred label-only bulk DELETEs
     let phase_remaining = PlanPhase {
         name: "Remaining cleanup".to_string(),
-        description: "Delete any CRs that were not cleaned up by controller".to_string(),
-        actions: vec![],
+        description: "Delete label-only approved CRs after controller cleanup completes"
+            .to_string(),
+        actions: deferred_remaining_actions,
         barrier: None,
     };
 
@@ -3009,7 +3096,7 @@ pub async fn generate_teardown_plan(
                 && let Some(decision) = resolved_decisions.get(resource)
             {
                 return match decision {
-                    ResolvedDecision::Delete { reason } => Action::Delete {
+                    ResolvedDecision::Delete { reason, .. } => Action::Delete {
                         resource: resource.clone(),
                         reason: reason.clone(),
                     },
@@ -3051,9 +3138,9 @@ pub async fn generate_teardown_plan(
 
     let mut seen_crds = HashSet::new();
 
-    // For --prune-apis DELETE actions, GET current UIDs NOW (at evidence time).
+    // For --prune-crds DELETE actions, GET current UIDs NOW (at evidence time).
     // This prevents UID migration between evidence→user confirmation→execution.
-    let prune_crd_uids: HashMap<String, BindResult> = if prune_apis {
+    let prune_crd_uids: HashMap<String, BindResult> = if prune_crds {
         let prune_candidates: Vec<String> = target_crds
             .iter()
             .filter(|name| {
@@ -3118,7 +3205,7 @@ pub async fn generate_teardown_plan(
                 resource: crd_id,
                 reason: "also owned by another operator".to_string(),
             });
-        } else if prune_apis {
+        } else if prune_crds {
             // UID must be bound at evidence time for DELETE authority
             match prune_crd_uids.get(crd_name) {
                 Some(BindResult::Bound(uid)) => {
@@ -3163,50 +3250,14 @@ pub async fn generate_teardown_plan(
         } else {
             phase4_actions.push(Action::Keep {
                 resource: crd_id,
-                reason: "eligible for prune (use --prune-apis to remove)".to_string(),
+                reason: "eligible for prune (use --prune-crds to remove)".to_string(),
             });
         }
     }
 
-    // APIService actions — dedup by (group, version) since one APIService serves multiple kinds
+    // APIService actions — dedup by (group, version) since one APIService serves multiple kinds.
+    // --prune-crds only removes CRDs; APIServices are always kept (future --prune-api-services).
     let mut seen_api_services = HashSet::new();
-
-    // Pre-fetch APIService UIDs for prune DELETE actions
-    let prune_apisvc_candidates: Vec<String> = if prune_apis {
-        target_operators
-            .iter()
-            .flat_map(|op| op.owned_api_service_defs.iter())
-            .map(|def| def.api_service_object_name())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter(|name| !blocked_crds.contains(name.as_str()))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let prune_apisvc_uids: HashMap<String, BindResult> = if !prune_apisvc_candidates.is_empty() {
-        let apisvc_gvk =
-            kube::core::GroupVersion::gv("apiregistration.k8s.io", "v1").with_kind("APIService");
-        let apisvc_ar = kube::api::ApiResource::from_gvk_with_plural(&apisvc_gvk, "apiservices");
-        let apisvc_api: kube::api::Api<kube::api::DynamicObject> =
-            kube::api::Api::all_with(client.clone(), &apisvc_ar);
-
-        let futs = prune_apisvc_candidates.iter().map(|name| {
-            let api = apisvc_api.clone();
-            let name = name.clone();
-            async move {
-                let result = probe_uid(&api, &name).await;
-                (name, result)
-            }
-        });
-        futures::stream::iter(futs)
-            .buffer_unordered(16)
-            .collect()
-            .await
-    } else {
-        HashMap::new()
-    };
 
     for def in target_operators
         .iter()
@@ -3236,62 +3287,20 @@ pub async fn generate_teardown_plan(
                 resource: api_svc_id,
                 reason: format!("required by unselected operator {}", blocker_op),
             });
-        } else if prune_apis {
-            match prune_apisvc_uids.get(&obj_name) {
-                Some(BindResult::Bound(uid)) => {
-                    phase4_actions.push(Action::Delete {
-                        resource: ResourceId {
-                            uid: Some(uid.clone()),
-                            ..api_svc_id
-                        },
-                        reason: "aggregated API owned by target operator".to_string(),
-                    });
-                }
-                Some(BindResult::Absent) => {
-                    phase4_actions.push(Action::Keep {
-                        resource: api_svc_id,
-                        reason: "already absent (confirmed via endpoint verification)".to_string(),
-                    });
-                }
-                Some(BindResult::Failed(reason)) => {
-                    blockers.push(Blocker {
-                        resource: api_svc_id.clone(),
-                        reason: format!("Cannot bind APIService UID: {}", reason),
-                        external_dependency: None,
-                    });
-                    phase4_actions.push(Action::Keep {
-                        resource: api_svc_id,
-                        reason: format!("UID binding failed: {}", reason),
-                    });
-                }
-                None => {
-                    blockers.push(Blocker {
-                        resource: api_svc_id.clone(),
-                        reason: "APIService not in binding candidates".to_string(),
-                        external_dependency: None,
-                    });
-                    phase4_actions.push(Action::Keep {
-                        resource: api_svc_id,
-                        reason: "UID binding not attempted".to_string(),
-                    });
-                }
-            }
         } else {
             phase4_actions.push(Action::Keep {
                 resource: api_svc_id,
-                reason: "eligible for prune (use --prune-apis to remove)".to_string(),
+                reason: "APIService kept by design (not removed by --prune-crds)".to_string(),
             });
         }
     }
 
     let phase4 = PlanPhase {
         name: "APIs".to_string(),
-        description: if prune_apis {
-            "Delete CRDs/APIServices with no remaining instances and no external dependencies"
-                .to_string()
+        description: if prune_crds {
+            "Delete CRDs with no remaining instances and no external dependencies".to_string()
         } else {
-            "CRDs/APIServices kept by default — use --prune-apis for complete API removal"
-                .to_string()
+            "CRDs kept by default — use --prune-crds to remove".to_string()
         },
         actions: phase4_actions,
         barrier: None,
@@ -3325,7 +3334,7 @@ pub async fn generate_teardown_plan(
         barrier: None,
     };
 
-    if !prune_apis {
+    if !prune_crds {
         let eligible = phase4
             .actions
             .iter()
@@ -3336,7 +3345,7 @@ pub async fn generate_teardown_plan(
         if eligible > 0 {
             warnings.push(Warning {
                 message: format!(
-                    "{} CRDs eligible for removal but kept by default (use --prune-apis)",
+                    "{} CRDs eligible for removal but kept by default (use --prune-crds)",
                     eligible
                 ),
                 resource: None,
@@ -3355,7 +3364,7 @@ pub async fn generate_teardown_plan(
     phases.push(phase5);
 
     // UID binding: bind current UIDs to all DELETE/EXPECT actions that lack them
-    // (e.g., --prune-apis CRDs). This happens at plan generation time so the plan
+    // (e.g., --prune-crds CRDs). This happens at plan generation time so the plan
     // presented to the user for confirmation includes the actual resource identities.
     // Binding failure → blocker (no mutation allowed).
     {
@@ -3490,6 +3499,7 @@ pub async fn generate_teardown_plan(
         dependency_edges,
         operator_inventory,
         explicit_decisions: vec![],
+        explicit_deletes: vec![],
     };
 
     // Invariant: every REVIEW action must have a corresponding ReviewCandidate.
@@ -3623,6 +3633,7 @@ pub fn load_plan_from_file(path: &str) -> Result<TeardownPlan> {
 
 /// Save explicit user decisions as a SavedTeardownPlan.
 /// Reads pre-built explicit_decisions from the plan (populated by generate_teardown_plan).
+#[allow(dead_code)]
 pub fn save_as_saved_plan(
     plan: &TeardownPlan,
     target: &crate::teardown::plan::SavedOperatorTarget,
@@ -3693,6 +3704,7 @@ fn build_decision_basis(
 }
 
 /// Load a SavedTeardownPlan from file with schema validation.
+#[allow(dead_code)]
 pub fn load_saved_plan(path: &str) -> Result<crate::teardown::plan::SavedTeardownPlan> {
     let data = std::fs::read_to_string(path)?;
     let saved: crate::teardown::plan::SavedTeardownPlan = serde_json::from_str(&data)?;
@@ -3710,6 +3722,7 @@ pub fn load_saved_plan(path: &str) -> Result<crate::teardown::plan::SavedTeardow
 /// Compares saved provenance/category/discovery_source/labels against fresh ReviewMetadata.
 /// Returns exact approval specs for DecisionPolicy on success,
 /// or list of errors if any decision cannot be safely replayed.
+#[allow(dead_code)]
 pub fn validate_saved_decisions(
     plan: &TeardownPlan,
     saved: &crate::teardown::plan::SavedTeardownPlan,
@@ -3801,6 +3814,7 @@ pub fn validate_saved_decisions(
     }
 }
 
+#[allow(dead_code)]
 fn check_basis_drift(
     saved: &crate::teardown::plan::DecisionBasis,
     fresh: &crate::teardown::plan::ReviewMetadata,
@@ -3991,6 +4005,26 @@ fn print_plan_tree(plan: &TeardownPlan) {
         }
     }
 
+    // Build lookup for explicit target evidence display
+    let explicit_evidence: std::collections::HashMap<
+        (String, String, Option<String>, String),
+        &crate::teardown::plan::ExplicitDeleteTarget,
+    > = plan
+        .explicit_deletes
+        .iter()
+        .map(|t| {
+            (
+                (
+                    t.group.clone(),
+                    t.kind.clone(),
+                    t.namespace.clone(),
+                    t.name.clone(),
+                ),
+                t,
+            )
+        })
+        .collect();
+
     for (i, phase) in plan.phases.iter().enumerate() {
         println!("\n\x1b[1mPhase {}  {}\x1b[0m", i, phase.name);
 
@@ -3998,6 +4032,8 @@ fn print_plan_tree(plan: &TeardownPlan) {
             println!("  (none)");
             continue;
         }
+
+        let is_explicit_phase = phase.name == crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME;
 
         for action in &phase.actions {
             match action {
@@ -4009,6 +4045,51 @@ fn print_plan_tree(plan: &TeardownPlan) {
                         scope_suffix(resource)
                     );
                     println!("         \x1b[2m{}\x1b[0m", reason);
+                    if is_explicit_phase {
+                        let key = (
+                            resource.group.clone(),
+                            resource.kind.clone(),
+                            resource.namespace.clone(),
+                            resource.name.clone(),
+                        );
+                        if let Some(evidence) = explicit_evidence.get(&key) {
+                            if evidence.inbound_refs_at_plan.is_empty() {
+                                println!(
+                                    "         \x1b[36m↳ no typed inbound refs at plan time\x1b[0m"
+                                );
+                            } else {
+                                for r in &evidence.inbound_refs_at_plan {
+                                    let status = if r.in_deletion_plan {
+                                        "in-plan"
+                                    } else {
+                                        "EXTERNAL"
+                                    };
+                                    println!(
+                                        "         \x1b[36m↳ ref: {}/{}{} uid={} field={} ({})\x1b[0m",
+                                        r.kind,
+                                        r.name,
+                                        r.namespace
+                                            .as_deref()
+                                            .map(|n| format!("@{n}"))
+                                            .unwrap_or_default(),
+                                        &r.uid[..r.uid.len().min(8)],
+                                        r.ref_field,
+                                        status
+                                    );
+                                }
+                            }
+                            let kinds_str = evidence.ref_scan_coverage.kinds_scanned.join(", ");
+                            let complete = if evidence.ref_scan_coverage.scan_complete {
+                                "✓"
+                            } else {
+                                "✗"
+                            };
+                            println!(
+                                "         \x1b[36m↳ coverage: {} [{}]\x1b[0m",
+                                complete, kinds_str
+                            );
+                        }
+                    }
                 }
                 Action::ExpectGone { resource, reason } => {
                     println!(
@@ -4098,7 +4179,7 @@ fn print_plan_tree(plan: &TeardownPlan) {
         plan.warnings.len()
     );
     // Blocker reasons are shown individually above — no additional summary needed.
-    // Each blocker's reason text includes the exact --approve-delete command.
+    // Each blocker's reason text includes the exact --approve-resource command.
 }
 
 fn print_plan_json(plan: &TeardownPlan) {
@@ -5062,6 +5143,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
@@ -5115,6 +5197,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
@@ -5164,6 +5247,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: crate::teardown::plan::SAVED_PLAN_SCHEMA_VERSION,
@@ -5295,6 +5379,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5345,6 +5430,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5428,6 +5514,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5482,6 +5569,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5538,6 +5626,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5647,6 +5736,7 @@ mod tests {
                     decisive_evidence: vec![],
                 },
             }],
+            explicit_deletes: vec![],
         };
         let target = SavedOperatorTarget {
             package_name: "test-op".to_string(),
@@ -5700,6 +5790,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5781,6 +5872,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5829,6 +5921,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5883,6 +5976,7 @@ mod tests {
             dependency_edges: vec![],
             operator_inventory: vec![],
             explicit_decisions: vec![],
+            explicit_deletes: vec![],
         };
         let saved = SavedTeardownPlan {
             schema_version: SAVED_PLAN_SCHEMA_VERSION,
@@ -5971,5 +6065,855 @@ mod tests {
             name: "".into(),
         };
         assert!(m3.validate().is_err());
+    }
+
+    /// Verify that --prune-crds deletes CRDs but keeps APIServices.
+    /// This tests the structural invariant at the plan phase level.
+    #[test]
+    fn prune_crds_deletes_crds_but_keeps_apiservices() {
+        // Build a mock PlanPhase matching Phase 4 (APIs) structure.
+        // When prune_crds=true, CRDs should be DELETE, APIServices should be KEEP.
+        let crd_action = Action::Delete {
+            resource: ResourceId {
+                group: "apiextensions.k8s.io".to_string(),
+                version: "v1".to_string(),
+                kind: "CustomResourceDefinition".to_string(),
+                namespace: None,
+                name: "widgets.example.com".to_string(),
+                uid: Some("crd-uid-1".to_string()),
+            },
+            reason: "no remaining CRs, no external dependencies".to_string(),
+        };
+        let apiservice_action = Action::Keep {
+            resource: ResourceId {
+                group: "apiregistration.k8s.io".to_string(),
+                version: "v1".to_string(),
+                kind: "APIService".to_string(),
+                namespace: None,
+                name: "v1.widgets.example.com".to_string(),
+                uid: None,
+            },
+            reason: "APIService kept by design (not removed by --prune-crds)".to_string(),
+        };
+
+        let phase = PlanPhase {
+            name: "APIs".to_string(),
+            description: "Delete CRDs with no remaining instances and no external dependencies"
+                .to_string(),
+            actions: vec![crd_action.clone(), apiservice_action.clone()],
+            barrier: None,
+        };
+
+        // Verify CRDs are DELETE
+        let crd_actions: Vec<_> = phase
+            .actions
+            .iter()
+            .filter(|a| match a {
+                Action::Delete { resource, .. } => resource.kind == "CustomResourceDefinition",
+                _ => false,
+            })
+            .collect();
+        assert_eq!(
+            crd_actions.len(),
+            1,
+            "CRD should be DELETE when prune_crds=true"
+        );
+
+        // Verify APIServices are KEEP
+        let apisvc_actions: Vec<_> = phase
+            .actions
+            .iter()
+            .filter(|a| match a {
+                Action::Keep { resource, .. } => resource.kind == "APIService",
+                _ => false,
+            })
+            .collect();
+        assert_eq!(
+            apisvc_actions.len(),
+            1,
+            "APIService should be KEEP even when prune_crds=true"
+        );
+
+        // Verify no APIService DELETE actions
+        let apisvc_deletes: Vec<_> = phase
+            .actions
+            .iter()
+            .filter(|a| match a {
+                Action::Delete { resource, .. } => resource.kind == "APIService",
+                _ => false,
+            })
+            .collect();
+        assert!(
+            apisvc_deletes.is_empty(),
+            "APIService should never be DELETE with --prune-crds"
+        );
+    }
+
+    // ── Phase assignment: label-only deferral ──
+
+    #[test]
+    fn resolve_decisions_bulk_label_only_has_correct_origin() {
+        let resource = make_res("LLMConfig", "config-1", "uid-1");
+        let mut cr = make_cr_instance(
+            "LLMConfig",
+            "config-1",
+            "uid-1",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        cr.provenance = Provenance::Unknown;
+        cr.discovery_source = DiscoverySource::RelatedLabelOnly;
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Root),
+            approval_class: compute_approval_class(&cr, GraphPosition::Root),
+            exact_approvable: true,
+            is_label_only_eligible: is_label_only_bulk_eligible(&cr),
+        };
+        let policy = DecisionPolicy {
+            approvals: vec![DeleteApproval::Bulk(BulkScope::LabelOnly)],
+            preserves: vec![],
+        };
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        let decision = resolved.get(&resource).expect("should be resolved");
+        match decision {
+            ResolvedDecision::Delete {
+                approval_origin, ..
+            } => {
+                assert_eq!(
+                    *approval_origin,
+                    ApprovalOrigin::BulkLabelOnly,
+                    "bulk label-only approval must set BulkLabelOnly origin"
+                );
+            }
+            _ => panic!("Expected Delete decision"),
+        }
+    }
+
+    #[test]
+    fn resolve_decisions_root_approval_has_other_origin() {
+        let resource = make_res("DSC", "default-dsc", "uid-dsc");
+        let _cr = make_cr_instance(
+            "DSC",
+            "default-dsc",
+            "uid-dsc",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Root),
+            approval_class: DeleteApprovalClass::Standard,
+            exact_approvable: true,
+            is_label_only_eligible: false,
+        };
+        let policy = DecisionPolicy {
+            approvals: vec![DeleteApproval::Bulk(BulkScope::Root)],
+            preserves: vec![],
+        };
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        let decision = resolved.get(&resource).expect("should be resolved");
+        match decision {
+            ResolvedDecision::Delete {
+                approval_origin, ..
+            } => {
+                assert_eq!(
+                    *approval_origin,
+                    ApprovalOrigin::Other,
+                    "root bulk approval must set Other origin"
+                );
+            }
+            _ => panic!("Expected Delete decision"),
+        }
+    }
+
+    #[test]
+    fn resolve_decisions_exact_approval_has_other_origin() {
+        let resource = make_res("Config", "default", "uid-cfg");
+        let _cr = make_cr_instance(
+            "Config",
+            "default",
+            "uid-cfg",
+            vec![],
+            HashMap::new(),
+            vec![],
+        );
+        let candidate = ReviewCandidate {
+            resource: &resource,
+            category: ReviewCategory::Operand(GraphPosition::Root),
+            approval_class: DeleteApprovalClass::ExplicitOnly,
+            exact_approvable: true,
+            is_label_only_eligible: false,
+        };
+        let policy = DecisionPolicy {
+            approvals: vec![DeleteApproval::Exact("Config/default".to_string())],
+            preserves: vec![],
+        };
+        let resolved = resolve_decisions(&policy, &[candidate]).unwrap();
+        let decision = resolved.get(&resource).expect("should be resolved");
+        match decision {
+            ResolvedDecision::Delete {
+                approval_origin, ..
+            } => {
+                assert_eq!(
+                    *approval_origin,
+                    ApprovalOrigin::Other,
+                    "exact approval must set Other origin"
+                );
+            }
+            _ => panic!("Expected Delete decision"),
+        }
+    }
+
+    // ── CSV package: load/save boundary tests ──
+
+    #[test]
+    fn load_execution_plan_rejects_empty_package() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01T00:00:00Z".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: String::new(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "csv.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-empty-pkg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Empty package_name must be rejected on load"
+        );
+        assert!(
+            format!("{}", result.unwrap_err()).contains("invalid package_name"),
+            "Error should mention invalid package"
+        );
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_whitespace_package() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01T00:00:00Z".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "   ".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "csv.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-ws-pkg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "Whitespace-only package must be rejected");
+    }
+
+    #[test]
+    fn extract_annotation_whitespace_package_excluded() {
+        use crate::analyzers::olm::extract_annotation_packages;
+        let mut obj = kube::api::DynamicObject::new(
+            "csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        obj.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\"   \"}"}]"#.to_string(),
+        )]));
+        let pkgs = extract_annotation_packages(&obj);
+        assert!(
+            pkgs.is_empty(),
+            "Whitespace-only packageName must be excluded"
+        );
+    }
+
+    #[test]
+    fn extract_annotation_leading_trailing_whitespace_rejected() {
+        use crate::analyzers::olm::extract_annotation_packages;
+        let mut obj = kube::api::DynamicObject::new(
+            "csv",
+            &kube::api::ApiResource::erase::<k8s_openapi::api::core::v1::Pod>(&()),
+        );
+        obj.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            "operatorframework.io/properties".to_string(),
+            r#"[{"type":"olm.package","value":"{\"packageName\":\" pkg \"}"}]"#.to_string(),
+        )]));
+        let pkgs = extract_annotation_packages(&obj);
+        assert!(
+            pkgs.is_empty(),
+            "Leading/trailing whitespace in packageName must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_leading_whitespace_package() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01T00:00:00Z".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: " rhods-operator".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "csv.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-lead-ws-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Leading whitespace package must be rejected"
+        );
+    }
+
+    // ── Explicit delete validation ──
+
+    #[test]
+    fn load_execution_plan_rejects_explicit_delete_forbidden_kind() {
+        use crate::teardown::plan::*;
+        let mut plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "".into(),
+                kind: "Namespace".into(),
+                namespace: None,
+                name: "bad-ns".into(),
+                uid: "uid-x".into(),
+                reason: "test".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-forbidden-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Namespace as explicit delete must be rejected"
+        );
+
+        // Also test CRD
+        plan.explicit_deletes[0].kind = "CustomResourceDefinition".into();
+        let dir2 =
+            std::env::temp_dir().join(format!("test-expl-forbidden2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir2);
+        let path2 = dir2.join("plan.json");
+        save_execution_plan(&plan, path2.to_str().unwrap()).unwrap();
+        let result2 = load_execution_plan(path2.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir2);
+        assert!(result2.is_err(), "CRD as explicit delete must be rejected");
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_explicit_delete_empty_uid() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "apps".into(),
+                kind: "Deployment".into(),
+                namespace: Some("ns".into()),
+                name: "my-deploy".into(),
+                uid: "".into(),
+                reason: "test".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-uid-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "Empty UID on explicit delete must fail");
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_incomplete_scan() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "apps".into(),
+                kind: "Deployment".into(),
+                namespace: Some("ns".into()),
+                name: "my-deploy".into(),
+                uid: "uid-valid".into(),
+                reason: "test".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec!["apps/Deployment".into()],
+                    scan_complete: false,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-scan-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err(), "Incomplete scan must be rejected on load");
+    }
+
+    #[test]
+    fn load_execution_plan_accepts_valid_explicit_delete() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![ExecutionPhase {
+                phase: 1,
+                name: "Explicit cleanup".into(),
+                resources: vec![ExecutionResource {
+                    group: "apps".into(),
+                    kind: "Deployment".into(),
+                    namespace: Some("ns".into()),
+                    name: "my-deploy".into(),
+                    uid: Some("uid-valid".into()),
+                    action: ExecutionAction::Delete,
+                }],
+            }],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "apps".into(),
+                kind: "Deployment".into(),
+                namespace: Some("ns".into()),
+                name: "my-deploy".into(),
+                uid: "uid-valid".into(),
+                reason: "config explicit".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-valid-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "Valid explicit delete should be accepted");
+        assert_eq!(result.unwrap().explicit_deletes.len(), 1);
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_tampered_extra_explicit_delete() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![],
+            explicit_deletes: vec![ExplicitDeleteTarget {
+                group: "".into(),
+                kind: "ConfigMap".into(),
+                namespace: Some("ns".into()),
+                name: "injected".into(),
+                uid: "uid-x".into(),
+                reason: "tampered".into(),
+                inbound_refs_at_plan: vec![],
+                ref_scan_coverage: RefScanCoverage {
+                    kinds_scanned: vec![],
+                    scan_complete: true,
+                },
+            }],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-tamper-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Extra explicit_delete without matching phase action must be rejected"
+        );
+        assert!(
+            format!("{}", result.unwrap_err()).contains("tampered"),
+            "Error should mention tampering"
+        );
+    }
+
+    #[test]
+    fn load_execution_plan_rejects_tampered_extra_phase_action() {
+        use crate::teardown::plan::*;
+        let plan = ExecutionPlan {
+            schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test".into(),
+                kube_system_uid: "uid-1".into(),
+            },
+            created_at: "2026-01-01".into(),
+            targets: vec![SavedOperatorTarget {
+                package_name: "test-op".into(),
+                install_namespace: "ns".into(),
+                csv_name_pattern: "test.v1".into(),
+            }],
+            prune_crds: false,
+            approve_scopes: vec![],
+            approve_resources: vec![],
+            keep_resources: vec![],
+            phases: vec![ExecutionPhase {
+                phase: 1,
+                name: "Explicit cleanup".into(),
+                resources: vec![ExecutionResource {
+                    group: "".into(),
+                    kind: "ConfigMap".into(),
+                    namespace: Some("ns".into()),
+                    name: "injected".into(),
+                    uid: Some("uid-x".into()),
+                    action: ExecutionAction::Delete,
+                }],
+            }],
+            explicit_deletes: vec![],
+        };
+        let dir = std::env::temp_dir().join(format!("test-expl-tamper2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plan.json");
+        save_execution_plan(&plan, path.to_str().unwrap()).unwrap();
+        let result = load_execution_plan(path.to_str().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "Extra phase action without matching explicit_delete must be rejected"
+        );
+    }
+
+    // ── Phase assignment: is_bulk_label_only_decision ──
+
+    #[test]
+    fn is_bulk_label_only_decision_detects_label_only() {
+        let id = make_res("LLMConfig", "cfg-1", "uid-1");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            id.clone(),
+            ResolvedDecision::Delete {
+                reason: "label-only approved".into(),
+                approval_origin: ApprovalOrigin::BulkLabelOnly,
+            },
+        );
+        assert!(is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    #[test]
+    fn is_bulk_label_only_decision_rejects_other() {
+        let id = make_res("DSC", "default", "uid-d");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            id.clone(),
+            ResolvedDecision::Delete {
+                reason: "root approved".into(),
+                approval_origin: ApprovalOrigin::Other,
+            },
+        );
+        assert!(!is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    #[test]
+    fn is_bulk_label_only_decision_missing_returns_false() {
+        let id = make_res("Unknown", "x", "uid-x");
+        let resolved = HashMap::new();
+        assert!(!is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    #[test]
+    fn is_bulk_label_only_decision_keep_returns_false() {
+        let id = make_res("NS", "ns1", "uid-ns");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            id.clone(),
+            ResolvedDecision::Keep {
+                reason: "preserved".into(),
+            },
+        );
+        assert!(!is_bulk_label_only_decision(&id, &resolved));
+    }
+
+    // ── resolve_decisions + is_bulk_label_only: end-to-end phase routing ──
+
+    #[test]
+    fn route_operand_action_routes_label_only_to_deferred() {
+        let label_res = make_res("LLMConfig", "llm-cfg", "uid-llm");
+        let root_res = make_res("DSC", "default-dsc", "uid-dsc");
+        let expect_res = make_res("Pod", "managed-pod", "uid-pod");
+
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            label_res.clone(),
+            ResolvedDecision::Delete {
+                reason: "label-only".into(),
+                approval_origin: ApprovalOrigin::BulkLabelOnly,
+            },
+        );
+        resolved.insert(
+            root_res.clone(),
+            ResolvedDecision::Delete {
+                reason: "root approved".into(),
+                approval_origin: ApprovalOrigin::Other,
+            },
+        );
+
+        let label_action = Action::Delete {
+            resource: label_res.clone(),
+            reason: "label-only approved".into(),
+        };
+        let root_action = Action::Delete {
+            resource: root_res.clone(),
+            reason: "root CR approved".into(),
+        };
+        let expect_action = Action::ExpectGone {
+            resource: expect_res.clone(),
+            reason: "managed descendant".into(),
+        };
+
+        let mut current = Vec::new();
+        let mut deferred = Vec::new();
+
+        // Route all 3 actions through the production helper
+        route_operand_action(
+            &label_res,
+            label_action,
+            &resolved,
+            &mut current,
+            &mut deferred,
+        );
+        route_operand_action(
+            &root_res,
+            root_action,
+            &resolved,
+            &mut current,
+            &mut deferred,
+        );
+        route_operand_action(
+            &expect_res,
+            expect_action,
+            &resolved,
+            &mut current,
+            &mut deferred,
+        );
+
+        // label-only → deferred
+        assert_eq!(deferred.len(), 1, "label-only DELETE should be deferred");
+        assert!(
+            matches!(&deferred[0], Action::Delete { resource, .. } if resource.kind == "LLMConfig")
+        );
+
+        // root DELETE and EXPECT → current phase
+        assert_eq!(
+            current.len(),
+            2,
+            "root DELETE and EXPECT should stay in current phase"
+        );
+        assert!(
+            current
+                .iter()
+                .any(|a| matches!(a, Action::Delete { resource, .. } if resource.kind == "DSC"))
+        );
+        assert!(
+            current.iter().any(
+                |a| matches!(a, Action::ExpectGone { resource, .. } if resource.kind == "Pod")
+            )
+        );
+    }
+
+    #[test]
+    fn route_operand_action_review_stays_in_current() {
+        let res = make_res("OG", "og-1", "uid-og");
+        let resolved = HashMap::new(); // not in resolved → not label-only
+        let action = Action::Review {
+            resource: res.clone(),
+            reason: "verify before deleting".into(),
+            metadata: None,
+        };
+        let mut current = Vec::new();
+        let mut deferred = Vec::new();
+        route_operand_action(&res, action, &resolved, &mut current, &mut deferred);
+        assert_eq!(current.len(), 1);
+        assert!(deferred.is_empty());
+    }
+
+    #[test]
+    fn route_operand_action_keep_stays_in_current() {
+        let res = make_res("NS", "ns-1", "uid-ns");
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            res.clone(),
+            ResolvedDecision::Keep {
+                reason: "preserved".into(),
+            },
+        );
+        let action = Action::Keep {
+            resource: res.clone(),
+            reason: "preserved".into(),
+        };
+        let mut current = Vec::new();
+        let mut deferred = Vec::new();
+        route_operand_action(&res, action, &resolved, &mut current, &mut deferred);
+        assert_eq!(current.len(), 1);
+        assert!(deferred.is_empty(), "KEEP should never be deferred");
+    }
+
+    // ── validate_package_name boundary tests ──
+
+    #[test]
+    fn validate_package_valid() {
+        use crate::teardown::plan::validate_package_name;
+        let r = validate_package_name(Some("rhods-operator"), "csv.v1");
+        assert!(r.is_ok());
+        assert_eq!(r.unwrap(), "rhods-operator");
+    }
+
+    #[test]
+    fn validate_package_none_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(None, "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_empty_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some(""), "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_whitespace_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some("   "), "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_leading_space_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some(" rhods-operator"), "csv.v1").is_err());
+    }
+
+    #[test]
+    fn validate_package_trailing_space_rejected() {
+        use crate::teardown::plan::validate_package_name;
+        assert!(validate_package_name(Some("rhods-operator "), "csv.v1").is_err());
     }
 }

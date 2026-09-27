@@ -57,7 +57,7 @@ CSV の `spec.customresourcedefinitions.owned` や `spec.apiservicedefinitions.o
 CSV -> provides -> CRD/APIService
 ```
 
-これは CRD instance の削除権限を意味しない。instance はユーザーが作成した durable intent の可能性がある。CRD 自体の削除も `--prune-apis` の明示操作に限定する。
+これは CRD instance の削除権限を意味しない。instance はユーザーが作成した durable intent の可能性がある。CRD 自体の削除も `--prune-crds` の明示操作に限定する。APIService は常に KEEP（`--prune-crds` の対象外）。
 
 ### 3.2 Instance lifecycle ownership
 
@@ -251,7 +251,7 @@ install namespace では、OperatorGroup、Lease、ConfigMap なども残存候�
 - target Subscription: OLM reconciliation を止めるため Phase 0 で UID-bound DELETE
 - target CSV: operand cleanup 完了後、controller を最後に UID-bound DELETE
 - explicit root DELETE の ownerRef descendant: `EXPECT_GONE`
-- CRD/APIService: default KEEP。`--prune-apis` の明示指定、live instance check、UID bindingを満たす場合だけ DELETE candidate
+- CRD: default KEEP。`--prune-crds` の明示指定、live instance check、UID bindingを満たす場合だけ DELETE candidate。APIService は常に KEEP
 
 ### 11.2 REVIEW にするもの
 

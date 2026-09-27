@@ -177,6 +177,97 @@ pub async fn list_with_selector_retry(
     })
 }
 
+pub async fn list_all_with_retry(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    let mut all_items = Vec::new();
+    let mut continue_token: Option<String> = None;
+    loop {
+        let mut lp = ListParams::default().limit(500);
+        if let Some(ref token) = continue_token {
+            lp = lp.continue_token(token);
+        }
+        let mut list_result = None;
+        for attempt in 0..=MAX_RETRIES {
+            let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
+            match tokio::time::timeout(timeout_dur, api.list(&lp)).await {
+                Ok(Ok(list)) => {
+                    list_result = Some(list);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    let warning = ScanWarning::from_kube_error(&e, group, version, plural);
+                    if warning.is_retryable() && attempt < MAX_RETRIES {
+                        let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                        warn_retry(
+                            is_tty,
+                            &format!(
+                                "{} — LIST attempt {}/{} failed; retrying in {}ms",
+                                gvr,
+                                attempt + 1,
+                                MAX_RETRIES + 1,
+                                delay.as_millis()
+                            ),
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    let mut w = ScanWarning::from_kube_error(&e, group, version, plural);
+                    w.set_retries(attempt);
+                    return Err(w);
+                }
+                Err(_elapsed) => {
+                    if attempt < MAX_RETRIES {
+                        let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                        warn_retry(
+                            is_tty,
+                            &format!(
+                                "{} — LIST timeout ({}s), attempt {}/{}; retrying",
+                                gvr,
+                                SCAN_REQUEST_TIMEOUT_SECS,
+                                attempt + 1,
+                                MAX_RETRIES + 1
+                            ),
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(ScanWarning::Timeout {
+                        gvr: gvr.clone(),
+                        message: Some(format!("LIST timeout ({}s)", SCAN_REQUEST_TIMEOUT_SECS)),
+                        retries: attempt,
+                    });
+                }
+            }
+        }
+        match list_result {
+            Some(list) => {
+                all_items.extend(list.items);
+                match list.metadata.continue_.filter(|t| !t.is_empty()) {
+                    Some(token) => continue_token = Some(token),
+                    None => break,
+                }
+            }
+            None => {
+                return Err(ScanWarning::Other {
+                    gvr,
+                    message: "exhausted retries".to_string(),
+                });
+            }
+        }
+    }
+    Ok(all_items)
+}
+
 pub(crate) fn resolve_name_matches(
     spec_strs: &[(String, String)],
     self_name: &str,
@@ -1663,6 +1754,152 @@ mod tests {
         assert!(
             matches!(warnings[0], ScanWarning::Forbidden { .. }),
             "Warning should be Forbidden"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_all_with_retry_403_no_retry() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                send.send_response(status_response(403, "Forbidden"));
+            }
+        });
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&kube::api::GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+        let api: Api<DynamicObject> = Api::all_with(client, &ar);
+        let result = list_all_with_retry(&api, "apps", "v1", "deployments").await;
+        spawned.abort();
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "403 should not retry — expected 1 request"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_all_with_retry_500_retries_3_times() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                send.send_response(status_response(500, "Internal Server Error"));
+            }
+        });
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&kube::api::GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+        let api: Api<DynamicObject> = Api::all_with(client, &ar);
+        let result = list_all_with_retry(&api, "apps", "v1", "deployments").await;
+        spawned.abort();
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "500 should retry — expected 3 requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_all_with_retry_500_then_200_recovery() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    send.send_response(status_response(500, "Internal Server Error"));
+                } else {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "apps/v1",
+                        "kind": "DeploymentList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "d1"}}]
+                    })));
+                }
+            }
+        });
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&kube::api::GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+        let api: Api<DynamicObject> = Api::all_with(client, &ar);
+        let result = list_all_with_retry(&api, "apps", "v1", "deployments").await;
+        spawned.abort();
+        let items = result.expect("should succeed after recovery");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "500→200 recovery should use 2 requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_all_with_retry_paginated() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let uri = req.uri().to_string();
+                if n == 0 && !uri.contains("continue") {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "apps/v1",
+                        "kind": "DeploymentList",
+                        "metadata": {"resourceVersion": "1", "continue": "token-1"},
+                        "items": [{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "d1"}}]
+                    })));
+                } else {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "apps/v1",
+                        "kind": "DeploymentList",
+                        "metadata": {"resourceVersion": "2"},
+                        "items": [{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "d2"}}]
+                    })));
+                }
+            }
+        });
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&kube::api::GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+        let api: Api<DynamicObject> = Api::all_with(client, &ar);
+        let result = list_all_with_retry(&api, "apps", "v1", "deployments").await;
+        spawned.abort();
+        let items = result.expect("paginated list should succeed");
+        assert_eq!(items.len(), 2, "both pages must be collected");
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "paginated list should use 2 requests"
         );
     }
 }

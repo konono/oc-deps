@@ -1,0 +1,1240 @@
+{
+  "layers": {
+    "raw": {
+      "pre": 17786,
+      "post": 14761
+    },
+    "logical": {
+      "pre": 17668,
+      "post": 14719,
+      "disappeared": 3408,
+      "appeared": 459
+    },
+    "physical_uid": {
+      "pre": 11716,
+      "post": 9165,
+      "removed": 2784,
+      "added": 233
+    },
+    "uid_null": {
+      "pre_observations": 820,
+      "post_observations": 731,
+      "logical_name_collisions": 22,
+      "fingerprint_collision_groups": 0,
+      "removed_fingerprints": 91,
+      "added_fingerprints": 2
+    }
+  },
+  "recreated": {
+    "physical_objects": 2,
+    "api_logical_identities": 3,
+    "details": [
+      {
+        "group": "",
+        "kind": "ConfigMap",
+        "namespace": "redhat-ai-gateway-infra",
+        "name": "openshift-service-ca.crt",
+        "pre_uid": "ae5fe019-31f8-413b-be27-f77f2e3a92c4",
+        "post_uid": "0c8255d0-4e73-4643-801d-9e8a529c71d0",
+        "pre_observations": [
+          [
+            "",
+            "v1",
+            "ConfigMap",
+            "configmaps"
+          ]
+        ],
+        "post_observations": [
+          [
+            "",
+            "v1",
+            "ConfigMap",
+            "configmaps"
+          ]
+        ]
+      },
+      {
+        "group": "authorization.openshift.io",
+        "kind": "RoleBinding",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-admin-binding",
+        "pre_uid": "8247a0fe-d50a-49e2-80f4-cd78628b1a99",
+        "post_uid": "b7cc599d-0bef-4458-b5ec-8ce1a5f72123",
+        "pre_observations": [
+          [
+            "authorization.openshift.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ],
+          [
+            "rbac.authorization.k8s.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ]
+        ],
+        "post_observations": [
+          [
+            "authorization.openshift.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ],
+          [
+            "rbac.authorization.k8s.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ]
+        ]
+      },
+      {
+        "group": "rbac.authorization.k8s.io",
+        "kind": "RoleBinding",
+        "namespace": "rhoai-model-registries",
+        "name": "model-catalog-admin-binding",
+        "pre_uid": "8247a0fe-d50a-49e2-80f4-cd78628b1a99",
+        "post_uid": "b7cc599d-0bef-4458-b5ec-8ce1a5f72123",
+        "pre_observations": [
+          [
+            "authorization.openshift.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ],
+          [
+            "rbac.authorization.k8s.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ]
+        ],
+        "post_observations": [
+          [
+            "authorization.openshift.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ],
+          [
+            "rbac.authorization.k8s.io",
+            "v1",
+            "RoleBinding",
+            "rolebindings"
+          ]
+        ]
+      }
+    ]
+  },
+  "physical_uid_classification": {
+    "direct_delete": 91,
+    "expect_gone": 72,
+    "planned_ownerref_descendant": 1282,
+    "owner_disappeared_unlinked": 10,
+    "derived_side_effect": 2,
+    "derived_candidate": 0,
+    "other_removed": 1327
+  },
+  "closure": {
+    "delete_seed": 91,
+    "total": 1460,
+    "removed_in_closure": 1445
+  },
+  "cross_operator_collisions": {
+    "uid_with_multiple_action_entries": 16,
+    "uid_used_by_multiple_operators": 1,
+    "logical_identity_with_multiple_action_entries": 17,
+    "logical_identity_used_by_multiple_operators": 2
+  },
+  "protected_transitive_deletions": [
+    {
+      "kind": "APIService",
+      "name": "v1alpha2.jobset.x-k8s.io",
+      "namespace": null,
+      "uid": "5221072c-bcda-4055-a0ae-3d88805324cc",
+      "classification": "derived_side_effect",
+      "ownerReferences": null,
+      "derived_evidence": {
+        "type": "derived_side_effect",
+        "evidence": "APIService v1alpha2.jobset.x-k8s.io matches deleted CRD jobsets.jobset.x-k8s.io, automanaged=true, version served",
+        "automanaged_label": true,
+        "version_served": true,
+        "related_crd": "jobsets.jobset.x-k8s.io",
+        "related_crd_uid": "4d2f7517-0847-412b-870a-4d8f5bb52a43"
+      }
+    },
+    {
+      "kind": "CustomResourceDefinition",
+      "name": "jobsets.jobset.x-k8s.io",
+      "namespace": null,
+      "uid": "4d2f7517-0847-412b-870a-4d8f5bb52a43",
+      "classification": "planned_ownerref_descendant",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.openshift.io/v1",
+          "kind": "JobSetOperator",
+          "name": "cluster",
+          "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b"
+        }
+      ],
+      "derived_evidence": null
+    },
+    {
+      "kind": "PersistentVolume",
+      "name": "pvc-78fb5c3e-4a6e-4cc3-a9aa-5b332657ab53",
+      "namespace": null,
+      "uid": "039099fc-f4eb-4b5e-a02e-28fbebd1893e",
+      "classification": "derived_side_effect",
+      "ownerReferences": null,
+      "derived_evidence": {
+        "type": "derived_side_effect",
+        "evidence": "PV name == pvc-{PVC_UID}",
+        "related_pvc_uid": "78fb5c3e-4a6e-4cc3-a9aa-5b332657ab53",
+        "limitation": "claimRef/reclaimPolicy not captured in metadata-only inventory"
+      }
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "mlflow-pvc",
+      "namespace": "redhat-ods-applications",
+      "uid": "78fb5c3e-4a6e-4cc3-a9aa-5b332657ab53",
+      "classification": "planned_ownerref_descendant",
+      "ownerReferences": [
+        {
+          "apiVersion": "mlflow.opendatahub.io/v1",
+          "kind": "MLflow",
+          "name": "mlflow",
+          "uid": "fbfb4430-94e4-4cb7-9db6-db4dfb6a6af7",
+          "controller": true,
+          "blockOwnerDeletion": true
+        }
+      ],
+      "derived_evidence": null
+    }
+  ],
+  "terminating": {
+    "newly_terminating": 0,
+    "preexisting_retained": 3,
+    "details": [
+      {
+        "kind": "NooBaa",
+        "name": "noobaa",
+        "namespace": "openshift-storage",
+        "uid": "29039875-d58a-455e-a9d1-29eeba4ea9e0",
+        "deletionTimestamp": "2026-09-20T02:27:12Z",
+        "finalizers": [
+          "noobaa.io/graceful_finalizer"
+        ],
+        "preexisting": true
+      },
+      {
+        "kind": "Secret",
+        "name": "ogx-obc",
+        "namespace": "redhat-ods-applications",
+        "uid": "394cdeb5-b5d3-4e02-b99f-6b84fba9e96e",
+        "deletionTimestamp": "2026-09-21T00:35:40Z",
+        "finalizers": [
+          "objectbucket.io/finalizer"
+        ],
+        "preexisting": true
+      },
+      {
+        "kind": "ServiceMesh",
+        "name": "default-servicemesh",
+        "namespace": null,
+        "uid": "9cd553f1-ffcf-4e00-9d34-02066a3f29d2",
+        "deletionTimestamp": "2026-09-25T16:41:18Z",
+        "finalizers": [
+          "platform.opendatahub.io/finalizer"
+        ],
+        "preexisting": true
+      }
+    ]
+  },
+  "orphan_ownerrefs_non_terminating": [
+    {
+      "kind": "OAuthClient",
+      "name": "data-science",
+      "namespace": null,
+      "uid": "658da81f-66a3-4aed-a848-30c141eae56e",
+      "deleted_owner_kind": "GatewayConfig",
+      "deleted_owner_name": "default-gateway",
+      "deleted_owner_uid": "1c9f002e-bcab-43ce-9102-537356c7137d"
+    }
+  ],
+  "provider_api_operands": {
+    "total": 25,
+    "results": [
+      {
+        "group": "authorino.kuadrant.io",
+        "kind": "AuthConfig",
+        "namespace": "openshift-rhcl",
+        "name": "002268263f8bb03204567714a8f374dbaf67e0353162e6d450af43df8900c427",
+        "uid": "ae275951-63ac-48be-be99-8b1ba21df0e8",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "route_rule_annotations": [
+            "HTTPRouteRule.gateway.networking.k8s.io"
+          ]
+        },
+        "version": "v1beta3",
+        "observedVersions": [
+          "authorino.kuadrant.io/v1beta3"
+        ],
+        "api_provider_operator": "authorino-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "authconfigs.authorino.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "removed_by_other_or_controller_cleanup",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "authorino.kuadrant.io",
+        "kind": "AuthConfig",
+        "namespace": "openshift-rhcl",
+        "name": "32c5926417ce74d07104e03d2afed39d36dfb3e0cd65e94a5f8f1e7b85163a98",
+        "uid": "f9cac037-0c50-4386-83e3-821319a81abd",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "route_rule_annotations": [
+            "HTTPRouteRule.gateway.networking.k8s.io"
+          ]
+        },
+        "version": "v1beta3",
+        "observedVersions": [
+          "authorino.kuadrant.io/v1beta3"
+        ],
+        "api_provider_operator": "authorino-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "authconfigs.authorino.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "removed_by_other_or_controller_cleanup",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "authorino.kuadrant.io",
+        "kind": "AuthConfig",
+        "namespace": "openshift-rhcl",
+        "name": "77d78fccf2af9dd49c04b2afd9490521a51584cb63af0ecef56e9bae12d430c1",
+        "uid": "026cd839-527f-4b4c-8707-207b6d1644eb",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "route_rule_annotations": [
+            "HTTPRouteRule.gateway.networking.k8s.io"
+          ]
+        },
+        "version": "v1beta3",
+        "observedVersions": [
+          "authorino.kuadrant.io/v1beta3"
+        ],
+        "api_provider_operator": "authorino-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "authconfigs.authorino.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "removed_by_other_or_controller_cleanup",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "authorino.kuadrant.io",
+        "kind": "AuthConfig",
+        "namespace": "openshift-rhcl",
+        "name": "9a9b0d8c5f8335cb2f5af8be2bef8c1a7ef8846ba736ea4a7135bd4b966f4f63",
+        "uid": "c0bebf73-16a2-4a2e-8298-87cab6cb8e7b",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "route_rule_annotations": [
+            "HTTPRouteRule.gateway.networking.k8s.io"
+          ]
+        },
+        "version": "v1beta3",
+        "observedVersions": [
+          "authorino.kuadrant.io/v1beta3"
+        ],
+        "api_provider_operator": "authorino-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "authconfigs.authorino.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "removed_by_other_or_controller_cleanup",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "operator.authorino.kuadrant.io",
+        "kind": "Authorino",
+        "namespace": "openshift-rhcl",
+        "name": "authorino",
+        "uid": "56cea9bc-bdf5-4244-b407-924e63687db5",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "kuadrant.io/v1beta1",
+            "kind": "Kuadrant",
+            "name": "kuadrant",
+            "uid": "aab74189-7851-4dd0-be2f-24b86b039fc8",
+            "controller": true
+          }
+        },
+        "version": "v1beta1",
+        "observedVersions": [
+          "operator.authorino.kuadrant.io/v1beta1"
+        ],
+        "api_provider_operator": "authorino-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "authorinos.operator.authorino.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "perses.dev",
+        "kind": "PersesDashboard",
+        "namespace": "redhat-ods-monitoring",
+        "name": "dashboard-2-llm-d-traffic-admin",
+        "uid": "0a3150ee-8d6f-4c15-834c-9976fd91b534",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "components.platform.opendatahub.io/v1alpha1",
+            "kind": "Kserve",
+            "name": "default-kserve",
+            "uid": "edeaa435-7940-466a-8453-9901e1080be6",
+            "controller": true
+          }
+        },
+        "version": "v1alpha1",
+        "observedVersions": [
+          "perses.dev/v1alpha1",
+          "perses.dev/v1alpha2"
+        ],
+        "api_provider_operator": "cluster-observability-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "persesdashboards.perses.dev"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "perses.dev",
+        "kind": "PersesDashboard",
+        "namespace": "redhat-ods-monitoring",
+        "name": "dashboard-3-llm-d-utilization-admin",
+        "uid": "eb10a5dd-1998-406a-9ee1-20e8bd1faa04",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "components.platform.opendatahub.io/v1alpha1",
+            "kind": "Kserve",
+            "name": "default-kserve",
+            "uid": "edeaa435-7940-466a-8453-9901e1080be6",
+            "controller": true
+          }
+        },
+        "version": "v1alpha1",
+        "observedVersions": [
+          "perses.dev/v1alpha1",
+          "perses.dev/v1alpha2"
+        ],
+        "api_provider_operator": "cluster-observability-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "persesdashboards.perses.dev"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "perses.dev",
+        "kind": "PersesDashboard",
+        "namespace": "redhat-ods-monitoring",
+        "name": "dashboard-3-maas-usage-admin",
+        "uid": "0d3e8186-abb9-4832-8754-bfecdf876c0f",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "maas.opendatahub.io/v1alpha1",
+            "kind": "Config",
+            "name": "default",
+            "uid": "46fe1323-ae9d-44c4-bbbd-e20806eb39c5",
+            "controller": true
+          },
+          "managed_by_label": "maas-observability"
+        },
+        "version": "v1alpha1",
+        "observedVersions": [
+          "perses.dev/v1alpha1",
+          "perses.dev/v1alpha2"
+        ],
+        "api_provider_operator": "cluster-observability-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "persesdashboards.perses.dev"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "perses.dev",
+        "kind": "PersesDashboard",
+        "namespace": "redhat-ods-monitoring",
+        "name": "dashboard-4-llm-d-performance-admin",
+        "uid": "de1081b7-cf03-4dd1-86cf-2d31d54778c2",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "components.platform.opendatahub.io/v1alpha1",
+            "kind": "Kserve",
+            "name": "default-kserve",
+            "uid": "edeaa435-7940-466a-8453-9901e1080be6",
+            "controller": true
+          }
+        },
+        "version": "v1alpha1",
+        "observedVersions": [
+          "perses.dev/v1alpha1",
+          "perses.dev/v1alpha2"
+        ],
+        "api_provider_operator": "cluster-observability-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "persesdashboards.perses.dev"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "limitador.kuadrant.io",
+        "kind": "Limitador",
+        "namespace": "openshift-rhcl",
+        "name": "limitador",
+        "uid": "0cbd4c02-2ca0-4d02-8480-783f99743dee",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "kuadrant.io/v1beta1",
+            "kind": "Kuadrant",
+            "name": "kuadrant",
+            "uid": "aab74189-7851-4dd0-be2f-24b86b039fc8",
+            "controller": true
+          }
+        },
+        "version": "v1alpha1",
+        "observedVersions": [
+          "limitador.kuadrant.io/v1alpha1"
+        ],
+        "api_provider_operator": "limitador-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "limitadors.limitador.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "cert-manager.io",
+        "kind": "Certificate",
+        "namespace": "openshift-jobset",
+        "name": "jobset-metrics-cert",
+        "uid": "85774c00-b2ff-4327-a8d9-7be9046de196",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "operator.openshift.io/v1",
+            "kind": "JobSetOperator",
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b",
+            "controller": null
+          },
+          "managed_by_label": "kustomize"
+        },
+        "version": "v1",
+        "observedVersions": [
+          "cert-manager.io/v1"
+        ],
+        "api_provider_operator": "openshift-cert-manager-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "certificates.cert-manager.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "cert-manager.io",
+        "kind": "Certificate",
+        "namespace": "openshift-jobset",
+        "name": "jobset-serving-cert",
+        "uid": "33a8ea64-4083-4936-8f76-b8f148f679e4",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "operator.openshift.io/v1",
+            "kind": "JobSetOperator",
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b",
+            "controller": null
+          },
+          "managed_by_label": "kustomize"
+        },
+        "version": "v1",
+        "observedVersions": [
+          "cert-manager.io/v1"
+        ],
+        "api_provider_operator": "openshift-cert-manager-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "certificates.cert-manager.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "cert-manager.io",
+        "kind": "Issuer",
+        "namespace": "openshift-jobset",
+        "name": "jobset-selfsigned-issuer",
+        "uid": "9625301a-bb64-451b-be5f-e4ed067bd5aa",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "operator.openshift.io/v1",
+            "kind": "JobSetOperator",
+            "name": "cluster",
+            "uid": "b943eafa-fc30-437d-83fe-db8be5efbf8b",
+            "controller": null
+          },
+          "managed_by_label": "kustomize"
+        },
+        "version": "v1",
+        "observedVersions": [
+          "cert-manager.io/v1"
+        ],
+        "api_provider_operator": "openshift-cert-manager-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "issuers.cert-manager.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "kuadrant.io",
+        "kind": "AuthPolicy",
+        "namespace": "openshift-ingress",
+        "name": "maas-gateway-auth",
+        "uid": "dfe52cb4-cd2a-441c-bb30-70481a490983",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "managed_by_label": "maas-controller"
+        },
+        "version": "v1",
+        "observedVersions": [
+          "kuadrant.io/v1"
+        ],
+        "api_provider_operator": "rhcl-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "authpolicies.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "direct_delete_by_rhcl-operator",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": [
+          {
+            "action": "DELETE",
+            "operator": "rhcl-operator",
+            "order": 9,
+            "phase": "Trigger operand cleanup"
+          }
+        ]
+      },
+      {
+        "group": "kuadrant.io",
+        "kind": "TokenRateLimitPolicy",
+        "namespace": "openshift-ingress",
+        "name": "gateway-default-deny",
+        "uid": "5d911eaf-0d4a-446d-a658-3e363948dcfe",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "maas.opendatahub.io/v1alpha1",
+            "kind": "Config",
+            "name": "default",
+            "uid": "46fe1323-ae9d-44c4-bbbd-e20806eb39c5",
+            "controller": true
+          },
+          "managed_by_label": "maas-controller"
+        },
+        "version": "v1alpha1",
+        "observedVersions": [
+          "kuadrant.io/v1alpha1"
+        ],
+        "api_provider_operator": "rhcl-operator",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "tokenratelimitpolicies.kuadrant.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "DestinationRule",
+        "namespace": "openshift-ingress",
+        "name": "data-science-tls-rule",
+        "uid": "d1936577-66a3-4e12-9856-baa31b7da3fb",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "services.platform.opendatahub.io/v1alpha1",
+            "kind": "GatewayConfig",
+            "name": "default-gateway",
+            "uid": "1c9f002e-bcab-43ce-9102-537356c7137d",
+            "controller": true
+          }
+        },
+        "version": "v1",
+        "observedVersions": [
+          "networking.istio.io/v1",
+          "networking.istio.io/v1alpha3",
+          "networking.istio.io/v1beta1"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "destinationrules.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "DestinationRule",
+        "namespace": "openshift-ingress",
+        "name": "maas-api-backend-tls",
+        "uid": "99d606c6-f258-4473-9130-50933fde1c65",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "maas.opendatahub.io/v1alpha1",
+            "kind": "Config",
+            "name": "default",
+            "uid": "46fe1323-ae9d-44c4-bbbd-e20806eb39c5",
+            "controller": true
+          }
+        },
+        "version": "v1",
+        "observedVersions": [
+          "networking.istio.io/v1",
+          "networking.istio.io/v1alpha3",
+          "networking.istio.io/v1beta1"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "destinationrules.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "DestinationRule",
+        "namespace": "openshift-ingress",
+        "name": "payload-pre-processing",
+        "uid": "8af94bdf-c658-4fab-9a61-ea24d8281314",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "maas.opendatahub.io/v1alpha1",
+            "kind": "Config",
+            "name": "default",
+            "uid": "46fe1323-ae9d-44c4-bbbd-e20806eb39c5",
+            "controller": true
+          }
+        },
+        "version": "v1",
+        "observedVersions": [
+          "networking.istio.io/v1",
+          "networking.istio.io/v1alpha3",
+          "networking.istio.io/v1beta1"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "destinationrules.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "DestinationRule",
+        "namespace": "openshift-ingress",
+        "name": "payload-processing",
+        "uid": "c1757dc2-5a55-4491-994e-358e1c20fa2b",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "maas.opendatahub.io/v1alpha1",
+            "kind": "Config",
+            "name": "default",
+            "uid": "46fe1323-ae9d-44c4-bbbd-e20806eb39c5",
+            "controller": true
+          }
+        },
+        "version": "v1",
+        "observedVersions": [
+          "networking.istio.io/v1",
+          "networking.istio.io/v1alpha3",
+          "networking.istio.io/v1beta1"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "destinationrules.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "EnvoyFilter",
+        "namespace": "openshift-ingress",
+        "name": "data-science-authn-filter",
+        "uid": "caacf04c-ff1a-4b6d-befa-1ec0b61197f5",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "services.platform.opendatahub.io/v1alpha1",
+            "kind": "GatewayConfig",
+            "name": "default-gateway",
+            "uid": "1c9f002e-bcab-43ce-9102-537356c7137d",
+            "controller": true
+          }
+        },
+        "version": "v1alpha3",
+        "observedVersions": [
+          "networking.istio.io/v1alpha3"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "envoyfilters.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "EnvoyFilter",
+        "namespace": "openshift-ingress",
+        "name": "kuadrant-auth-maas-default-gateway",
+        "uid": "cc32ed35-bd89-4d12-ac7a-bec07c4d85e1",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "name": "maas-default-gateway",
+            "uid": "d37b41b0-7fd3-4d86-959b-19a72993ae3a",
+            "controller": true
+          }
+        },
+        "version": "v1alpha3",
+        "observedVersions": [
+          "networking.istio.io/v1alpha3"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "envoyfilters.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "EnvoyFilter",
+        "namespace": "openshift-ingress",
+        "name": "kuadrant-maas-default-gateway",
+        "uid": "add64e23-9f7d-42a4-9de4-42d65e84622b",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "name": "maas-default-gateway",
+            "uid": "d37b41b0-7fd3-4d86-959b-19a72993ae3a",
+            "controller": true
+          }
+        },
+        "version": "v1alpha3",
+        "observedVersions": [
+          "networking.istio.io/v1alpha3"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "envoyfilters.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "EnvoyFilter",
+        "namespace": "openshift-ingress",
+        "name": "kuadrant-ratelimiting-maas-default-gateway",
+        "uid": "e0f9d008-365a-49b1-9d88-5411ed93ea56",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "name": "maas-default-gateway",
+            "uid": "d37b41b0-7fd3-4d86-959b-19a72993ae3a",
+            "controller": true
+          }
+        },
+        "version": "v1alpha3",
+        "observedVersions": [
+          "networking.istio.io/v1alpha3"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "envoyfilters.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "EnvoyFilter",
+        "namespace": "openshift-ingress",
+        "name": "maas-default-gateway-authn-ssl",
+        "uid": "eaee3614-2e04-49b2-b738-9ae0172fe5f9",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "name": "maas-default-gateway",
+            "uid": "d37b41b0-7fd3-4d86-959b-19a72993ae3a",
+            "controller": true
+          },
+          "managed_by_label": "odh-model-controller"
+        },
+        "version": "v1alpha3",
+        "observedVersions": [
+          "networking.istio.io/v1alpha3"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "envoyfilters.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      },
+      {
+        "group": "networking.istio.io",
+        "kind": "EnvoyFilter",
+        "namespace": "openshift-ingress",
+        "name": "payload-processing",
+        "uid": "9f722732-ace5-41d9-8bb9-547c2ca7450c",
+        "initial_action": "DELETE",
+        "lifecycle_owner_evidence": {
+          "ownerRef": {
+            "apiVersion": "maas.opendatahub.io/v1alpha1",
+            "kind": "Config",
+            "name": "default",
+            "uid": "46fe1323-ae9d-44c4-bbbd-e20806eb39c5",
+            "controller": true
+          }
+        },
+        "version": "v1alpha3",
+        "observedVersions": [
+          "networking.istio.io/v1alpha3"
+        ],
+        "api_provider_operator": "servicemeshoperator3",
+        "provider_api_evidence": {
+          "type": "CsvOwnedCrd",
+          "crd": "envoyfilters.networking.istio.io"
+        },
+        "discovery_source": "Direct",
+        "graph_position": "Independent",
+        "approval_scope": "independent",
+        "expected_without_independent_approval": "REVIEW",
+        "expected_full_teardown_decision": "DELETE",
+        "in_pre": true,
+        "pre_uid_match": true,
+        "in_post": false,
+        "initial_plan_has_delete": true,
+        "physical_disappearance_cause": "planned_ownerref_descendant",
+        "initial_plan_correctness": "expected_provider_operand_cleanup",
+        "action_history": []
+      }
+    ]
+  },
+  "derived_evidence": {
+    "039099fc-f4eb-4b5e-a02e-28fbebd1893e": {
+      "type": "derived_side_effect",
+      "evidence": "PV name == pvc-{PVC_UID}",
+      "related_pvc_uid": "78fb5c3e-4a6e-4cc3-a9aa-5b332657ab53",
+      "limitation": "claimRef/reclaimPolicy not captured in metadata-only inventory"
+    },
+    "5221072c-bcda-4055-a0ae-3d88805324cc": {
+      "type": "derived_side_effect",
+      "evidence": "APIService v1alpha2.jobset.x-k8s.io matches deleted CRD jobsets.jobset.x-k8s.io, automanaged=true, version served",
+      "automanaged_label": true,
+      "version_served": true,
+      "related_crd": "jobsets.jobset.x-k8s.io",
+      "related_crd_uid": "4d2f7517-0847-412b-870a-4d8f5bb52a43"
+    }
+  }
+}

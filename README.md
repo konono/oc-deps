@@ -382,7 +382,7 @@ oc-deps operator resources rhods-operator              # top-level subcommand
 oc-deps operator resources rhods-operator -o json       # JSON output
 oc-deps operator resources rhods-operator --scope related  # discover across namespaces
 oc-deps operator resources rhods-operator -o table         # tabular output with group/source
-oc-deps teardown inspect rhods-operator                    # also available under teardown
+oc-deps operator resources rhods-operator -v                # verbose output
 ```
 
 Resources are grouped into categories with **Relationship**, **Evidence**, and **Confidence**:
@@ -432,7 +432,9 @@ The managing operator is determined via `operator owner` (ownerRef chain → CSV
 oc-deps teardown plan rhods-operator
 oc-deps teardown plan rhods-operator odf-operator   # multiple operators
 oc-deps teardown plan rhods-operator -o json         # JSON output
-oc-deps teardown plan rhods-operator --prune-apis    # include CRD deletion
+oc-deps teardown plan rhods-operator --prune-crds    # include CRD deletion
+oc-deps teardown plan rhods-operator --approve-scope root --approve-resource Config/default
+oc-deps teardown plan rhods-operator --file plan.json  # save execution plan for apply
 ```
 
 The plan is read-only — nothing is deleted. It generates a phased deletion sequence:
@@ -443,8 +445,44 @@ The plan is read-only — nothing is deleted. It generates a phased deletion seq
 | 1 | Trigger operand cleanup | DELETE root CRs, EXPECT managed descendants to vanish |
 | 2 | Remaining cleanup | DELETE any remaining operands |
 | 3 | Remove controllers | DELETE CSV (GC removes Deployments) |
-| 4 | APIs | KEEP CRDs by default (DELETE with `--prune-apis`) |
+| 4 | APIs | KEEP CRDs by default (DELETE with `--prune-crds`); APIServices always KEEP |
 | 5 | Namespaces | KEEP (manual verification required) |
+
+### Explicit resource cleanup (`--delete-resource`)
+
+Some operator residuals (e.g. Gateway, ConfigMap, ConsolePlugin bundles) are not owned via ownerReferences and survive operator teardown. Use `--delete-resource` to explicitly include them in the plan:
+
+```bash
+oc-deps teardown plan rhods-operator \
+  --delete-resource gateway.networking.k8s.io/Gateway/openshift-ingress/maas-default-gateway \
+  --delete-resource ConfigMap/openshift-ingress/maas-gateway-options \
+  --file plan.json
+```
+
+**Syntax:** `group/Kind/ns/name` or `Kind/ns/name` (core group) or `Kind/-/name` (cluster-scoped).
+
+**Supported target kinds:** Gateway, ConfigMap, Service, ConsolePlugin, Deployment.
+**Forbidden kinds:** Namespace, PersistentVolume, PersistentVolumeClaim, CustomResourceDefinition, APIService.
+
+**Safety guarantees:**
+
+- **Typed inbound reference scan** — at plan time AND apply time, the tool lists all known referrer kinds for each target and checks whether any live object outside the deletion closure references it. If any external reference exists, the target is blocked.
+- **Fail-closed** — if a required referrer API LIST fails (RBAC, timeout, server error), the scan is incomplete and the target is blocked. Optional APIs (e.g. Gateway routes on non-Gateway clusters) are skipped when not served.
+- **UID precondition** — every explicit DELETE uses a UID precondition to prevent deleting a recreated resource.
+- **Apply-time revalidation** — the full ref scan re-runs at apply time (including dry-run) with fresh cluster state. New external referrers introduced after `plan` will block `apply`.
+- **Canonical authority comparison** — apply compares saved plan evidence (identity, inbound refs, coverage) against fresh resolution. Any drift (UID change, new refs, coverage change) is rejected.
+
+**Reference coverage per target kind:**
+
+| Target | Referrer kinds scanned |
+|--------|----------------------|
+| Gateway | HTTPRoute, GRPCRoute, TCPRoute, TLSRoute, UDPRoute (parentRefs) |
+| ConfigMap | Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, Pod (volumes, projected, envFrom, env valueFrom); Gateway (parametersRef) |
+| Service | ConsolePlugin (backend), HTTPRoute/GRPCRoute/TCPRoute/TLSRoute/UDPRoute (backendRefs), Ingress (defaultBackend, rules), Route (spec.to, alternateBackends) |
+| ConsolePlugin | Console (spec.plugins) |
+| Deployment | HorizontalPodAutoscaler (scaleTargetRef) |
+
+The Explicit cleanup phase executes after controller removal and before API/namespace phases, ensuring controllers are gone before their residual resources are cleaned up.
 
 ### Check resource status
 
@@ -465,10 +503,12 @@ Explains why a specific resource is in its phase, showing the evidence chain fro
 ### Execute a plan
 
 ```bash
-oc-deps teardown apply rhods-operator --dry-run    # preview only
-oc-deps teardown apply rhods-operator              # warnings and interactive confirmation
-oc-deps teardown apply rhods-operator --force       # suppress advisory warnings
+oc-deps teardown apply plan.json --dry-run    # preview only
+oc-deps teardown apply plan.json              # interactive confirmation
+oc-deps teardown apply plan.json --non-interactive  # non-interactive mode
 ```
+
+Apply always reads from an execution plan file (generated by `teardown plan --file`). The execution plan carries cluster identity, approval policy, and resource UIDs. Apply does fresh discovery and re-generates the plan using the saved approval/keep/prune settings, then validates against the saved plan for drift.
 
 ### Cluster snapshot and evidence graph
 
@@ -508,8 +548,8 @@ Resources are matched by logical identity (group/kind/namespace/name). UID chang
 | Tier | Condition | Override |
 |------|-----------|----------|
 | **Blocker** | External operator depends on target CRD | Cannot override |
-| **Critical preflight** | CSV not Succeeded, controller unavailable | Cannot override (`--force` ignored) |
-| **Non-critical preflight** | Uncertain CR provenance | Warn and continue |
+| **Critical preflight** | Ambiguous Subscription authority, incomplete required API/CRD discovery | Cannot override |
+| **Advisory preflight** | CSV not Succeeded, controller unavailable, uncertain CR provenance | Warn and continue |
 | **REVIEW items** | Resources with unknown provenance | Preserve unless explicitly approved |
 | **Confirmation** | Interactive y/N prompt | User types `y` |
 | **Barrier** | Resources must vanish before next phase | Times out after 300s or stalls after 120s |
@@ -523,33 +563,30 @@ CRs are classified by how strongly they can be attributed to the target operator
 - **LikelyManaged**: labels contain the operator's CSV name prefix, or managedFields manager matches a deployment name
 - **Unknown**: no attributable evidence
 
-Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW items and remain preserved unless explicitly approved with `--approve-delete` or in the TUI. Unresolved REVIEW items do not block the interactive CLI; the operator cleanup continues after a final `y` confirmation. Non-interactive execution still requires all REVIEW items to be resolved.
+Only `Managed` CRs are auto-deleted. `LikelyManaged` and `Unknown` become REVIEW items and remain preserved unless explicitly approved with `--approve-scope`/`--approve-resource` or in the TUI. Unresolved REVIEW items do not block the interactive CLI; the operator cleanup continues after a final `y` confirmation. Non-interactive execution still requires all REVIEW items to be resolved.
 
 ### Key flags
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Show what would be done without executing |
-| `--prune-apis` | Include CRD deletion in plan (default: KEEP) |
-| `--approve-delete label-only` | Delete REVIEW CRs discovered only through matching platform labels; excludes Namespace, PV, PVC, and CRD |
-| `--approve-delete operator-group` | Delete an OperatorGroup only when no non-target operator remains in its namespace |
-| `--force` | Suppress advisory warnings. Does not authorize REVIEW deletion or override blockers and safety guards |
-| `--no-cache` | Skip API discovery cache (force fresh discovery) |
+| `--prune-crds` | Include CRD deletion in plan (default: KEEP) |
+| `--approve-scope label-only` | Delete REVIEW CRs discovered only through matching platform labels; excludes Namespace, PV, PVC, and CRD |
+| `--approve-scope operator-group` | Delete an OperatorGroup only when no non-target operator remains in its namespace |
+| `--approve-resource Kind/name` | Approve deletion of a specific REVIEW resource |
+| `--keep-resource Kind/name` | Preserve a REVIEW resource (keep instead of delete) |
+| `--refresh-discovery` | Skip API discovery cache (force fresh discovery) |
 
-`--force` changes warning output only. It does not change the plan, authorize additional
-deletions, bypass confirmation, or relax execution guards.
+The API discovery cache is valid for 30 minutes. Use `--refresh-discovery` after changing CRDs
+or APIService registrations when the command must observe those changes immediately.
 
-The API discovery cache is valid for 30 minutes. Use `--refresh-discovery` (or `--no-cache` on
-teardown/snapshot/graph subcommands) after changing CRDs or APIService registrations when the
-command must observe those changes immediately.
+For `teardown batch`, `--refresh-discovery` refreshes API discovery for the first operator and
+reuses that fresh snapshot for later operators in the same run. Operator, CR, and namespace
+discovery still runs for every operator so each plan observes changes made by earlier teardowns.
 
-For `teardown apply-set`, `--no-cache` refreshes API discovery for the first operator and reuses
-that fresh snapshot for later operators in the same run. Operator, CR, and namespace discovery
-still runs for every operator so each plan observes changes made by earlier teardowns.
+### Batch deletion approvals
 
-### Apply-set deletion approvals
-
-Apply-set config can declare common REVIEW approvals once and keep per-operator entries focused on
+Batch config can declare common REVIEW approvals once and keep per-operator entries focused on
 exceptions:
 
 ```json
@@ -574,9 +611,18 @@ exceptions:
 
 Each scope is opt-in. If a scope is omitted, matching REVIEW resources remain preserved. The
 structured form intentionally has no `all` scope; use `root` and `independent` explicitly.
-Operator-level approvals and preserves are added to the defaults. Operator-level `force` and
-`non_interactive` values override their defaults. `resources` contains exact approvals only. The
-original array form remains accepted for existing configs.
+Operator-level approvals and keeps are added to the defaults. Operator-level
+`non_interactive` values override their defaults. `resources` contains exact approvals only.
+
+### Batch baseline gate
+
+Before starting any destructive operations, `teardown batch` verifies that every operator in the config is **present** in the cluster (has a discoverable CSV). CSV phase (Succeeded, Failed, Pending) is shown for diagnostics but does not block teardown — operators in any phase are allowed to proceed, though cleanup of non-Succeeded operators may rely on finalizer recovery and advisory warnings should be reviewed.
+
+Missing operators fail the baseline gate by default. Use `--skip-missing` to skip absent operators; skipped entries are reported as `⏭ SKIPPED` in the summary and are never counted as successful.
+
+### CSV health and controller availability
+
+Teardown preflight reports CSV health and controller availability as advisory warnings. A Failed or unavailable operator can still be torn down — the plan and apply proceed normally. Only true safety failures block execution: ambiguous Subscription authority, incomplete required API discovery, plan identity/drift mismatch, and explicit-delete reference guard failures.
 
 ## Build
 
