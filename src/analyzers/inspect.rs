@@ -9,7 +9,8 @@ use kube::{
 use serde::{Deserialize, Serialize};
 
 use crate::analyzers::namespace_scope::{
-    CandidateNamespace, discover_operator_namespaces, scan_candidate_namespaces,
+    CandidateNamespace, RejectedNamespaceCandidate, discover_operator_namespaces,
+    scan_candidate_namespaces,
 };
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
@@ -78,6 +79,8 @@ pub struct OperatorInspection {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub scan_warning_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rejected_namespace_candidates: Vec<RejectedNamespaceCandidate>,
 }
 
 pub async fn inspect_operator_with_options(
@@ -96,6 +99,7 @@ pub async fn inspect_operator_with_options(
     let mut scope_warnings = Vec::new();
     let mut all_warnings = Vec::new();
     let mut scan_warning_count = 0usize;
+    let mut rejected_namespace_candidates = Vec::new();
 
     // OLM resources
     if let Some(sub) = &operator.subscription {
@@ -242,6 +246,7 @@ pub async fn inspect_operator_with_options(
         scan_warning_count += scope_result.scan_failures.len();
         all_warnings.extend(scope_result.scan_failures.iter().map(|w| format!("{}", w)));
         namespace_scope = Some(scope_result.candidates.clone());
+        rejected_namespace_candidates = scope_result.rejected_candidates;
 
         let scan_result =
             scan_candidate_namespaces(client, &scope_result.candidates, kind_map, None).await;
@@ -379,6 +384,7 @@ pub async fn inspect_operator_with_options(
         scope_warnings,
         warnings: all_warnings,
         scan_warning_count,
+        rejected_namespace_candidates,
     })
 }
 
@@ -819,6 +825,7 @@ mod tests {
             scope_warnings: vec![],
             warnings: vec![],
             scan_warning_count: 0,
+            rejected_namespace_candidates: vec![],
         };
         let json = serde_json::to_string(&inspection).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

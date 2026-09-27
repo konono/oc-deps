@@ -14,6 +14,76 @@ use crate::kube::resource::{NamespaceIndex, ScanWarning};
 use crate::kube::scanner::scan_namespace;
 use crate::teardown::planner::discover_cr_instances;
 
+// ──────────────────────────────────────────────────────────────
+//  Namespace validation
+// ──────────────────────────────────────────────────────────────
+
+pub fn is_valid_k8s_namespace(s: &str) -> bool {
+    if s.is_empty() || s.len() > 63 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if !bytes[0].is_ascii_lowercase() && !bytes[0].is_ascii_digit() {
+        return false;
+    }
+    let last = bytes[bytes.len() - 1];
+    if !last.is_ascii_lowercase() && !last.is_ascii_digit() {
+        return false;
+    }
+    s.bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+fn describe_invalid_namespace(s: &str) -> String {
+    if s.is_empty() {
+        return "empty string".to_string();
+    }
+    if s.len() > 63 {
+        return format!("exceeds 63 characters ({})", s.len());
+    }
+    if s.contains('/') {
+        return "contains '/'".to_string();
+    }
+    if s.contains('_') {
+        return "contains '_'".to_string();
+    }
+    if s.contains('.') {
+        return "contains '.'".to_string();
+    }
+    if s.contains(' ') {
+        return "contains space".to_string();
+    }
+    if s.chars().any(|c| c.is_uppercase()) {
+        return "contains uppercase characters".to_string();
+    }
+    if s.starts_with('-') {
+        return "starts with '-'".to_string();
+    }
+    if s.ends_with('-') {
+        return "ends with '-'".to_string();
+    }
+    "invalid DNS-1123 label".to_string()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum NamespaceValidation {
+    Valid,
+    InvalidDnsLabel { value: String, reason: String },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RejectedNamespaceCandidate {
+    pub value: String,
+    pub field_path: String,
+    pub source_kind: String,
+    pub source_name: String,
+    pub reason: String,
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Namespace evidence
+// ──────────────────────────────────────────────────────────────
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NamespaceEvidence {
     InstallNamespace,
@@ -30,6 +100,7 @@ pub enum NamespaceEvidence {
         source_kind: String,
         source_name: String,
         field: String,
+        validation: NamespaceValidation,
     },
 }
 
@@ -45,6 +116,7 @@ pub struct NamespaceScopeResult {
     pub is_all_namespaces: bool,
     pub info_messages: Vec<String>,
     pub scan_failures: Vec<ScanWarning>,
+    pub rejected_candidates: Vec<RejectedNamespaceCandidate>,
 }
 
 pub async fn discover_operator_namespaces(
@@ -58,6 +130,7 @@ pub async fn discover_operator_namespaces(
     let mut info_messages = Vec::new();
     let mut scan_failures: Vec<ScanWarning> = Vec::new();
     let mut is_all_namespaces = false;
+    let mut rejected_candidates = Vec::new();
 
     // 1. Install namespace (always included)
     ns_evidence
@@ -103,9 +176,10 @@ pub async fn discover_operator_namespaces(
 
     // 3b. Typed spec namespace references — scan CR instance specs for namespace fields
     if !operator.owned_crds.is_empty() {
-        let (spec_ns, spec_failures) =
+        let (spec_ns, spec_failures, spec_rejected) =
             discover_spec_namespace_refs(client, &operator.owned_crds, gvr_map, gk_map).await;
         scan_failures.extend(spec_failures);
+        rejected_candidates.extend(spec_rejected);
         for (ns, source_kind, source_name, field) in spec_ns {
             ns_evidence
                 .entry(ns)
@@ -114,6 +188,7 @@ pub async fn discover_operator_namespaces(
                     source_kind,
                     source_name,
                     field,
+                    validation: NamespaceValidation::Valid,
                 });
         }
     }
@@ -172,11 +247,38 @@ pub async fn discover_operator_namespaces(
         );
     }
 
+    // Print rejected namespace candidates to stderr
+    if !rejected_candidates.is_empty() {
+        let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+        for r in &rejected_candidates {
+            if is_tty {
+                eprintln!(
+                    "ℹ Rejected namespace candidate \"{}\" (invalid DNS label: {})",
+                    r.value, r.reason
+                );
+                eprintln!(
+                    "  Source: {}/{} field={}",
+                    r.source_kind, r.source_name, r.field_path
+                );
+            } else {
+                eprintln!(
+                    "INFO: Rejected namespace candidate \"{}\" (invalid DNS label: {})",
+                    r.value, r.reason
+                );
+                eprintln!(
+                    "  Source: {}/{} field={}",
+                    r.source_kind, r.source_name, r.field_path
+                );
+            }
+        }
+    }
+
     Ok(NamespaceScopeResult {
         candidates,
         is_all_namespaces,
         info_messages,
         scan_failures,
+        rejected_candidates,
     })
 }
 
@@ -185,9 +287,14 @@ async fn discover_spec_namespace_refs(
     target_crds: &[String],
     gvr_map: &crate::kube::discovery::GvrMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
-) -> (Vec<(String, String, String, String)>, Vec<ScanWarning>) {
+) -> (
+    Vec<(String, String, String, String)>,
+    Vec<ScanWarning>,
+    Vec<RejectedNamespaceCandidate>,
+) {
     let mut results = Vec::new();
     let mut failures = Vec::new();
+    let mut rejected = Vec::new();
 
     for crd_name in target_crds {
         let (plural, group) = match crd_name.split_once('.') {
@@ -228,7 +335,7 @@ async fn discover_spec_namespace_refs(
         for item in &items {
             let item_name = item.metadata.name.as_deref().unwrap_or("").to_string();
             if let Some(spec) = item.data.get("spec") {
-                extract_namespace_fields(spec, "", &kind, &item_name, &mut results);
+                extract_namespace_fields(spec, "", &kind, &item_name, &mut results, &mut rejected);
             }
         }
     }
@@ -237,7 +344,7 @@ async fn discover_spec_namespace_refs(
     let mut seen = std::collections::HashSet::new();
     results.retain(|entry| seen.insert(entry.clone()));
 
-    (results, failures)
+    (results, failures, rejected)
 }
 
 fn extract_namespace_fields(
@@ -246,6 +353,7 @@ fn extract_namespace_fields(
     source_kind: &str,
     source_name: &str,
     results: &mut Vec<(String, String, String, String)>,
+    rejected: &mut Vec<RejectedNamespaceCandidate>,
 ) {
     match value {
         serde_json::Value::Object(map) => {
@@ -266,37 +374,71 @@ fn extract_namespace_fields(
                 {
                     match val {
                         serde_json::Value::String(ns) if !ns.is_empty() => {
-                            results.push((
-                                ns.clone(),
-                                source_kind.to_string(),
-                                source_name.to_string(),
-                                field_path.clone(),
-                            ));
+                            if is_valid_k8s_namespace(ns) {
+                                results.push((
+                                    ns.clone(),
+                                    source_kind.to_string(),
+                                    source_name.to_string(),
+                                    field_path.clone(),
+                                ));
+                            } else {
+                                rejected.push(RejectedNamespaceCandidate {
+                                    value: ns.clone(),
+                                    field_path: field_path.clone(),
+                                    source_kind: source_kind.to_string(),
+                                    source_name: source_name.to_string(),
+                                    reason: describe_invalid_namespace(ns),
+                                });
+                            }
                         }
                         serde_json::Value::Array(arr) => {
                             for v in arr {
                                 if let serde_json::Value::String(ns) = v
                                     && !ns.is_empty()
                                 {
-                                    results.push((
-                                        ns.clone(),
-                                        source_kind.to_string(),
-                                        source_name.to_string(),
-                                        field_path.clone(),
-                                    ));
+                                    if is_valid_k8s_namespace(ns) {
+                                        results.push((
+                                            ns.clone(),
+                                            source_kind.to_string(),
+                                            source_name.to_string(),
+                                            field_path.clone(),
+                                        ));
+                                    } else {
+                                        rejected.push(RejectedNamespaceCandidate {
+                                            value: ns.clone(),
+                                            field_path: field_path.clone(),
+                                            source_kind: source_kind.to_string(),
+                                            source_name: source_name.to_string(),
+                                            reason: describe_invalid_namespace(ns),
+                                        });
+                                    }
                                 }
                             }
                         }
                         _ => {}
                     }
                 }
-                extract_namespace_fields(val, &field_path, source_kind, source_name, results);
+                extract_namespace_fields(
+                    val,
+                    &field_path,
+                    source_kind,
+                    source_name,
+                    results,
+                    rejected,
+                );
             }
         }
         serde_json::Value::Array(arr) => {
             for (i, val) in arr.iter().enumerate() {
                 let field_path = format!("{}[{}]", path, i);
-                extract_namespace_fields(val, &field_path, source_kind, source_name, results);
+                extract_namespace_fields(
+                    val,
+                    &field_path,
+                    source_kind,
+                    source_name,
+                    results,
+                    rejected,
+                );
             }
         }
         _ => {}
@@ -459,6 +601,35 @@ pub async fn scan_candidate_namespaces(
 mod tests {
     use super::*;
 
+    // ── is_valid_k8s_namespace ──
+
+    #[test]
+    fn test_is_valid_k8s_namespace() {
+        // Valid
+        assert!(is_valid_k8s_namespace("demo"));
+        assert!(is_valid_k8s_namespace("redhat-ods-applications"));
+        assert!(is_valid_k8s_namespace(&"a".repeat(63)));
+        assert!(is_valid_k8s_namespace("a"));
+        assert!(is_valid_k8s_namespace("ns-123"));
+        assert!(is_valid_k8s_namespace("0starts-with-digit"));
+        assert!(is_valid_k8s_namespace("ends-with-9"));
+
+        // Invalid
+        assert!(!is_valid_k8s_namespace(""));
+        assert!(!is_valid_k8s_namespace(
+            "redhat-ai-gateway-infra/maas-api-route"
+        ));
+        assert!(!is_valid_k8s_namespace(&"a".repeat(64)));
+        assert!(!is_valid_k8s_namespace("MyNamespace"));
+        assert!(!is_valid_k8s_namespace("my_namespace"));
+        assert!(!is_valid_k8s_namespace("-starts-with-dash"));
+        assert!(!is_valid_k8s_namespace("ends-with-dash-"));
+        assert!(!is_valid_k8s_namespace("has space"));
+        assert!(!is_valid_k8s_namespace("has.dot"));
+    }
+
+    // ── extract_namespace_fields ──
+
     #[test]
     fn test_extract_namespace_field() {
         let spec = serde_json::json!({
@@ -466,11 +637,20 @@ mod tests {
             "name": "default"
         });
         let mut results = Vec::new();
-        extract_namespace_fields(&spec, "", "ModelRegistry", "default", &mut results);
+        let mut rejected = Vec::new();
+        extract_namespace_fields(
+            &spec,
+            "",
+            "ModelRegistry",
+            "default",
+            &mut results,
+            &mut rejected,
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "rhoai-model-registries");
         assert_eq!(results[0].1, "ModelRegistry");
         assert_eq!(results[0].3, "registriesNamespace");
+        assert!(rejected.is_empty());
     }
 
     #[test]
@@ -483,10 +663,12 @@ mod tests {
             }
         });
         let mut results = Vec::new();
-        extract_namespace_fields(&spec, "", "DSC", "default-dsc", &mut results);
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "DSC", "default-dsc", &mut results, &mut rejected);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "rhods-notebooks");
         assert_eq!(results[0].3, "components.workbenches.workbenchNamespace");
+        assert!(rejected.is_empty());
     }
 
     #[test]
@@ -495,10 +677,12 @@ mod tests {
             "targetNamespaces": ["ns-a", "ns-b"]
         });
         let mut results = Vec::new();
-        extract_namespace_fields(&spec, "", "OG", "og1", &mut results);
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "OG", "og1", &mut results, &mut rejected);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, "ns-a");
         assert_eq!(results[1].0, "ns-b");
+        assert!(rejected.is_empty());
     }
 
     #[test]
@@ -511,9 +695,11 @@ mod tests {
             "ignoreNamespace": "bad-ns-5"
         });
         let mut results = Vec::new();
-        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results);
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "good-ns");
+        assert!(rejected.is_empty());
     }
 
     #[test]
@@ -523,9 +709,11 @@ mod tests {
             "otherNamespace": "valid-ns"
         });
         let mut results = Vec::new();
-        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results);
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "valid-ns");
+        assert!(rejected.is_empty());
     }
 
     #[test]
@@ -553,5 +741,170 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         results.retain(|r| seen.insert(r.clone()));
         assert_eq!(results.len(), 2);
+    }
+
+    // ── Slash-containing value rejection (Limitador case) ──
+
+    #[test]
+    fn test_slash_containing_value_rejected() {
+        let spec = serde_json::json!({
+            "limits": [{
+                "namespace": "redhat-ai-gateway-infra/maas-api-route",
+                "conditions": ["limit.name == test"]
+            }]
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(
+            &spec,
+            "",
+            "Limitador",
+            "kuadrant-limitador",
+            &mut results,
+            &mut rejected,
+        );
+        assert!(
+            results.is_empty(),
+            "slash-containing value should not be a namespace candidate"
+        );
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].value, "redhat-ai-gateway-infra/maas-api-route");
+        assert!(
+            rejected[0].reason.contains("'/'"),
+            "reason should mention slash: {}",
+            rejected[0].reason
+        );
+        assert_eq!(rejected[0].source_kind, "Limitador");
+        assert_eq!(rejected[0].source_name, "kuadrant-limitador");
+    }
+
+    // ── Real RHOAI namespace paths preserved ──
+
+    #[test]
+    fn test_real_rhoai_namespace_paths_preserved() {
+        let spec = serde_json::json!({
+            "registriesNamespace": "rhoai-model-registries",
+            "components": {
+                "workbenches": {
+                    "workbenchNamespace": "rhods-notebooks"
+                }
+            }
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "DSC", "default-dsc", &mut results, &mut rejected);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.0 == "rhoai-model-registries"));
+        assert!(results.iter().any(|r| r.0 == "rhods-notebooks"));
+        assert!(rejected.is_empty());
+    }
+
+    // ── Uppercase, underscore, long names rejected ──
+
+    #[test]
+    fn test_uppercase_namespace_rejected() {
+        let spec = serde_json::json!({
+            "targetNamespace": "MyNamespace"
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert!(results.is_empty());
+        assert_eq!(rejected.len(), 1);
+        assert!(rejected[0].reason.contains("uppercase"));
+    }
+
+    #[test]
+    fn test_underscore_namespace_rejected() {
+        let spec = serde_json::json!({
+            "targetNamespace": "my_namespace"
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert!(results.is_empty());
+        assert_eq!(rejected.len(), 1);
+        assert!(rejected[0].reason.contains("'_'"));
+    }
+
+    #[test]
+    fn test_64_char_namespace_rejected() {
+        let long = "a".repeat(64);
+        let spec = serde_json::json!({
+            "targetNamespace": long
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert!(results.is_empty());
+        assert_eq!(rejected.len(), 1);
+        assert!(rejected[0].reason.contains("63"));
+    }
+
+    #[test]
+    fn test_63_char_namespace_valid() {
+        let exactly_63 = "a".repeat(63);
+        let spec = serde_json::json!({
+            "targetNamespace": exactly_63
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Widget", "w1", &mut results, &mut rejected);
+        assert_eq!(results.len(), 1);
+        assert!(rejected.is_empty());
+    }
+
+    // ── Mixed valid and invalid ──
+
+    #[test]
+    fn test_mixed_valid_and_invalid_namespaces() {
+        let spec = serde_json::json!({
+            "limits": [
+                {"namespace": "redhat-ai-gateway-infra/maas-api-route"},
+                {"namespace": "valid-ns"},
+                {"namespace": "Another/Bad"},
+                {"namespace": "also-valid"}
+            ]
+        });
+        let mut results = Vec::new();
+        let mut rejected = Vec::new();
+        extract_namespace_fields(&spec, "", "Limitador", "test", &mut results, &mut rejected);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.0 == "valid-ns"));
+        assert!(results.iter().any(|r| r.0 == "also-valid"));
+        assert_eq!(rejected.len(), 2);
+    }
+
+    // ── NamespaceValidation serialization ──
+
+    #[test]
+    fn test_namespace_validation_serialization() {
+        let valid = NamespaceValidation::Valid;
+        let json = serde_json::to_string(&valid).unwrap();
+        let _: NamespaceValidation = serde_json::from_str(&json).unwrap();
+
+        let invalid = NamespaceValidation::InvalidDnsLabel {
+            value: "bad/name".into(),
+            reason: "contains '/'".into(),
+        };
+        let json2 = serde_json::to_string(&invalid).unwrap();
+        let _: NamespaceValidation = serde_json::from_str(&json2).unwrap();
+    }
+
+    // ── RejectedNamespaceCandidate serialization ──
+
+    #[test]
+    fn test_rejected_candidate_serialization() {
+        let r = RejectedNamespaceCandidate {
+            value: "redhat-ai-gateway-infra/maas-api-route".into(),
+            field_path: "limits[0].namespace".into(),
+            source_kind: "Limitador".into(),
+            source_name: "kuadrant-limitador".into(),
+            reason: "contains '/'".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let r2: RejectedNamespaceCandidate = serde_json::from_str(&json).unwrap();
+        assert_eq!(r2.value, r.value);
+        assert_eq!(r2.reason, r.reason);
     }
 }

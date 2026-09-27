@@ -210,6 +210,195 @@ pub fn format_scan_warnings(warnings: &[ScanWarning], verbose: bool) {
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Query coverage ledger
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "outcome")]
+#[allow(dead_code)]
+pub enum QueryOutcome {
+    Success { count: usize, pages: usize },
+    ApiAbsent,
+    Forbidden { status: u16 },
+    Timeout { retries: usize },
+    RateLimited { retries: usize },
+    ServerError { status: u16, retries: usize },
+    ListUnsupported,
+}
+
+#[allow(dead_code)]
+impl QueryOutcome {
+    pub fn is_failure(&self) -> bool {
+        matches!(
+            self,
+            QueryOutcome::Forbidden { .. }
+                | QueryOutcome::Timeout { .. }
+                | QueryOutcome::RateLimited { .. }
+                | QueryOutcome::ServerError { .. }
+        )
+    }
+
+    pub fn is_absent(&self) -> bool {
+        matches!(self, QueryOutcome::ApiAbsent)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct QueryRecord {
+    pub gvr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_selector: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_selector: Option<String>,
+    pub outcome: QueryOutcome,
+    pub elapsed_ms: u64,
+}
+
+#[allow(dead_code)]
+pub const COVERAGE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct CoverageLedger {
+    #[serde(default)]
+    pub schema_version: Option<u32>,
+    pub records: Vec<QueryRecord>,
+}
+
+#[allow(dead_code)]
+impl CoverageLedger {
+    pub fn new() -> Self {
+        Self {
+            schema_version: Some(COVERAGE_SCHEMA_VERSION),
+            records: Vec::new(),
+        }
+    }
+
+    pub fn record(&mut self, record: QueryRecord) {
+        self.records.push(record);
+    }
+
+    pub fn summary(&self) -> CoverageSummary {
+        let total = self.records.len();
+        let success = self
+            .records
+            .iter()
+            .filter(|r| matches!(r.outcome, QueryOutcome::Success { .. }))
+            .count();
+        let failures = self
+            .records
+            .iter()
+            .filter(|r| r.outcome.is_failure())
+            .count();
+        let absent = self
+            .records
+            .iter()
+            .filter(|r| r.outcome.is_absent())
+            .count();
+        let total_elapsed_ms: u64 = self.records.iter().map(|r| r.elapsed_ms).sum();
+        CoverageSummary {
+            total_queries: total,
+            success,
+            failures,
+            api_absent: absent,
+            total_elapsed_ms,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct CoverageSummary {
+    pub total_queries: usize,
+    pub success: usize,
+    pub failures: usize,
+    pub api_absent: usize,
+    pub total_elapsed_ms: u64,
+}
+
+#[allow(dead_code)]
+pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
+    let summary = ledger.summary();
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    if is_tty {
+        eprintln!(
+            "\n📊 Coverage: {} queries, {} success, {} failures, {} absent ({:.1}s)",
+            summary.total_queries,
+            summary.success,
+            summary.failures,
+            summary.api_absent,
+            summary.total_elapsed_ms as f64 / 1000.0
+        );
+    } else {
+        eprintln!(
+            "\nCoverage: {} queries, {} success, {} failures, {} absent ({:.1}s)",
+            summary.total_queries,
+            summary.success,
+            summary.failures,
+            summary.api_absent,
+            summary.total_elapsed_ms as f64 / 1000.0
+        );
+    }
+    if verbose {
+        for r in &ledger.records {
+            let outcome_str = match &r.outcome {
+                QueryOutcome::Success { count, pages } => {
+                    format!("OK ({} items, {} pages)", count, pages)
+                }
+                QueryOutcome::ApiAbsent => "API absent".to_string(),
+                QueryOutcome::Forbidden { status } => format!("{} Forbidden", status),
+                QueryOutcome::Timeout { retries } => format!("Timeout (retries: {})", retries),
+                QueryOutcome::RateLimited { retries } => {
+                    format!("429 Rate Limited (retries: {})", retries)
+                }
+                QueryOutcome::ServerError { status, retries } => {
+                    format!("{} Server Error (retries: {})", status, retries)
+                }
+                QueryOutcome::ListUnsupported => "LIST unsupported".to_string(),
+            };
+            let scope_str = r
+                .namespace
+                .as_ref()
+                .map(|ns| format!(" ns={}", ns))
+                .unwrap_or_default();
+            let selector_str = r
+                .label_selector
+                .as_ref()
+                .map(|s| format!(" selector={}", s))
+                .unwrap_or_default();
+            eprintln!(
+                "  {} {}{}{} {}ms",
+                r.gvr, outcome_str, scope_str, selector_str, r.elapsed_ms
+            );
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn scan_warning_to_outcome(w: &ScanWarning) -> QueryOutcome {
+    match w {
+        ScanWarning::NotFound { .. } => QueryOutcome::ApiAbsent,
+        ScanWarning::Forbidden { status, .. } => QueryOutcome::Forbidden { status: *status },
+        ScanWarning::Timeout { retries, .. } => QueryOutcome::Timeout { retries: *retries },
+        ScanWarning::RateLimited { retries, .. } => QueryOutcome::RateLimited { retries: *retries },
+        ScanWarning::ServerError {
+            status, retries, ..
+        } => QueryOutcome::ServerError {
+            status: *status,
+            retries: *retries,
+        },
+        ScanWarning::Other { .. } => QueryOutcome::ServerError {
+            status: 0,
+            retries: 0,
+        },
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Snapshot types — serializable, designed for persistence
 // ──────────────────────────────────────────────────────────────
 
@@ -1076,6 +1265,145 @@ mod tests {
             format!("{}", snap2.scan_warnings[1]),
             format!("{}", snap.scan_warnings[1])
         );
+    }
+
+    // ── QueryOutcome / CoverageLedger tests ──
+
+    #[test]
+    fn query_outcome_success_not_failure() {
+        let o = QueryOutcome::Success { count: 5, pages: 1 };
+        assert!(!o.is_failure());
+        assert!(!o.is_absent());
+    }
+
+    #[test]
+    fn query_outcome_forbidden_is_failure() {
+        let o = QueryOutcome::Forbidden { status: 403 };
+        assert!(o.is_failure());
+        assert!(!o.is_absent());
+    }
+
+    #[test]
+    fn query_outcome_absent_not_failure() {
+        let o = QueryOutcome::ApiAbsent;
+        assert!(!o.is_failure());
+        assert!(o.is_absent());
+    }
+
+    #[test]
+    fn query_outcome_timeout_is_failure() {
+        let o = QueryOutcome::Timeout { retries: 2 };
+        assert!(o.is_failure());
+    }
+
+    #[test]
+    fn query_outcome_rate_limited_is_failure() {
+        let o = QueryOutcome::RateLimited { retries: 1 };
+        assert!(o.is_failure());
+    }
+
+    #[test]
+    fn query_outcome_server_error_is_failure() {
+        let o = QueryOutcome::ServerError {
+            status: 500,
+            retries: 2,
+        };
+        assert!(o.is_failure());
+    }
+
+    #[test]
+    fn query_outcome_list_unsupported_not_failure() {
+        let o = QueryOutcome::ListUnsupported;
+        assert!(!o.is_failure());
+        assert!(!o.is_absent());
+    }
+
+    #[test]
+    fn coverage_ledger_summary() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 3, pages: 1 },
+            elapsed_ms: 100,
+        });
+        ledger.record(QueryRecord {
+            gvr: "custom.io/v1/widgets".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::ApiAbsent,
+            elapsed_ms: 5,
+        });
+        ledger.record(QueryRecord {
+            gvr: "v1/secrets".into(),
+            namespace: Some("kube-system".into()),
+            scope: "namespaced".into(),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Forbidden { status: 403 },
+            elapsed_ms: 10,
+        });
+        let summary = ledger.summary();
+        assert_eq!(summary.total_queries, 3);
+        assert_eq!(summary.success, 1);
+        assert_eq!(summary.failures, 1);
+        assert_eq!(summary.api_absent, 1);
+        assert_eq!(summary.total_elapsed_ms, 115);
+    }
+
+    #[test]
+    fn query_outcome_serialization_roundtrip() {
+        let o = QueryOutcome::Timeout { retries: 2 };
+        let json = serde_json::to_string(&o).unwrap();
+        let o2: QueryOutcome = serde_json::from_str(&json).unwrap();
+        assert!(o2.is_failure());
+    }
+
+    #[test]
+    fn coverage_ledger_serialization_roundtrip() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            label_selector: Some("app=test".into()),
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 1, pages: 1 },
+            elapsed_ms: 50,
+        });
+        let json = serde_json::to_string(&ledger).unwrap();
+        let ledger2: CoverageLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(ledger2.records.len(), 1);
+        assert_eq!(ledger2.schema_version, Some(1));
+    }
+
+    #[test]
+    fn scan_warning_to_outcome_conversion() {
+        let w = ScanWarning::NotFound {
+            gvr: "v1/pods".into(),
+        };
+        assert!(scan_warning_to_outcome(&w).is_absent());
+
+        let w2 = ScanWarning::Forbidden {
+            gvr: "v1/pods".into(),
+            status: 403,
+        };
+        assert!(scan_warning_to_outcome(&w2).is_failure());
+
+        let w3 = ScanWarning::Timeout {
+            gvr: "v1/pods".into(),
+            message: None,
+            retries: 2,
+        };
+        match scan_warning_to_outcome(&w3) {
+            QueryOutcome::Timeout { retries } => assert_eq!(retries, 2),
+            other => panic!("expected Timeout, got {:?}", other),
+        }
     }
 
     #[test]
