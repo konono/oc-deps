@@ -2347,4 +2347,217 @@ mod tests {
             "Contradicted CSV must not be linked via label fallback"
         );
     }
+
+    #[tokio::test]
+    async fn who_manages_opts_records_get_chain_and_operator_list_to_ledger() {
+        use crate::kube::resource::{CoverageLedger, QueryOperation, QueryOutcome};
+        use crate::kube::scanner::SharedLedger;
+        use std::sync::Arc;
+
+        fn json_obj_response(obj: serde_json::Value) -> Response<kube::client::Body> {
+            Response::builder()
+                .status(200)
+                .body(kube::client::Body::from(serde_json::to_vec(&obj).unwrap()))
+                .unwrap()
+        }
+
+        let mut km = olm_kind_map();
+        km.insert(
+            "Deployment".into(),
+            crate::kube::discovery::KindInfo {
+                group: "apps".into(),
+                version: "v1".into(),
+                plural: "deployments".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let mut gk_map: crate::kube::discovery::GroupKindMap = std::collections::HashMap::new();
+        gk_map.insert(
+            ("apps".into(), "Deployment".into()),
+            crate::kube::discovery::KindInfo {
+                group: "apps".into(),
+                version: "v1".into(),
+                plural: "deployments".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk_map.insert(
+            (
+                "operators.coreos.com".into(),
+                "ClusterServiceVersion".into(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "operators.coreos.com".into(),
+                version: "v1alpha1".into(),
+                plural: "clusterserviceversions".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let csv_obj = serde_json::json!({
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "metadata": {
+                "name": "my-op.v1.0",
+                "namespace": "test-ns",
+                "uid": "uid-csv",
+                "labels": {},
+                "annotations": {},
+            },
+            "status": {"phase": "Succeeded"},
+            "spec": {
+                "customresourcedefinitions": {"owned": []},
+                "install": {"spec": {"deployments": []}}
+            }
+        });
+
+        let deploy_obj = serde_json::json!({
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": "my-deploy",
+                "namespace": "test-ns",
+                "uid": "uid-deploy",
+                "labels": {},
+                "annotations": {},
+                "ownerReferences": [{
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "ClusterServiceVersion",
+                    "name": "my-op.v1.0",
+                    "uid": "uid-csv",
+                    "controller": true
+                }]
+            },
+            "spec": {}
+        });
+
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "test-ns");
+        let ledger: SharedLedger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let request_paths: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = request_paths.clone();
+
+        let csv_for_handler = csv_obj.clone();
+        let deploy_for_handler = deploy_obj.clone();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Request sequence:
+            // 1. GET Deployment (target) — single object response
+            // 2. GET CSV (owner) — single object response
+            // 3+4. LIST CSVs + LIST Subscriptions (discover_operators_opts, concurrent)
+            while let Some((req, send)) = handle.next_request().await {
+                let path = req.uri().path().to_string();
+                rp.lock().unwrap().push(path.clone());
+                if path.contains("/deployments/") {
+                    send.send_response(json_obj_response(deploy_for_handler.clone()));
+                } else if path.contains("/clusterserviceversions/") {
+                    send.send_response(json_obj_response(csv_for_handler.clone()));
+                } else if path.contains("/clusterserviceversions") {
+                    send.send_response(mock_list_response_olm(vec![csv_for_handler.clone()]));
+                } else if path.contains("/subscriptions") {
+                    send.send_response(mock_list_response_olm(vec![]));
+                } else {
+                    panic!("Unexpected request in who_manages test: {}", path);
+                }
+            }
+        });
+
+        let input = WhoManagesInput {
+            client: &client,
+            kind: "Deployment",
+            group: "apps",
+            name: "my-deploy",
+            namespace: "test-ns",
+            kind_map: &km,
+            gk_map: &gk_map,
+        };
+
+        let result = who_manages_opts(&input, Some(ledger.clone())).await;
+        // input borrows client/km/gk_map — just abort the mock handler
+        spawned.abort();
+
+        let wm = match result {
+            Ok(w) => w,
+            Err(e) => panic!(
+                "who_manages failed: {} (scan_failure: {:?})",
+                e.message, e.scan_failure
+            ),
+        };
+        assert!(
+            wm.operator_name.is_some(),
+            "should have attributed operator, got: {:?}",
+            wm.operator_name
+        );
+
+        let l = ledger.lock().unwrap();
+        let paths = request_paths.lock().unwrap();
+        assert!(
+            paths.len() >= 4,
+            "should have >= 4 requests (GET deploy + GET CSV + LIST CSV + LIST Sub), got {}: {:?}",
+            paths.len(),
+            *paths
+        );
+
+        let get_records: Vec<_> = l
+            .records
+            .iter()
+            .filter(|r| r.operation == QueryOperation::Get)
+            .collect();
+        assert!(
+            get_records.len() >= 2,
+            "should have >= 2 GET records, got {}: {:?}",
+            get_records.len(),
+            get_records
+                .iter()
+                .map(|r| format!("{} {}", r.gvr, r.target_name.as_deref().unwrap_or("-")))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            get_records
+                .iter()
+                .any(|r| r.gvr.contains("deployments")
+                    && r.target_name.as_deref() == Some("my-deploy")),
+            "should have GET for Deployment/my-deploy"
+        );
+        assert!(
+            get_records
+                .iter()
+                .any(|r| r.gvr.contains("clusterserviceversions")),
+            "should have GET for CSV"
+        );
+
+        let list_records: Vec<_> = l
+            .records
+            .iter()
+            .filter(|r| r.operation == QueryOperation::List)
+            .collect();
+        assert!(
+            list_records
+                .iter()
+                .any(|r| r.gvr.contains("clusterserviceversions")),
+            "should have LIST CSV record from discover_operators_opts"
+        );
+        assert!(
+            list_records.iter().any(|r| r.gvr.contains("subscriptions")),
+            "should have LIST Sub record from discover_operators_opts"
+        );
+
+        for rec in &l.records {
+            assert!(
+                matches!(rec.outcome, QueryOutcome::Success { .. }),
+                "all records should be Success, got {:?} for {}",
+                rec.outcome,
+                rec.gvr
+            );
+        }
+    }
 }

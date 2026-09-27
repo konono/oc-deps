@@ -722,6 +722,243 @@ mod tests {
         assert_eq!(id.kind, "Deployment");
     }
 
+    #[tokio::test]
+    async fn test_trace_resource_ledger_records_operator_and_sibling_queries() {
+        use crate::kube::discovery::{GroupKindMap, GvrMap, KindInfo, KindMap};
+        use crate::kube::resource::{
+            CoverageLedger, NamespaceIndex, QueryOperation, QueryOutcome, ResourceInfo,
+        };
+        use crate::kube::scanner::SharedLedger;
+        use kube::client::Body;
+        use std::pin::pin;
+        use std::sync::Arc;
+
+        fn json_response(json: serde_json::Value) -> http::Response<Body> {
+            http::Response::builder()
+                .status(200)
+                .body(Body::from(serde_json::to_vec(&json).unwrap()))
+                .unwrap()
+        }
+
+        let mut kind_map: KindMap = HashMap::new();
+        kind_map.insert(
+            "ClusterServiceVersion".into(),
+            KindInfo {
+                group: "operators.coreos.com".into(),
+                version: "v1alpha1".into(),
+                plural: "clusterserviceversions".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map.insert(
+            "Widget".into(),
+            KindInfo {
+                group: "example.com".into(),
+                version: "v1".into(),
+                plural: "widgets".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map.insert(
+            "Gadget".into(),
+            KindInfo {
+                group: "example.com".into(),
+                version: "v1".into(),
+                plural: "gadgets".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let mut gvr_map: GvrMap = HashMap::new();
+        gvr_map.insert("gadgets.example.com".into(), "Gadget".into());
+
+        let mut gk_map: GroupKindMap = HashMap::new();
+        gk_map.insert(
+            ("example.com".into(), "Widget".into()),
+            KindInfo {
+                group: "example.com".into(),
+                version: "v1".into(),
+                plural: "widgets".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk_map.insert(
+            ("example.com".into(), "Gadget".into()),
+            KindInfo {
+                group: "example.com".into(),
+                version: "v1".into(),
+                plural: "gadgets".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk_map.insert(
+            (
+                "operators.coreos.com".into(),
+                "ClusterServiceVersion".into(),
+            ),
+            KindInfo {
+                group: "operators.coreos.com".into(),
+                version: "v1alpha1".into(),
+                plural: "clusterserviceversions".into(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        // Pre-populate index with target resource
+        let mut index = NamespaceIndex::new();
+        index.insert(ResourceInfo {
+            group: "example.com".into(),
+            kind: "Widget".into(),
+            name: "w1".into(),
+            namespace: Some("test-ns".into()),
+            uid: "uid-w1".into(),
+            owner_refs: vec![],
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
+            pod_template: None,
+        });
+
+        let ledger: SharedLedger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        // CSV with owned sibling CRD "gadgets.example.com"
+        let csv = serde_json::json!({
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "metadata": {
+                "name": "my-op.v1.0",
+                "namespace": "test-ns",
+                "uid": "uid-csv",
+                "labels": {},
+                "annotations": {},
+            },
+            "status": {"phase": "Succeeded"},
+            "spec": {
+                "customresourcedefinitions": {
+                    "owned": [
+                        {"name": "widgets.example.com", "kind": "Widget", "version": "v1"},
+                        {"name": "gadgets.example.com", "kind": "Gadget", "version": "v1"}
+                    ]
+                },
+                "install": {"spec": {"deployments": []}}
+            }
+        });
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = kube::Client::new(mock_service, "test-ns");
+
+        let request_paths: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rp = request_paths.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Requests: CSV LIST + Sub LIST (concurrent from discover_operators_opts),
+            // then Gadget LIST (from discover_cr_instances_opts)
+            for _ in 0..3 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                let path = req.uri().path().to_string();
+                rp.lock().unwrap().push(path.clone());
+                if path.contains("/clusterserviceversions") {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "List",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [csv.clone()]
+                    })));
+                } else if path.contains("/subscriptions") {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "List",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": []
+                    })));
+                } else if path.contains("/gadgets") {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "List",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{
+                            "apiVersion": "example.com/v1",
+                            "kind": "Gadget",
+                            "metadata": {"name": "g1", "namespace": "test-ns", "uid": "uid-g1"}
+                        }]
+                    })));
+                } else {
+                    panic!("Unexpected request: {}", path);
+                }
+            }
+        });
+
+        let result = trace_resource(
+            &client,
+            "Widget",
+            "w1",
+            "test-ns",
+            "example.com",
+            &index,
+            &kind_map,
+            &gvr_map,
+            &gk_map,
+            10,
+            Some("my-op.v1.0"),
+            Some(ledger.clone()),
+        )
+        .await
+        .unwrap();
+
+        spawned.await.unwrap();
+
+        // Verify same-operator resources found
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|c| c.label.contains("Same Operator")),
+            "should have same-operator category"
+        );
+
+        // Verify ledger records
+        let l = ledger.lock().unwrap();
+        let paths = request_paths.lock().unwrap();
+        assert_eq!(paths.len(), 3, "CSV LIST + Sub LIST + Gadget LIST");
+
+        assert!(
+            l.records.len() >= 3,
+            "ledger should have >= 3 records, got {}",
+            l.records.len()
+        );
+
+        let csv_record = l
+            .records
+            .iter()
+            .find(|r| r.gvr.contains("clusterserviceversions"));
+        assert!(csv_record.is_some(), "must have CSV LIST record");
+        assert!(matches!(
+            csv_record.unwrap().outcome,
+            QueryOutcome::Success { .. }
+        ));
+        assert_eq!(csv_record.unwrap().operation, QueryOperation::List);
+
+        let sub_record = l.records.iter().find(|r| r.gvr.contains("subscriptions"));
+        assert!(sub_record.is_some(), "must have Subscription LIST record");
+        assert!(matches!(
+            sub_record.unwrap().outcome,
+            QueryOutcome::Success { .. }
+        ));
+
+        let gadget_record = l.records.iter().find(|r| r.gvr.contains("gadgets"));
+        assert!(gadget_record.is_some(), "must have Gadget LIST record");
+        assert!(matches!(
+            gadget_record.unwrap().outcome,
+            QueryOutcome::Success { .. }
+        ));
+        assert_eq!(gadget_record.unwrap().operation, QueryOperation::List);
+    }
+
     #[test]
     fn test_spec_ref_relationship_in_json() {
         let r = TracedResource {
