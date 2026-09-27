@@ -341,6 +341,17 @@ impl CoverageLedger {
         });
     }
 
+    pub fn snapshot(&mut self) -> (Option<CoverageSummary>, usize, Option<CoverageLedger>) {
+        if self.records.is_empty() {
+            return (None, 0, None);
+        }
+        let summary = self.summary();
+        let incomplete = self.incomplete_count();
+        self.sort_records();
+        let cloned = self.clone();
+        (Some(summary), incomplete, Some(cloned))
+    }
+
     pub fn summary(&self) -> CoverageSummary {
         let total = self.records.len();
         let success = self
@@ -2642,5 +2653,80 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn test_snapshot_nonempty_ledger() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".to_string(),
+            namespace: Some("default".to_string()),
+            scope: "namespaced".to_string(),
+            operation: QueryOperation::List,
+            target_name: None,
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 3, pages: 1 },
+            elapsed_ms: 50,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.record(QueryRecord {
+            gvr: "v1/pods".to_string(),
+            namespace: Some("default".to_string()),
+            scope: "namespaced".to_string(),
+            operation: QueryOperation::Get,
+            target_name: Some("test-pod".to_string()),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Timeout { retries: 2 },
+            elapsed_ms: 60000,
+            requirement: QueryRequirement::Required,
+        });
+
+        let (coverage, incomplete, cloned_ledger) = ledger.snapshot();
+        assert!(coverage.is_some());
+        let summary = coverage.unwrap();
+        assert_eq!(summary.total_queries, 2);
+        assert_eq!(summary.success, 1);
+        assert_eq!(summary.incomplete, 1);
+        assert_eq!(incomplete, 1);
+        assert!(cloned_ledger.is_some());
+        let cl = cloned_ledger.unwrap();
+        assert_eq!(cl.records.len(), 2);
+        assert_eq!(cl.records[0].gvr, "apps/v1/deployments");
+        assert_eq!(cl.records[1].gvr, "v1/pods");
+    }
+
+    #[test]
+    fn test_snapshot_empty_ledger() {
+        let mut ledger = CoverageLedger::new();
+        let (coverage, incomplete, cloned_ledger) = ledger.snapshot();
+        assert!(coverage.is_none());
+        assert_eq!(incomplete, 0);
+        assert!(cloned_ledger.is_none());
+    }
+
+    #[test]
+    fn test_shared_ledger_snapshot_no_deadlock() {
+        use std::sync::{Arc, Mutex};
+        let shared: Arc<Mutex<CoverageLedger>> = Arc::new(Mutex::new(CoverageLedger::new()));
+        shared.lock().unwrap().record(QueryRecord {
+            gvr: "v1/services".to_string(),
+            namespace: None,
+            scope: "cluster".to_string(),
+            operation: QueryOperation::List,
+            target_name: None,
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::Success { count: 5, pages: 1 },
+            elapsed_ms: 100,
+            requirement: QueryRequirement::Required,
+        });
+        let (cov, inc, ledger) = shared.lock().unwrap().snapshot();
+        assert!(cov.is_some());
+        assert_eq!(inc, 0);
+        assert!(ledger.is_some());
+        let json = serde_json::to_string(&ledger.unwrap()).unwrap();
+        assert!(json.contains("v1/services"));
     }
 }

@@ -443,6 +443,9 @@ pub async fn inspect_operator_with_options_ledger(
     let mut unique_crds: Vec<String> = operator.owned_crds.clone();
     unique_crds.dedup();
 
+    let (snapshot_coverage, snapshot_incomplete, snapshot_ledger) =
+        shared_ledger.lock().unwrap().snapshot();
+
     Ok(OperatorInspection {
         operator_name: operator
             .package_name
@@ -458,24 +461,9 @@ pub async fn inspect_operator_with_options_ledger(
         warnings: all_warnings,
         scan_warning_count,
         rejected_namespace_candidates,
-        coverage: {
-            let ledger = shared_ledger.lock().unwrap();
-            if ledger.records.is_empty() {
-                None
-            } else {
-                Some(ledger.summary())
-            }
-        },
-        incomplete_count: shared_ledger.lock().unwrap().incomplete_count(),
-        coverage_ledger: {
-            let mut ledger = shared_ledger.lock().unwrap();
-            if ledger.records.is_empty() {
-                None
-            } else {
-                ledger.sort_records();
-                Some(ledger.clone())
-            }
-        },
+        coverage: snapshot_coverage,
+        incomplete_count: snapshot_incomplete,
+        coverage_ledger: snapshot_ledger,
     })
 }
 
