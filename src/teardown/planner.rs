@@ -7220,7 +7220,7 @@ mod tests {
 
     #[test]
     fn test_crd_catalog_unavailable_no_retry() {
-        use crate::kube::resource::{CrdCatalog, CrdMeta, ScanWarning};
+        use crate::kube::resource::{CrdCatalog, ScanWarning};
 
         let catalog = CrdCatalog::Unavailable(ScanWarning::Timeout {
             gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
@@ -7228,7 +7228,7 @@ mod tests {
             retries: 2,
         });
 
-        let target_crds = vec!["widgets.example.io".to_string()];
+        let target_crds = ["widgets.example.io".to_string()];
         let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
         let target_groups: HashSet<&str> = target_crds
             .iter()
@@ -7294,7 +7294,7 @@ mod tests {
             },
         ]);
 
-        let target_crds = vec!["widgets.example.io".to_string()];
+        let target_crds = ["widgets.example.io".to_string()];
         let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
         let target_groups: HashSet<&str> = target_crds
             .iter()
