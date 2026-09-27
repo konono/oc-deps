@@ -525,6 +525,17 @@ oc-deps snapshot create -A --strict --file snap.json  # save then exit 2 on warn
 oc-deps graph -n <namespace> --file evidence-graph.json
 ```
 
+**Evidence graph JSON schema (v2):** The graph carries a `schema_version` field (currently `2`). Each edge has typed `relation`, `resolution`, `evidence`, and `confidence` fields.
+
+**Breaking change from v1:** `Evidence::OwnerReference` changed from a unit string variant to a struct with full identity fields (`api_version`, `kind`, `name`, `uid`, `controller`, `block_owner_deletion`). Consumers that parsed the v1 string representation must update. The `schema_version` field distinguishes the formats.
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `relation` | `Owns`, `ApiStewardship`, `Creates`, `References`, `Selects`, `RequiresApi`, `UsesStorage`, `ServesWebhook`, `UsesServiceAccount`, `ManagedBy` | Typed relationship. `ApiStewardship` means the operator provides/stewards the CRD API definition — it does NOT imply lifecycle ownership of CR instances. |
+| `resolution` | `Resolved`, `TargetMissing`, `IdentityMismatch`, `Ambiguous`, `Unresolved` | How the edge target was verified. For ownerRef edges: `Resolved` requires exact UID + full identity (group/kind/namespace/name) match against the live object. For spec-ref and OLM edges: `Resolved` means all available reference identity fields matched a unique live target. |
+| `evidence` | `OwnerReference{...}`, `CsvOwnedCrd{...}`, `CsvInstallStrategy`, `SpecField{...}`, etc. | Source evidence with full identity fields. `OwnerReference` includes `api_version`, `kind`, `name`, `uid`, `controller`, `block_owner_deletion`. |
+| `confidence` | `Hard`, `Inferred`, `Heuristic` | Evidence strength. `Hard` = exact Kubernetes metadata. `Heuristic` = name-based inference. |
+
 **Cluster-wide snapshot:** Scans all namespaces (or filtered subset) with bounded concurrency (shared global API semaphore, max 50 concurrent LIST requests). Schema v3 adds `scope` with mode (`single-namespace`/`all-namespaces`/`filtered`), requested filters, complete/incomplete namespace lists with typed ScanWarning. Atomic save (temp file + rename) prevents corruption on Ctrl-C (exit 130). Secret values stored as SHA-256 hashes.
 
 **Diff scope comparison:** When comparing snapshots with different scopes (mode, filters, namespaces), diff adds scope warnings. v2 vs v3 snapshots accepted with "scope comparison unavailable" warning. Resource diff proceeds regardless.

@@ -236,6 +236,8 @@ pub struct OwnerRefEntry {
     pub name: String,
     pub uid: String,
     pub controller: bool,
+    #[serde(default)]
+    pub block_owner_deletion: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

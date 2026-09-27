@@ -187,6 +187,7 @@ async fn build_snapshot_inner(
                                         name: r.name,
                                         uid: r.uid,
                                         controller: r.controller.unwrap_or(false),
+                                        block_owner_deletion: r.block_owner_deletion.unwrap_or(false),
                                     })
                                     .collect();
 
@@ -1429,6 +1430,7 @@ mod tests {
             name: "web-rs".into(),
             uid: "owner-uid-old".into(),
             controller: true,
+            block_owner_deletion: false,
         });
         let mut after_entry = before_entry.clone();
         after_entry.owner_refs[0].uid = "owner-uid-new".into();
