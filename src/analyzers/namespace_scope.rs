@@ -143,7 +143,7 @@ pub async fn discover_operator_namespaces_opts(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<crate::kube::scanner::SharedLedger>,
-    cached_crds: Option<&[kube::api::DynamicObject]>,
+    cached_catalog: Option<&crate::kube::resource::CrdCatalog>,
 ) -> Result<NamespaceScopeResult> {
     let mut ns_evidence: HashMap<String, Vec<NamespaceEvidence>> = HashMap::new();
     let mut info_messages = Vec::new();
@@ -237,7 +237,7 @@ pub async fn discover_operator_namespaces_opts(
         kind_map,
         client,
         ledger.clone(),
-        cached_crds,
+        cached_catalog,
     )
     .await;
     scan_failures.extend(seed_errors);
@@ -251,7 +251,7 @@ pub async fn discover_operator_namespaces_opts(
             gvr_map,
             gk_map,
             ledger.clone(),
-            cached_crds,
+            cached_catalog,
         )
         .await;
         scan_failures.extend(related_report.unavailable_crds);

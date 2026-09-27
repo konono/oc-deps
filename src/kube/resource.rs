@@ -210,6 +210,40 @@ pub fn format_scan_warnings(warnings: &[ScanWarning], verbose: bool) {
 }
 
 // ──────────────────────────────────────────────────────────────
+//  CRD catalog (metadata-only, command-scoped cache)
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct CrdMeta {
+    pub name: String,
+    pub labels: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum CrdCatalog {
+    Available(Vec<CrdMeta>),
+    Unavailable(ScanWarning),
+}
+
+impl CrdCatalog {
+    #[allow(dead_code)]
+    pub fn as_available(&self) -> Option<&[CrdMeta]> {
+        match self {
+            CrdCatalog::Available(v) => Some(v),
+            CrdCatalog::Unavailable(_) => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn unavailable_warning(&self) -> Option<&ScanWarning> {
+        match self {
+            CrdCatalog::Unavailable(w) => Some(w),
+            CrdCatalog::Available(_) => None,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Query coverage ledger
 // ──────────────────────────────────────────────────────────────
 

@@ -15,7 +15,9 @@ use crate::analyzers::namespace_scope::{
 use crate::analyzers::olm::OperatorInstance;
 use crate::cli::OutputFormat;
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
-use crate::kube::resource::{CoverageLedger, CoverageSummary, QueryRequirement, ResourceId};
+use crate::kube::resource::{
+    CoverageLedger, CoverageSummary, CrdCatalog, QueryRequirement, ResourceId,
+};
 use crate::kube::scanner::SharedLedger;
 use crate::teardown::planner::{
     CrInstance, Provenance, compute_part_of_seeds_opts, discover_cr_instances_opts,
@@ -240,14 +242,16 @@ pub async fn inspect_operator_with_options_ledger(
         });
     }
 
-    // Fetch CRD catalog once for reuse by part-of seeds, related CRDs, and namespace scope
-    let crd_catalog = match fetch_crd_catalog(client, kind_map, Some(&shared_ledger)).await {
-        Ok(crds) => Some(crds),
-        Err(w) => {
+    // Fetch metadata-only CRD catalog lazily — only when owned CRDs exist
+    let crd_catalog: Option<CrdCatalog> = if !operator.owned_crds.is_empty() {
+        let catalog = fetch_crd_catalog(client, kind_map, Some(&shared_ledger)).await;
+        if let CrdCatalog::Unavailable(ref w) = catalog {
             all_warnings.push(format!("{}", w));
             scan_warning_count += 1;
-            None
         }
+        Some(catalog)
+    } else {
+        None
     };
 
     // Related CRD instances (label-based)
@@ -258,7 +262,7 @@ pub async fn inspect_operator_with_options_ledger(
         kind_map,
         client,
         Some(shared_ledger.clone()),
-        crd_catalog.as_deref(),
+        crd_catalog.as_ref(),
     )
     .await;
     for w in &seed_errors {
@@ -273,7 +277,7 @@ pub async fn inspect_operator_with_options_ledger(
         gvr_map,
         gk_map,
         Some(shared_ledger.clone()),
-        crd_catalog.as_deref(),
+        crd_catalog.as_ref(),
     )
     .await;
     for w in &related_report.unavailable_crds {
@@ -311,7 +315,7 @@ pub async fn inspect_operator_with_options_ledger(
             gvr_map,
             gk_map,
             Some(shared_ledger.clone()),
-            crd_catalog.as_deref(),
+            crd_catalog.as_ref(),
         )
         .await?;
         eprintln!(

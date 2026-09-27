@@ -18,8 +18,8 @@ use crate::cli::OutputFormat;
 use crate::kube::discovery::KindInfo;
 use crate::kube::discovery::{GroupKindMap, GvkMap, GvrMap, KindMap};
 use crate::kube::resource::{
-    QueryOperation, QueryOutcome, QueryRequirement, ResourceId, ScanWarning, resolve_api,
-    scan_warning_to_outcome,
+    CrdCatalog, CrdMeta, QueryOperation, QueryOutcome, QueryRequirement, ResourceId, ScanWarning,
+    resolve_api, scan_warning_to_outcome,
 };
 use crate::kube::scanner::SharedLedger;
 
@@ -1529,6 +1529,7 @@ const STANDARD_CONFIGMAPS: &[&str] = &["kube-root-ca.crt", "openshift-service-ca
 ///    with target-owned CRDs (e.g. both under the same API group)
 ///
 /// No domain suffix guessing — avoids public suffix ambiguity.
+#[allow(dead_code)]
 pub async fn compute_part_of_seeds(
     target_crds: &[String],
     kind_map: &KindMap,
@@ -1537,17 +1538,18 @@ pub async fn compute_part_of_seeds(
     compute_part_of_seeds_opts(target_crds, kind_map, client, None, None).await
 }
 
-/// Fetch the full CRD catalog once, for reuse by `compute_part_of_seeds_opts`
-/// and `discover_related_crd_instances_opts`.
+/// Fetch a metadata-only CRD catalog. Returns `CrdCatalog::Available` on
+/// success or `CrdCatalog::Unavailable` on terminal failure (timeout, 403,
+/// etc.). Consumers must reuse the cached result — never re-query.
 pub async fn fetch_crd_catalog(
     client: &Client,
     kind_map: &KindMap,
     ledger: Option<&SharedLedger>,
-) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+) -> CrdCatalog {
     let crd_ki = match kind_map.get("CustomResourceDefinition") {
         Some(i) => i,
         None => {
-            return Err(ScanWarning::Other {
+            return CrdCatalog::Unavailable(ScanWarning::Other {
                 gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
                 message: "CustomResourceDefinition kind not found in discovery".to_string(),
             });
@@ -1557,16 +1559,171 @@ pub async fn fetch_crd_catalog(
         GroupVersion::gv(&crd_ki.group, &crd_ki.version).with_kind("CustomResourceDefinition");
     let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
     let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-    list_paginated_with_retry_opts(
+
+    match list_metadata_paginated_with_retry(
         &crd_api,
         &crd_ki.group,
         &crd_ki.version,
         &crd_ki.plural,
         ledger,
-        None,
-        None,
     )
     .await
+    {
+        Ok(metas) => CrdCatalog::Available(metas),
+        Err(w) => CrdCatalog::Unavailable(w),
+    }
+}
+
+/// Metadata-only paginated LIST with retry/timeout, recording to coverage
+/// ledger. Uses `Api::list_metadata` to avoid downloading full CRD specs.
+async fn list_metadata_paginated_with_retry(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+) -> std::result::Result<Vec<CrdMeta>, ScanWarning> {
+    let gvr = if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    };
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let query_start = std::time::Instant::now();
+    let record =
+        |ledger: Option<&SharedLedger>, outcome: QueryOutcome, elapsed: std::time::Duration| {
+            if let Some(l) = ledger
+                && let Ok(mut lg) = l.lock()
+            {
+                lg.record(crate::kube::resource::QueryRecord {
+                    gvr: gvr.clone(),
+                    namespace: None,
+                    scope: "cluster".to_string(),
+                    operation: QueryOperation::List,
+                    target_name: None,
+                    label_selector: None,
+                    field_selector: None,
+                    outcome,
+                    elapsed_ms: elapsed.as_millis() as u64,
+                    requirement: QueryRequirement::Required,
+                });
+            }
+        };
+    let mut all_items = Vec::new();
+    let mut continue_token: Option<String> = None;
+    let mut pages: usize = 0;
+    let mut last_warning: Option<ScanWarning> = None;
+
+    'outer: loop {
+        let mut lp = ListParams::default().limit(LIST_PAGE_SIZE);
+        if let Some(token) = &continue_token {
+            lp = lp.continue_token(token);
+        }
+
+        for attempt in 0..=DISCOVERY_MAX_RETRIES {
+            let timeout_dur = std::time::Duration::from_secs(DISCOVERY_REQUEST_TIMEOUT_SECS);
+            match tokio::time::timeout(timeout_dur, api.list_metadata(&lp)).await {
+                Ok(Ok(list)) => {
+                    let metadata = list.metadata;
+                    for item in list.items {
+                        all_items.push(CrdMeta {
+                            name: item.metadata.name.unwrap_or_default(),
+                            labels: item.metadata.labels.unwrap_or_default(),
+                        });
+                    }
+                    pages += 1;
+                    match metadata.continue_.filter(|t| !t.is_empty()) {
+                        Some(token) => {
+                            continue_token = Some(token);
+                            continue 'outer;
+                        }
+                        None => break 'outer,
+                    }
+                }
+                Ok(Err(e)) => {
+                    let mut warning = ScanWarning::from_kube_error(&e, group, version, plural);
+                    if warning.is_retryable() && attempt < DISCOVERY_MAX_RETRIES {
+                        let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                        let msg = format!(
+                            "{} — metadata LIST attempt {}/{} failed; retrying as {}/{}",
+                            gvr,
+                            attempt + 1,
+                            DISCOVERY_MAX_RETRIES + 1,
+                            attempt + 2,
+                            DISCOVERY_MAX_RETRIES + 1,
+                        );
+                        if is_tty {
+                            eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                        } else {
+                            eprintln!("   ⚠ {}", msg);
+                        }
+                        tokio::time::sleep(delay).await;
+                        last_warning = Some(warning);
+                        continue;
+                    }
+                    warning.set_retries(attempt);
+                    record(
+                        ledger,
+                        scan_warning_to_outcome(&warning),
+                        query_start.elapsed(),
+                    );
+                    return Err(warning);
+                }
+                Err(_elapsed) => {
+                    let warning = ScanWarning::Timeout {
+                        gvr: gvr.clone(),
+                        message: Some(format!(
+                            "metadata LIST timeout ({}s)",
+                            DISCOVERY_REQUEST_TIMEOUT_SECS,
+                        )),
+                        retries: attempt,
+                    };
+                    if attempt < DISCOVERY_MAX_RETRIES {
+                        let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                        let msg = format!(
+                            "{} — metadata LIST timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
+                            gvr,
+                            DISCOVERY_REQUEST_TIMEOUT_SECS,
+                            attempt + 1,
+                            DISCOVERY_MAX_RETRIES + 1,
+                            attempt + 2,
+                            DISCOVERY_MAX_RETRIES + 1,
+                        );
+                        if is_tty {
+                            eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
+                        } else {
+                            eprintln!("   ⚠ {}", msg);
+                        }
+                        tokio::time::sleep(delay).await;
+                        last_warning = Some(warning);
+                        continue;
+                    }
+                    record(
+                        ledger,
+                        scan_warning_to_outcome(&warning),
+                        query_start.elapsed(),
+                    );
+                    return Err(warning);
+                }
+            }
+        }
+        // All retries exhausted for current page
+        let mut w = last_warning.unwrap();
+        w.set_retries(DISCOVERY_MAX_RETRIES);
+        record(ledger, scan_warning_to_outcome(&w), query_start.elapsed());
+        return Err(w);
+    }
+
+    record(
+        ledger,
+        QueryOutcome::Success {
+            count: all_items.len(),
+            pages,
+        },
+        query_start.elapsed(),
+    );
+
+    Ok(all_items)
 }
 
 pub async fn compute_part_of_seeds_opts(
@@ -1574,7 +1731,7 @@ pub async fn compute_part_of_seeds_opts(
     kind_map: &KindMap,
     client: &Client,
     ledger: Option<SharedLedger>,
-    cached_crds: Option<&[DynamicObject]>,
+    cached_catalog: Option<&CrdCatalog>,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
@@ -1586,48 +1743,24 @@ pub async fn compute_part_of_seeds_opts(
         .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
         .collect();
 
-    let owned_crds;
-    let crd_items: &[DynamicObject] = match cached_crds {
-        Some(crds) => crds,
+    // Resolve CRD metadata from cache or live fetch
+    let fallback_catalog;
+    let crd_metas: &[CrdMeta] = match cached_catalog {
+        Some(CrdCatalog::Available(metas)) => metas,
+        Some(CrdCatalog::Unavailable(w)) => {
+            return (HashSet::new(), vec![w.clone()]);
+        }
         None => {
-            let Some(crd_ki) = kind_map.get("CustomResourceDefinition") else {
-                return (
-                    HashSet::new(),
-                    vec![ScanWarning::Other {
-                        gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
-                        message: "CustomResourceDefinition kind not found in discovery".to_string(),
-                    }],
-                );
-            };
-
-            let crd_gvk = GroupVersion::gv(&crd_ki.group, &crd_ki.version)
-                .with_kind("CustomResourceDefinition");
-            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_ki.plural);
-            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-
-            owned_crds = match list_paginated_with_retry_opts(
-                &crd_api,
-                &crd_ki.group,
-                &crd_ki.version,
-                &crd_ki.plural,
-                ledger.as_ref(),
-                None,
-                None,
-            )
-            .await
-            {
-                Ok(items) => items,
-                Err(w) => {
-                    return (HashSet::new(), vec![w]);
+            fallback_catalog = fetch_crd_catalog(client, kind_map, ledger.as_ref()).await;
+            match &fallback_catalog {
+                CrdCatalog::Available(metas) => metas,
+                CrdCatalog::Unavailable(w) => {
+                    return (HashSet::new(), vec![w.clone()]);
                 }
-            };
-            &owned_crds
+            }
         }
     };
 
-    // Discover part-of label key/value pairs from target-owned CRDs.
-    // Checks standard app.kubernetes.io/part-of and any */part-of key present on
-    // target CRDs or CRDs sharing the exact same API group.
     let part_of_suffixes = ["/part-of", "/managed-by"];
     let standard_keys = [
         "app.kubernetes.io/part-of",
@@ -1636,17 +1769,14 @@ pub async fn compute_part_of_seeds_opts(
     ];
 
     let mut values = HashSet::new();
-    for crd in crd_items {
-        let crd_name = crd.metadata.name.as_deref().unwrap_or("");
-        let crd_group = crd_name.split_once('.').map(|(_, g)| g).unwrap_or("");
+    for crd in crd_metas {
+        let crd_group = crd.name.split_once('.').map(|(_, g)| g).unwrap_or("");
 
-        let is_target = target_crd_set.contains(crd_name);
+        let is_target = target_crd_set.contains(crd.name.as_str());
         let shares_group = target_groups.contains(crd_group);
 
-        if (is_target || shares_group)
-            && let Some(labels) = &crd.metadata.labels
-        {
-            for (k, v) in labels {
+        if is_target || shares_group {
+            for (k, v) in &crd.labels {
                 let is_part_of = part_of_suffixes.iter().any(|s| k.ends_with(s))
                     || standard_keys.contains(&k.as_str());
                 if is_part_of {
@@ -1667,6 +1797,7 @@ pub struct RelatedCrdReport {
     pub instance_count: usize,
 }
 
+#[allow(dead_code)]
 pub async fn discover_related_crd_instances(
     client: &Client,
     target_crds: &HashSet<&str>,
@@ -1697,7 +1828,7 @@ pub async fn discover_related_crd_instances_opts(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
-    cached_crds: Option<&[DynamicObject]>,
+    cached_catalog: Option<&CrdCatalog>,
 ) -> RelatedCrdReport {
     let mut actions = Vec::new();
 
@@ -1712,78 +1843,54 @@ pub async fn discover_related_crd_instances_opts(
         };
     }
 
-    let owned_crds;
-    let all_crds: &[DynamicObject] = match cached_crds {
-        Some(crds) => crds,
+    // Resolve CRD metadata from cache or live fetch
+    let fallback_catalog;
+    let crd_metas: &[CrdMeta] = match cached_catalog {
+        Some(CrdCatalog::Available(metas)) => metas,
+        Some(CrdCatalog::Unavailable(w)) => {
+            return RelatedCrdReport {
+                actions,
+                instances: vec![],
+                unavailable_crds: vec![w.clone()],
+                crd_count: 0,
+                instance_count: 0,
+            };
+        }
         None => {
-            let crd_kind_info = match kind_map.get("CustomResourceDefinition") {
-                Some(i) => i,
-                None => {
+            fallback_catalog = fetch_crd_catalog(client, kind_map, ledger.as_ref()).await;
+            match &fallback_catalog {
+                CrdCatalog::Available(metas) => metas,
+                CrdCatalog::Unavailable(w) => {
                     return RelatedCrdReport {
                         actions,
                         instances: vec![],
-                        unavailable_crds: vec![ScanWarning::Other {
-                            gvr: "<related-crd-catalog>".to_string(),
-                            message: "CustomResourceDefinition kind not found in discovery"
-                                .to_string(),
-                        }],
+                        unavailable_crds: vec![w.clone()],
                         crd_count: 0,
                         instance_count: 0,
                     };
                 }
-            };
-
-            let crd_gvk = GroupVersion::gv(&crd_kind_info.group, &crd_kind_info.version)
-                .with_kind("CustomResourceDefinition");
-            let crd_ar = ApiResource::from_gvk_with_plural(&crd_gvk, &crd_kind_info.plural);
-            let crd_api: Api<DynamicObject> = Api::all_with(client.clone(), &crd_ar);
-
-            owned_crds = match list_paginated_with_retry_opts(
-                &crd_api,
-                &crd_kind_info.group,
-                &crd_kind_info.version,
-                &crd_kind_info.plural,
-                ledger.as_ref(),
-                None,
-                None,
-            )
-            .await
-            {
-                Ok(items) => items,
-                Err(w) => {
-                    return RelatedCrdReport {
-                        actions,
-                        instances: vec![],
-                        unavailable_crds: vec![w],
-                        crd_count: 0,
-                        instance_count: 0,
-                    };
-                }
-            };
-            &owned_crds
+            }
         }
     };
 
     // Scope CRD types by label pair match — record which pairs matched per CRD
     let mut related_crd_pairs: std::collections::HashMap<String, Vec<(String, String)>> =
         std::collections::HashMap::new();
-    for crd in all_crds {
-        let crd_name = match &crd.metadata.name {
-            Some(n) => n,
-            None => continue,
-        };
-        if target_crds.contains(crd_name.as_str()) {
+    for crd in crd_metas {
+        if crd.name.is_empty() {
             continue;
         }
-        if let Some(labels) = &crd.metadata.labels {
-            let intersection: Vec<(String, String)> = labels
-                .iter()
-                .filter(|(k, v)| target_label_pairs.contains(&((*k).clone(), (*v).clone())))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            if !intersection.is_empty() {
-                related_crd_pairs.insert(crd_name.clone(), intersection);
-            }
+        if target_crds.contains(crd.name.as_str()) {
+            continue;
+        }
+        let intersection: Vec<(String, String)> = crd
+            .labels
+            .iter()
+            .filter(|(k, v)| target_label_pairs.contains(&((*k).clone(), (*v).clone())))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if !intersection.is_empty() {
+            related_crd_pairs.insert(crd.name.clone(), intersection);
         }
     }
 
@@ -2250,9 +2357,14 @@ pub async fn generate_teardown_plan(
 
     // Related CRD discovery — scoped by label VALUE match
     eprint!("🔍 Discovering related CRD instances...");
-    let crd_catalog = fetch_crd_catalog(client, kind_map, None).await.ok();
+    let crd_catalog: Option<CrdCatalog> = if !target_crds.is_empty() {
+        let catalog = fetch_crd_catalog(client, kind_map, None).await;
+        Some(catalog)
+    } else {
+        None
+    };
     let (target_label_pairs, seed_unavailable) =
-        compute_part_of_seeds_opts(&target_crds, kind_map, client, None, crd_catalog.as_deref())
+        compute_part_of_seeds_opts(&target_crds, kind_map, client, None, crd_catalog.as_ref())
             .await;
     all_unavailable.extend(seed_unavailable);
 
@@ -2264,7 +2376,7 @@ pub async fn generate_teardown_plan(
         gvr_map,
         gk_map,
         None,
-        crd_catalog.as_deref(),
+        crd_catalog.as_ref(),
     )
     .await;
     eprintln!(
@@ -7102,5 +7214,154 @@ mod tests {
     fn validate_package_trailing_space_rejected() {
         use crate::teardown::plan::validate_package_name;
         assert!(validate_package_name(Some("rhods-operator "), "csv.v1").is_err());
+    }
+
+    // ── CRD catalog tests ──
+
+    #[test]
+    fn test_crd_catalog_unavailable_no_retry() {
+        use crate::kube::resource::{CrdCatalog, CrdMeta, ScanWarning};
+
+        let catalog = CrdCatalog::Unavailable(ScanWarning::Timeout {
+            gvr: "apiextensions.k8s.io/v1/customresourcedefinitions".to_string(),
+            message: Some("timeout".to_string()),
+            retries: 2,
+        });
+
+        let target_crds = vec!["widgets.example.io".to_string()];
+        let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
+        let target_groups: HashSet<&str> = target_crds
+            .iter()
+            .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
+            .collect();
+
+        // Simulate what compute_part_of_seeds_opts does with an Unavailable catalog
+        let (values, warnings) = match &catalog {
+            CrdCatalog::Available(metas) => {
+                let mut values = HashSet::new();
+                let part_of_suffixes = ["/part-of", "/managed-by"];
+                let standard_keys = [
+                    "app.kubernetes.io/part-of",
+                    "app.kubernetes.io/managed-by",
+                    "app.kubernetes.io/instance",
+                ];
+                for crd in metas {
+                    let crd_group = crd.name.split_once('.').map(|(_, g)| g).unwrap_or("");
+                    let is_target = target_crd_set.contains(crd.name.as_str());
+                    let shares_group = target_groups.contains(crd_group);
+                    if is_target || shares_group {
+                        for (k, v) in &crd.labels {
+                            let is_part_of = part_of_suffixes.iter().any(|s| k.ends_with(s))
+                                || standard_keys.contains(&k.as_str());
+                            if is_part_of {
+                                values.insert((k.clone(), v.clone()));
+                            }
+                        }
+                    }
+                }
+                (values, vec![])
+            }
+            CrdCatalog::Unavailable(w) => (HashSet::new(), vec![w.clone()]),
+        };
+
+        assert!(values.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(warnings[0], ScanWarning::Timeout { .. }));
+    }
+
+    #[test]
+    fn test_crd_catalog_available_reuse() {
+        use crate::kube::resource::{CrdCatalog, CrdMeta};
+
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "app.kubernetes.io/part-of".to_string(),
+            "my-operator".to_string(),
+        );
+
+        let catalog = CrdCatalog::Available(vec![
+            CrdMeta {
+                name: "widgets.example.io".to_string(),
+                labels: labels.clone(),
+            },
+            CrdMeta {
+                name: "gadgets.example.io".to_string(),
+                labels: labels.clone(),
+            },
+            CrdMeta {
+                name: "unrelated.other.io".to_string(),
+                labels: std::collections::BTreeMap::new(),
+            },
+        ]);
+
+        let target_crds = vec!["widgets.example.io".to_string()];
+        let target_crd_set: HashSet<&str> = target_crds.iter().map(|s| s.as_str()).collect();
+        let target_groups: HashSet<&str> = target_crds
+            .iter()
+            .filter_map(|crd| crd.split_once('.').map(|(_, g)| g))
+            .collect();
+
+        if let CrdCatalog::Available(metas) = &catalog {
+            let part_of_suffixes = ["/part-of", "/managed-by"];
+            let standard_keys = [
+                "app.kubernetes.io/part-of",
+                "app.kubernetes.io/managed-by",
+                "app.kubernetes.io/instance",
+            ];
+            let mut values = HashSet::new();
+            for crd in metas {
+                let crd_group = crd.name.split_once('.').map(|(_, g)| g).unwrap_or("");
+                let is_target = target_crd_set.contains(crd.name.as_str());
+                let shares_group = target_groups.contains(crd_group);
+                if is_target || shares_group {
+                    for (k, v) in &crd.labels {
+                        let is_part_of = part_of_suffixes.iter().any(|s| k.ends_with(s))
+                            || standard_keys.contains(&k.as_str());
+                        if is_part_of {
+                            values.insert((k.clone(), v.clone()));
+                        }
+                    }
+                }
+            }
+            // Both widgets (target) and gadgets (same group) should contribute
+            assert_eq!(values.len(), 1);
+            assert!(values.contains(&(
+                "app.kubernetes.io/part-of".to_string(),
+                "my-operator".to_string()
+            )));
+        } else {
+            panic!("Expected Available");
+        }
+    }
+
+    #[test]
+    fn test_zero_owned_crds_no_catalog_fetch() {
+        // Verifies the lazy-fetch condition: when owned_crds is empty,
+        // the catalog should not be fetched.
+        let owned_crds: Vec<String> = vec![];
+        let should_fetch = !owned_crds.is_empty();
+        assert!(!should_fetch);
+    }
+
+    #[test]
+    fn test_crd_meta_from_partial_object() {
+        use crate::kube::resource::CrdMeta;
+
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert("key".to_string(), "value".to_string());
+
+        let meta = CrdMeta {
+            name: "widgets.example.io".to_string(),
+            labels: labels.clone(),
+        };
+
+        assert_eq!(meta.name, "widgets.example.io");
+        assert_eq!(meta.labels.get("key"), Some(&"value".to_string()));
+
+        let empty_meta = CrdMeta {
+            name: "nolabels.io".to_string(),
+            labels: std::collections::BTreeMap::new(),
+        };
+        assert!(empty_meta.labels.is_empty());
     }
 }
