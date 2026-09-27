@@ -34,6 +34,25 @@ Requires Rust toolchain and an active kubeconfig (`~/.kube/config`, `KUBECONFIG`
 
 A subcommand is always required. Resource arguments use `kind/name` format.
 
+### Choose a command by question
+
+| Question | Command | Typical scope |
+|---|---|---|
+| What owns or references this resource? | `tree RESOURCE` | One namespace |
+| What dependency roots exist here? | `map` | One or all namespaces |
+| What relationships can be followed from this resource? | `trace RESOURCE` | Namespace or related namespaces |
+| How is this workload or Service exposed and restricted? | `network RESOURCE` | One namespace plus referenced network APIs |
+| Which Operator supplies or manages it? | `operator owner RESOURCE` | One resource |
+| What resources are related to an Operator? | `operator resources OPERATOR` | Install or related namespaces |
+| What changed between two inventories? | `snapshot create`, `snapshot diff` | Namespace or cluster; diff is offline |
+| What typed evidence was discovered? | `graph` | One namespace |
+| How can an Operator be removed safely? | `teardown plan/apply/batch` | Explicit saved plan |
+
+`tree` reports structural owner and spec-reference relationships. `trace` expands weaker
+evidence such as same-Operator APIs and label correlations. `network` has its own schema and
+does not change the dependency tree. `teardown` is the only command family that mutates the
+cluster; `teardown plan` itself is read-only.
+
 ```bash
 # Show dependency tree around a resource
 oc-deps tree pod/<pod-name> -n <namespace>
@@ -91,6 +110,27 @@ oc-deps tree deployment/<name> -n <namespace> --show pod-resources
 | `-d, --depth` | Max traversal depth (default: 20) |
 | `--no-refs` | Disable spec-level reference detection |
 | `--include-events` | Include Event resources in scan |
+
+### Shell completion
+
+Completion generation is offline and does not read kubeconfig or contact a cluster.
+
+```bash
+# Bash
+oc-deps completion bash > ~/.local/share/bash-completion/completions/oc-deps
+
+# Zsh
+mkdir -p ~/.zfunc
+oc-deps completion zsh > ~/.zfunc/_oc-deps
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+
+# Fish
+oc-deps completion fish > ~/.config/fish/completions/oc-deps.fish
+
+# PowerShell
+oc-deps completion power-shell | Out-String | Invoke-Expression
+```
 
 ### tree-specific options
 
@@ -634,6 +674,51 @@ Missing operators fail the baseline gate by default. Use `--skip-missing` to ski
 ### CSV health and controller availability
 
 Teardown preflight reports CSV health and controller availability as advisory warnings. A Failed or unavailable operator can still be torn down — the plan and apply proceed normally. Only true safety failures block execution: ambiguous Subscription authority, incomplete required API discovery, plan identity/drift mismatch, and explicit-delete reference guard failures.
+
+## Exit codes and output contract
+
+| Code | Meaning |
+|---:|---|
+| `0` | Command completed and required discovery was complete. For teardown, the requested read or mutation completed successfully. |
+| `1` | Invalid input, unavailable required resource/API, safety or drift rejection, failed action, or another fatal error. |
+| `2` | `--strict` produced or saved a partial result, then reported incomplete discovery/scan. |
+| `130` | Cluster-wide snapshot was cancelled with Ctrl-C; the temporary file is removed. |
+
+For machine use, select `-o json` where supported. Result data is written to stdout;
+progress and warnings are written to stderr. `snapshot create` and `graph` save artifacts with
+`--file`; `-o/--output` always selects a display format. `snapshot diff`, `completion`,
+`--help`, and `--version` do not require Kubernetes API access.
+
+Color and in-place progress are enabled automatically only for terminals. Redirected or piped
+stdout/stderr contains no ANSI escape sequences. Set the standard `NO_COLOR` environment
+variable to disable color while retaining terminal-friendly layout.
+
+## CLI v1 to v2 migration
+
+CLI v2 intentionally has no compatibility aliases. A subcommand is required and options must
+follow the command that owns them.
+
+| Removed syntax | CLI v2 |
+|---|---|
+| `oc-deps RESOURCE` | `oc-deps tree RESOURCE` |
+| `--up-only` | `tree RESOURCE --direction parents` |
+| `--down-only` | `tree RESOURCE --direction children` |
+| `--map` | `map` |
+| `--filter kind=Deployment` | `map --root-kind Deployment` |
+| `--filter label=app=myapp` | `map --root-label app=myapp` |
+| `--network RESOURCE` | `network RESOURCE` |
+| `operators` | `operator list` |
+| `who-manages RESOURCE`, `--crd-origin` | `operator owner RESOURCE` |
+| `inspect OPERATOR`, `teardown inspect OPERATOR` | `operator resources OPERATOR` |
+| `snapshot ... -o FILE` | `snapshot create ... --file FILE` |
+| `diff BEFORE AFTER --format json` | `snapshot diff BEFORE AFTER -o json` |
+| `graph ... -o FILE` | `graph ... --file FILE` |
+| `teardown apply-set CONFIG` | `teardown batch CONFIG` |
+| `--no-cache` | `--refresh-discovery` |
+| `--prune-apis` | `teardown plan ... --prune-crds` |
+| mixed `--approve-delete` values | `--approve-scope` and `--approve-resource` on `teardown plan` |
+| `--preserve` | `--keep-resource` |
+| output-only `--force` | Removed; warnings remain visible |
 
 ## Build
 

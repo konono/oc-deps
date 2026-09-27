@@ -7,6 +7,7 @@ edition = "2024"
 kube = { version = "3", features = ["derive", "runtime"] }
 k8s-openapi = { version = "0.27", default-features = false, features = ["v1_35"] }
 clap = { version = "4", features = ["derive"] }
+clap_complete = "=4.6.0"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }

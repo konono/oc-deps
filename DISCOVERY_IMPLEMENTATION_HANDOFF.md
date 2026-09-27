@@ -18,6 +18,9 @@ logs/discovery-baseline/20260926-cycle-b2-3c77a17/
 The expanded corpus is stored as `full-corpus.tar.zst`; compact summaries and validators
 remain reviewable in the repository.
 
+Usage and regression-test guidance is documented in
+`logs/discovery-baseline/CORPUS_GUIDE.md`.
+
 ## 2. Product semantics established by Phase 0
 
 ### 2.1 Provider API operands are desired cleanup targets

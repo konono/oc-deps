@@ -1,16 +1,43 @@
+macro_rules! print {
+    ($($arg:tt)*) => {{
+        crate::terminal_output::write_stdout(format_args!($($arg)*), false)
+    }};
+}
+
+macro_rules! println {
+    () => {{ crate::terminal_output::write_stdout(format_args!(""), true) }};
+    ($($arg:tt)*) => {{
+        crate::terminal_output::write_stdout(format_args!($($arg)*), true)
+    }};
+}
+
+macro_rules! eprint {
+    ($($arg:tt)*) => {{
+        crate::terminal_output::write_stderr(format_args!($($arg)*), false)
+    }};
+}
+
+macro_rules! eprintln {
+    () => {{ crate::terminal_output::write_stderr(format_args!(""), true) }};
+    ($($arg:tt)*) => {{
+        crate::terminal_output::write_stderr(format_args!($($arg)*), true)
+    }};
+}
+
 mod analyzers;
 mod cli;
 mod graph;
 mod kube;
 mod output;
 mod teardown;
+mod terminal_output;
 mod tui;
 
 use std::collections::HashSet;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use crate::analyzers::inspect::{
     inspect_operator_with_options, print_inspection as print_inspection_top,
@@ -1128,6 +1155,17 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // ── Offline subcommands (dispatch before client init) ──
+    if let Command::Completion { shell } = args.command {
+        let mut command = Args::command();
+        clap_complete::generate(
+            clap_complete::Shell::from(shell),
+            &mut command,
+            "oc-deps",
+            &mut std::io::stdout(),
+        );
+        return Ok(());
+    }
+
     if let Command::Snapshot {
         action:
             SnapshotAction::Diff {
@@ -1241,6 +1279,7 @@ async fn main() -> Result<()> {
 
     // ── Subcommand dispatch ──
     match args.command {
+        Command::Completion { .. } => unreachable!("completion is dispatched before client init"),
         Command::Snapshot {
             action:
                 SnapshotAction::Create {

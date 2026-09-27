@@ -65,6 +65,27 @@ pub enum Scope {
     Related,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Elvish,
+    Fish,
+    PowerShell,
+    Zsh,
+}
+
+impl From<CompletionShell> for clap_complete::Shell {
+    fn from(value: CompletionShell) -> Self {
+        match value {
+            CompletionShell::Bash => Self::Bash,
+            CompletionShell::Elvish => Self::Elvish,
+            CompletionShell::Fish => Self::Fish,
+            CompletionShell::PowerShell => Self::PowerShell,
+            CompletionShell::Zsh => Self::Zsh,
+        }
+    }
+}
+
 /// Common options for subcommands that connect to a cluster.
 #[derive(clap::Args, Clone, Debug)]
 pub struct OnlineOpts {
@@ -91,6 +112,13 @@ pub struct OnlineOpts {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Generate a shell completion script (offline)
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
+
     /// Show dependency tree around a resource
     Tree {
         /// Resource in kind/name format
@@ -1029,6 +1057,74 @@ mod tests {
     fn test_subcommand_required() {
         let result = Args::try_parse_from(["oc-deps"]);
         assert!(result.is_err(), "Expected error when no subcommand given");
+    }
+
+    #[test]
+    fn test_completion_shells_parse() {
+        for shell in ["bash", "elvish", "fish", "power-shell", "zsh"] {
+            let args = Args::try_parse_from(["oc-deps", "completion", shell])
+                .unwrap_or_else(|e| panic!("{shell} should parse: {e}"));
+            assert!(matches!(args.command, Command::Completion { .. }));
+        }
+    }
+
+    #[test]
+    fn documented_cli_examples_parse() {
+        let examples: &[&[&str]] = &[
+            &["tree", "deployment/app", "-n", "demo"],
+            &["tree", "pod/app", "-n", "demo", "--direction", "parents"],
+            &["map", "-n", "demo", "--root-kind", "Deployment"],
+            &["map", "-A", "--exclude-system-namespaces"],
+            &[
+                "trace",
+                "deployment/app",
+                "-n",
+                "demo",
+                "--scope",
+                "related",
+            ],
+            &["network", "deployment/app", "-n", "demo", "-o", "json"],
+            &["operator", "list", "-o", "table"],
+            &["operator", "owner", "deployment/app", "-n", "demo"],
+            &[
+                "operator",
+                "resources",
+                "example-operator",
+                "--scope",
+                "related",
+            ],
+            &["snapshot", "create", "-n", "demo", "--file", "before.json"],
+            &[
+                "snapshot",
+                "diff",
+                "before.json",
+                "after.json",
+                "-o",
+                "json",
+            ],
+            &["graph", "-n", "demo", "--file", "graph.json"],
+            &[
+                "teardown",
+                "plan",
+                "example-operator",
+                "--file",
+                "plan.json",
+            ],
+            &["teardown", "apply", "plan.json", "--dry-run"],
+            &[
+                "teardown",
+                "batch",
+                "configs/full-teardown.json",
+                "--dry-run",
+            ],
+            &["completion", "zsh"],
+        ];
+
+        for example in examples {
+            let argv = std::iter::once("oc-deps").chain(example.iter().copied());
+            Args::try_parse_from(argv)
+                .unwrap_or_else(|e| panic!("documented example failed to parse: {example:?}: {e}"));
+        }
     }
 
     #[test]

@@ -7,6 +7,10 @@ what the tool discovered, planned, deleted, expected to disappear, and observed 
 full 15-operator teardown. It is evidence for later Discovery work; it is not production
 runtime input.
 
+For the identity model, replay workflow, test levels, update rules, and guidance on
+turning corpus cases into focused Rust tests, see
+[`../CORPUS_GUIDE.md`](../CORPUS_GUIDE.md).
+
 The 25 cross-controller objects in `provider-api-operands.json` are **positive full
 teardown cases**. A dependency operator provided their API while another controller
 created or managed the object. The generic discovery path found them through the
