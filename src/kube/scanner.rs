@@ -18,6 +18,49 @@ use crate::kube::resource::*;
 const MAX_RETRIES: usize = 2;
 const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
 
+pub type SharedLedger = Arc<std::sync::Mutex<CoverageLedger>>;
+
+fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
+    if group.is_empty() {
+        format!("{}/{}", version, plural)
+    } else {
+        format!("{}/{}/{}", group, version, plural)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_to_ledger(
+    ledger: &SharedLedger,
+    gvr: &str,
+    namespace: Option<&str>,
+    operation: QueryOperation,
+    target_name: Option<&str>,
+    label_selector: Option<&str>,
+    outcome: QueryOutcome,
+    elapsed: std::time::Duration,
+    requirement: QueryRequirement,
+) {
+    let scope = if namespace.is_some() {
+        "namespaced"
+    } else {
+        "cluster"
+    };
+    if let Ok(mut l) = ledger.lock() {
+        l.record(QueryRecord {
+            gvr: gvr.to_string(),
+            namespace: namespace.map(|s| s.to_string()),
+            scope: scope.to_string(),
+            operation,
+            target_name: target_name.map(|s| s.to_string()),
+            label_selector: label_selector.map(|s| s.to_string()),
+            field_selector: None,
+            outcome,
+            elapsed_ms: elapsed.as_millis() as u64,
+            requirement,
+        });
+    }
+}
+
 fn warn_retry(is_tty: bool, msg: &str) {
     if is_tty {
         eprintln!("   \x1b[33m⚠ {}\x1b[0m", msg);
@@ -33,16 +76,52 @@ pub async fn get_with_retry(
     version: &str,
     plural: &str,
 ) -> std::result::Result<DynamicObject, ScanWarning> {
+    get_with_retry_ledger(
+        api,
+        name,
+        group,
+        version,
+        plural,
+        None,
+        None,
+        QueryRequirement::Required,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn get_with_retry_ledger(
+    api: &Api<DynamicObject>,
+    name: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+) -> std::result::Result<DynamicObject, ScanWarning> {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let gvr = if group.is_empty() {
-        format!("{}/{}", version, plural)
-    } else {
-        format!("{}/{}/{}", group, version, plural)
-    };
+    let gvr = canonical_gvr(group, version, plural);
+    let query_start = Instant::now();
     for attempt in 0..=MAX_RETRIES {
         let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
         match tokio::time::timeout(timeout_dur, api.get(name)).await {
-            Ok(Ok(obj)) => return Ok(obj),
+            Ok(Ok(obj)) => {
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::Get,
+                        Some(name),
+                        None,
+                        QueryOutcome::Success { count: 1, pages: 1 },
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
+                return Ok(obj);
+            }
             Ok(Err(e)) => {
                 let warning = ScanWarning::from_kube_error(&e, group, version, plural);
                 if warning.is_retryable() && attempt < MAX_RETRIES {
@@ -64,6 +143,19 @@ pub async fn get_with_retry(
                 }
                 let mut w = ScanWarning::from_kube_error(&e, group, version, plural);
                 w.set_retries(attempt);
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::Get,
+                        Some(name),
+                        None,
+                        scan_warning_to_outcome_for_get(&w),
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
                 return Err(w);
             }
             Err(_elapsed) => {
@@ -84,23 +176,52 @@ pub async fn get_with_retry(
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                return Err(ScanWarning::Timeout {
+                let w = ScanWarning::Timeout {
                     gvr: gvr.clone(),
                     message: Some(format!(
                         "GET {} timeout ({}s)",
                         name, SCAN_REQUEST_TIMEOUT_SECS
                     )),
                     retries: attempt,
-                });
+                };
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::Get,
+                        Some(name),
+                        None,
+                        scan_warning_to_outcome(&w),
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
+                return Err(w);
             }
         }
     }
-    Err(ScanWarning::Other {
-        gvr,
+    let w = ScanWarning::Other {
+        gvr: gvr.clone(),
         message: "exhausted retries".to_string(),
-    })
+    };
+    if let Some(l) = ledger {
+        record_to_ledger(
+            l,
+            &gvr,
+            namespace,
+            QueryOperation::Get,
+            Some(name),
+            None,
+            scan_warning_to_outcome(&w),
+            query_start.elapsed(),
+            requirement,
+        );
+    }
+    Err(w)
 }
 
+#[allow(dead_code)]
 pub async fn list_with_selector_retry(
     api: &Api<DynamicObject>,
     selector: &str,
@@ -108,17 +229,57 @@ pub async fn list_with_selector_retry(
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    list_with_selector_retry_ledger(
+        api,
+        selector,
+        group,
+        version,
+        plural,
+        None,
+        None,
+        QueryRequirement::Required,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn list_with_selector_retry_ledger(
+    api: &Api<DynamicObject>,
+    selector: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let gvr = if group.is_empty() {
-        format!("{}/{}", version, plural)
-    } else {
-        format!("{}/{}/{}", group, version, plural)
-    };
+    let gvr = canonical_gvr(group, version, plural);
+    let query_start = Instant::now();
     for attempt in 0..=MAX_RETRIES {
         let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
         let lp = ListParams::default().labels(selector);
         match tokio::time::timeout(timeout_dur, api.list(&lp)).await {
-            Ok(Ok(list)) => return Ok(list.items),
+            Ok(Ok(list)) => {
+                let items = list.items;
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::List,
+                        None,
+                        Some(selector),
+                        QueryOutcome::Success {
+                            count: items.len(),
+                            pages: 1,
+                        },
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
+                return Ok(items);
+            }
             Ok(Err(e)) => {
                 let warning = ScanWarning::from_kube_error(&e, group, version, plural);
                 if warning.is_retryable() && attempt < MAX_RETRIES {
@@ -140,6 +301,19 @@ pub async fn list_with_selector_retry(
                 }
                 let mut w = ScanWarning::from_kube_error(&e, group, version, plural);
                 w.set_retries(attempt);
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::List,
+                        None,
+                        Some(selector),
+                        scan_warning_to_outcome(&w),
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
                 return Err(w);
             }
             Err(_elapsed) => {
@@ -160,21 +334,49 @@ pub async fn list_with_selector_retry(
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                return Err(ScanWarning::Timeout {
+                let w = ScanWarning::Timeout {
                     gvr: gvr.clone(),
                     message: Some(format!(
                         "LIST selector={} timeout ({}s)",
                         selector, SCAN_REQUEST_TIMEOUT_SECS
                     )),
                     retries: attempt,
-                });
+                };
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::List,
+                        None,
+                        Some(selector),
+                        scan_warning_to_outcome(&w),
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
+                return Err(w);
             }
         }
     }
-    Err(ScanWarning::Other {
-        gvr,
+    let w = ScanWarning::Other {
+        gvr: gvr.clone(),
         message: "exhausted retries".to_string(),
-    })
+    };
+    if let Some(l) = ledger {
+        record_to_ledger(
+            l,
+            &gvr,
+            namespace,
+            QueryOperation::List,
+            None,
+            Some(selector),
+            scan_warning_to_outcome(&w),
+            query_start.elapsed(),
+            requirement,
+        );
+    }
+    Err(w)
 }
 
 pub async fn list_all_with_retry(
@@ -183,14 +385,34 @@ pub async fn list_all_with_retry(
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    list_all_with_retry_ledger(
+        api,
+        group,
+        version,
+        plural,
+        None,
+        None,
+        QueryRequirement::Required,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn list_all_with_retry_ledger(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let gvr = if group.is_empty() {
-        format!("{}/{}", version, plural)
-    } else {
-        format!("{}/{}/{}", group, version, plural)
-    };
+    let gvr = canonical_gvr(group, version, plural);
+    let query_start = Instant::now();
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
+    let mut pages: usize = 0;
     loop {
         let mut lp = ListParams::default().limit(500);
         if let Some(ref token) = continue_token {
@@ -223,6 +445,19 @@ pub async fn list_all_with_retry(
                     }
                     let mut w = ScanWarning::from_kube_error(&e, group, version, plural);
                     w.set_retries(attempt);
+                    if let Some(l) = ledger {
+                        record_to_ledger(
+                            l,
+                            &gvr,
+                            namespace,
+                            QueryOperation::List,
+                            None,
+                            None,
+                            scan_warning_to_outcome(&w),
+                            query_start.elapsed(),
+                            requirement,
+                        );
+                    }
                     return Err(w);
                 }
                 Err(_elapsed) => {
@@ -241,16 +476,31 @@ pub async fn list_all_with_retry(
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    return Err(ScanWarning::Timeout {
+                    let w = ScanWarning::Timeout {
                         gvr: gvr.clone(),
                         message: Some(format!("LIST timeout ({}s)", SCAN_REQUEST_TIMEOUT_SECS)),
                         retries: attempt,
-                    });
+                    };
+                    if let Some(l) = ledger {
+                        record_to_ledger(
+                            l,
+                            &gvr,
+                            namespace,
+                            QueryOperation::List,
+                            None,
+                            None,
+                            scan_warning_to_outcome(&w),
+                            query_start.elapsed(),
+                            requirement,
+                        );
+                    }
+                    return Err(w);
                 }
             }
         }
         match list_result {
             Some(list) => {
+                pages += 1;
                 all_items.extend(list.items);
                 match list.metadata.continue_.filter(|t| !t.is_empty()) {
                     Some(token) => continue_token = Some(token),
@@ -258,12 +508,42 @@ pub async fn list_all_with_retry(
                 }
             }
             None => {
-                return Err(ScanWarning::Other {
-                    gvr,
+                let w = ScanWarning::Other {
+                    gvr: gvr.clone(),
                     message: "exhausted retries".to_string(),
-                });
+                };
+                if let Some(l) = ledger {
+                    record_to_ledger(
+                        l,
+                        &gvr,
+                        namespace,
+                        QueryOperation::List,
+                        None,
+                        None,
+                        scan_warning_to_outcome(&w),
+                        query_start.elapsed(),
+                        requirement,
+                    );
+                }
+                return Err(w);
             }
         }
+    }
+    if let Some(l) = ledger {
+        record_to_ledger(
+            l,
+            &gvr,
+            namespace,
+            QueryOperation::List,
+            None,
+            None,
+            QueryOutcome::Success {
+                count: all_items.len(),
+                pages,
+            },
+            query_start.elapsed(),
+            requirement,
+        );
     }
     Ok(all_items)
 }
@@ -342,6 +622,7 @@ pub async fn scan_namespace(
         show_spec,
         None,
         &[],
+        None,
     )
     .await
 }
@@ -378,6 +659,7 @@ pub async fn scan_namespace_with_extra_apis(
         show_spec,
         None,
         &extra,
+        None,
     )
     .await
 }
@@ -392,6 +674,7 @@ pub async fn scan_namespace_with_semaphore(
     show_spec: bool,
     api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
     extra_apis: &[(String, crate::kube::discovery::KindInfo)],
+    coverage_ledger: Option<SharedLedger>,
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
@@ -426,11 +709,14 @@ pub async fn scan_namespace_with_semaphore(
         let ns = namespace.to_string();
         let scanned = scanned.clone();
         let sem = api_sem.clone();
+        let ledger = coverage_ledger.clone();
 
         async move {
             let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
             let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
+            let gvr_canonical = canonical_gvr(&info.group, &info.version, &info.plural);
+            let query_start = Instant::now();
 
             let mut last_err = None;
             for attempt in 0..=MAX_RETRIES {
@@ -455,6 +741,7 @@ pub async fn scan_namespace_with_semaphore(
 
                 match result {
                     Ok(Ok(list)) => {
+                        let item_count = list.items.len();
                         let items: Vec<ScanItem> = list
                             .items
                             .into_iter()
@@ -520,6 +807,22 @@ pub async fn scan_namespace_with_semaphore(
                                 ))
                             })
                             .collect();
+                        if let Some(ref l) = ledger {
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                QueryOperation::List,
+                                None,
+                                None,
+                                QueryOutcome::Success {
+                                    count: item_count,
+                                    pages: 1,
+                                },
+                                query_start.elapsed(),
+                                QueryRequirement::Required,
+                            );
+                        }
                         return Ok(items);
                     }
                     Ok(Err(e)) => {
@@ -549,6 +852,19 @@ pub async fn scan_namespace_with_semaphore(
                             continue;
                         }
                         warning.set_retries(attempt);
+                        if let Some(ref l) = ledger {
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                QueryOperation::List,
+                                None,
+                                None,
+                                scan_warning_to_outcome(&warning),
+                                query_start.elapsed(),
+                                QueryRequirement::Required,
+                            );
+                        }
                         return Err(warning);
                     }
                     Err(_elapsed) => {
@@ -579,12 +895,38 @@ pub async fn scan_namespace_with_semaphore(
                             last_err = Some(warning);
                             continue;
                         }
+                        if let Some(ref l) = ledger {
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                QueryOperation::List,
+                                None,
+                                None,
+                                scan_warning_to_outcome(&warning),
+                                query_start.elapsed(),
+                                QueryRequirement::Required,
+                            );
+                        }
                         return Err(warning);
                     }
                 }
             }
             let mut w = last_err.unwrap();
             w.set_retries(MAX_RETRIES);
+            if let Some(ref l) = ledger {
+                record_to_ledger(
+                    l,
+                    &gvr_canonical,
+                    Some(&ns),
+                    QueryOperation::List,
+                    None,
+                    None,
+                    scan_warning_to_outcome(&w),
+                    query_start.elapsed(),
+                    QueryRequirement::Required,
+                );
+            }
             Err(w)
         }
     });
@@ -706,6 +1048,23 @@ pub async fn resolve_missing_parents(
     gk_map: &GroupKindMap,
     show_spec: bool,
 ) -> Vec<ScanWarning> {
+    resolve_missing_parents_opts(
+        index, start_uid, client, namespace, kind_map, gk_map, show_spec, None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn resolve_missing_parents_opts(
+    index: &mut NamespaceIndex,
+    start_uid: &str,
+    client: &Client,
+    namespace: &str,
+    kind_map: &KindMap,
+    gk_map: &GroupKindMap,
+    show_spec: bool,
+    ledger: Option<SharedLedger>,
+) -> Vec<ScanWarning> {
     let mut warnings = Vec::new();
     let mut current = start_uid.to_string();
     let mut visited = HashSet::new();
@@ -770,12 +1129,20 @@ pub async fn resolve_missing_parents(
             Api::all_with(client.clone(), &ar)
         };
 
-        match get_with_retry(
+        let ns_for_ledger = if kind_info.namespaced {
+            Some(namespace)
+        } else {
+            None
+        };
+        match get_with_retry_ledger(
             &api,
             &owner.name,
             &kind_info.group,
             &kind_info.version,
             &kind_info.plural,
+            ledger.as_ref(),
+            ns_for_ledger,
+            QueryRequirement::Required,
         )
         .await
         {
@@ -1610,8 +1977,28 @@ mod tests {
         let c2 = client.clone();
 
         let (r1, r2) = tokio::join!(
-            scan_namespace_with_semaphore(&c1, "ns-a", &km1, false, false, false, Some(sem1), &[]),
-            scan_namespace_with_semaphore(&c2, "ns-b", &km2, false, false, false, Some(sem2), &[]),
+            scan_namespace_with_semaphore(
+                &c1,
+                "ns-a",
+                &km1,
+                false,
+                false,
+                false,
+                Some(sem1),
+                &[],
+                None
+            ),
+            scan_namespace_with_semaphore(
+                &c2,
+                "ns-b",
+                &km2,
+                false,
+                false,
+                false,
+                Some(sem2),
+                &[],
+                None
+            ),
         );
 
         spawned.await.unwrap();
@@ -1901,5 +2288,542 @@ mod tests {
             2,
             "paginated list should use 2 requests"
         );
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_records_success_coverage() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "PodList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [
+                    {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p1", "namespace": "test-ns", "uid": "uid-p1", "labels": {}, "annotations": {}}, "spec": {}},
+                    {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p2", "namespace": "test-ns", "uid": "uid-p2", "labels": {}, "annotations": {}}, "spec": {}}
+                ]
+            })));
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1, "should have one query record");
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "v1/pods");
+        assert_eq!(rec.namespace.as_deref(), Some("test-ns"));
+        assert_eq!(rec.scope, "namespaced");
+        // elapsed_ms may be 0 in fast mock tests — no assertion on timing
+        match &rec.outcome {
+            QueryOutcome::Success { count, pages } => {
+                assert_eq!(*count, 2);
+                assert_eq!(*pages, 1);
+            }
+            other => panic!("expected Success, got {:?}", other),
+        }
+        assert_eq!(rec.requirement, QueryRequirement::Required);
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_records_403_coverage() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Secret".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "secrets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected LIST");
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok()); // scan_namespace returns Ok with warnings
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "v1/secrets");
+        assert_eq!(rec.namespace.as_deref(), Some("test-ns"));
+        match &rec.outcome {
+            QueryOutcome::Forbidden { status } => assert_eq!(*status, 403),
+            other => panic!("expected Forbidden, got {:?}", other),
+        }
+        assert_eq!(rec.requirement, QueryRequirement::Required);
+        assert!(l.has_incomplete(), "403 should be a required failure");
+        assert_eq!(l.incomplete_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_records_mixed_success_and_failure() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map.insert(
+            "Secret".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "secrets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Two requests expected (Pod and Secret)
+            for _ in 0..2 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                let uri = req.uri().to_string();
+                if uri.contains("secrets") {
+                    send.send_response(status_response(403, "Forbidden"));
+                } else {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1",
+                        "kind": "PodList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [{"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p1", "namespace": "test-ns", "uid": "uid-p1", "labels": {}, "annotations": {}}, "spec": {}}]
+                    })));
+                }
+            }
+        });
+
+        let result = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 2, "should have two query records");
+        let summary = l.summary();
+        assert_eq!(summary.total_queries, 2);
+        assert_eq!(summary.success, 1);
+        assert_eq!(summary.incomplete, 1);
+        assert!(l.has_incomplete());
+    }
+
+    #[tokio::test]
+    async fn get_with_retry_ledger_records_success() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let ki = kind_map.get("Pod").unwrap();
+        let gvk = GroupVersion::gv(&ki.group, &ki.version).with_kind("Pod");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &ki.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "test-ns", &ar);
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(json_response(mock_pod_obj()));
+        });
+
+        let result = get_with_retry_ledger(
+            &api,
+            "myapp-abc-xyz",
+            "",
+            "v1",
+            "pods",
+            Some(&ledger),
+            Some("test-ns"),
+            QueryRequirement::Required,
+        )
+        .await;
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "v1/pods");
+        assert_eq!(rec.namespace.as_deref(), Some("test-ns"));
+        assert!(matches!(
+            rec.outcome,
+            QueryOutcome::Success { count: 1, pages: 1 }
+        ));
+        assert_eq!(rec.requirement, QueryRequirement::Required);
+    }
+
+    #[tokio::test]
+    async fn get_with_retry_ledger_records_403() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let ki = kind_map.get("Pod").unwrap();
+        let gvk = GroupVersion::gv(&ki.group, &ki.version).with_kind("Pod");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &ki.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "test-ns", &ar);
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected GET");
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        let result = get_with_retry_ledger(
+            &api,
+            "myapp",
+            "",
+            "v1",
+            "pods",
+            Some(&ledger),
+            Some("test-ns"),
+            QueryRequirement::Required,
+        )
+        .await;
+        spawned.await.unwrap();
+        assert!(result.is_err());
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        assert!(matches!(
+            l.records[0].outcome,
+            QueryOutcome::Forbidden { status: 403 }
+        ));
+        assert_eq!(l.records[0].requirement, QueryRequirement::Required);
+        assert!(l.has_incomplete());
+    }
+
+    #[tokio::test]
+    async fn list_selector_ledger_records_selector_and_count() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let kind_map = make_kind_map();
+        let ki = kind_map.get("Pod").unwrap();
+        let gvk = GroupVersion::gv(&ki.group, &ki.version).with_kind("Pod");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &ki.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client, "test-ns", &ar);
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (req, send) = handle.next_request().await.expect("expected LIST");
+            let uri = req.uri().to_string();
+            assert!(
+                uri.contains("labelSelector=app%3Dtest"),
+                "should contain selector: {}",
+                uri
+            );
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1", "kind": "PodList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [
+                    {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p1", "namespace": "test-ns", "uid": "uid-p1"}, "spec": {}},
+                    {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p2", "namespace": "test-ns", "uid": "uid-p2"}, "spec": {}}
+                ]
+            })));
+        });
+
+        let result = list_with_selector_retry_ledger(
+            &api,
+            "app=test",
+            "",
+            "v1",
+            "pods",
+            Some(&ledger),
+            Some("test-ns"),
+            QueryRequirement::Required,
+        )
+        .await;
+        spawned.await.unwrap();
+        assert!(result.is_ok());
+        let items = result.unwrap();
+        assert_eq!(items.len(), 2);
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "v1/pods");
+        assert_eq!(rec.label_selector.as_deref(), Some("app=test"));
+        assert!(matches!(
+            rec.outcome,
+            QueryOutcome::Success { count: 2, pages: 1 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn list_all_ledger_records_pages() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let uri = req.uri().to_string();
+                if n == 0 && !uri.contains("continue") {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "apps/v1", "kind": "DeploymentList",
+                        "metadata": {"resourceVersion": "1", "continue": "token-1"},
+                        "items": [{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "d1"}}]
+                    })));
+                } else {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "apps/v1", "kind": "DeploymentList",
+                        "metadata": {"resourceVersion": "2"},
+                        "items": [{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "d2"}}]
+                    })));
+                }
+            }
+        });
+        let client = Client::new(mock_service, "default");
+        let ar = ApiResource::from_gvk(&kube::api::GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+        let api: Api<DynamicObject> = Api::all_with(client, &ar);
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let result = list_all_with_retry_ledger(
+            &api,
+            "apps",
+            "v1",
+            "deployments",
+            Some(&ledger),
+            None,
+            QueryRequirement::Required,
+        )
+        .await;
+        spawned.abort();
+        let items = result.expect("paginated should succeed");
+        assert_eq!(items.len(), 2);
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "apps/v1/deployments");
+        assert_eq!(rec.namespace, None);
+        assert_eq!(rec.scope, "cluster");
+        match &rec.outcome {
+            QueryOutcome::Success { count, pages } => {
+                assert_eq!(*count, 2);
+                assert_eq!(*pages, 2, "should record 2 pages");
+            }
+            other => panic!("expected Success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_ledger_sorted_deterministic() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Zebra".to_string(),
+            KindInfo {
+                group: "zoo".to_string(),
+                version: "v1".to_string(),
+                plural: "zebras".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map.insert(
+            "Apple".to_string(),
+            KindInfo {
+                group: "fruit".to_string(),
+                version: "v1".to_string(),
+                plural: "apples".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let ledger = Arc::new(std::sync::Mutex::new(CoverageLedger::new()));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            for _ in 0..2 {
+                let (_req, send) = handle.next_request().await.expect("expected LIST");
+                send.send_response(json_response(serde_json::json!({
+                    "apiVersion": "v1", "kind": "List",
+                    "metadata": {"resourceVersion": "1"},
+                    "items": []
+                })));
+            }
+        });
+
+        let _ = scan_namespace_with_semaphore(
+            &client,
+            "test-ns",
+            &kind_map,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            Some(ledger.clone()),
+        )
+        .await;
+        spawned.await.unwrap();
+
+        let mut l = ledger.lock().unwrap();
+        l.sort_records();
+        assert_eq!(l.records.len(), 2);
+        assert_eq!(l.records[0].gvr, "fruit/v1/apples");
+        assert_eq!(l.records[1].gvr, "zoo/v1/zebras");
+
+        let json1 = serde_json::to_string(&*l).unwrap();
+        l.sort_records();
+        let json2 = serde_json::to_string(&*l).unwrap();
+        assert_eq!(json1, json2, "double sort should be byte-identical");
+    }
+
+    #[tokio::test]
+    async fn scan_namespace_request_uris_match_candidate_namespaces() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Pod".to_string(),
+            KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "pods".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let request_uris = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let uris = request_uris.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                uris.lock().unwrap().push(req.uri().to_string());
+                send.send_response(json_response(serde_json::json!({
+                    "apiVersion": "v1", "kind": "PodList",
+                    "metadata": {"resourceVersion": "1"}, "items": []
+                })));
+            }
+        });
+
+        let candidates = vec![crate::analyzers::namespace_scope::CandidateNamespace {
+            namespace: "valid-ns".to_string(),
+            evidence: vec![],
+        }];
+
+        let result = crate::analyzers::namespace_scope::scan_candidate_namespaces_with_ledger(
+            &client,
+            &candidates,
+            &kind_map,
+            None,
+            None,
+        )
+        .await;
+        spawned.abort();
+
+        assert!(result.scanned_namespaces.contains(&"valid-ns".to_string()));
+        let uris = request_uris.lock().unwrap();
+        assert!(!uris.is_empty(), "should have made requests");
+        for uri in uris.iter() {
+            assert!(
+                uri.contains("namespaces/valid-ns"),
+                "all requests should target valid-ns, got: {}",
+                uri
+            );
+            assert!(
+                !uri.contains("redhat-ai-gateway-infra"),
+                "no requests should target rejected namespace, got: {}",
+                uri
+            );
+        }
     }
 }

@@ -437,12 +437,16 @@ Each resource may have a **`source_id`** indicating the relationship edge source
 1. Install namespace (always included)
 2. OperatorGroup `status.namespaces` / `spec.targetNamespaces`
 3. Owned CRD instances' actual namespaces
-4. Spec namespace references — fields matching `*namespace*`/`*Namespace*` in CR specs (heuristic; exclusion fields like `excludedNamespaces` are skipped)
+4. Spec namespace references — fields matching `*namespace*`/`*Namespace*` in CR specs (heuristic suffix matching; exclusion fields like `excludedNamespaces` are skipped, and their descendants are excluded from extraction). Values are validated as DNS-1123 labels; invalid values (containing `/`, uppercase, `_`, exceeding 63 chars, or empty) are rejected with a diagnostic and never queried.
 5. Label evidence from related CRD instances
 
 Namespaces are scanned sequentially to avoid connection exhaustion. For AllNamespaces operators, only namespaces with known evidence are scanned — the tool does not scan all cluster namespaces.
 
-If some namespaces or CRDs fail (403, timeout), partial results are still returned. Use `--strict` to exit with code 2 when discovery is incomplete. Use `--verbose` to see all warnings (default: first 5). In JSON output, `warnings` contains all failure messages and `scan_warning_count` is the total count.
+**Coverage ledger**: Every GET/LIST query records its canonical GVR, namespace, scope, selector, outcome, and elapsed time into a coverage ledger. The ledger distinguishes `Required` queries (namespace scans) from `Optional` queries (API discovery for CRDs that may not exist). In JSON output, `coverage` contains a summary with `total_queries`, `success`, `incomplete` (required queries without Success, or optional queries with anything except Success/ApiAbsent/ListUnsupported/TargetMissing), `api_absent` (LIST 404 — API does not exist), `target_missing` (GET 404 — object not found), and `total_elapsed_ms`. The full `coverage_ledger` includes per-query records. Use `--verbose` to see per-query details on stderr.
+
+**Strict mode**: `--strict` exits with code 2 after output when any `Required` query fails. Optional `ApiAbsent` (a CRD API that doesn't exist on the cluster) does not trigger strict failure. Query outcomes include: `Success`, `ApiAbsent` (LIST 404), `TargetMissing` (GET 404), `Forbidden`, `Timeout`, `RateLimited`, `ServerError`, `ListUnsupported`, and `Unknown`.
+
+If some namespaces or CRDs fail (403, timeout), partial results are still returned. Use `--verbose` to see all warnings (default: first 5). In JSON output, `warnings` contains all failure messages and `scan_warning_count` is the total count.
 
 ### Trace impact radius
 

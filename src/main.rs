@@ -40,12 +40,12 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser};
 
 use crate::analyzers::inspect::{
-    inspect_operator_with_options, print_inspection as print_inspection_top,
+    inspect_operator_with_options_ledger, print_inspection as print_inspection_top,
 };
-use crate::analyzers::namespace_scope::{discover_operator_namespaces, scan_candidate_namespaces};
+use crate::analyzers::namespace_scope::discover_operator_namespaces_opts;
 use crate::analyzers::olm::{
-    WhoManagesInput, compute_operator_dependencies, discover_operators, print_operators,
-    print_who_manages, who_manages,
+    WhoManagesInput, compute_operator_dependencies, discover_operators, discover_operators_opts,
+    print_operators, print_who_manages, who_manages, who_manages_opts,
 };
 use crate::analyzers::selector::{
     build_network_inventory, build_service_network_path, evaluate_network_postures,
@@ -451,6 +451,7 @@ async fn cluster_wide_map(
                 show_spec,
                 Some(sem),
                 &[],
+                None,
             )
             .await;
 
@@ -5027,25 +5028,34 @@ async fn main() -> Result<()> {
                 build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
+            let cmd_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
+                std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
+            );
+
             eprint!("🔍 Discovering operators...");
-            let all_operators = discover_operators(&client, &kind_map).await?;
+            let all_operators =
+                discover_operators_opts(&client, &kind_map, Some(cmd_ledger.clone())).await?;
             eprintln!(" found {} operators", all_operators.len());
 
             let target_indices = resolve_operator_targets(&[operator_query], &all_operators)?;
             let target_op = &all_operators[target_indices[0]];
 
-            let inspection = inspect_operator_with_options(
+            let inspection = inspect_operator_with_options_ledger(
                 &client,
                 target_op,
                 &kind_map,
                 &gvr_map,
                 &gk_map,
                 cross_namespace,
+                Some(cmd_ledger.clone()),
             )
             .await?;
 
             print_inspection_top(&inspection, &output, verbose);
-            if strict && inspection.scan_warning_count > 0 {
+            if let Some(ref ledger) = inspection.coverage_ledger {
+                crate::kube::resource::format_coverage_summary(ledger, verbose);
+            }
+            if strict && inspection.should_exit_strict() {
                 std::process::exit(2);
             }
             return Ok(());
@@ -5094,13 +5104,35 @@ async fn main() -> Result<()> {
                 }
             })?;
 
+            let trace_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
+                std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
+            );
             let (mut index, mut scan_warnings) = if kind_info.namespaced {
-                scan_namespace(&client, &namespace, &kind_map, false, true, false).await?
+                crate::kube::scanner::scan_namespace_with_semaphore(
+                    &client,
+                    &namespace,
+                    &kind_map,
+                    false,
+                    true,
+                    false,
+                    None,
+                    &[],
+                    Some(trace_ledger.clone()),
+                )
+                .await?
             } else {
-                // For cluster-scoped targets, scan the namespace for children
-                // but also fetch the target itself
-                let (idx, warnings) =
-                    scan_namespace(&client, &namespace, &kind_map, false, true, false).await?;
+                let (idx, warnings) = crate::kube::scanner::scan_namespace_with_semaphore(
+                    &client,
+                    &namespace,
+                    &kind_map,
+                    false,
+                    true,
+                    false,
+                    None,
+                    &[],
+                    Some(trace_ledger.clone()),
+                )
+                .await?;
                 (idx, warnings)
             };
             // For cluster-scoped targets, fetch the target via exact GET and insert
@@ -5111,12 +5143,15 @@ async fn main() -> Result<()> {
                 let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
                 let api: ::kube::Api<::kube::api::DynamicObject> =
                     ::kube::Api::all_with(client.clone(), &ar);
-                match crate::kube::scanner::get_with_retry(
+                match crate::kube::scanner::get_with_retry_ledger(
                     &api,
                     &name,
                     &kind_info.group,
                     &kind_info.version,
                     &kind_info.plural,
+                    Some(&trace_ledger),
+                    None,
+                    crate::kube::resource::QueryRequirement::Required,
                 )
                 .await
                 {
@@ -5170,7 +5205,7 @@ async fn main() -> Result<()> {
             if !uids_with_missing_parents.is_empty() {
                 eprint!("🔗 Resolving cluster-scoped parents...");
                 for uid in &uids_with_missing_parents {
-                    let parent_warnings = resolve_missing_parents(
+                    let parent_warnings = crate::kube::scanner::resolve_missing_parents_opts(
                         &mut index,
                         uid,
                         &client,
@@ -5178,6 +5213,7 @@ async fn main() -> Result<()> {
                         &kind_map,
                         &gk_map_trace,
                         false,
+                        Some(trace_ledger.clone()),
                     )
                     .await;
                     scan_warnings.extend(parent_warnings);
@@ -5188,15 +5224,18 @@ async fn main() -> Result<()> {
             // Determine managing operator via who-manages (for same-operator CRD + cross-ns)
             let mut confirmed_csv: Option<String> = None;
             eprint!("🔍 Tracing ownership...");
-            let wm_result = who_manages(&WhoManagesInput {
-                client: &client,
-                kind: &kind,
-                group: &target_group,
-                name: &name,
-                namespace: &namespace,
-                kind_map: &kind_map,
-                gk_map: &gk_map_trace,
-            })
+            let wm_result = who_manages_opts(
+                &WhoManagesInput {
+                    client: &client,
+                    kind: &kind,
+                    group: &target_group,
+                    name: &name,
+                    namespace: &namespace,
+                    kind_map: &kind_map,
+                    gk_map: &gk_map_trace,
+                },
+                Some(trace_ledger.clone()),
+            )
             .await;
             match wm_result {
                 Ok(wm) => {
@@ -5223,18 +5262,21 @@ async fn main() -> Result<()> {
 
             // Cross-namespace scan using confirmed operator
             if cross_namespace && let Some(csv_name) = &confirmed_csv {
-                let operators = discover_operators(&client, &kind_map).await?;
+                let operators =
+                    discover_operators_opts(&client, &kind_map, Some(trace_ledger.clone())).await?;
                 let csv_query = csv_name.to_string();
                 if let Ok(indices) = resolve_operator_targets(&[csv_query], &operators)
                     && let Some(&idx) = indices.first()
                 {
                     let target_op = &operators[idx];
-                    let scope_result = discover_operator_namespaces(
+                    let scope_result = discover_operator_namespaces_opts(
                         &client,
                         target_op,
                         &kind_map,
                         &gvr_map,
                         &gk_map_trace,
+                        Some(trace_ledger.clone()),
+                        None,
                     )
                     .await?;
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -5246,13 +5288,15 @@ async fn main() -> Result<()> {
                         }
                     }
                     scan_warnings.extend(scope_result.scan_failures);
-                    let ns_scan = scan_candidate_namespaces(
-                        &client,
-                        &scope_result.candidates,
-                        &kind_map,
-                        Some(&namespace),
-                    )
-                    .await;
+                    let ns_scan =
+                        crate::analyzers::namespace_scope::scan_candidate_namespaces_with_ledger(
+                            &client,
+                            &scope_result.candidates,
+                            &kind_map,
+                            Some(&namespace),
+                            Some(trace_ledger.clone()),
+                        )
+                        .await;
                     for w in &ns_scan.namespace_warnings {
                         scan_warnings.push(crate::kube::resource::ScanWarning::Other {
                             gvr: "cross-namespace".to_string(),
@@ -5276,6 +5320,7 @@ async fn main() -> Result<()> {
                 &gk_map_trace,
                 depth,
                 confirmed_csv.as_deref(),
+                Some(trace_ledger.clone()),
             )
             .await?;
 
@@ -5290,9 +5335,31 @@ async fn main() -> Result<()> {
             } else {
                 "namespace"
             };
-            print_trace(&result, &output, scope_str);
+            let (trace_coverage, trace_coverage_ledger) = {
+                let mut ledger = trace_ledger.lock().unwrap();
+                if ledger.records.is_empty() {
+                    (None, None)
+                } else {
+                    ledger.sort_records();
+                    (Some(ledger.summary()), Some(ledger.clone()))
+                }
+            };
+            print_trace(
+                &result,
+                &output,
+                scope_str,
+                trace_coverage,
+                trace_coverage_ledger.clone(),
+            );
 
-            // strict: exit 2 only for actual scan failures (not scope info messages)
+            if let Some(ref ledger) = trace_coverage_ledger {
+                crate::kube::resource::format_coverage_summary(ledger, verbose);
+            }
+
+            // strict: exit 2 for ledger incomplete OR scan failures (excluding info messages)
+            let has_ledger_incomplete = trace_coverage_ledger
+                .as_ref()
+                .is_some_and(|l| l.has_incomplete());
             let has_scan_failures = scan_warnings.iter().any(|w| {
                 !matches!(
                     w,
@@ -5300,7 +5367,7 @@ async fn main() -> Result<()> {
                         if message.starts_with("AllNamespaces operator")
                 )
             });
-            if strict && has_scan_failures {
+            if strict && (has_scan_failures || has_ledger_incomplete) {
                 std::process::exit(2);
             }
             return Ok(());
