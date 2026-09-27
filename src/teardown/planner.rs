@@ -2250,17 +2250,21 @@ pub async fn generate_teardown_plan(
 
     // Related CRD discovery — scoped by label VALUE match
     eprint!("🔍 Discovering related CRD instances...");
+    let crd_catalog = fetch_crd_catalog(client, kind_map, None).await.ok();
     let (target_label_pairs, seed_unavailable) =
-        compute_part_of_seeds(&target_crds, kind_map, client).await;
+        compute_part_of_seeds_opts(&target_crds, kind_map, client, None, crd_catalog.as_deref())
+            .await;
     all_unavailable.extend(seed_unavailable);
 
-    let related_report = discover_related_crd_instances(
+    let related_report = discover_related_crd_instances_opts(
         client,
         &target_crd_set,
         &target_label_pairs,
         kind_map,
         gvr_map,
         gk_map,
+        None,
+        crd_catalog.as_deref(),
     )
     .await;
     eprintln!(

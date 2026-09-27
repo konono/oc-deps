@@ -98,7 +98,7 @@ RHOAI operator の teardown → Ansible 復旧 → verify の1サイクル。
 ```bash
 # 1. teardown (plan then apply)
 cargo build --release
-./target/release/oc-deps teardown plan rhods-operator.3.5.0 \
+./target/release/oc-deps teardown plan rhods-operator \
   --approve-scope root --approve-scope independent \
   --approve-scope label-only --approve-scope operator-group \
   --approve-resource maas.opendatahub.io/Config/-/default \
@@ -135,7 +135,7 @@ cargo build --release
 OC_DEPS=./target/release/oc-deps
 
 # Step 1: RHOAI (plan then apply)
-$OC_DEPS teardown plan rhods-operator.3.5.0 \
+$OC_DEPS teardown plan rhods-operator \
   --approve-scope root --approve-scope independent \
   --approve-scope label-only --approve-scope operator-group \
   --approve-resource maas.opendatahub.io/Config/-/default \
