@@ -5319,6 +5319,7 @@ async fn main() -> Result<()> {
                 &gk_map_trace,
                 depth,
                 confirmed_csv.as_deref(),
+                Some(trace_ledger.clone()),
             )
             .await?;
 

@@ -667,6 +667,7 @@ async fn discover_one_crd(
         &kind_info.plural,
         ledger.as_ref(),
         None,
+        None,
     )
     .await
     {
@@ -1126,7 +1127,7 @@ pub(crate) async fn list_paginated_with_retry(
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
-    list_paginated_with_retry_opts(api, group, version, plural, None, None).await
+    list_paginated_with_retry_opts(api, group, version, plural, None, None, None).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1137,6 +1138,7 @@ pub(crate) async fn list_paginated_with_retry_opts(
     plural: &str,
     ledger: Option<&SharedLedger>,
     requirement: Option<QueryRequirement>,
+    query_namespace: Option<&str>,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
     let requirement = requirement.unwrap_or(QueryRequirement::Required);
     let gvr = if group.is_empty() {
@@ -1155,8 +1157,13 @@ pub(crate) async fn list_paginated_with_retry_opts(
         {
             lg.record(crate::kube::resource::QueryRecord {
                 gvr: gvr.clone(),
-                namespace: None,
-                scope: "cluster".to_string(),
+                namespace: query_namespace.map(|s| s.to_string()),
+                scope: if query_namespace.is_some() {
+                    "namespaced"
+                } else {
+                    "cluster"
+                }
+                .to_string(),
                 operation: QueryOperation::List,
                 target_name: None,
                 label_selector: None,
@@ -1568,6 +1575,7 @@ pub async fn compute_part_of_seeds_opts(
         &crd_ki.plural,
         ledger.as_ref(),
         None,
+        None,
     )
     .await
     {
@@ -1689,6 +1697,7 @@ pub async fn discover_related_crd_instances_opts(
         &crd_kind_info.version,
         &crd_kind_info.plural,
         ledger.as_ref(),
+        None,
         None,
     )
     .await

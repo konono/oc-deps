@@ -5,12 +5,13 @@ use kube::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::analyzers::inspect::{Confidence, Relationship};
-use crate::analyzers::olm::discover_operators;
+use crate::analyzers::olm::discover_operators_opts;
 use crate::cli::OutputFormat;
 use crate::graph::tree::{TreeNode, build_child_tree};
 use crate::kube::discovery::{GroupKindMap, GvrMap, KindMap};
 use crate::kube::resource::{NamespaceIndex, ResourceId, ResourceInfo};
-use crate::teardown::planner::{discover_cr_instances, resolve_operator_targets};
+use crate::kube::scanner::SharedLedger;
+use crate::teardown::planner::{discover_cr_instances_opts, resolve_operator_targets};
 
 fn resource_id_from_info(
     info: &ResourceInfo,
@@ -86,6 +87,7 @@ pub async fn trace_resource(
     gk_map: &GroupKindMap,
     max_depth: usize,
     confirmed_operator_csv: Option<&str>,
+    ledger: Option<SharedLedger>,
 ) -> Result<TraceResult> {
     let mut scan_failures: Vec<crate::kube::resource::ScanWarning> = Vec::new();
     let target_ki = if !target_group.is_empty() {
@@ -141,7 +143,7 @@ pub async fn trace_resource(
     // 3. Same Operator CRDs — use confirmed operator (from who-manages), not CRD origin
     let mut same_operator_resources = Vec::new();
     if let Some(csv_name) = confirmed_operator_csv {
-        let operators = match discover_operators(client, kind_map).await {
+        let operators = match discover_operators_opts(client, kind_map, ledger.clone()).await {
             Ok(ops) => ops,
             Err(e) => {
                 scan_failures.push(crate::kube::resource::ScanWarning::Other {
@@ -170,7 +172,14 @@ pub async fn trace_resource(
                 .collect();
 
             if !sibling_crds.is_empty() {
-                let cr_report = discover_cr_instances(client, &sibling_crds, gvr_map, gk_map).await;
+                let cr_report = discover_cr_instances_opts(
+                    client,
+                    &sibling_crds,
+                    gvr_map,
+                    gk_map,
+                    ledger.clone(),
+                )
+                .await;
                 scan_failures.extend(cr_report.unavailable_crds);
                 for cr in &cr_report.instances {
                     same_operator_resources.push(TracedResource {

@@ -241,7 +241,11 @@ impl QueryOutcome {
     }
 
     pub fn is_absent(&self) -> bool {
-        matches!(self, QueryOutcome::ApiAbsent | QueryOutcome::TargetMissing)
+        matches!(self, QueryOutcome::ApiAbsent)
+    }
+
+    pub fn is_target_missing(&self) -> bool {
+        matches!(self, QueryOutcome::TargetMissing)
     }
 
     pub fn is_incomplete(&self, requirement: &QueryRequirement) -> bool {
@@ -350,12 +354,18 @@ impl CoverageLedger {
             .iter()
             .filter(|r| r.outcome.is_absent())
             .count();
+        let target_missing = self
+            .records
+            .iter()
+            .filter(|r| r.outcome.is_target_missing())
+            .count();
         let total_elapsed_ms: u64 = self.records.iter().map(|r| r.elapsed_ms).sum();
         CoverageSummary {
             total_queries: total,
             success,
             incomplete,
             api_absent: absent,
+            target_missing,
             total_elapsed_ms,
         }
     }
@@ -367,6 +377,7 @@ pub struct CoverageSummary {
     pub success: usize,
     pub incomplete: usize,
     pub api_absent: usize,
+    pub target_missing: usize,
     pub total_elapsed_ms: u64,
 }
 
@@ -375,20 +386,22 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     if is_tty {
         eprintln!(
-            "\n📊 Coverage: {} queries, {} success, {} incomplete, {} absent ({:.1}s)",
+            "\n📊 Coverage: {} queries, {} success, {} incomplete, {} absent, {} missing ({:.1}s)",
             summary.total_queries,
             summary.success,
             summary.incomplete,
             summary.api_absent,
+            summary.target_missing,
             summary.total_elapsed_ms as f64 / 1000.0
         );
     } else {
         eprintln!(
-            "\nCoverage: {} queries, {} success, {} incomplete, {} absent ({:.1}s)",
+            "\nCoverage: {} queries, {} success, {} incomplete, {} absent, {} missing ({:.1}s)",
             summary.total_queries,
             summary.success,
             summary.incomplete,
             summary.api_absent,
+            summary.target_missing,
             summary.total_elapsed_ms as f64 / 1000.0
         );
     }
@@ -1445,6 +1458,45 @@ mod tests {
         assert_eq!(summary.incomplete, 1);
         assert_eq!(summary.api_absent, 1);
         assert_eq!(summary.total_elapsed_ms, 115);
+    }
+
+    #[test]
+    fn target_missing_separate_from_api_absent_in_summary() {
+        let mut ledger = CoverageLedger::new();
+        ledger.record(QueryRecord {
+            gvr: "apps/v1/deployments".into(),
+            namespace: Some("default".into()),
+            scope: "namespaced".into(),
+            operation: QueryOperation::Get,
+            target_name: Some("nonexistent".into()),
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::TargetMissing,
+            elapsed_ms: 5,
+            requirement: QueryRequirement::Required,
+        });
+        ledger.record(QueryRecord {
+            gvr: "custom/v1/widgets".into(),
+            namespace: None,
+            scope: "cluster".into(),
+            operation: QueryOperation::List,
+            target_name: None,
+            label_selector: None,
+            field_selector: None,
+            outcome: QueryOutcome::ApiAbsent,
+            elapsed_ms: 3,
+            requirement: QueryRequirement::Optional,
+        });
+        let summary = ledger.summary();
+        assert_eq!(summary.api_absent, 1, "only ApiAbsent counted");
+        assert_eq!(
+            summary.target_missing, 1,
+            "TargetMissing counted separately"
+        );
+        assert_eq!(
+            summary.incomplete, 1,
+            "Required TargetMissing is incomplete"
+        );
     }
 
     #[test]

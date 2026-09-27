@@ -1567,7 +1567,7 @@ pub async fn who_manages_opts(
     if !chain_broken {
         for step in &steps {
             if step.kind == "ClusterServiceVersion" {
-                let operators = discover_operators(client, kind_map).await?;
+                let operators = discover_operators_opts(client, kind_map, ledger.clone()).await?;
                 let matched_op = operators.iter().find(|op| {
                     op.csv.name == step.name
                         && step.namespace.as_deref() == Some(op.install_namespace.as_str())
@@ -1605,7 +1605,7 @@ pub async fn who_manages_opts(
             };
 
             if let Some(crd_name) = crd_name_for_lookup {
-                let operators = discover_operators(client, kind_map).await?;
+                let operators = discover_operators_opts(client, kind_map, ledger.clone()).await?;
                 let matched_op = operators
                     .iter()
                     .find(|op| op.owned_crds.contains(&crd_name));

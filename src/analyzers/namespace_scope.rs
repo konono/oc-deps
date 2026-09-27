@@ -384,6 +384,7 @@ async fn discover_spec_namespace_refs_opts(
             &kind_info.plural,
             ledger,
             Some(crate::kube::resource::QueryRequirement::Optional),
+            None,
         )
         .await
         {
@@ -581,6 +582,7 @@ async fn discover_operator_group_targets_opts(
         "operatorgroups",
         ledger,
         Some(crate::kube::resource::QueryRequirement::Required),
+        Some(install_namespace),
     )
     .await?;
 
@@ -1268,5 +1270,69 @@ mod tests {
                 .any(|ns| ns.contains("redhat-ai-gateway-infra")),
             "no request should target rejected namespace"
         );
+    }
+
+    #[tokio::test]
+    async fn test_operator_group_records_namespaced_scope() {
+        use kube::client::Body;
+        use std::pin::pin;
+        use std::sync::Arc;
+
+        fn json_response(json: serde_json::Value) -> http::Response<Body> {
+            http::Response::builder()
+                .status(200)
+                .body(Body::from(serde_json::to_vec(&json).unwrap()))
+                .unwrap()
+        }
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+
+        let ledger = Arc::new(std::sync::Mutex::new(
+            crate::kube::resource::CoverageLedger::new(),
+        ));
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("expected OG LIST");
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "operators.coreos.com/v1",
+                "kind": "OperatorGroupList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": "operators.coreos.com/v1",
+                    "kind": "OperatorGroup",
+                    "metadata": {"name": "og1", "namespace": "test-install-ns"},
+                    "status": {"namespaces": ["test-install-ns"]}
+                }]
+            })));
+        });
+
+        let kind_map = KindMap::new();
+        let result = discover_operator_group_targets_opts(
+            &client,
+            "test-install-ns",
+            &kind_map,
+            Some(&ledger),
+        )
+        .await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let l = ledger.lock().unwrap();
+        assert_eq!(
+            l.records.len(),
+            1,
+            "should have one OperatorGroup LIST record"
+        );
+        let rec = &l.records[0];
+        assert_eq!(rec.gvr, "operators.coreos.com/v1/operatorgroups");
+        assert_eq!(
+            rec.namespace.as_deref(),
+            Some("test-install-ns"),
+            "namespace must be the install namespace"
+        );
+        assert_eq!(rec.scope, "namespaced", "scope must be namespaced");
     }
 }
