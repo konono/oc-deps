@@ -2132,101 +2132,8 @@ async fn main() -> Result<()> {
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                     }
 
-                    // Backup gate: if --backup-file specified, capture all delete targets
-                    // before any mutation can occur
-                    let _backup_receipt: Option<crate::teardown::backup::BackupReceipt> =
-                        if let Some(ref backup_path) = backup_file {
-                            if backup_path.is_empty() {
-                                bail!("--backup-file path must not be empty");
-                            }
-                            let backup_target = std::path::Path::new(backup_path);
-
-                            eprintln!("\n📦 Backup: capturing pre-delete resource state...");
-
-                            // Extract candidates from plan actions
-                            let mut candidates = crate::teardown::backup::extract_candidates(&plan);
-                            eprintln!("  {} candidate(s) from plan actions", candidates.len());
-
-                            // Run adapters for cleanup-contract targets
-                            {
-                                let adapter_reports = crate::analyzers::adapters::run_adapters(
-                                    &client,
-                                    target_operators[0],
-                                    None,
-                                    &[],
-                                )
-                                .await;
-                                crate::teardown::backup::add_adapter_candidates(
-                                    &mut candidates,
-                                    &adapter_reports,
-                                )?;
-                            }
-
-                            eprintln!(
-                                "  {} total candidate(s) (including cleanup-contract)",
-                                candidates.len()
-                            );
-
-                            // Fetch all candidates from cluster
-                            let (resources, contains_secrets) =
-                                crate::teardown::backup::fetch_backup_resources(
-                                    &client,
-                                    &candidates,
-                                    &kind_map,
-                                    &gk_map,
-                                )
-                                .await?;
-
-                            let captured = resources
-                                .iter()
-                                .filter(|r| {
-                                    r.state
-                                        == crate::teardown::backup::BackupResourceState::Captured
-                                })
-                                .count();
-                            let absent = resources
-                                .iter()
-                                .filter(|r| {
-                                    r.state
-                                        == crate::teardown::backup::BackupResourceState::AlreadyAbsent
-                                })
-                                .count();
-                            eprintln!("  {} captured, {} already absent", captured, absent);
-
-                            // Compute plan SHA-256
-                            let plan_sha =
-                                crate::teardown::backup::compute_plan_sha256(&plan_file)?;
-
-                            let operator_names: Vec<String> = target_operators
-                                .iter()
-                                .map(|op| op.csv.name.clone())
-                                .collect();
-
-                            let bundle = crate::teardown::backup::build_bundle(
-                                resources,
-                                &current_cluster_identity,
-                                &plan_sha,
-                                &plan_file,
-                                operator_names,
-                                contains_secrets,
-                                vec![],
-                            );
-
-                            let receipt = crate::teardown::backup::write_backup_bundle(
-                                &bundle,
-                                backup_target,
-                            )?;
-                            eprintln!(
-                                "  ✅ Backup written: {} ({} resources, SHA-256: {})",
-                                receipt.path,
-                                receipt.resource_count,
-                                &receipt.sha256[..12]
-                            );
-
-                            Some(receipt)
-                        } else {
-                            None
-                        };
+                    // Compute plan SHA-256 for backup/receipt binding
+                    let plan_sha = crate::teardown::backup::compute_plan_sha256(&plan_file)?;
 
                     // TUI mode: ratatui interactive Plan Review → Execution → Residual Cleanup
                     if use_tui && !dry_run {
@@ -2237,6 +2144,7 @@ async fn main() -> Result<()> {
                                 &target_operators,
                                 &gk_map,
                                 approve_finalizer_recovery,
+                                None, // TUI updates receipt after review overrides
                             )
                             .await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
@@ -2272,6 +2180,10 @@ async fn main() -> Result<()> {
                             &journal_store,
                             &gate,
                             force,
+                            backup_file.as_deref(),
+                            &current_cluster_identity,
+                            &plan_sha,
+                            &plan_file,
                         )
                         .await?;
                         return Ok(());
@@ -2513,6 +2425,28 @@ async fn main() -> Result<()> {
                                     plan = mutated;
                                 }
 
+                                // Backup gate: after overrides, before journal+execution
+                                let script_backup_receipt = if let Some(ref bp) = backup_file {
+                                    let ctx = crate::teardown::backup::BackupGateContext {
+                                        client: &client,
+                                        final_plan: &plan,
+                                        target_operators: target_operators.clone(),
+                                        cluster_identity: &current_cluster_identity,
+                                        plan_sha256: &plan_sha,
+                                        plan_path: &plan_file,
+                                        gk_map: &gk_map,
+                                        gvk_map: &gvk_map,
+                                    };
+                                    let r = crate::teardown::backup::prepare_backup_gate(
+                                        &ctx,
+                                        std::path::Path::new(bp.as_str()),
+                                    )
+                                    .await?;
+                                    Some(r)
+                                } else {
+                                    None
+                                };
+
                                 // Run executor with the plan
                                 script_journal = if !dry_run {
                                     let store = create_run_journal(
@@ -2521,6 +2455,7 @@ async fn main() -> Result<()> {
                                         &target_operators,
                                         &gk_map,
                                         app.finalizer_recovery_approved,
+                                        script_backup_receipt,
                                     )
                                     .await?;
                                     Some(std::sync::Arc::new(store))
@@ -2875,6 +2810,28 @@ async fn main() -> Result<()> {
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
                     let effective_finalizer_recovery = approve_finalizer_recovery;
 
+                    // Backup gate: final plan is ready (no overrides in normal path)
+                    let normal_backup_receipt = if let Some(ref bp) = backup_file {
+                        let ctx = crate::teardown::backup::BackupGateContext {
+                            client: &client,
+                            final_plan: &plan,
+                            target_operators: target_operators.clone(),
+                            cluster_identity: &current_cluster_identity,
+                            plan_sha256: &plan_sha,
+                            plan_path: &plan_file,
+                            gk_map: &gk_map,
+                            gvk_map: &gvk_map,
+                        };
+                        let r = crate::teardown::backup::prepare_backup_gate(
+                            &ctx,
+                            std::path::Path::new(bp.as_str()),
+                        )
+                        .await?;
+                        Some(r)
+                    } else {
+                        None
+                    };
+
                     // Create RunJournal before first mutation (fail-closed)
                     // Use process lock to prevent dual-writer from resume
                     let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
@@ -2884,6 +2841,7 @@ async fn main() -> Result<()> {
                             &target_operators,
                             &gk_map,
                             effective_finalizer_recovery,
+                            normal_backup_receipt,
                         )
                         .await?;
                         eprintln!("📓 Run journal: {}", store.path().display());
@@ -3653,6 +3611,17 @@ async fn main() -> Result<()> {
                     // Re-verify cluster identity with authoritative journal
                     if !j.cluster_identity.matches(&cluster_id) {
                         bail!("Cluster identity mismatch after lock acquisition");
+                    }
+
+                    // Backup receipt validation: if the journal has a receipt,
+                    // verify the backup file is intact before resuming mutations
+                    if let Some(ref receipt) = j.backup_receipt {
+                        eprintln!("📦 Validating backup receipt...");
+                        let plan_sha = crate::teardown::backup::compute_sha256(
+                            serde_json::to_string_pretty(&j.plan_snapshot)?.as_bytes(),
+                        );
+                        crate::teardown::backup::validate_receipt(receipt, &cluster_id, &plan_sha)?;
+                        eprintln!("  ✅ Backup file intact: {}", receipt.path);
                     }
 
                     eprintln!(
@@ -7910,6 +7879,7 @@ async fn create_run_journal(
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
     _finalizer_recovery_approved: bool,
+    backup_receipt: Option<crate::teardown::backup::BackupReceipt>,
 ) -> Result<JournalStore> {
     if target_operators.len() > 1 {
         bail!(
@@ -7988,7 +7958,7 @@ async fn create_run_journal(
         cleanup_decisions: Vec::new(),
         finalizer_recovery_approved: true,
         finalizer_recoveries: Vec::new(),
-        backup_receipt: None,
+        backup_receipt,
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;

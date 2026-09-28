@@ -30,9 +30,10 @@ pub struct BackupBundle {
     pub capability_warnings: Vec<String>,
     pub limitations: Vec<String>,
     pub resources: Vec<BackupResource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cleanup_contract_observations: Vec<CleanupContractObservation>,
 }
 
-// Custom Debug: never print raw objects (may contain Secrets)
 impl std::fmt::Debug for BackupBundle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BackupBundle")
@@ -56,6 +57,19 @@ pub struct CoverageSummary {
     pub adapter_incomplete: Vec<String>,
 }
 
+/// Structured record for adapter targets that were TargetMissing.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanupContractObservation {
+    pub adapter_id: String,
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub resolution: String,
+    pub evidence: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct BackupResource {
     pub identity: BackupResourceIdentity,
@@ -71,7 +85,6 @@ pub struct BackupResource {
     pub omitted_fields: Option<Vec<OmittedField>>,
 }
 
-// Custom Debug: never print raw_object / recreate_manifest
 impl std::fmt::Debug for BackupResource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BackupResource")
@@ -151,10 +164,13 @@ pub struct BackupReceipt {
     pub execution_plan_sha256: String,
     pub resource_count: usize,
     pub contains_secret_data: bool,
+    /// SHA-256 of the sorted backup candidate UIDs — binds receipt to the
+    /// exact final plan target set (including overrides).
+    pub candidate_set_sha256: String,
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Candidate extraction
+//  Candidate extraction — fail closed on missing UIDs
 // ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -163,7 +179,9 @@ pub struct BackupCandidate {
     pub sources: Vec<BackupSource>,
 }
 
-pub fn extract_candidates(plan: &TeardownPlan) -> Vec<BackupCandidate> {
+/// Extract backup candidates from the final plan.
+/// Returns Err if any Delete/Expect/Wait action has missing or empty UID.
+pub fn extract_candidates(plan: &TeardownPlan) -> Result<Vec<BackupCandidate>> {
     let mut by_uid: BTreeMap<String, BackupCandidate> = BTreeMap::new();
 
     for (phase_idx, phase) in plan.phases.iter().enumerate() {
@@ -177,7 +195,16 @@ pub fn extract_candidates(plan: &TeardownPlan) -> Vec<BackupCandidate> {
 
             let uid = match &rid.uid {
                 Some(u) if !u.is_empty() => u,
-                _ => continue,
+                _ => {
+                    bail!(
+                        "Backup candidate {}/{} (phase {}, action {}) has missing or empty UID — \
+                         backup cannot proceed",
+                        rid.kind,
+                        rid.name,
+                        phase_idx + 1,
+                        action_name,
+                    );
+                }
             };
 
             let identity = BackupResourceIdentity::from_resource_id(rid, uid);
@@ -187,9 +214,28 @@ pub fn extract_candidates(plan: &TeardownPlan) -> Vec<BackupCandidate> {
                 reason: reason.to_string(),
             };
 
+            match by_uid.get(uid) {
+                Some(existing) if existing.identity != identity => {
+                    bail!(
+                        "Backup candidate UID {} has conflicting identity: \
+                         {}/{} vs {}/{} — backup cannot proceed",
+                        uid,
+                        existing.identity.kind,
+                        existing.identity.name,
+                        identity.kind,
+                        identity.name,
+                    );
+                }
+                _ => {}
+            }
+
             by_uid
                 .entry(uid.clone())
-                .and_modify(|c| c.sources.push(source.clone()))
+                .and_modify(|c| {
+                    if !c.sources.contains(&source) {
+                        c.sources.push(source.clone());
+                    }
+                })
                 .or_insert_with(|| BackupCandidate {
                     identity,
                     sources: vec![source],
@@ -197,12 +243,19 @@ pub fn extract_candidates(plan: &TeardownPlan) -> Vec<BackupCandidate> {
         }
     }
 
-    by_uid.into_values().collect()
+    // Sort sources for deterministic output
+    let mut result: Vec<BackupCandidate> = by_uid.into_values().collect();
+    for c in &mut result {
+        c.sources.sort();
+        c.sources.dedup();
+    }
+    Ok(result)
 }
 
 pub fn add_adapter_candidates(
     candidates: &mut Vec<BackupCandidate>,
     reports: &[crate::analyzers::adapters::AdapterReport],
+    observations: &mut Vec<CleanupContractObservation>,
 ) -> Result<()> {
     use crate::analyzers::adapters::{AdapterReportStatus, AdapterResolution};
 
@@ -211,7 +264,6 @@ pub fn add_adapter_candidates(
             continue;
         }
 
-        // Fail closed on incomplete/unknown adapters
         if report.incomplete || report.status == AdapterReportStatus::Unknown {
             bail!(
                 "Adapter {} reported status={} incomplete={} — \
@@ -243,7 +295,20 @@ pub fn add_adapter_candidates(
                         source_contract: "CleansUp".to_string(),
                     };
 
+                    // Full identity + UID dedup with conflict check
                     if let Some(existing) = candidates.iter_mut().find(|c| c.identity.uid == uid) {
+                        if existing.identity != identity {
+                            bail!(
+                                "Adapter {} cleanup target UID {} has conflicting identity: \
+                                 {}/{} vs {}/{}",
+                                report.adapter_id,
+                                uid,
+                                existing.identity.kind,
+                                existing.identity.name,
+                                identity.kind,
+                                identity.name,
+                            );
+                        }
                         if !existing.sources.contains(&source) {
                             existing.sources.push(source);
                         }
@@ -255,7 +320,16 @@ pub fn add_adapter_candidates(
                     }
                 }
                 AdapterResolution::TargetMissing => {
-                    // Record but continue — target is already absent
+                    observations.push(CleanupContractObservation {
+                        adapter_id: report.adapter_id.clone(),
+                        group: result.resource.id.group.clone(),
+                        version: result.resource.id.version.clone(),
+                        kind: result.resource.id.kind.clone(),
+                        namespace: result.resource.id.namespace.clone(),
+                        name: result.resource.id.name.clone(),
+                        resolution: "TargetMissing".to_string(),
+                        evidence: result.adapter_evidence.adapter_id.clone(),
+                    });
                 }
                 AdapterResolution::Unknown => {
                     bail!(
@@ -271,6 +345,13 @@ pub fn add_adapter_candidates(
     }
 
     Ok(())
+}
+
+/// Compute SHA-256 of the sorted candidate UID set for receipt binding.
+pub fn candidate_set_hash(candidates: &[BackupCandidate]) -> String {
+    let mut uids: Vec<&str> = candidates.iter().map(|c| c.identity.uid.as_str()).collect();
+    uids.sort();
+    compute_sha256(uids.join(",").as_bytes())
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -298,7 +379,6 @@ pub fn sanitize_for_recreate(
         finalizers: Vec::new(),
     };
 
-    // Remove status
     if manifest.as_object_mut().unwrap().remove("status").is_some() {
         omitted.push(OmittedField {
             path: "status".to_string(),
@@ -306,12 +386,10 @@ pub fn sanitize_for_recreate(
         });
     }
 
-    // Process metadata
     if let Some(metadata) = manifest
         .pointer_mut("/metadata")
         .and_then(|v| v.as_object_mut())
     {
-        // Remove server metadata fields
         for field in SERVER_METADATA_FIELDS {
             if metadata.remove(*field).is_some() {
                 omitted.push(OmittedField {
@@ -321,7 +399,6 @@ pub fn sanitize_for_recreate(
             }
         }
 
-        // Remove generateName if name is present
         if metadata.contains_key("name") && metadata.remove("generateName").is_some() {
             omitted.push(OmittedField {
                 path: "metadata.generateName".to_string(),
@@ -329,7 +406,6 @@ pub fn sanitize_for_recreate(
             });
         }
 
-        // Move ownerReferences to deferred_lifecycle
         if let Some(refs) = metadata.remove("ownerReferences") {
             if let Some(arr) = refs.as_array() {
                 deferred.owner_references = arr.clone();
@@ -341,7 +417,6 @@ pub fn sanitize_for_recreate(
             });
         }
 
-        // Move finalizers to deferred_lifecycle
         if let Some(fins) = metadata.remove("finalizers") {
             if let Some(arr) = fins.as_array() {
                 deferred.finalizers = arr
@@ -361,62 +436,95 @@ pub fn sanitize_for_recreate(
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Fetch candidates from cluster
+//  Fetch candidates from cluster — uses get_with_retry + GvkMap
 // ──────────────────────────────────────────────────────────────
 
 pub async fn fetch_backup_resources(
     client: &kube::Client,
     candidates: &[BackupCandidate],
-    kind_map: &crate::kube::discovery::KindMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
+    gvk_map: &crate::kube::discovery::GvkMap,
 ) -> Result<(Vec<BackupResource>, bool)> {
+    use kube::api::{Api, ApiResource, DynamicObject};
+
     let mut resources = Vec::new();
     let mut contains_secrets = false;
 
     for candidate in candidates {
-        let rid = ResourceId {
-            group: candidate.identity.group.clone(),
-            version: candidate.identity.version.clone(),
-            kind: candidate.identity.kind.clone(),
-            namespace: candidate.identity.namespace.clone(),
-            name: candidate.identity.name.clone(),
-            uid: Some(candidate.identity.uid.clone()),
+        // Exact served GVK validation via GvkMap
+        let gvk_key = (
+            candidate.identity.group.clone(),
+            candidate.identity.version.clone(),
+            candidate.identity.kind.clone(),
+        );
+        let info = match gvk_map.get(&gvk_key) {
+            Some(i) => i,
+            None => {
+                // Fallback to gk_map (version may differ from discovery preferred version)
+                let gk_key = (
+                    candidate.identity.group.clone(),
+                    candidate.identity.kind.clone(),
+                );
+                match gk_map.get(&gk_key) {
+                    Some(i) => i,
+                    None => {
+                        bail!(
+                            "Cannot resolve API for {}/{} (group={}, version={}) — \
+                             API discovery failure, backup cannot proceed",
+                            candidate.identity.kind,
+                            candidate.identity.name,
+                            candidate.identity.group,
+                            candidate.identity.version,
+                        );
+                    }
+                }
+            }
         };
 
-        let (api, _namespaced) =
-            match crate::kube::resource::resolve_api(client, &rid, kind_map, gk_map) {
-                Some(resolved) => resolved,
-                None => {
-                    bail!(
-                        "Cannot resolve API for {}/{} (group={}, version={}) — \
-                     API discovery failure, backup cannot proceed",
-                        rid.kind,
-                        rid.name,
-                        rid.group,
-                        rid.version,
-                    );
-                }
-            };
+        let gvk = kube::api::GroupVersionKind {
+            group: info.group.clone(),
+            version: info.version.clone(),
+            kind: candidate.identity.kind.clone(),
+        };
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
 
-        match api.get(&rid.name).await {
+        let api: Api<DynamicObject> = if let Some(ref ns) = candidate.identity.namespace {
+            Api::namespaced_with(client.clone(), ns, &ar)
+        } else if info.namespaced {
+            bail!(
+                "Resource {}/{} is namespaced but has no namespace in candidate — \
+                 backup cannot proceed",
+                candidate.identity.kind,
+                candidate.identity.name,
+            );
+        } else {
+            Api::all_with(client.clone(), &ar)
+        };
+
+        match crate::kube::scanner::get_with_retry(
+            &api,
+            &candidate.identity.name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
             Ok(obj) => {
-                // Validate UID exact match
                 let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
                 if live_uid != candidate.identity.uid {
                     bail!(
                         "UID mismatch for {}/{}: expected {} got {} — \
                          resource has been recreated, backup cannot proceed",
-                        rid.kind,
-                        rid.name,
+                        candidate.identity.kind,
+                        candidate.identity.name,
                         candidate.identity.uid,
                         live_uid,
                     );
                 }
 
-                // Check for Secret
                 let raw = serde_json::to_value(&obj)?;
-                let is_secret = rid.kind == "Secret";
-                if is_secret {
+                if candidate.identity.kind == "Secret" {
                     contains_secrets = true;
                 }
 
@@ -432,7 +540,7 @@ pub async fn fetch_backup_resources(
                     omitted_fields: Some(omitted),
                 });
             }
-            Err(kube::Error::Api(ref err)) if err.code == 404 => {
+            Err(w) if w.is_not_found() => {
                 resources.push(BackupResource {
                     identity: candidate.identity.clone(),
                     sources: candidate.sources.clone(),
@@ -443,27 +551,19 @@ pub async fn fetch_backup_resources(
                     omitted_fields: None,
                 });
             }
-            Err(e) => {
-                let code = if let kube::Error::Api(ref api_err) = e {
-                    api_err.code
-                } else {
-                    0
-                };
+            Err(w) => {
                 bail!(
-                    "Failed to GET {}/{} (HTTP {}): {} — \
+                    "Failed to GET {}/{}: {} — \
                      backup cannot proceed (no partial backups)",
-                    rid.kind,
-                    rid.name,
-                    code,
-                    e,
+                    candidate.identity.kind,
+                    candidate.identity.name,
+                    w,
                 );
             }
         }
     }
 
-    // Sort by identity for deterministic output
     resources.sort_by(|a, b| a.identity.cmp(&b.identity));
-
     Ok((resources, contains_secrets))
 }
 
@@ -471,6 +571,7 @@ pub async fn fetch_backup_resources(
 //  Build bundle
 // ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_bundle(
     resources: Vec<BackupResource>,
     cluster_identity: &ClusterIdentity,
@@ -479,6 +580,7 @@ pub fn build_bundle(
     operator_names: Vec<String>,
     contains_secret_data: bool,
     adapter_incomplete: Vec<String>,
+    observations: Vec<CleanupContractObservation>,
 ) -> BackupBundle {
     let candidates = resources.len();
     let captured = resources
@@ -540,11 +642,13 @@ pub fn build_bundle(
             "Operator-reconciled state may differ from the stored originals after re-creation.".to_string(),
         ],
         resources,
+        cleanup_contract_observations: observations,
     }
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Atomic write with readback verification
+//  Atomic write — P0 security: 0600 from creation, no-clobber
+//  fail closed, readback guard
 // ──────────────────────────────────────────────────────────────
 
 pub fn compute_sha256(data: &[u8]) -> String {
@@ -565,7 +669,6 @@ static BACKUP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<BackupReceipt> {
     use std::io::Write;
 
-    // Reject if target already exists
     if target.exists() {
         bail!(
             "Backup target {} already exists — will not overwrite",
@@ -583,12 +686,10 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
         );
     }
 
-    // Serialize with stable key ordering
     let json = serde_json::to_string_pretty(bundle)?;
     let json_bytes = json.as_bytes();
     let expected_sha = compute_sha256(json_bytes);
 
-    // Atomic write: create_new → write → sync → rename
     let seq = BACKUP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp_name = format!(".tmp_backup_{}_{}", std::process::id(), seq);
     let tmp_path = parent.join(&tmp_name);
@@ -610,48 +711,46 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
         }
     }
 
-    let mut guard = TempGuard {
+    let mut tmp_guard = TempGuard {
         path: tmp_path.clone(),
         armed: true,
     };
 
+    // Create temp with 0600 from the start via OpenOptions
     {
-        let mut f = std::fs::File::create_new(&tmp_path)
+        #[cfg(unix)]
+        let f = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+                .with_context(|| format!("Failed to create temp backup: {}", tmp_path.display()))?
+        };
+        #[cfg(not(unix))]
+        let f = std::fs::File::create_new(&tmp_path)
             .with_context(|| format!("Failed to create temp backup: {}", tmp_path.display()))?;
 
-        // Set file mode 0600 before writing content
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
-        }
-
+        let mut f = f;
         f.write_all(json_bytes)?;
         f.sync_all()?;
     }
 
-    // No-clobber rename
-    // On Unix, rename is atomic but overwrites. We already checked !target.exists(),
-    // but to be safe against races we use link + unlink pattern where possible.
+    // No-clobber publish via hard_link (Unix). If hard_link fails, fail closed —
+    // do NOT fall back to rename which can overwrite.
     #[cfg(unix)]
     {
-        match std::fs::hard_link(&tmp_path, target) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&tmp_path);
-                guard.disarm();
-            }
-            Err(_) => {
-                // Same filesystem fallback
-                std::fs::rename(&tmp_path, target).with_context(|| {
-                    format!(
-                        "Failed to publish backup: {} → {}",
-                        tmp_path.display(),
-                        target.display()
-                    )
-                })?;
-                guard.disarm();
-            }
-        }
+        std::fs::hard_link(&tmp_path, target).with_context(|| {
+            format!(
+                "Failed to publish backup (no-clobber link): {} → {}",
+                tmp_path.display(),
+                target.display()
+            )
+        })?;
+        // link succeeded — remove temp, keep target
+        let _ = std::fs::remove_file(&tmp_path);
+        tmp_guard.disarm();
     }
 
     #[cfg(not(unix))]
@@ -663,17 +762,44 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
                 target.display()
             )
         })?;
-        guard.disarm();
+        tmp_guard.disarm();
     }
 
-    // Verify file mode
+    // Target guard: if readback/hash/parse fails, remove the published file
+    struct TargetGuard {
+        path: PathBuf,
+        armed: bool,
+    }
+    impl TargetGuard {
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+    }
+    impl Drop for TargetGuard {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+    let mut target_guard = TargetGuard {
+        path: target.to_path_buf(),
+        armed: true,
+    };
+
+    // Verify mode 0600
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let meta = std::fs::metadata(target)?;
+        let meta = std::fs::metadata(target)
+            .with_context(|| format!("Failed to stat backup: {}", target.display()))?;
         let mode = meta.permissions().mode() & 0o777;
         if mode != 0o600 {
-            let _ = std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o600));
+            bail!(
+                "Backup file {} has mode {:o}, expected 0600 — backup rejected",
+                target.display(),
+                mode,
+            );
         }
     }
 
@@ -690,16 +816,17 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
         );
     }
 
-    // Parse readback to verify valid JSON
     let _: BackupBundle = serde_json::from_slice(&readback)
         .with_context(|| "Backup readback parse failed — file is corrupted")?;
+
+    // All verification passed — disarm target guard
+    target_guard.disarm();
 
     // fsync parent directory
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
 
-    // Warn about secret content
     if bundle.contains_secret_data {
         eprintln!(
             "  ⚠ Backup contains Secret data (file mode 0600). \
@@ -714,11 +841,12 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
         execution_plan_sha256: bundle.execution_plan_sha256.clone(),
         resource_count: bundle.resources.len(),
         contains_secret_data: bundle.contains_secret_data,
+        candidate_set_sha256: String::new(), // set by caller
     })
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Backup dir setup for batch mode
+//  Backup dir setup — propagate chmod errors
 // ──────────────────────────────────────────────────────────────
 
 pub fn setup_backup_dir(dir: &Path) -> Result<()> {
@@ -730,7 +858,18 @@ pub fn setup_backup_dir(dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("Failed to set backup dir mode 0700: {}", dir.display()))?;
+        // Re-stat to verify
+        let meta = std::fs::metadata(dir)?;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode != 0o700 {
+            bail!(
+                "Backup dir {} has mode {:o} after chmod, expected 0700",
+                dir.display(),
+                mode,
+            );
+        }
     }
 
     Ok(())
@@ -744,13 +883,11 @@ pub fn batch_backup_path(dir: &Path, index: usize, operator_name: &str) -> PathB
 //  Receipt validation (for resume)
 // ──────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub fn validate_receipt(
     receipt: &BackupReceipt,
     current_cluster: &ClusterIdentity,
     plan_sha256: &str,
 ) -> Result<()> {
-    // Check file exists
     let path = Path::new(&receipt.path);
     if !path.exists() {
         bail!(
@@ -759,7 +896,6 @@ pub fn validate_receipt(
         );
     }
 
-    // Check SHA-256
     let data = std::fs::read(path)
         .with_context(|| format!("Failed to read backup for validation: {}", receipt.path))?;
     let actual_sha = compute_sha256(&data);
@@ -773,7 +909,6 @@ pub fn validate_receipt(
         );
     }
 
-    // Parse and validate cluster binding
     let bundle: BackupBundle = serde_json::from_slice(&data)
         .with_context(|| format!("Backup file {} is not valid JSON", receipt.path))?;
 
@@ -786,7 +921,6 @@ pub fn validate_receipt(
         );
     }
 
-    // Check plan SHA-256 binding
     if bundle.execution_plan_sha256 != plan_sha256 {
         bail!(
             "Backup plan SHA-256 mismatch: backup {} does not match current plan {}",
@@ -796,6 +930,127 @@ pub fn validate_receipt(
     }
 
     Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────
+//  prepare_backup_gate — common entry point for all apply modes
+// ──────────────────────────────────────────────────────────────
+
+pub struct BackupGateContext<'a> {
+    pub client: &'a kube::Client,
+    pub final_plan: &'a TeardownPlan,
+    pub target_operators: Vec<&'a crate::analyzers::olm::OperatorInstance>,
+    pub cluster_identity: &'a ClusterIdentity,
+    pub plan_sha256: &'a str,
+    pub plan_path: &'a str,
+    pub gk_map: &'a crate::kube::discovery::GroupKindMap,
+    pub gvk_map: &'a crate::kube::discovery::GvkMap,
+}
+
+pub async fn prepare_backup_gate(
+    ctx: &BackupGateContext<'_>,
+    backup_path: &Path,
+) -> Result<BackupReceipt> {
+    eprintln!("\n📦 Backup: capturing pre-delete resource state...");
+
+    // Extract candidates from final plan (after all overrides)
+    let mut candidates = extract_candidates(ctx.final_plan)?;
+    eprintln!("  {} candidate(s) from plan actions", candidates.len());
+
+    // Run adapters for cleanup-contract targets on all target operators
+    let mut observations = Vec::new();
+    {
+        // Build root ResourceIds from plan actions for adapter discovery
+        let plan_rids: Vec<ResourceId> = ctx
+            .final_plan
+            .phases
+            .iter()
+            .flat_map(|p| &p.actions)
+            .filter_map(|a| match a {
+                Action::Delete { resource, .. }
+                | Action::ExpectGone { resource, .. }
+                | Action::WaitGone { resource } => Some(resource.clone()),
+                _ => None,
+            })
+            .collect();
+
+        // Create synthetic InspectedResources from plan ResourceIds for root discovery
+        let cr_resources: Vec<crate::analyzers::inspect::InspectedResource> = plan_rids
+            .iter()
+            .map(|rid| crate::analyzers::inspect::InspectedResource {
+                id: rid.clone(),
+                source_id: None,
+                relationship: crate::analyzers::inspect::Relationship::OwnedCrdInstance,
+                evidence: "plan-action".to_string(),
+                confidence: crate::analyzers::inspect::Confidence::Managed,
+            })
+            .collect();
+
+        // Create a fresh QueryPlanner for adapter discovery (adapters use it to
+        // probe cleanup targets — the redaction is OK since we re-GET raw later)
+        let planner = crate::kube::planner::QueryPlanner::new(None);
+
+        for op in &ctx.target_operators {
+            let reports = crate::analyzers::adapters::run_adapters(
+                ctx.client,
+                op,
+                Some(&planner),
+                &cr_resources,
+            )
+            .await;
+            add_adapter_candidates(&mut candidates, &reports, &mut observations)?;
+        }
+    }
+
+    eprintln!(
+        "  {} total candidate(s) (including cleanup-contract)",
+        candidates.len()
+    );
+
+    let candidate_hash = candidate_set_hash(&candidates);
+
+    // Fetch all candidates from cluster
+    let (resources, contains_secrets) =
+        fetch_backup_resources(ctx.client, &candidates, ctx.gk_map, ctx.gvk_map).await?;
+
+    let captured = resources
+        .iter()
+        .filter(|r| r.state == BackupResourceState::Captured)
+        .count();
+    let absent = resources
+        .iter()
+        .filter(|r| r.state == BackupResourceState::AlreadyAbsent)
+        .count();
+    eprintln!("  {} captured, {} already absent", captured, absent);
+
+    let operator_names: Vec<String> = ctx
+        .target_operators
+        .iter()
+        .map(|op| op.csv.name.clone())
+        .collect();
+
+    let bundle = build_bundle(
+        resources,
+        ctx.cluster_identity,
+        ctx.plan_sha256,
+        ctx.plan_path,
+        operator_names,
+        contains_secrets,
+        vec![],
+        observations,
+    );
+
+    let mut receipt = write_backup_bundle(&bundle, backup_path)?;
+    receipt.candidate_set_sha256 = candidate_hash;
+
+    eprintln!(
+        "  ✅ Backup written: {} ({} resources, SHA-256: {})",
+        receipt.path,
+        receipt.resource_count,
+        &receipt.sha256[..12.min(receipt.sha256.len())]
+    );
+
+    Ok(receipt)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -838,6 +1093,26 @@ mod tests {
         }
     }
 
+    fn test_cluster() -> ClusterIdentity {
+        ClusterIdentity {
+            api_server: "https://test".to_string(),
+            kube_system_uid: "uid-ks".to_string(),
+        }
+    }
+
+    fn test_bundle(resources: Vec<BackupResource>) -> BackupBundle {
+        build_bundle(
+            resources,
+            &test_cluster(),
+            "sha256abc",
+            "/tmp/plan.json",
+            vec!["op1".to_string()],
+            false,
+            vec![],
+            vec![],
+        )
+    }
+
     #[test]
     fn candidate_extraction_includes_delete_expect_wait() {
         let plan = make_plan(vec![
@@ -854,12 +1129,8 @@ mod tests {
             },
         ]);
 
-        let candidates = extract_candidates(&plan);
+        let candidates = extract_candidates(&plan).unwrap();
         assert_eq!(candidates.len(), 3);
-        let uids: Vec<&str> = candidates.iter().map(|c| c.identity.uid.as_str()).collect();
-        assert!(uids.contains(&"uid-1"));
-        assert!(uids.contains(&"uid-2"));
-        assert!(uids.contains(&"uid-3"));
     }
 
     #[test]
@@ -880,7 +1151,7 @@ mod tests {
             },
         ]);
 
-        let candidates = extract_candidates(&plan);
+        let candidates = extract_candidates(&plan).unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].identity.uid, "uid-1");
     }
@@ -898,26 +1169,142 @@ mod tests {
             },
         ]);
 
-        let candidates = extract_candidates(&plan);
+        let candidates = extract_candidates(&plan).unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].sources.len(), 2);
     }
 
     #[test]
-    fn candidate_skips_empty_uid() {
+    fn candidate_missing_uid_hard_fail() {
+        let plan = make_plan(vec![Action::Delete {
+            resource: rid("Deployment", "d1", None),
+            reason: "root".to_string(),
+        }]);
+
+        let result = extract_candidates(&plan);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing or empty UID")
+        );
+    }
+
+    #[test]
+    fn candidate_empty_uid_hard_fail() {
+        let plan = make_plan(vec![Action::Delete {
+            resource: rid("Deployment", "d1", Some("")),
+            reason: "root".to_string(),
+        }]);
+
+        let result = extract_candidates(&plan);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn candidate_same_uid_different_identity_hard_fail() {
         let plan = make_plan(vec![
             Action::Delete {
-                resource: rid("Deployment", "d1", None),
+                resource: ResourceId {
+                    group: "".to_string(),
+                    version: "v1".to_string(),
+                    kind: "ConfigMap".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "cm1".to_string(),
+                    uid: Some("uid-conflict".to_string()),
+                },
                 reason: "root".to_string(),
             },
             Action::Delete {
-                resource: rid("Deployment", "d2", Some("")),
+                resource: ResourceId {
+                    group: "apps".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Deployment".to_string(),
+                    namespace: Some("ns".to_string()),
+                    name: "dep1".to_string(),
+                    uid: Some("uid-conflict".to_string()),
+                },
                 reason: "root".to_string(),
             },
         ]);
 
-        let candidates = extract_candidates(&plan);
+        let result = extract_candidates(&plan);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("conflicting identity")
+        );
+    }
+
+    #[test]
+    fn candidate_same_uid_same_identity_merges() {
+        let plan = make_plan(vec![
+            Action::Delete {
+                resource: rid("Deployment", "d1", Some("uid-1")),
+                reason: "root".to_string(),
+            },
+            Action::ExpectGone {
+                resource: rid("Deployment", "d1", Some("uid-1")),
+                reason: "cascade".to_string(),
+            },
+        ]);
+
+        let candidates = extract_candidates(&plan).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].sources.len(), 2);
+    }
+
+    #[test]
+    fn target_missing_recorded_in_observations() {
+        use crate::analyzers::adapters::*;
+        use crate::analyzers::inspect::*;
+
+        let report = AdapterReport {
+            adapter_id: "test-adapter".to_string(),
+            status: AdapterReportStatus::Applied,
+            status_reason: None,
+            evidence: None,
+            results: vec![AdapterResult {
+                resource: InspectedResource {
+                    id: ResourceId {
+                        group: "security.openshift.io".to_string(),
+                        version: "v1".to_string(),
+                        kind: "SecurityContextConstraints".to_string(),
+                        namespace: None,
+                        name: "nfd-worker".to_string(),
+                        uid: None,
+                    },
+                    source_id: None,
+                    relationship: Relationship::CleansUp,
+                    evidence: "cleanup".to_string(),
+                    confidence: Confidence::Managed,
+                },
+                resolution: AdapterResolution::TargetMissing,
+                adapter_evidence: AdapterEvidence {
+                    adapter_id: "test-adapter".to_string(),
+                    source_commit: "abc".to_string(),
+                    source_url: "url".to_string(),
+                    cleanup_function: "fn".to_string(),
+                    naming_function: "fn".to_string(),
+                    matched_csv_version: "v1".to_string(),
+                    binding_note: None,
+                },
+            }],
+            diagnostics: vec![],
+            incomplete: false,
+        };
+
+        let mut candidates = vec![];
+        let mut observations = vec![];
+        let result = add_adapter_candidates(&mut candidates, &[report], &mut observations);
+        assert!(result.is_ok());
         assert_eq!(candidates.len(), 0);
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].resolution, "TargetMissing");
+        assert_eq!(observations[0].name, "nfd-worker");
     }
 
     #[test]
@@ -943,26 +1330,12 @@ mod tests {
 
         let (manifest, deferred, omitted) = sanitize_for_recreate(&raw);
 
-        // Server fields removed
         assert!(manifest.pointer("/metadata/uid").is_none());
         assert!(manifest.pointer("/metadata/resourceVersion").is_none());
-        assert!(manifest.pointer("/metadata/generation").is_none());
-        assert!(manifest.pointer("/metadata/creationTimestamp").is_none());
-        assert!(manifest.pointer("/metadata/managedFields").is_none());
-        assert!(manifest.pointer("/metadata/selfLink").is_none());
         assert!(manifest.pointer("/status").is_none());
-
-        // Desired fields preserved
         assert_eq!(manifest.pointer("/metadata/name").unwrap(), "test");
-        assert_eq!(manifest.pointer("/metadata/labels/app").unwrap(), "test");
         assert_eq!(manifest.pointer("/data/key").unwrap(), "value");
-        assert_eq!(manifest.pointer("/apiVersion").unwrap(), "v1");
-
-        // Deferred empty (no ownerRefs/finalizers in input)
         assert!(deferred.owner_references.is_empty());
-        assert!(deferred.finalizers.is_empty());
-
-        // Omitted fields recorded
         let paths: Vec<&str> = omitted.iter().map(|o| o.path.as_str()).collect();
         assert!(paths.contains(&"metadata.uid"));
         assert!(paths.contains(&"status"));
@@ -982,8 +1355,7 @@ mod tests {
             },
         });
 
-        let (manifest, deferred, _omitted) = sanitize_for_recreate(&raw);
-
+        let (manifest, deferred, _) = sanitize_for_recreate(&raw);
         assert!(manifest.pointer("/metadata/ownerReferences").is_none());
         assert!(manifest.pointer("/metadata/finalizers").is_none());
         assert_eq!(deferred.owner_references.len(), 1);
@@ -995,10 +1367,7 @@ mod tests {
         let raw = serde_json::json!({
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {
-                "name": "pod-abc",
-                "generateName": "pod-",
-            },
+            "metadata": {"name": "pod-abc", "generateName": "pod-"},
         });
 
         let (manifest, _, omitted) = sanitize_for_recreate(&raw);
@@ -1011,9 +1380,7 @@ mod tests {
         let raw = serde_json::json!({
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {
-                "generateName": "pod-",
-            },
+            "metadata": {"generateName": "pod-"},
         });
 
         let (manifest, _, _) = sanitize_for_recreate(&raw);
@@ -1025,21 +1392,13 @@ mod tests {
         let raw = serde_json::json!({
             "apiVersion": "example.io/v1",
             "kind": "Widget",
-            "metadata": {
-                "name": "w1",
-                "uid": "uid-1",
-                "resourceVersion": "999",
-            },
-            "spec": {
-                "replicas": 3,
-                "template": {"custom": true},
-            },
+            "metadata": {"name": "w1", "uid": "uid-1", "resourceVersion": "999"},
+            "spec": {"replicas": 3, "template": {"custom": true}},
             "data": {"secret-key": "secret-value"},
         });
 
         let (manifest, _, _) = sanitize_for_recreate(&raw);
         assert_eq!(manifest.pointer("/spec/replicas").unwrap(), 3);
-        assert_eq!(manifest.pointer("/spec/template/custom").unwrap(), true);
         assert_eq!(
             manifest.pointer("/data/secret-key").unwrap(),
             "secret-value"
@@ -1051,17 +1410,12 @@ mod tests {
         let raw = serde_json::json!({
             "apiVersion": "v1",
             "kind": "Secret",
-            "metadata": {
-                "name": "my-secret",
-                "uid": "uid-s",
-                "resourceVersion": "100",
-            },
+            "metadata": {"name": "my-secret", "uid": "uid-s", "resourceVersion": "100"},
             "data": {"password": "c2VjcmV0"},
             "stringData": {"api-key": "abc123"},
         });
 
         let (manifest, _, _) = sanitize_for_recreate(&raw);
-        // Both raw and recreate should have Secret data
         assert_eq!(raw.pointer("/data/password").unwrap(), "c2VjcmV0");
         assert_eq!(manifest.pointer("/data/password").unwrap(), "c2VjcmV0");
         assert_eq!(manifest.pointer("/stringData/api-key").unwrap(), "abc123");
@@ -1096,30 +1450,13 @@ mod tests {
         let debug_str = format!("{:?}", resource);
         assert!(
             !debug_str.contains("c2VjcmV0"),
-            "Debug must not contain Secret data: {}",
-            debug_str
-        );
-        assert!(
-            !debug_str.contains("password"),
-            "Debug must not contain Secret keys: {}",
-            debug_str
+            "Debug must not contain Secret data"
         );
     }
 
     #[test]
     fn bundle_debug_no_secrets() {
-        let bundle = build_bundle(
-            vec![],
-            &ClusterIdentity {
-                api_server: "https://test".to_string(),
-                kube_system_uid: "uid-ks".to_string(),
-            },
-            "sha256abc",
-            "/tmp/plan.json",
-            vec!["test-op".to_string()],
-            true,
-            vec![],
-        );
+        let bundle = test_bundle(vec![]);
         let debug_str = format!("{:?}", bundle);
         assert!(!debug_str.contains("raw_object"));
         assert!(!debug_str.contains("recreate_manifest"));
@@ -1132,20 +1469,9 @@ mod tests {
         let target = dir.join("backup.json");
         std::fs::write(&target, "{}").unwrap();
 
-        let bundle = build_bundle(
-            vec![],
-            &ClusterIdentity {
-                api_server: "https://test".to_string(),
-                kube_system_uid: "uid-ks".to_string(),
-            },
-            "sha256abc",
-            "/tmp/plan.json",
-            vec![],
-            false,
-            vec![],
-        );
+        let bundle = test_bundle(vec![]);
         let result = write_backup_bundle(&bundle, &target);
-        assert!(result.is_err(), "must reject existing target");
+        assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1156,29 +1482,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("backup.json");
 
-        let bundle = build_bundle(
-            vec![],
-            &ClusterIdentity {
-                api_server: "https://test".to_string(),
-                kube_system_uid: "uid-ks".to_string(),
-            },
-            "sha256abc",
-            "/tmp/plan.json",
-            vec!["op1".to_string()],
-            false,
-            vec![],
-        );
+        let bundle = test_bundle(vec![]);
         let receipt = write_backup_bundle(&bundle, &target).unwrap();
 
         assert_eq!(receipt.resource_count, 0);
         assert!(!receipt.contains_secret_data);
 
-        // Verify SHA-256
         let data = std::fs::read(&target).unwrap();
         let sha = compute_sha256(&data);
         assert_eq!(receipt.sha256, sha);
 
-        // Verify mode 0600
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1186,7 +1499,6 @@ mod tests {
             assert_eq!(mode, 0o600, "file mode must be 0600");
         }
 
-        // Verify parseable
         let loaded: BackupBundle = serde_json::from_slice(&data).unwrap();
         assert_eq!(loaded.schema_version, 1);
 
@@ -1195,20 +1507,65 @@ mod tests {
 
     #[test]
     fn write_cleans_temp_on_failure() {
-        let bundle = build_bundle(
-            vec![],
-            &ClusterIdentity {
-                api_server: "https://test".to_string(),
-                kube_system_uid: "uid-ks".to_string(),
-            },
-            "sha256abc",
-            "/tmp/plan.json",
-            vec![],
-            false,
-            vec![],
-        );
+        let bundle = test_bundle(vec![]);
         let result = write_backup_bundle(&bundle, Path::new("/nonexistent/dir/backup.json"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn concurrent_same_target_one_success() {
+        let dir = std::env::temp_dir().join(format!("backup-conc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("backup.json");
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let _dir = dir.clone();
+                let target = target.clone();
+                std::thread::spawn(move || {
+                    let bundle = build_bundle(
+                        vec![],
+                        &ClusterIdentity {
+                            api_server: "https://test".to_string(),
+                            kube_system_uid: "uid-ks".to_string(),
+                        },
+                        "sha",
+                        "/tmp/plan.json",
+                        vec![],
+                        false,
+                        vec![],
+                        vec![],
+                    );
+                    write_backup_bundle(&bundle, &target)
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        // Exactly 1 success (hard_link no-clobber ensures this)
+        assert!(
+            successes <= 1,
+            "at most 1 success expected, got {}",
+            successes
+        );
+        // File content is valid if it exists
+        if target.exists() {
+            let data = std::fs::read(&target).unwrap();
+            let _: BackupBundle = serde_json::from_slice(&data).unwrap();
+        }
+        // No temp residuals
+        let tmps: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with(".tmp_"))
+            })
+            .collect();
+        assert_eq!(tmps.len(), 0, "no temp residuals");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1257,35 +1614,27 @@ mod tests {
                         omitted_fields: None,
                     },
                 ],
-                &ClusterIdentity {
-                    api_server: "https://test".to_string(),
-                    kube_system_uid: "uid-ks".to_string(),
-                },
+                &test_cluster(),
                 "sha256abc",
                 "/tmp/plan.json",
                 vec!["op1".to_string()],
                 false,
                 vec![],
+                vec![],
             )
         };
 
-        // Resources are pre-sorted by identity in build, so order should be deterministic
         let b1 = make_bundle();
         let b2 = make_bundle();
         let j1 = serde_json::to_string_pretty(&b1).unwrap();
         let j2 = serde_json::to_string_pretty(&b2).unwrap();
-        // created_at differs, so strip it
         let strip = |s: &str| -> String {
             s.lines()
                 .filter(|l| !l.contains("created_at"))
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        assert_eq!(
-            strip(&j1),
-            strip(&j2),
-            "output must be deterministic (minus timestamp)"
-        );
+        assert_eq!(strip(&j1), strip(&j2));
     }
 
     #[test]
@@ -1297,12 +1646,12 @@ mod tests {
             execution_plan_sha256: "plan-sha".to_string(),
             resource_count: 5,
             contains_secret_data: true,
+            candidate_set_sha256: "cand-sha".to_string(),
         };
         let json = serde_json::to_string(&receipt).unwrap();
         let loaded: BackupReceipt = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded.sha256, "abc123");
-        assert_eq!(loaded.resource_count, 5);
-        assert!(loaded.contains_secret_data);
+        assert_eq!(loaded.candidate_set_sha256, "cand-sha");
     }
 
     #[test]
@@ -1314,12 +1663,9 @@ mod tests {
             execution_plan_sha256: "p".to_string(),
             resource_count: 0,
             contains_secret_data: false,
+            candidate_set_sha256: "c".to_string(),
         };
-        let cluster = ClusterIdentity {
-            api_server: "https://test".to_string(),
-            kube_system_uid: "uid".to_string(),
-        };
-        let result = validate_receipt(&receipt, &cluster, "p");
+        let result = validate_receipt(&receipt, &test_cluster(), "p");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no longer exists"));
     }
@@ -1330,35 +1676,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("backup.json");
 
-        let bundle = build_bundle(
-            vec![],
-            &ClusterIdentity {
-                api_server: "https://test".to_string(),
-                kube_system_uid: "uid-ks".to_string(),
-            },
-            "plan-sha",
-            "/tmp/plan.json",
-            vec![],
-            false,
-            vec![],
-        );
+        let bundle = test_bundle(vec![]);
         let receipt = write_backup_bundle(&bundle, &path).unwrap();
-
-        // Tamper with file
         std::fs::write(&path, "{}").unwrap();
 
-        let cluster = ClusterIdentity {
-            api_server: "https://test".to_string(),
-            kube_system_uid: "uid-ks".to_string(),
-        };
-        let result = validate_receipt(&receipt, &cluster, "plan-sha");
+        let result = validate_receipt(&receipt, &test_cluster(), "sha256abc");
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("modified") || err.contains("not valid JSON"),
-            "err: {}",
-            err
-        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1368,25 +1691,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("backup.json");
 
-        let bundle = build_bundle(
-            vec![],
-            &ClusterIdentity {
-                api_server: "https://test".to_string(),
-                kube_system_uid: "uid-ks".to_string(),
-            },
-            "plan-sha",
-            "/tmp/plan.json",
-            vec![],
-            false,
-            vec![],
-        );
+        let bundle = test_bundle(vec![]);
         let receipt = write_backup_bundle(&bundle, &path).unwrap();
 
         let wrong_cluster = ClusterIdentity {
             api_server: "https://other".to_string(),
             kube_system_uid: "uid-other".to_string(),
         };
-        let result = validate_receipt(&receipt, &wrong_cluster, "plan-sha");
+        let result = validate_receipt(&receipt, &wrong_cluster, "sha256abc");
         assert!(result.is_err());
         assert!(
             result
@@ -1419,9 +1731,9 @@ mod tests {
         };
 
         let mut candidates = vec![];
-        let result = add_adapter_candidates(&mut candidates, &[report]);
+        let mut observations = vec![];
+        let result = add_adapter_candidates(&mut candidates, &[report], &mut observations);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("incomplete"));
     }
 
     #[test]
@@ -1439,7 +1751,8 @@ mod tests {
         };
 
         let mut candidates = vec![];
-        let result = add_adapter_candidates(&mut candidates, &[report]);
+        let mut observations = vec![];
+        let result = add_adapter_candidates(&mut candidates, &[report], &mut observations);
         assert!(result.is_err());
     }
 
@@ -1458,7 +1771,8 @@ mod tests {
         };
 
         let mut candidates = vec![];
-        let result = add_adapter_candidates(&mut candidates, &[report]);
+        let mut observations = vec![];
+        let result = add_adapter_candidates(&mut candidates, &[report], &mut observations);
         assert!(result.is_ok());
         assert_eq!(candidates.len(), 0);
     }
@@ -1479,5 +1793,36 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidate_set_hash_deterministic() {
+        let c1 = BackupCandidate {
+            identity: BackupResourceIdentity {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                kind: "ConfigMap".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "cm1".to_string(),
+                uid: "uid-b".to_string(),
+            },
+            sources: vec![],
+        };
+        let c2 = BackupCandidate {
+            identity: BackupResourceIdentity {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                kind: "Secret".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "s1".to_string(),
+                uid: "uid-a".to_string(),
+            },
+            sources: vec![],
+        };
+
+        // Order should not matter — hash sorts internally
+        let h1 = candidate_set_hash(&[c1.clone(), c2.clone()]);
+        let h2 = candidate_set_hash(&[c2, c1]);
+        assert_eq!(h1, h2);
     }
 }

@@ -22,6 +22,14 @@ impl ApprovalScope {
 }
 
 /// Reject scope tokens passed as resource specs.
+fn non_empty_path(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        Err("path must not be empty".to_string())
+    } else {
+        Ok(s.to_string())
+    }
+}
+
 fn validate_resource_spec(s: &str) -> Result<String, String> {
     const SCOPE_TOKENS: &[&str] = &["root", "independent", "label-only", "operator-group", "all"];
     if SCOPE_TOKENS.contains(&s) {
@@ -361,7 +369,7 @@ pub enum TeardownAction {
         tui: bool,
 
         /// Save pre-delete backup bundle to this path before executing
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", value_parser = non_empty_path)]
         backup_file: Option<String>,
     },
 
@@ -431,7 +439,7 @@ pub enum TeardownAction {
         skip_missing: bool,
 
         /// Save per-operator backup bundles to this directory
-        #[arg(long, value_name = "DIR")]
+        #[arg(long, value_name = "DIR", value_parser = non_empty_path)]
         backup_dir: Option<String>,
     },
 
@@ -1533,5 +1541,104 @@ mod tests {
             result.is_err(),
             "teardown inspect should be rejected (removed)"
         );
+    }
+
+    #[test]
+    fn test_apply_backup_file_parse() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "plan.json",
+            "--backup-file",
+            "/tmp/backup.json",
+            "--dry-run",
+        ]);
+        match args.command {
+            Command::Teardown {
+                action:
+                    TeardownAction::Apply {
+                        backup_file,
+                        dry_run,
+                        ..
+                    },
+            } => {
+                assert_eq!(backup_file, Some("/tmp/backup.json".to_string()));
+                assert!(dry_run);
+            }
+            _ => panic!("Expected teardown apply"),
+        }
+    }
+
+    #[test]
+    fn test_apply_empty_backup_file_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "plan.json",
+            "--backup-file",
+            "",
+        ]);
+        assert!(result.is_err(), "empty backup-file path must be rejected");
+    }
+
+    #[test]
+    fn test_batch_backup_dir_parse() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "teardown",
+            "batch",
+            "config.json",
+            "--backup-dir",
+            "/tmp/backups",
+        ]);
+        match args.command {
+            Command::Teardown {
+                action: TeardownAction::Batch { backup_dir, .. },
+            } => {
+                assert_eq!(backup_dir, Some("/tmp/backups".to_string()));
+            }
+            _ => panic!("Expected teardown batch"),
+        }
+    }
+
+    #[test]
+    fn test_batch_empty_backup_dir_rejected() {
+        let result = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "batch",
+            "config.json",
+            "--backup-dir",
+            "",
+        ]);
+        assert!(result.is_err(), "empty backup-dir path must be rejected");
+    }
+
+    #[test]
+    fn test_apply_no_backup_option_unchanged() {
+        let args = Args::parse_from(["oc-deps", "teardown", "apply", "plan.json"]);
+        match args.command {
+            Command::Teardown {
+                action: TeardownAction::Apply { backup_file, .. },
+            } => {
+                assert!(backup_file.is_none());
+            }
+            _ => panic!("Expected teardown apply"),
+        }
+    }
+
+    #[test]
+    fn test_batch_no_backup_option_unchanged() {
+        let args = Args::parse_from(["oc-deps", "teardown", "batch", "config.json"]);
+        match args.command {
+            Command::Teardown {
+                action: TeardownAction::Batch { backup_dir, .. },
+            } => {
+                assert!(backup_dir.is_none());
+            }
+            _ => panic!("Expected teardown batch"),
+        }
     }
 }
