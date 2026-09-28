@@ -136,6 +136,21 @@ impl std::fmt::Display for SpecRefSourceLabel {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AbsenceCoverage {
+    Complete,
+    Incomplete {
+        incomplete_namespaces: Vec<String>,
+        scan_warning_count: usize,
+    },
+}
+
+impl AbsenceCoverage {
+    pub fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuditObservationSet {
     pub observations: Vec<AuditObservation>,
@@ -144,6 +159,7 @@ pub struct AuditObservationSet {
     pub capability_warnings: Vec<String>,
     pub has_deletion_timestamp: bool,
     pub has_spec_ref_source: bool,
+    pub absence_coverage: AbsenceCoverage,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -404,6 +420,25 @@ pub fn snapshot_to_observation_set(snap: &ClusterSnapshot) -> AuditObservationSe
             .collect()
     };
 
+    let absence_coverage = {
+        let mut incomplete_ns = Vec::new();
+        let mut warn_count = snap.scan_warnings.len();
+        if let Some(scope) = &snap.scope {
+            for inc in &scope.incomplete_namespaces {
+                incomplete_ns.push(inc.namespace.clone());
+                warn_count += inc.warnings.len();
+            }
+        }
+        if incomplete_ns.is_empty() && snap.scan_warnings.is_empty() {
+            AbsenceCoverage::Complete
+        } else {
+            AbsenceCoverage::Incomplete {
+                incomplete_namespaces: incomplete_ns,
+                scan_warning_count: warn_count,
+            }
+        }
+    };
+
     AuditObservationSet {
         observations,
         cluster_url: snap.cluster_url.clone(),
@@ -411,6 +446,7 @@ pub fn snapshot_to_observation_set(snap: &ClusterSnapshot) -> AuditObservationSe
         capability_warnings: warnings,
         has_deletion_timestamp: has_deletion_ts,
         has_spec_ref_source,
+        absence_coverage,
     }
 }
 
@@ -525,6 +561,7 @@ pub struct AuditLayers {
     pub raw_observations: RawObsLayer,
     pub physical_uids: PhysicalLayer,
     pub logical: LogicalLayer,
+    pub uid_null: UidNullLayer,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -546,6 +583,13 @@ pub struct PhysicalLayer {
 pub struct LogicalLayer {
     pub pre: usize,
     pub post: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UidNullLayer {
+    pub pre: usize,
+    pub post: usize,
+    pub fingerprint_collision_groups: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -959,6 +1003,24 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
     let pre_logical = build_logical_index_multi(&pre_ents);
     let post_logical = build_logical_index_multi(&post_ents);
 
+    // API-logical layer: built from raw observations (group, kind, ns, name)
+    let pre_api_logical = build_api_logical_set(&before.observations);
+    let post_api_logical = build_api_logical_set(&after.observations);
+
+    // UID-null layer
+    let pre_null: Vec<_> = before
+        .observations
+        .iter()
+        .filter(|o| !o.uid.as_ref().is_some_and(|u| !u.is_empty()))
+        .collect();
+    let post_null: Vec<_> = after
+        .observations
+        .iter()
+        .filter(|o| !o.uid.as_ref().is_some_and(|u| !u.is_empty()))
+        .collect();
+    let pre_null_fps = null_fingerprint_groups(&pre_null);
+    let fp_collision_groups = pre_null_fps.values().filter(|rs| rs.len() > 1).count();
+
     // Plan action index with full identity verification [P0-2, P0-5]
     let (uid_actions, collision_warnings, conflicted_uids) = build_plan_action_index(&input.plans);
 
@@ -1072,7 +1134,10 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
         }
     }
 
-    // Classify all removed UIDs [P0-3: owner_unlinked → UnexplainedChange]
+    // P0-2: if after coverage is incomplete, we cannot prove absence
+    let after_can_prove_absent = after.absence_coverage.is_complete();
+
+    // Classify all removed UIDs
     let mut removals: Vec<ClassifiedRemoval> = Vec::new();
     for uid in &removed_uids {
         let ent = match pre_ents.get(uid) {
@@ -1092,7 +1157,14 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
             })
             .collect();
 
-        let (classification, evidence, plan_operator, derived_detail) = if del_uids.contains(uid) {
+        let (classification, evidence, plan_operator, derived_detail) = if !after_can_prove_absent {
+            (
+                AuditClassification::UnexplainedChange,
+                Some("after snapshot coverage incomplete; absence not proven".to_string()),
+                None,
+                None,
+            )
+        } else if del_uids.contains(uid) {
             (
                 AuditClassification::PlannedDirectDelete,
                 Some("Plan DELETE action with full identity+UID match".to_string()),
@@ -1190,7 +1262,10 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
             }
             if let Some(pre_owner) = pre_ents.get(&oref.uid) {
                 let oref_group = group_from_api_version(&oref.api_version);
-                if pre_owner.identity.kind == oref.kind
+                let namespace_ok = pre_owner.identity.namespace.is_none()
+                    || pre_owner.identity.namespace == ent.identity.namespace;
+                if namespace_ok
+                    && pre_owner.identity.kind == oref.kind
                     && pre_owner.identity.name == oref.name
                     && pre_owner.identity.group == oref_group
                 {
@@ -1207,8 +1282,18 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
     }
 
     // Dangling spec refs with proper source [P0-4]
+    // Only report when after coverage is complete
     let mut dangling_spec_refs: Vec<DanglingSpecRefEntry> = Vec::new();
+    if !after_can_prove_absent {
+        capability_warnings.push(
+            "after snapshot coverage incomplete; dangling spec-ref detection suppressed"
+                .to_string(),
+        );
+    }
     for (uid, ent) in &post_ents {
+        if !after_can_prove_absent {
+            break;
+        }
         for spec_ref in &ent.spec_refs {
             let target_ns = spec_ref
                 .target_namespace
@@ -1365,8 +1450,13 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
                 multi_observed,
             },
             logical: LogicalLayer {
-                pre: pre_logical.len(),
-                post: post_logical.len(),
+                pre: pre_api_logical.len(),
+                post: post_api_logical.len(),
+            },
+            uid_null: UidNullLayer {
+                pre: pre_null.len(),
+                post: post_null.len(),
+                fingerprint_collision_groups: fp_collision_groups,
             },
         },
         classification_summary,
@@ -1403,6 +1493,29 @@ fn build_logical_index_multi(
         uids.sort();
     }
     index
+}
+
+fn build_api_logical_set(observations: &[AuditObservation]) -> HashSet<LogicalIdentity> {
+    observations
+        .iter()
+        .map(|o| LogicalIdentity {
+            group: o.group.clone(),
+            kind: o.kind.clone(),
+            namespace: o.namespace.clone(),
+            name: o.name.clone(),
+        })
+        .collect()
+}
+
+fn null_fingerprint_groups<'a>(
+    null_obs: &[&'a AuditObservation],
+) -> HashMap<String, Vec<&'a AuditObservation>> {
+    let mut groups: HashMap<String, Vec<&'a AuditObservation>> = HashMap::new();
+    for o in null_obs {
+        let fp = uid_null_fingerprint(o);
+        groups.entry(fp).or_default().push(o);
+    }
+    groups
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1471,6 +1584,7 @@ mod tests {
             capability_warnings: vec![],
             has_deletion_timestamp: true,
             has_spec_ref_source: true,
+            absence_coverage: AbsenceCoverage::Complete,
         }
     }
 
@@ -2335,6 +2449,35 @@ mod tests {
     }
 
     #[test]
+    fn typed_secret_ref_different_group_stays_dangling() {
+        let mut dep = make_obs("apps", "Deployment", Some("ns"), "dep1", Some("uid-dep"));
+        dep.spec_refs.push(ObsSpecRef {
+            target_kind: "Secret".into(),
+            target_name: "my-secret".into(),
+            field_path: "spec.volumes.[0].secret.secretName".into(),
+            target_group: Some("".into()),
+            target_namespace: None,
+            source: SpecRefSourceLabel::Typed,
+        });
+        let custom_secret = make_obs(
+            "custom.io",
+            "Secret",
+            Some("ns"),
+            "my-secret",
+            Some("uid-cs"),
+        );
+
+        let after = make_obs_set(vec![dep, custom_secret]);
+        let before = make_obs_set(vec![]);
+        let report = audit(before, after, vec![]);
+        assert_eq!(
+            report.dangling_spec_refs.len(),
+            1,
+            "core Secret ref must not match custom.io/Secret"
+        );
+    }
+
+    #[test]
     fn future_audit_schema_roundtrip() {
         let report = AuditReport {
             schema_version: 999,
@@ -2353,6 +2496,11 @@ mod tests {
                     multi_observed: 0,
                 },
                 logical: LogicalLayer { pre: 0, post: 0 },
+                uid_null: UidNullLayer {
+                    pre: 0,
+                    post: 0,
+                    fingerprint_collision_groups: 0,
+                },
             },
             classification_summary: BTreeMap::new(),
             removals: vec![],
@@ -2555,6 +2703,71 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("incomplete")),
             "incomplete scope must propagate"
+        );
+    }
+
+    #[test]
+    fn incomplete_after_downgrades_to_unexplained() {
+        let entry = make_obs("", "Pod", Some("ns"), "p1", Some("uid-1"));
+        let before = make_obs_set(vec![entry]);
+        let mut after = make_obs_set(vec![]);
+        after.absence_coverage = AbsenceCoverage::Incomplete {
+            incomplete_namespaces: vec!["ns".into()],
+            scan_warning_count: 1,
+        };
+
+        let plan = make_plan(vec![(
+            "",
+            "Pod",
+            Some("ns"),
+            "p1",
+            "uid-1",
+            ExecutionAction::Delete,
+        )]);
+        let report = audit(before, after, vec![("plan.json".into(), plan)]);
+        let r = &report.removals[0];
+        assert_eq!(
+            r.classification,
+            AuditClassification::UnexplainedChange,
+            "incomplete after must not strongly classify even with plan DELETE"
+        );
+        assert!(r.evidence.as_ref().unwrap().contains("absence not proven"),);
+    }
+
+    #[test]
+    fn orphan_wrong_namespace_not_reported() {
+        let parent = make_obs(
+            "apps",
+            "Deployment",
+            Some("ns-a"),
+            "dep1",
+            Some("uid-parent"),
+        );
+        let mut child = make_obs("", "RS", Some("ns-b"), "rs1", Some("uid-child"));
+        child.owner_refs.push(ObsOwnerRef {
+            api_version: "apps/v1".into(),
+            kind: "Deployment".into(),
+            name: "dep1".into(),
+            uid: "uid-parent".into(),
+            controller: true,
+            block_owner_deletion: false,
+        });
+
+        let before = make_obs_set(vec![parent, child.clone()]);
+        let after = make_obs_set(vec![child]);
+        let plan = make_plan(vec![(
+            "apps",
+            "Deployment",
+            Some("ns-a"),
+            "dep1",
+            "uid-parent",
+            ExecutionAction::Delete,
+        )]);
+        let report = audit(before, after, vec![("plan.json".into(), plan)]);
+        assert_eq!(
+            report.orphan_owner_refs.len(),
+            0,
+            "namespaced owner in different namespace must not be reported as orphan"
         );
     }
 }

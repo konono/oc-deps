@@ -205,11 +205,16 @@ async fn build_snapshot_inner(
                                             Some(SpecRefSourceSer::Heuristic)
                                         }
                                     };
+                                    let tg = match r.target_kind.as_str() {
+                                        "Secret" | "ConfigMap" | "ServiceAccount"
+                                        | "PersistentVolumeClaim" => Some(String::new()),
+                                        _ => None,
+                                    };
                                     SpecRefEntry {
                                         target_kind: r.target_kind,
                                         target_name: r.target_name,
                                         field_path: r.field_path,
-                                        target_group: None,
+                                        target_group: tg,
                                         target_namespace: None,
                                         source,
                                     }

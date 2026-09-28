@@ -5,7 +5,7 @@
 //!
 //! Runs only when CORPUS_REPLAY=1 is set (requires corpus archive).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -223,11 +223,52 @@ fn corpus_replay_exact_counts() {
 
     let (before_snap, pre_raw) =
         inventory_to_snapshot(&workdir.join("inventory/pre-inventory.jsonl"));
-    let (after_snap, post_raw) =
+    let (mut after_snap, post_raw) =
         inventory_to_snapshot(&workdir.join("inventory/post-inventory.jsonl"));
 
     assert_eq!(pre_raw, 17786, "pre raw observations");
     assert_eq!(post_raw, 14761, "post raw observations");
+
+    // Inject spec-ref data from the dangling fixture into after observations.
+    // The inventory JSONL doesn't contain raw spec, so spec-refs were extracted
+    // at runtime by the Phase 0 tooling. We inject the known dangling edges
+    // as spec_refs on the source resources in the after snapshot.
+    let dangling_path = PathBuf::from(
+        "logs/discovery-baseline/20260926-cycle-b2-3c77a17/post-specref-dangling.json",
+    );
+    let dangling: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&dangling_path).unwrap()).unwrap();
+    for detail in dangling["details"].as_array().unwrap_or(&vec![]) {
+        let src_uid = detail["source"]["uid"].as_str().unwrap_or("");
+        let target_kind = detail["target"]["kind"].as_str().unwrap_or("");
+        let target_name = detail["target"]["name"].as_str().unwrap_or("");
+        let field_path = detail["fieldPath"].as_str().unwrap_or("");
+        let ref_source = detail["refSource"].as_str().unwrap_or("typed");
+
+        // Find matching observation by UID and add spec_ref
+        for obs in &mut after_snap.observations {
+            if obs.uid.as_deref() == Some(src_uid) {
+                obs.spec_refs.push(serde_json::json!({
+                    "target_kind": target_kind,
+                    "target_name": target_name,
+                    "field_path": field_path,
+                    "target_group": "",
+                    "source": if ref_source == "typed" { "Typed" } else { "Heuristic" },
+                }));
+                break;
+            }
+        }
+        // Also inject into resources (for compatibility path)
+        if let Some(entry) = after_snap.resources.get_mut(src_uid) {
+            entry.spec_refs.push(serde_json::json!({
+                "target_kind": target_kind,
+                "target_name": target_name,
+                "field_path": field_path,
+                "target_group": "",
+                "source": if ref_source == "typed" { "Typed" } else { "Heuristic" },
+            }));
+        }
+    }
 
     let before_path = workdir.join("before-snapshot.json");
     let after_path = workdir.join("after-snapshot.json");
@@ -312,9 +353,22 @@ fn corpus_replay_exact_counts() {
         .as_u64()
         .unwrap_or(0);
 
+    let logical_pre = report["layers"]["logical"]["pre"].as_u64().unwrap_or(0);
+    let logical_post = report["layers"]["logical"]["post"].as_u64().unwrap_or(0);
+    let uid_null_pre = report["layers"]["uid_null"]["pre"].as_u64().unwrap_or(0);
+    let uid_null_post = report["layers"]["uid_null"]["post"].as_u64().unwrap_or(0);
+    let fp_collisions = report["layers"]["uid_null"]["fingerprint_collision_groups"]
+        .as_u64()
+        .unwrap_or(99);
+
     eprintln!("=== Corpus Replay Results ===");
     eprintln!("Raw: {} → {}", raw_pre, raw_post);
+    eprintln!("Logical: {} → {}", logical_pre, logical_post);
     eprintln!("Physical: {} → {}", phys_pre, phys_post);
+    eprintln!(
+        "UID-null: {} → {} (fp collisions: {})",
+        uid_null_pre, uid_null_post, fp_collisions
+    );
     eprintln!("PlannedDirectDelete: {}", direct_delete);
     eprintln!("ExpectedControllerCleanup: {}", expect);
     eprintln!("OwnerRefGcDescendant: {}", descendant);
@@ -327,8 +381,13 @@ fn corpus_replay_exact_counts() {
     // Phase C exact acceptance criteria (Issue #38)
     assert_eq!(raw_pre, 17786, "raw pre observations");
     assert_eq!(raw_post, 14761, "raw post observations");
+    assert_eq!(logical_pre, 17668, "API-logical pre identities");
+    assert_eq!(logical_post, 14719, "API-logical post identities");
     assert_eq!(phys_pre, 11716, "physical pre UIDs");
     assert_eq!(phys_post, 9165, "physical post UIDs");
+    assert_eq!(uid_null_pre, 820, "UID-null pre observations");
+    assert_eq!(uid_null_post, 731, "UID-null post observations");
+    assert_eq!(fp_collisions, 0, "fingerprint collision groups");
     assert_eq!(direct_delete, 91, "direct DELETE");
     assert_eq!(expect, 72, "EXPECT");
     assert_eq!(closure_seeds, 91, "DELETE seeds");
@@ -338,6 +397,35 @@ fn corpus_replay_exact_counts() {
     assert_eq!(newly_term, 0, "newly terminating");
     assert_eq!(provider_count, 25, "provider operands");
     assert_eq!(descendant, 1282, "OwnerRefGcDescendant");
+
+    // Dangling spec-ref fixture: 12 edges to 2 targets
+    let dangling_count = report["dangling_spec_refs"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let dangling_targets: HashSet<String> = report["dangling_spec_refs"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|d| {
+            format!(
+                "{}/{}",
+                d["target_kind"].as_str().unwrap_or(""),
+                d["target_name"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    eprintln!(
+        "Dangling spec refs: {} edges, {} targets",
+        dangling_count,
+        dangling_targets.len()
+    );
+    assert_eq!(dangling_count, 12, "dangling spec-ref edges");
+    assert_eq!(
+        dangling_targets.len(),
+        2,
+        "dangling spec-ref distinct targets"
+    );
 
     // Verify determinism: run again
     let output2 = Command::new(binary())

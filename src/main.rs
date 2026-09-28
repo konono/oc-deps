@@ -1409,6 +1409,7 @@ async fn main() -> Result<()> {
                 let mut all_resources =
                     std::collections::HashMap::<String, crate::kube::resource::ResourceEntry>::new(
                     );
+                let mut all_observations = Vec::new();
                 let mut all_warnings = Vec::new();
                 let mut complete_namespaces = Vec::new();
                 let mut incomplete_namespaces = Vec::new();
@@ -1480,6 +1481,7 @@ async fn main() -> Result<()> {
                             }
 
                             all_resources.extend(ns_snapshot.resources);
+                            all_observations.extend(ns_snapshot.observations);
                         }
                         Err(e) => {
                             let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -1553,7 +1555,29 @@ async fn main() -> Result<()> {
                         complete_namespaces,
                         incomplete_namespaces,
                     }),
-                    observations: vec![],
+                    observations: {
+                        all_observations.sort_by(|a, b| {
+                            (
+                                &a.group,
+                                &a.version,
+                                &a.resource,
+                                &a.kind,
+                                &a.namespace,
+                                &a.name,
+                                &a.uid,
+                            )
+                                .cmp(&(
+                                    &b.group,
+                                    &b.version,
+                                    &b.resource,
+                                    &b.kind,
+                                    &b.namespace,
+                                    &b.name,
+                                    &b.uid,
+                                ))
+                        });
+                        all_observations
+                    },
                 };
 
                 let resource_count = snapshot.resources.len();
