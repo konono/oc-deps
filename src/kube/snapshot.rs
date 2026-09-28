@@ -183,6 +183,57 @@ async fn build_snapshot_inner(
     build_snapshot_from_targets(client, config, namespace, scan_targets, api_semaphore).await
 }
 
+pub fn enrich_heuristic_spec_refs(resources: &mut HashMap<String, ResourceEntry>) {
+    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in resources.values() {
+        by_name
+            .entry(entry.id.name.clone())
+            .or_default()
+            .push(entry.id.kind.clone());
+    }
+    for kinds in by_name.values_mut() {
+        kinds.sort();
+        kinds.dedup();
+    }
+
+    for entry in resources.values_mut() {
+        if let Some(ref spec) = entry.raw_spec {
+            let mut path = vec!["spec".to_string()];
+            let mut strings = Vec::new();
+            crate::analyzers::spec_ref::collect_string_values(spec, &mut path, &mut strings);
+
+            let mut seen: HashSet<(String, String)> = entry
+                .spec_refs
+                .iter()
+                .map(|r| (r.target_kind.clone(), r.target_name.clone()))
+                .collect();
+
+            for (_field_path, value) in strings {
+                if value == entry.id.name {
+                    continue;
+                }
+                if let Some(kinds) = by_name.get(&value) {
+                    for kind in kinds {
+                        let key = (kind.clone(), value.clone());
+                        if seen.contains(&key) {
+                            continue;
+                        }
+                        seen.insert(key);
+                        entry.spec_refs.push(SpecRefEntry {
+                            target_kind: kind.clone(),
+                            target_name: value.clone(),
+                            field_path: _field_path.clone(),
+                            target_group: None,
+                            target_namespace: None,
+                            source: Some(SpecRefSourceSer::Heuristic),
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn build_snapshot_from_targets(
     client: &Client,
     config: &Config,
@@ -473,55 +524,9 @@ async fn build_snapshot_from_targets(
         all_observations.extend(obs);
     }
 
-    // Heuristic spec-ref extraction: match spec string values against namespace resource names
-    // Build name → Vec<kind> map for resolving heuristic targets
-    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
-    for entry in resources.values() {
-        by_name
-            .entry(entry.id.name.clone())
-            .or_default()
-            .push(entry.id.kind.clone());
-    }
-    for kinds in by_name.values_mut() {
-        kinds.sort();
-        kinds.dedup();
-    }
+    enrich_heuristic_spec_refs(&mut resources);
 
-    for entry in resources.values_mut() {
-        if let Some(ref spec) = entry.raw_spec {
-            let mut path = vec!["spec".to_string()];
-            let mut strings = Vec::new();
-            crate::analyzers::spec_ref::collect_string_values(spec, &mut path, &mut strings);
-
-            let already_found: HashSet<(String, String)> = entry
-                .spec_refs
-                .iter()
-                .map(|r| (r.target_kind.clone(), r.target_name.clone()))
-                .collect();
-
-            for (field_path, value) in strings {
-                if value == entry.id.name {
-                    continue;
-                }
-                if let Some(kinds) = by_name.get(&value) {
-                    for kind in kinds {
-                        if already_found.contains(&(kind.clone(), value.clone())) {
-                            continue;
-                        }
-                        entry.spec_refs.push(SpecRefEntry {
-                            target_kind: kind.clone(),
-                            target_name: value.clone(),
-                            field_path: field_path.clone(),
-                            target_group: None,
-                            target_namespace: None,
-                            source: Some(SpecRefSourceSer::Heuristic),
-                        });
-                    }
-                }
-            }
-        }
-    }
-    // Add heuristic refs to observations too
+    // Propagate heuristic refs to observations
     for obs in &mut all_observations {
         if let Some(uid) = &obs.uid
             && let Some(entry) = resources.get(uid)
@@ -536,7 +541,7 @@ async fn build_snapshot_from_targets(
                 if !obs
                     .spec_refs
                     .iter()
-                    .any(|r| r.target_name == hr.target_name && r.field_path == hr.field_path)
+                    .any(|r| r.target_name == hr.target_name && r.target_kind == hr.target_kind)
                 {
                     obs.spec_refs.push(hr);
                 }
@@ -2385,5 +2390,142 @@ mod tests {
             "should achieve parallelism (>= 2), got {}",
             observed
         );
+    }
+
+    // ── enrich_heuristic_spec_refs production helper tests ──
+
+    fn make_resource(
+        kind: &str,
+        name: &str,
+        uid: &str,
+        spec: Option<serde_json::Value>,
+    ) -> (String, ResourceEntry) {
+        let id = ResourceId {
+            group: "".into(),
+            version: "v1".into(),
+            kind: kind.into(),
+            namespace: Some("ns".into()),
+            name: name.into(),
+            uid: Some(uid.into()),
+        };
+        (
+            uid.into(),
+            ResourceEntry {
+                id,
+                owner_refs: vec![],
+                spec_refs: vec![],
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                raw_spec: spec,
+                data_keys: None,
+                data_hash: None,
+                secret_value_hashes: None,
+                deletion_timestamp: None,
+                finalizers: None,
+                observed_apis: None,
+            },
+        )
+    }
+
+    #[test]
+    fn heuristic_sets_correct_target_kind() {
+        let (u1, cm) = make_resource("ConfigMap", "shared-name", "uid-cm", None);
+        let (u2, dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"containers": [{"image": "shared-name"}]})),
+        );
+        let mut resources: HashMap<String, ResourceEntry> =
+            [(u1, cm), (u2.clone(), dep)].into_iter().collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u2).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(heuristic.len(), 1);
+        assert_eq!(heuristic[0].target_kind, "ConfigMap");
+        assert_eq!(heuristic[0].target_name, "shared-name");
+    }
+
+    #[test]
+    fn heuristic_same_name_two_kinds() {
+        let (u1, cm) = make_resource("ConfigMap", "shared", "uid-cm", None);
+        let (u2, secret) = make_resource("Secret", "shared", "uid-sec", None);
+        let (u3, dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"env": "shared"})),
+        );
+        let mut resources: HashMap<String, ResourceEntry> =
+            [(u1, cm), (u2, secret), (u3.clone(), dep)]
+                .into_iter()
+                .collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u3).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(heuristic.len(), 2, "ConfigMap+Secret → 2 edges");
+        let kinds: HashSet<_> = heuristic.iter().map(|r| r.target_kind.as_str()).collect();
+        assert!(kinds.contains("ConfigMap"));
+        assert!(kinds.contains("Secret"));
+    }
+
+    #[test]
+    fn heuristic_dedup_same_name_multiple_fields() {
+        let (u1, cm) = make_resource("ConfigMap", "cfg", "uid-cm", None);
+        let (u2, dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"field1": "cfg", "field2": "cfg"})),
+        );
+        let mut resources = [(u1, cm), (u2.clone(), dep)].into_iter().collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u2).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(
+            heuristic.len(),
+            1,
+            "same (kind,name) from 2 fields → 1 edge"
+        );
+    }
+
+    #[test]
+    fn heuristic_skip_when_typed_exists() {
+        let (u1, cm) = make_resource("ConfigMap", "my-cm", "uid-cm", None);
+        let (u2, mut dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"configMap": {"name": "my-cm"}, "ref": "my-cm"})),
+        );
+        dep.spec_refs.push(SpecRefEntry {
+            target_kind: "ConfigMap".into(),
+            target_name: "my-cm".into(),
+            field_path: "spec.configMap.name".into(),
+            target_group: Some("".into()),
+            target_namespace: None,
+            source: Some(SpecRefSourceSer::Typed),
+        });
+        let mut resources = [(u1, cm), (u2.clone(), dep)].into_iter().collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u2).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(heuristic.len(), 0, "typed exists → no heuristic duplicate");
     }
 }

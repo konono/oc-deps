@@ -1,18 +1,17 @@
 {
   "phase": "C",
   "workstream": 4,
-  "timestamp": "20260928T091024Z",
-  "evidence_commit": "9ec2af198357fd216b18eb14849f38146d2d8659",
-  "tested_code_commit": "9f48498ca9c3cdaa9c269f7db719152823a64436",
+  "timestamp": "20260928T092305Z",
+  "tested_code_commit": "b8c5177965130c7780b2e082db9109676b508be6",
   "base_commit": "9293f41",
-  "binary_sha256": "368e3fe9b7b7c94eb9f75d7081a3996f5c9112776552c1383ecbcb3f5227d507",
+  "binary_sha256": "32a8dd55352e456b508f5cc4085b0aa1737e3eeeadb417124e1435720aae3ac5",
   "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
-  "quality_gates": "fmt/clippy/test(1102+4)/release/corpus PASS",
+  "quality_gates": "fmt/clippy/test(1106+4)/release/corpus PASS",
   "live_evidence": {
     "command": "oc-deps snapshot create -A --exclude-system-namespaces --file live-snapshot.json",
-    "snapshot_sha256": "6d3c5434d019f241e7b046f2092f393780e94a8fa22e0bd4e437d6f9917a338b",
+    "snapshot_sha256": "f93e05b7fa3c5cd7408c023e3c085fa30416514ad2c75b9e483b26d0679f8ffc",
     "exit_code": 0,
-    "elapsed_ms": 306702,
+    "elapsed_ms": 271949,
     "raw_observations": 18080,
     "physical_uids": 4594,
     "logical_identities": 17661,
@@ -20,7 +19,7 @@
     "cluster_scoped": 5054,
     "multi_observed": 2290,
     "typed_refs": 1541,
-    "heuristic_refs": 902,
+    "heuristic_refs": 800,
     "scan_warnings": 3,
     "secret_plaintext": 0
   },
@@ -49,5 +48,6 @@
     "spec_refs": "2587 (2155/432)",
     "dangling_edges": 12,
     "dangling_targets": 2
-  }
+  },
+  "evidence_commit": "569403969f083ca366a4a2b471525b9ba952001a"
 }

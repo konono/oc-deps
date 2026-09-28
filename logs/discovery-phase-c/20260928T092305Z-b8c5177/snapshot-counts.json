@@ -1,0 +1,12 @@
+{
+  "raw_observations": 18080,
+  "physical_uids": 4594,
+  "logical_identities": 17661,
+  "uid_null": 10552,
+  "cluster_scoped": 5054,
+  "multi_observed": 2290,
+  "typed_refs": 1541,
+  "heuristic_refs": 800,
+  "scan_warnings": 3,
+  "secret_plaintext": 0
+}
