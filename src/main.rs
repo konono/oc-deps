@@ -2132,9 +2132,6 @@ async fn main() -> Result<()> {
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                     }
 
-                    // Compute plan SHA-256 for backup/receipt binding
-                    let plan_sha = crate::teardown::backup::compute_plan_sha256(&plan_file)?;
-
                     // TUI mode: ratatui interactive Plan Review → Execution → Residual Cleanup
                     if use_tui && !dry_run {
                         let journal_store = {
@@ -2182,7 +2179,6 @@ async fn main() -> Result<()> {
                             force,
                             backup_file.as_deref(),
                             &current_cluster_identity,
-                            &plan_sha,
                             &plan_file,
                         )
                         .await?;
@@ -2432,9 +2428,7 @@ async fn main() -> Result<()> {
                                         final_plan: &plan,
                                         target_operators: target_operators.clone(),
                                         cluster_identity: &current_cluster_identity,
-                                        plan_sha256: &plan_sha,
                                         plan_path: &plan_file,
-                                        gk_map: &gk_map,
                                         gvk_map: &gvk_map,
                                     };
                                     let r = crate::teardown::backup::prepare_backup_gate(
@@ -2817,9 +2811,7 @@ async fn main() -> Result<()> {
                             final_plan: &plan,
                             target_operators: target_operators.clone(),
                             cluster_identity: &current_cluster_identity,
-                            plan_sha256: &plan_sha,
                             plan_path: &plan_file,
-                            gk_map: &gk_map,
                             gvk_map: &gvk_map,
                         };
                         let r = crate::teardown::backup::prepare_backup_gate(
@@ -3617,10 +3609,13 @@ async fn main() -> Result<()> {
                     // verify the backup file is intact before resuming mutations
                     if let Some(ref receipt) = j.backup_receipt {
                         eprintln!("📦 Validating backup receipt...");
-                        let plan_sha = crate::teardown::backup::compute_sha256(
-                            serde_json::to_string_pretty(&j.plan_snapshot)?.as_bytes(),
-                        );
-                        crate::teardown::backup::validate_receipt(receipt, &cluster_id, &plan_sha)?;
+                        let bound_sha =
+                            crate::teardown::backup::bound_plan_sha256(&j.plan_snapshot)?;
+                        crate::teardown::backup::validate_receipt(
+                            receipt,
+                            &cluster_id,
+                            &bound_sha,
+                        )?;
                         eprintln!("  ✅ Backup file intact: {}", receipt.path);
                     }
 

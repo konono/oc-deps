@@ -30,6 +30,7 @@ pub struct BackupBundle {
     pub capability_warnings: Vec<String>,
     pub limitations: Vec<String>,
     pub resources: Vec<BackupResource>,
+    pub candidate_set_sha256: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cleanup_contract_observations: Vec<CleanupContractObservation>,
 }
@@ -347,11 +348,52 @@ pub fn add_adapter_candidates(
     Ok(())
 }
 
-/// Compute SHA-256 of the sorted candidate UID set for receipt binding.
+/// Compute SHA-256 of sorted full candidate identities for receipt binding.
 pub fn candidate_set_hash(candidates: &[BackupCandidate]) -> String {
-    let mut uids: Vec<&str> = candidates.iter().map(|c| c.identity.uid.as_str()).collect();
-    uids.sort();
-    compute_sha256(uids.join(",").as_bytes())
+    let mut keys: Vec<String> = candidates
+        .iter()
+        .map(|c| {
+            format!(
+                "{}/{}/{}/{}/{}/{}",
+                c.identity.group,
+                c.identity.version,
+                c.identity.kind,
+                c.identity.namespace.as_deref().unwrap_or("-"),
+                c.identity.name,
+                c.identity.uid,
+            )
+        })
+        .collect();
+    keys.sort();
+    compute_sha256(keys.join("\n").as_bytes())
+}
+
+/// Recompute candidate set hash from bundle resources for validation.
+pub fn candidate_set_hash_from_resources(resources: &[BackupResource]) -> String {
+    let mut keys: Vec<String> = resources
+        .iter()
+        .map(|r| {
+            format!(
+                "{}/{}/{}/{}/{}/{}",
+                r.identity.group,
+                r.identity.version,
+                r.identity.kind,
+                r.identity.namespace.as_deref().unwrap_or("-"),
+                r.identity.name,
+                r.identity.uid,
+            )
+        })
+        .collect();
+    keys.sort();
+    compute_sha256(keys.join("\n").as_bytes())
+}
+
+/// Compute SHA-256 of the final TeardownPlan for bundle/receipt binding.
+/// Used identically at creation and resume to ensure hash match.
+pub fn bound_plan_sha256(plan: &TeardownPlan) -> Result<String> {
+    let bytes =
+        serde_json::to_vec(plan).context("Failed to serialize TeardownPlan for bound hash")?;
+    Ok(compute_sha256(&bytes))
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -442,7 +484,6 @@ pub fn sanitize_for_recreate(
 pub async fn fetch_backup_resources(
     client: &kube::Client,
     candidates: &[BackupCandidate],
-    gk_map: &crate::kube::discovery::GroupKindMap,
     gvk_map: &crate::kube::discovery::GvkMap,
 ) -> Result<(Vec<BackupResource>, bool)> {
     use kube::api::{Api, ApiResource, DynamicObject};
@@ -451,7 +492,7 @@ pub async fn fetch_backup_resources(
     let mut contains_secrets = false;
 
     for candidate in candidates {
-        // Exact served GVK validation via GvkMap
+        // Exact served GVK validation — no fallback to preferred version
         let gvk_key = (
             candidate.identity.group.clone(),
             candidate.identity.version.clone(),
@@ -460,24 +501,13 @@ pub async fn fetch_backup_resources(
         let info = match gvk_map.get(&gvk_key) {
             Some(i) => i,
             None => {
-                // Fallback to gk_map (version may differ from discovery preferred version)
-                let gk_key = (
-                    candidate.identity.group.clone(),
-                    candidate.identity.kind.clone(),
+                bail!(
+                    "Exact GVK ({}/{}/{}) not served by cluster — \
+                     backup cannot proceed. Re-run teardown plan.",
+                    candidate.identity.group,
+                    candidate.identity.version,
+                    candidate.identity.kind,
                 );
-                match gk_map.get(&gk_key) {
-                    Some(i) => i,
-                    None => {
-                        bail!(
-                            "Cannot resolve API for {}/{} (group={}, version={}) — \
-                             API discovery failure, backup cannot proceed",
-                            candidate.identity.kind,
-                            candidate.identity.name,
-                            candidate.identity.group,
-                            candidate.identity.version,
-                        );
-                    }
-                }
             }
         };
 
@@ -581,6 +611,7 @@ pub fn build_bundle(
     contains_secret_data: bool,
     adapter_incomplete: Vec<String>,
     observations: Vec<CleanupContractObservation>,
+    candidate_set_sha256: String,
 ) -> BackupBundle {
     let candidates = resources.len();
     let captured = resources
@@ -642,6 +673,7 @@ pub fn build_bundle(
             "Operator-reconciled state may differ from the stored originals after re-creation.".to_string(),
         ],
         resources,
+        candidate_set_sha256,
         cleanup_contract_observations: observations,
     }
 }
@@ -658,6 +690,8 @@ pub fn compute_sha256(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Hash the raw execution plan file for provenance tracking (not used for receipt binding).
+#[allow(dead_code)]
 pub fn compute_plan_sha256(plan_path: &str) -> Result<String> {
     let data = std::fs::read(plan_path)
         .with_context(|| format!("Failed to read plan file for SHA-256: {}", plan_path))?;
@@ -841,7 +875,7 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
         execution_plan_sha256: bundle.execution_plan_sha256.clone(),
         resource_count: bundle.resources.len(),
         contains_secret_data: bundle.contains_secret_data,
-        candidate_set_sha256: String::new(), // set by caller
+        candidate_set_sha256: bundle.candidate_set_sha256.clone(),
     })
 }
 
@@ -886,7 +920,7 @@ pub fn batch_backup_path(dir: &Path, index: usize, operator_name: &str) -> PathB
 pub fn validate_receipt(
     receipt: &BackupReceipt,
     current_cluster: &ClusterIdentity,
-    plan_sha256: &str,
+    bound_plan_sha: &str,
 ) -> Result<()> {
     let path = Path::new(&receipt.path);
     if !path.exists() {
@@ -921,11 +955,54 @@ pub fn validate_receipt(
         );
     }
 
-    if bundle.execution_plan_sha256 != plan_sha256 {
+    // Cross-validate all duplicated receipt fields against parsed bundle
+    if bundle.execution_plan_sha256 != bound_plan_sha {
         bail!(
-            "Backup plan SHA-256 mismatch: backup {} does not match current plan {}",
+            "Backup plan SHA-256 mismatch: bundle {} does not match current plan {}",
             bundle.execution_plan_sha256,
-            plan_sha256,
+            bound_plan_sha,
+        );
+    }
+
+    if receipt.execution_plan_sha256 != bundle.execution_plan_sha256 {
+        bail!(
+            "Receipt/bundle plan SHA-256 mismatch: receipt {} vs bundle {}",
+            receipt.execution_plan_sha256,
+            bundle.execution_plan_sha256,
+        );
+    }
+
+    if receipt.candidate_set_sha256 != bundle.candidate_set_sha256 {
+        bail!(
+            "Receipt/bundle candidate set hash mismatch: receipt {} vs bundle {}",
+            receipt.candidate_set_sha256,
+            bundle.candidate_set_sha256,
+        );
+    }
+
+    // Recompute candidate set hash from bundle resources
+    let recomputed = candidate_set_hash_from_resources(&bundle.resources);
+    if recomputed != bundle.candidate_set_sha256 {
+        bail!(
+            "Candidate set hash verification failed: bundle {} vs recomputed {}",
+            bundle.candidate_set_sha256,
+            recomputed,
+        );
+    }
+
+    if receipt.resource_count != bundle.resources.len() {
+        bail!(
+            "Resource count mismatch: receipt {} vs bundle {}",
+            receipt.resource_count,
+            bundle.resources.len(),
+        );
+    }
+
+    if receipt.contains_secret_data != bundle.contains_secret_data {
+        bail!(
+            "Secret data flag mismatch: receipt {} vs bundle {}",
+            receipt.contains_secret_data,
+            bundle.contains_secret_data,
         );
     }
 
@@ -941,9 +1018,7 @@ pub struct BackupGateContext<'a> {
     pub final_plan: &'a TeardownPlan,
     pub target_operators: Vec<&'a crate::analyzers::olm::OperatorInstance>,
     pub cluster_identity: &'a ClusterIdentity,
-    pub plan_sha256: &'a str,
     pub plan_path: &'a str,
-    pub gk_map: &'a crate::kube::discovery::GroupKindMap,
     pub gvk_map: &'a crate::kube::discovery::GvkMap,
 }
 
@@ -1009,9 +1084,12 @@ pub async fn prepare_backup_gate(
 
     let candidate_hash = candidate_set_hash(&candidates);
 
-    // Fetch all candidates from cluster
+    // Compute bound plan hash from the final TeardownPlan
+    let bound_plan_sha = bound_plan_sha256(ctx.final_plan)?;
+
+    // Fetch all candidates from cluster (exact GVK only, no fallback)
     let (resources, contains_secrets) =
-        fetch_backup_resources(ctx.client, &candidates, ctx.gk_map, ctx.gvk_map).await?;
+        fetch_backup_resources(ctx.client, &candidates, ctx.gvk_map).await?;
 
     let captured = resources
         .iter()
@@ -1032,16 +1110,16 @@ pub async fn prepare_backup_gate(
     let bundle = build_bundle(
         resources,
         ctx.cluster_identity,
-        ctx.plan_sha256,
+        &bound_plan_sha,
         ctx.plan_path,
         operator_names,
         contains_secrets,
         vec![],
         observations,
+        candidate_hash,
     );
 
-    let mut receipt = write_backup_bundle(&bundle, backup_path)?;
-    receipt.candidate_set_sha256 = candidate_hash;
+    let receipt = write_backup_bundle(&bundle, backup_path)?;
 
     eprintln!(
         "  ✅ Backup written: {} ({} resources, SHA-256: {})",
@@ -1101,6 +1179,7 @@ mod tests {
     }
 
     fn test_bundle(resources: Vec<BackupResource>) -> BackupBundle {
+        let cand_hash = candidate_set_hash_from_resources(&resources);
         build_bundle(
             resources,
             &test_cluster(),
@@ -1110,6 +1189,7 @@ mod tests {
             false,
             vec![],
             vec![],
+            cand_hash,
         )
     }
 
@@ -1535,6 +1615,7 @@ mod tests {
                         false,
                         vec![],
                         vec![],
+                        "cand".to_string(),
                     );
                     write_backup_bundle(&bundle, &target)
                 })
@@ -1543,17 +1624,15 @@ mod tests {
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
         let successes = results.iter().filter(|r| r.is_ok()).count();
-        // Exactly 1 success (hard_link no-clobber ensures this)
-        assert!(
-            successes <= 1,
-            "at most 1 success expected, got {}",
+        assert_eq!(
+            successes, 1,
+            "exactly 1 success expected, got {}",
             successes
         );
-        // File content is valid if it exists
-        if target.exists() {
-            let data = std::fs::read(&target).unwrap();
-            let _: BackupBundle = serde_json::from_slice(&data).unwrap();
-        }
+        assert!(target.exists(), "target file must exist after 1 success");
+        let data = std::fs::read(&target).unwrap();
+        let loaded: BackupBundle = serde_json::from_slice(&data).unwrap();
+        assert_eq!(loaded.schema_version, BACKUP_SCHEMA_VERSION);
         // No temp residuals
         let tmps: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
@@ -1621,6 +1700,7 @@ mod tests {
                 false,
                 vec![],
                 vec![],
+                "fixed-cand-hash".to_string(),
             )
         };
 
@@ -1824,5 +1904,180 @@ mod tests {
         let h1 = candidate_set_hash(&[c1.clone(), c2.clone()]);
         let h2 = candidate_set_hash(&[c2, c1]);
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn bound_plan_sha256_roundtrip() {
+        let plan = make_plan(vec![Action::Delete {
+            resource: rid("Deployment", "d1", Some("uid-1")),
+            reason: "root".to_string(),
+        }]);
+        let h1 = bound_plan_sha256(&plan).unwrap();
+        let h2 = bound_plan_sha256(&plan).unwrap();
+        assert_eq!(h1, h2, "same plan must produce same hash");
+        assert!(!h1.is_empty());
+    }
+
+    #[test]
+    fn bound_plan_sha256_differs_after_override() {
+        let mut plan = make_plan(vec![
+            Action::Delete {
+                resource: rid("Deployment", "d1", Some("uid-1")),
+                reason: "root".to_string(),
+            },
+            Action::Review {
+                resource: rid("ConfigMap", "cm1", Some("uid-2")),
+                reason: "label".to_string(),
+                metadata: None,
+            },
+        ]);
+        let h1 = bound_plan_sha256(&plan).unwrap();
+
+        // Simulate TUI override: Review → Delete
+        plan.phases[0].actions[1] = Action::Delete {
+            resource: rid("ConfigMap", "cm1", Some("uid-2")),
+            reason: "approved via TUI".to_string(),
+        };
+        let h2 = bound_plan_sha256(&plan).unwrap();
+        assert_ne!(h1, h2, "override must change plan hash");
+    }
+
+    #[test]
+    fn validate_receipt_plan_hash_mismatch_fails() {
+        let dir = std::env::temp_dir().join(format!("hash-mm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backup.json");
+
+        let bundle = test_bundle(vec![]);
+        let receipt = write_backup_bundle(&bundle, &path).unwrap();
+
+        // Validate with a different plan hash
+        let result = validate_receipt(&receipt, &test_cluster(), "wrong-plan-hash");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("plan SHA-256"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_receipt_candidate_hash_cross_validated() {
+        let dir = std::env::temp_dir().join(format!("cand-xv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backup.json");
+
+        let bundle = test_bundle(vec![]);
+        let receipt = write_backup_bundle(&bundle, &path).unwrap();
+
+        // Receipt has candidate_set_sha256 from bundle — validate succeeds
+        let result = validate_receipt(&receipt, &test_cluster(), "sha256abc");
+        assert!(result.is_ok());
+
+        // Tamper receipt candidate hash
+        let mut bad_receipt = receipt.clone();
+        bad_receipt.candidate_set_sha256 = "tampered".to_string();
+        let result = validate_receipt(&bad_receipt, &test_cluster(), "sha256abc");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("candidate set hash")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_receipt_resource_count_mismatch_fails() {
+        let dir = std::env::temp_dir().join(format!("rcount-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backup.json");
+
+        let bundle = test_bundle(vec![]);
+        let receipt = write_backup_bundle(&bundle, &path).unwrap();
+
+        let mut bad_receipt = receipt;
+        bad_receipt.resource_count = 999;
+        let result = validate_receipt(&bad_receipt, &test_cluster(), "sha256abc");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Resource count"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_receipt_secret_flag_mismatch_fails() {
+        let dir = std::env::temp_dir().join(format!("sflag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backup.json");
+
+        let bundle = test_bundle(vec![]);
+        let receipt = write_backup_bundle(&bundle, &path).unwrap();
+
+        let mut bad_receipt = receipt;
+        bad_receipt.contains_secret_data = true;
+        let result = validate_receipt(&bad_receipt, &test_cluster(), "sha256abc");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Secret data flag"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_receipt_plan_sha_mismatch_in_receipt_fails() {
+        let dir = std::env::temp_dir().join(format!("psha-mm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backup.json");
+
+        let bundle = test_bundle(vec![]);
+        let receipt = write_backup_bundle(&bundle, &path).unwrap();
+
+        let mut bad_receipt = receipt;
+        bad_receipt.execution_plan_sha256 = "tampered".to_string();
+        let result = validate_receipt(&bad_receipt, &test_cluster(), "sha256abc");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("plan SHA-256"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidate_set_hash_uses_full_identity() {
+        let c1 = BackupCandidate {
+            identity: BackupResourceIdentity {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "Deployment".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "dep1".to_string(),
+                uid: "uid-1".to_string(),
+            },
+            sources: vec![],
+        };
+        let c2 = BackupCandidate {
+            identity: BackupResourceIdentity {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                kind: "ConfigMap".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "cm1".to_string(),
+                uid: "uid-1".to_string(), // same UID, different identity
+            },
+            sources: vec![],
+        };
+
+        let h1 = candidate_set_hash(std::slice::from_ref(&c1));
+        let h2 = candidate_set_hash(std::slice::from_ref(&c2));
+        // Same UID but different group/kind → different hash
+        assert_ne!(
+            h1, h2,
+            "full identity hash must differ when group/kind differ"
+        );
+    }
+
+    #[test]
+    fn bundle_contains_candidate_set_hash() {
+        let bundle = test_bundle(vec![]);
+        assert!(!bundle.candidate_set_sha256.is_empty());
+        let json = serde_json::to_string(&bundle).unwrap();
+        assert!(json.contains("candidate_set_sha256"));
+        // Recompute must match
+        let recomputed = candidate_set_hash_from_resources(&bundle.resources);
+        assert_eq!(bundle.candidate_set_sha256, recomputed);
     }
 }

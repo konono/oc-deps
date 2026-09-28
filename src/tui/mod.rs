@@ -41,7 +41,6 @@ pub async fn run_tui(
     force: bool,
     backup_file: Option<&str>,
     cluster_identity: &crate::teardown::plan::ClusterIdentity,
-    plan_sha: &str,
     plan_path: &str,
 ) -> Result<()> {
     enable_raw_mode().context("Failed to enable raw mode")?;
@@ -64,7 +63,6 @@ pub async fn run_tui(
         force,
         backup_file,
         cluster_identity,
-        plan_sha,
         plan_path,
     )
     .await;
@@ -92,7 +90,6 @@ async fn run_tui_inner(
     force: bool,
     backup_file: Option<&str>,
     cluster_identity: &crate::teardown::plan::ClusterIdentity,
-    plan_sha: &str,
     plan_path: &str,
 ) -> Result<()> {
     let mut app = AppState::new(journal_store.read().await.finalizer_recovery_approved);
@@ -403,9 +400,7 @@ async fn run_tui_inner(
             final_plan: plan,
             target_operators: target_operators.to_vec(),
             cluster_identity,
-            plan_sha256: plan_sha,
             plan_path,
-            gk_map,
             gvk_map,
         };
         let r =
