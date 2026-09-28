@@ -2483,12 +2483,12 @@ mod tests {
 
         let spawned = tokio::spawn(async move {
             let mut handle = pin!(handle);
-            // Expect 2 LIST requests (one per served GVR)
+            let mut paths = Vec::new();
             for i in 0..2 {
-                let (_req, send) = handle.next_request().await.expect("expected request");
+                let (req, send) = handle.next_request().await.expect("expected request");
+                paths.push(req.uri().path().to_string());
                 rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if i == 0 {
-                    // First GVR returns: 1 object with UID + 1 UID-null
                     send.send_response(mock_json_response(serde_json::json!({
                         "apiVersion": "group-a/v1", "kind": "WidgetList",
                         "metadata": {"resourceVersion": "1"},
@@ -2500,7 +2500,6 @@ mod tests {
                         ]
                     })));
                 } else {
-                    // Second GVR returns same UID under different group
                     send.send_response(mock_json_response(serde_json::json!({
                         "apiVersion": "group-b/v1", "kind": "WidgetList",
                         "metadata": {"resourceVersion": "1"},
@@ -2511,6 +2510,7 @@ mod tests {
                     })));
                 }
             }
+            paths
         });
 
         let result = build_snapshot_all_gvrs(
@@ -2523,7 +2523,7 @@ mod tests {
             None,
         )
         .await;
-        spawned.await.unwrap();
+        let paths = spawned.await.unwrap();
 
         assert!(result.is_ok());
         let snap = result.unwrap();
@@ -2532,6 +2532,14 @@ mod tests {
             request_count.load(std::sync::atomic::Ordering::Relaxed),
             2,
             "2 served GVRs = 2 requests"
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "/apis/group-a/v1/namespaces/test-ns/widgets",
+                "/apis/group-b/v1/namespaces/test-ns/widgets",
+            ],
+            "each served GVR gets a distinct request path"
         );
         assert_eq!(
             snap.observations.len(),

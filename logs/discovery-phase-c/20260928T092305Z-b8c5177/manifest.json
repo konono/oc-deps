@@ -6,7 +6,7 @@
   "base_commit": "9293f41",
   "binary_sha256": "32a8dd55352e456b508f5cc4085b0aa1737e3eeeadb417124e1435720aae3ac5",
   "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
-  "quality_gates": "fmt/clippy/test(1106+4)/release/corpus PASS",
+  "quality_gates": "fmt/clippy/test(1107+4)/release/corpus PASS",
   "live_evidence": {
     "command": "oc-deps snapshot create -A --exclude-system-namespaces --file live-snapshot.json",
     "snapshot_sha256": "f93e05b7fa3c5cd7408c023e3c085fa30416514ad2c75b9e483b26d0679f8ffc",
@@ -49,6 +49,6 @@
     "dangling_edges": 12,
     "dangling_targets": 2
   },
-  "evidence_commit": "bedf30608281e2bdae29bb9b57a7567db135daaa",
+  "evidence_commit": "containing git commit (self-referential)",
   "notes": "Live evidence created from binary at e504df6. Subsequent commits (bedf306) add clippy fix, tower mock test, and resource alias merge \u2014 no classification logic change."
 }
