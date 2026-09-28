@@ -1158,6 +1158,25 @@ pub fn validate_receipt(receipt: &BackupReceipt, current_cluster: &ClusterIdenti
     let manifest: BackupManifest =
         serde_yaml::from_slice(&manifest_bytes).with_context(|| "Failed to parse manifest.yaml")?;
 
+    // Schema version
+    if manifest.schema_version != BACKUP_SCHEMA_VERSION {
+        bail!(
+            "Backup schema version mismatch: expected {} got {}",
+            BACKUP_SCHEMA_VERSION,
+            manifest.schema_version,
+        );
+    }
+
+    // Root must not be a symlink
+    #[cfg(unix)]
+    {
+        let meta = std::fs::symlink_metadata(root)
+            .with_context(|| format!("Failed to stat root: {}", root.display()))?;
+        if meta.file_type().is_symlink() {
+            bail!("Backup root {} is a symlink — rejected", root.display());
+        }
+    }
+
     // Cluster identity
     if !current_cluster.matches(&manifest.cluster_identity) {
         bail!("Backup cluster identity mismatch");
@@ -1317,6 +1336,86 @@ pub fn validate_receipt(receipt: &BackupReceipt, current_cluster: &ClusterIdenti
         bail!("Secret data flag mismatch");
     }
 
+    // Tree hash triple-check: manifest == receipt == recomputed
+    if manifest.tree_sha256 != receipt.tree_sha256 {
+        bail!(
+            "Manifest/receipt tree hash mismatch: {} vs {}",
+            manifest.tree_sha256,
+            receipt.tree_sha256,
+        );
+    }
+
+    // Verify coverage counts match resource states
+    let actual_captured = manifest
+        .resources
+        .iter()
+        .filter(|e| e.state == BackupResourceState::Captured)
+        .count();
+    let actual_absent = manifest
+        .resources
+        .iter()
+        .filter(|e| e.state == BackupResourceState::AlreadyAbsent)
+        .count();
+    if manifest.coverage.captured != actual_captured
+        || manifest.coverage.already_absent != actual_absent
+    {
+        bail!(
+            "Coverage count mismatch: manifest says {}/{} captured/absent, resources show {}/{}",
+            manifest.coverage.captured,
+            manifest.coverage.already_absent,
+            actual_captured,
+            actual_absent,
+        );
+    }
+
+    // Verify relative_path matches expected resource_dir_path
+    for entry in &manifest.resources {
+        let expected = resource_dir_path(&entry.identity)?;
+        if entry.relative_path != expected {
+            bail!(
+                "Resource path mismatch for {}/{}: manifest {:?} vs expected {:?}",
+                entry.identity.kind,
+                entry.identity.name,
+                entry.relative_path,
+                expected,
+            );
+        }
+    }
+
+    // Verify Captured resources have all 3 files, AlreadyAbsent has lifecycle only
+    for entry in &manifest.resources {
+        match entry.state {
+            BackupResourceState::Captured => {
+                if entry.raw_sha256.is_none()
+                    || entry.recreate_sha256.is_none()
+                    || entry.lifecycle_sha256.is_none()
+                {
+                    bail!(
+                        "Captured resource {}/{} missing required file hash",
+                        entry.identity.kind,
+                        entry.identity.name,
+                    );
+                }
+            }
+            BackupResourceState::AlreadyAbsent => {
+                if entry.lifecycle_sha256.is_none() {
+                    bail!(
+                        "AlreadyAbsent resource {}/{} missing lifecycle hash",
+                        entry.identity.kind,
+                        entry.identity.name,
+                    );
+                }
+                if entry.raw_sha256.is_some() || entry.recreate_sha256.is_some() {
+                    bail!(
+                        "AlreadyAbsent resource {}/{} has unexpected raw/recreate hash",
+                        entry.identity.kind,
+                        entry.identity.name,
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1366,8 +1465,95 @@ pub struct BackupGateContext<'a> {
     pub gvk_map: &'a crate::kube::discovery::GvkMap,
 }
 
+/// Resolve a live UID for a resource that inspection returned without one
+/// (e.g., CSV installStrategy Deployments/ServiceAccounts).
+async fn resolve_live_uid(
+    client: &kube::Client,
+    res: &crate::analyzers::inspect::InspectedResource,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<String> {
+    use kube::api::{Api, ApiResource, DynamicObject};
+
+    let gk_key = (res.id.group.clone(), res.id.kind.clone());
+    let info = gk_map.get(&gk_key).with_context(|| {
+        format!(
+            "Cannot resolve API for {}/{} — UID resolution failed",
+            res.id.kind, res.id.name,
+        )
+    })?;
+
+    let gvk = kube::api::GroupVersionKind {
+        group: info.group.clone(),
+        version: info.version.clone(),
+        kind: res.id.kind.clone(),
+    };
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+
+    let api: Api<DynamicObject> = if let Some(ref ns) = res.id.namespace {
+        Api::namespaced_with(client.clone(), ns, &ar)
+    } else {
+        Api::all_with(client.clone(), &ar)
+    };
+
+    let obj = crate::kube::scanner::get_with_retry(
+        &api,
+        &res.id.name,
+        &info.group,
+        &info.version,
+        &info.plural,
+    )
+    .await
+    .map_err(|w| {
+        anyhow::anyhow!(
+            "Failed to GET {}/{} for UID resolution: {}",
+            res.id.kind,
+            res.id.name,
+            w
+        )
+    })?;
+
+    let uid = obj
+        .metadata
+        .uid
+        .filter(|u| !u.is_empty())
+        .with_context(|| {
+            format!(
+                "GET {}/{} returned no UID — resource may not exist",
+                res.id.kind, res.id.name,
+            )
+        })?;
+
+    // Verify identity
+    if let Some(tm) = &obj.types {
+        let (group, _version) = split_api_version(&tm.api_version);
+        if group != res.id.group || tm.kind != res.id.kind {
+            bail!(
+                "Identity mismatch for {}/{}: expected {}/{} got {}/{}",
+                res.id.kind,
+                res.id.name,
+                res.id.group,
+                res.id.kind,
+                group,
+                tm.kind,
+            );
+        }
+    }
+    if obj.metadata.name.as_deref() != Some(&res.id.name) {
+        bail!(
+            "Name mismatch for {}: expected {} got {:?}",
+            res.id.kind,
+            res.id.name,
+            obj.metadata.name,
+        );
+    }
+
+    Ok(uid)
+}
+
 /// Shared operator backup discovery: uses the same inspection as
 /// `operator resources --scope related`, producing the exact same identity set.
+/// Resolves UIDs for installStrategy resources (Deployments, ServiceAccounts)
+/// that inspection returns without UIDs.
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_operator_backup(
     client: &kube::Client,
@@ -1385,18 +1571,31 @@ pub async fn discover_operator_backup(
         crate::kube::scanner::DEFAULT_API_CONCURRENCY,
     ));
     let cmd_planner = crate::kube::planner::QueryPlanner::new(Some(cmd_semaphore));
+    let cmd_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
+        std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
+    );
 
-    let inspection = crate::analyzers::inspect::inspect_operator_with_options_ledger(
+    let mut inspection = crate::analyzers::inspect::inspect_operator_with_options_ledger(
         client,
         operator,
         kind_map,
         gvr_map,
         gk_map,
         true, // cross_namespace = related scope
-        None,
+        Some(cmd_ledger.clone()),
         Some(cmd_planner.clone()),
     )
     .await?;
+
+    // Flush planner to ledger and update coverage (same boundary as operator resources)
+    cmd_planner.flush_to_ledger(&cmd_ledger).await;
+    {
+        let mut ledger = cmd_ledger.lock().unwrap();
+        let (coverage, incomplete, snapshot) = ledger.snapshot();
+        inspection.coverage = coverage;
+        inspection.incomplete_count = incomplete;
+        inspection.coverage_ledger = snapshot;
+    }
 
     // Fail closed on incomplete coverage
     if inspection.should_exit_strict() {
@@ -1412,21 +1611,29 @@ pub async fn discover_operator_backup(
     let mut candidates: Vec<BackupCandidate> = Vec::new();
     let mut observations = Vec::new();
 
-    // Collect all discovered resources by UID
+    // Collect all discovered resources, resolving missing UIDs via exact GET
     for category in &inspection.categories {
         for res in &category.resources {
             let uid = match &res.id.uid {
                 Some(u) if !u.is_empty() => u.clone(),
                 _ => {
-                    bail!(
-                        "Discovered resource {}/{} has no UID — backup cannot proceed",
-                        res.id.kind,
-                        res.id.name,
-                    );
+                    // installStrategy resources (Deployment/ServiceAccount) have no UID
+                    // from inspection — resolve via live GET
+                    resolve_live_uid(client, res, gk_map).await?
                 }
             };
 
-            let identity = BackupResourceIdentity::from_resource_id(&res.id, &uid);
+            let mut resolved_id = res.id.clone();
+            resolved_id.uid = Some(uid.clone());
+            // Use version from gk_map if resource version is empty
+            if resolved_id.version.is_empty()
+                && let Some(info) =
+                    gk_map.get(&(resolved_id.group.clone(), resolved_id.kind.clone()))
+            {
+                resolved_id.version = info.version.clone();
+            }
+
+            let identity = BackupResourceIdentity::from_resource_id(&resolved_id, &uid);
             let source = BackupSource::operator_discovery(
                 &operator.csv.name,
                 &category.label,
