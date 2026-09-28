@@ -20,6 +20,10 @@ const CLEANUP_FUNCTION: &str =
 const NAMING_FUNCTION: &str = "internal/controllers/nodefeaturediscovery_reconciler.go:handleSCCs (hardcoded deterministic names)";
 const BINDING_NOTE: &str = "binding=package nfd + exact CSV 4.22.0-202609151747 (corpus/live empirical); source contract reference=upstream commit 3931a619 (approximate for downstream image)";
 
+const ROOT_GROUP: &str = "nfd.openshift.io";
+const ROOT_VERSION: &str = "v1";
+const ROOT_KIND: &str = "NodeFeatureDiscovery";
+
 const SCC_NAMES: [&str; 2] = ["nfd-topology-updater", "nfd-worker"];
 
 fn extract_csv_version(csv_name: &str) -> Option<&str> {
@@ -35,7 +39,11 @@ pub fn find_nfd_roots(cr_resources: &[InspectedResource]) -> Vec<ResourceId> {
         .iter()
         .map(|r| &r.id)
         .filter(|id| {
-            id.group == "nfd.openshift.io" && id.kind == "NodeFeatureDiscovery" && id.uid.is_some()
+            id.group == ROOT_GROUP
+                && id.version == ROOT_VERSION
+                && id.kind == ROOT_KIND
+                && id.namespace.as_deref().is_some_and(|ns| !ns.is_empty())
+                && id.uid.as_deref().is_some_and(|uid| !uid.is_empty())
         })
         .cloned()
         .collect();
@@ -793,43 +801,134 @@ mod tests {
         assert_eq!(id.group, "security.openshift.io");
     }
 
-    // Test: find_nfd_roots filters correctly
+    // Test: find_nfd_roots version/scope-bound filtering
     #[test]
-    fn find_roots_filters_kind_and_group() {
-        let resources = vec![
+    fn find_roots_version_scope_bound() {
+        fn make_resource(
+            group: &str,
+            version: &str,
+            kind: &str,
+            namespace: Option<&str>,
+            uid: Option<&str>,
+        ) -> InspectedResource {
             InspectedResource {
                 id: ResourceId {
-                    group: "nfd.openshift.io".to_string(),
-                    version: "v1".to_string(),
-                    kind: "NodeFeatureDiscovery".to_string(),
-                    namespace: Some("openshift-nfd".to_string()),
+                    group: group.to_string(),
+                    version: version.to_string(),
+                    kind: kind.to_string(),
+                    namespace: namespace.map(|s| s.to_string()),
                     name: "nfd-instance".to_string(),
-                    uid: Some("uid-1".to_string()),
+                    uid: uid.map(|s| s.to_string()),
                 },
                 source_id: None,
                 relationship: Relationship::OwnedCrdInstance,
                 evidence: String::new(),
                 confidence: Confidence::Managed,
+            }
+        }
+
+        struct Case {
+            label: &'static str,
+            group: &'static str,
+            version: &'static str,
+            kind: &'static str,
+            namespace: Option<&'static str>,
+            uid: Option<&'static str>,
+            expected: bool,
+        }
+
+        let cases = vec![
+            Case {
+                label: "v1 namespaced positive",
+                group: "nfd.openshift.io",
+                version: "v1",
+                kind: "NodeFeatureDiscovery",
+                namespace: Some("openshift-nfd"),
+                uid: Some("uid-1"),
+                expected: true,
             },
-            InspectedResource {
-                id: ResourceId {
-                    group: "nfd.openshift.io".to_string(),
-                    version: "v1".to_string(),
-                    kind: "NodeFeatureRule".to_string(),
-                    namespace: Some("openshift-nfd".to_string()),
-                    name: "some-rule".to_string(),
-                    uid: Some("uid-2".to_string()),
-                },
-                source_id: None,
-                relationship: Relationship::OwnedCrdInstance,
-                evidence: String::new(),
-                confidence: Confidence::Managed,
+            Case {
+                label: "v1alpha1 negative",
+                group: "nfd.openshift.io",
+                version: "v1alpha1",
+                kind: "NodeFeatureDiscovery",
+                namespace: Some("openshift-nfd"),
+                uid: Some("uid-2"),
+                expected: false,
+            },
+            Case {
+                label: "namespace=None negative (cluster-scoped)",
+                group: "nfd.openshift.io",
+                version: "v1",
+                kind: "NodeFeatureDiscovery",
+                namespace: None,
+                uid: Some("uid-3"),
+                expected: false,
+            },
+            Case {
+                label: "empty namespace negative",
+                group: "nfd.openshift.io",
+                version: "v1",
+                kind: "NodeFeatureDiscovery",
+                namespace: Some(""),
+                uid: Some("uid-4"),
+                expected: false,
+            },
+            Case {
+                label: "UID None negative",
+                group: "nfd.openshift.io",
+                version: "v1",
+                kind: "NodeFeatureDiscovery",
+                namespace: Some("openshift-nfd"),
+                uid: None,
+                expected: false,
+            },
+            Case {
+                label: "empty UID negative",
+                group: "nfd.openshift.io",
+                version: "v1",
+                kind: "NodeFeatureDiscovery",
+                namespace: Some("openshift-nfd"),
+                uid: Some(""),
+                expected: false,
+            },
+            Case {
+                label: "wrong kind negative",
+                group: "nfd.openshift.io",
+                version: "v1",
+                kind: "NodeFeatureRule",
+                namespace: Some("openshift-nfd"),
+                uid: Some("uid-5"),
+                expected: false,
+            },
+            Case {
+                label: "wrong group negative",
+                group: "nfd.k8s-sigs.io",
+                version: "v1",
+                kind: "NodeFeatureDiscovery",
+                namespace: Some("openshift-nfd"),
+                uid: Some("uid-6"),
+                expected: false,
             },
         ];
 
-        let roots = find_nfd_roots(&resources);
-        assert_eq!(roots.len(), 1);
-        assert_eq!(roots[0].kind, "NodeFeatureDiscovery");
+        for case in &cases {
+            let resources = vec![make_resource(
+                case.group,
+                case.version,
+                case.kind,
+                case.namespace,
+                case.uid,
+            )];
+            let roots = find_nfd_roots(&resources);
+            assert_eq!(
+                roots.len(),
+                if case.expected { 1 } else { 0 },
+                "case '{}' expected roots={}",
+                case.label,
+                if case.expected { 1 } else { 0 }
+            );
+        }
     }
 
     // Test: merge only Resolved+UID
