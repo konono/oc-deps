@@ -93,6 +93,8 @@ pub struct OperatorInspection {
     pub coverage_ledger: Option<CoverageLedger>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_planner: Option<crate::kube::planner::PlannerMetrics>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adapter_reports: Vec<crate::analyzers::adapters::AdapterReport>,
 }
 
 impl OperatorInspection {
@@ -478,32 +480,16 @@ pub async fn inspect_operator_with_options_ledger(
     }
 
     // Run targeted adapters
-    let mut adapter_resources = Vec::new();
-    {
-        eprint!("🔍 Running targeted adapters...");
-        let adapter_reports =
-            crate::analyzers::adapters::run_adapters(client, operator, planner.as_ref()).await;
-        for report in &adapter_reports {
-            if report.skipped {
-                continue;
-            }
-            for r in &report.results {
-                adapter_resources.push(r.resource.clone());
-            }
-            if report.incomplete {
-                scan_warning_count += 1;
-                all_warnings.push(format!(
-                    "adapter {}: incomplete (some queries failed)",
-                    report.adapter_id
-                ));
-            }
-            for d in &report.diagnostics {
-                all_warnings.push(format!("adapter {}: {}", report.adapter_id, d));
-                scan_warning_count += 1;
-            }
-        }
-        eprintln!(" found {} resources", adapter_resources.len());
+    eprint!("🔍 Running targeted adapters...");
+    let adapter_reports =
+        crate::analyzers::adapters::run_adapters(client, operator, planner.as_ref(), &cr_resources)
+            .await;
+    let adapter_merge = crate::analyzers::adapters::merge_adapter_reports(&adapter_reports);
+    for w in &adapter_merge.warnings {
+        all_warnings.push(w.clone());
     }
+    scan_warning_count += adapter_merge.incomplete_count;
+    eprintln!(" found {} resources", adapter_merge.resources.len());
 
     // Build categories after cross-ns scan has enriched cr_resources
     let mut categories = Vec::new();
@@ -531,10 +517,10 @@ pub async fn inspect_operator_with_options_ledger(
             resources: related_resources,
         });
     }
-    if !adapter_resources.is_empty() {
+    if !adapter_merge.resources.is_empty() {
         categories.push(InspectionCategory {
             label: "Targeted Adapter (cleanup contract)".to_string(),
-            resources: adapter_resources,
+            resources: adapter_merge.resources,
         });
     }
 
@@ -563,6 +549,7 @@ pub async fn inspect_operator_with_options_ledger(
         incomplete_count: snapshot_incomplete,
         coverage_ledger: snapshot_ledger,
         query_planner: None,
+        adapter_reports,
     })
 }
 
@@ -824,6 +811,44 @@ fn print_inspection_tree(inspection: &OperatorInspection, verbose: bool) {
         println!();
     }
 
+    // Adapter reports
+    if !inspection.adapter_reports.is_empty() {
+        println!("── Targeted Adapters ──");
+        for report in &inspection.adapter_reports {
+            let status = if report.skipped {
+                "skipped"
+            } else if report.incomplete {
+                "incomplete"
+            } else {
+                "ok"
+            };
+            println!("  {} ({})", report.adapter_id, status);
+            if let Some(reason) = &report.skip_reason {
+                println!("    reason: {}", reason);
+            }
+            for r in &report.results {
+                let uid_str = r.resource.id.uid.as_deref().unwrap_or("none");
+                let src_str = r
+                    .resource
+                    .source_id
+                    .as_ref()
+                    .map(|s| format!("{}/{}", s.kind, s.name))
+                    .unwrap_or_default();
+                println!(
+                    "    {}/{} [{}] uid={} source={}",
+                    r.resource.id.kind, r.resource.id.name, r.resolution, uid_str, src_str
+                );
+            }
+            if let Some(ev) = report.results.first().map(|r| &r.adapter_evidence) {
+                println!("    source: {} ({})", ev.source_url, ev.matched_csv_version);
+            }
+            for d in &report.diagnostics {
+                println!("    \x1b[33mdiag: {}\x1b[0m", d);
+            }
+        }
+        println!();
+    }
+
     // Summary
     let total: usize = inspection
         .categories
@@ -1022,6 +1047,7 @@ mod tests {
             incomplete_count: 0,
             coverage_ledger: None,
             query_planner: None,
+            adapter_reports: vec![],
         };
         let json = serde_json::to_string(&inspection).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1143,6 +1169,7 @@ mod tests {
             incomplete_count: 0,
             coverage_ledger: Some(ledger),
             query_planner: None,
+            adapter_reports: vec![],
         };
 
         let json = serde_json::to_string_pretty(&inspection).unwrap();
@@ -1182,6 +1209,7 @@ mod tests {
             incomplete_count: 0,
             coverage_ledger: None,
             query_planner: None,
+            adapter_reports: vec![],
         };
 
         assert!(
@@ -1226,6 +1254,7 @@ mod tests {
             incomplete_count: 0,
             coverage_ledger: Some(ledger),
             query_planner: None,
+            adapter_reports: vec![],
         };
 
         assert_eq!(inspection.scan_warning_count, 0);
@@ -1283,6 +1312,7 @@ mod tests {
                 incomplete_count: incomplete,
                 coverage_ledger: Some(ledger),
                 query_planner: None,
+                adapter_reports: vec![],
             }
         };
 

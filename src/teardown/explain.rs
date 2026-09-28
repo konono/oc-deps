@@ -458,14 +458,6 @@ fn format_evidence(evidence: &[Evidence], confidence: &Confidence) -> String {
             Evidence::StorageBinding => "StorageBinding".to_string(),
             Evidence::WebhookService => "WebhookService".to_string(),
             Evidence::ApiServiceBackend => "ApiServiceBackend".to_string(),
-            Evidence::CleanupContract {
-                adapter_id,
-                source_revision,
-                ..
-            } => format!(
-                "CleanupContract: adapter={} source={}",
-                adapter_id, source_revision
-            ),
         })
         .unwrap_or_else(|| "unknown".to_string());
     format!("{}: {}", conf, ev)
