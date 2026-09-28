@@ -452,6 +452,7 @@ async fn cluster_wide_map(
                 Some(sem),
                 &[],
                 None,
+                None,
             )
             .await;
 
@@ -1625,7 +1626,11 @@ async fn main() -> Result<()> {
                         build_kind_lookup_cached(&client, &config, no_cache).await?;
                     let t_discovery = t0.elapsed();
 
-                    let plan_planner = crate::kube::planner::QueryPlanner::new(None);
+                    let plan_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+                    ));
+                    let plan_planner =
+                        crate::kube::planner::QueryPlanner::new(Some(plan_semaphore));
                     let t_olm = Instant::now();
                     eprint!("🔍 Discovering operators...");
                     let all_operators = discover_operators_full(
@@ -1655,6 +1660,7 @@ async fn main() -> Result<()> {
                         &gvk_map,
                         prune_crds,
                         &policy,
+                        Some(plan_planner.clone()),
                     )
                     .await?;
                     let t_plan = t_plan.elapsed();
@@ -1856,6 +1862,7 @@ async fn main() -> Result<()> {
                         &gvk_map,
                         prune_crds,
                         &policy,
+                        None,
                     )
                     .await?;
 
@@ -3148,6 +3155,7 @@ async fn main() -> Result<()> {
                             &_gvk_map,
                             false,
                             &DecisionPolicy::empty(),
+                            None,
                         )
                         .await?
                     };
@@ -3183,6 +3191,7 @@ async fn main() -> Result<()> {
                         &gvk_map,
                         false,
                         &policy,
+                        None,
                     )
                     .await?;
 
@@ -3281,6 +3290,7 @@ async fn main() -> Result<()> {
                         &gvk_map,
                         false,
                         &DecisionPolicy::empty(),
+                        None,
                     )
                     .await?;
 
@@ -5038,7 +5048,10 @@ async fn main() -> Result<()> {
             let cmd_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
                 std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
             );
-            let cmd_planner = crate::kube::planner::QueryPlanner::new(None);
+            let cmd_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+            ));
+            let cmd_planner = crate::kube::planner::QueryPlanner::new(Some(cmd_semaphore));
 
             eprint!("🔍 Discovering operators...");
             let all_operators = discover_operators_full(
@@ -5061,6 +5074,7 @@ async fn main() -> Result<()> {
                 &gk_map,
                 cross_namespace,
                 Some(cmd_ledger.clone()),
+                Some(cmd_planner.clone()),
             )
             .await?;
 
@@ -5151,7 +5165,10 @@ async fn main() -> Result<()> {
             let trace_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
                 std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
             );
-            let trace_planner = crate::kube::planner::QueryPlanner::new(None);
+            let trace_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+            ));
+            let trace_planner = crate::kube::planner::QueryPlanner::new(Some(trace_semaphore));
             let (mut index, mut scan_warnings) = if kind_info.namespaced {
                 crate::kube::scanner::scan_namespace_with_semaphore(
                     &client,
@@ -5163,6 +5180,7 @@ async fn main() -> Result<()> {
                     None,
                     &[],
                     Some(trace_ledger.clone()),
+                    Some(trace_planner.clone()),
                 )
                 .await?
             } else {
@@ -5176,6 +5194,7 @@ async fn main() -> Result<()> {
                     None,
                     &[],
                     Some(trace_ledger.clone()),
+                    Some(trace_planner.clone()),
                 )
                 .await?;
                 (idx, warnings)
@@ -5259,6 +5278,7 @@ async fn main() -> Result<()> {
                         &gk_map_trace,
                         false,
                         Some(trace_ledger.clone()),
+                        Some(trace_planner.clone()),
                     )
                     .await;
                     scan_warnings.extend(parent_warnings);
@@ -5280,6 +5300,7 @@ async fn main() -> Result<()> {
                     gk_map: &gk_map_trace,
                 },
                 Some(trace_ledger.clone()),
+                Some(trace_planner.clone()),
             )
             .await;
             match wm_result {
@@ -5327,6 +5348,7 @@ async fn main() -> Result<()> {
                         &gk_map_trace,
                         Some(trace_ledger.clone()),
                         None,
+                        Some(trace_planner.clone()),
                     )
                     .await?;
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -5345,6 +5367,7 @@ async fn main() -> Result<()> {
                             &kind_map,
                             Some(&namespace),
                             Some(trace_ledger.clone()),
+                            Some(trace_planner.clone()),
                         )
                         .await;
                     for w in &ns_scan.namespace_warnings {

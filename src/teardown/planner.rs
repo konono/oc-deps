@@ -623,6 +623,7 @@ async fn discover_one_crd(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> CrdDiscoveryResult {
     let (plural, group) = match crd_name.split_once('.') {
         Some((p, g)) => (p, g),
@@ -668,6 +669,8 @@ async fn discover_one_crd(
         ledger.as_ref(),
         None,
         None,
+        planner.as_ref(),
+        Some(client),
     )
     .await
     {
@@ -738,21 +741,24 @@ pub struct CrDiscoveryReport {
     pub unavailable_crds: Vec<ScanWarning>,
 }
 
+#[allow(dead_code)]
 pub async fn discover_cr_instances(
     client: &Client,
     target_crds: &[String],
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> CrDiscoveryReport {
-    discover_cr_instances_opts(client, target_crds, gvr_map, gk_map, None).await
+    discover_cr_instances_opts(client, target_crds, gvr_map, gk_map, None, None).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn discover_cr_instances_opts(
     client: &Client,
     target_crds: &[String],
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> CrDiscoveryReport {
     let unique_crds: Vec<&String> = {
         let mut seen = HashSet::new();
@@ -775,8 +781,10 @@ pub async fn discover_cr_instances_opts(
         let gk_map = gk_map.clone();
         let discovered = discovered.clone();
         let ledger = ledger.clone();
+        let planner = planner.clone();
         async move {
-            let result = discover_one_crd(&client, &crd_name, &gvr_map, &gk_map, ledger).await;
+            let result =
+                discover_one_crd(&client, &crd_name, &gvr_map, &gk_map, ledger, planner).await;
             if is_tty {
                 let count = discovered.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 eprint!("\r\x1b[2K   CRD {}/{}: {}", count, total_crds, crd_name);
@@ -1127,7 +1135,7 @@ pub(crate) async fn list_paginated_with_retry(
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
-    list_paginated_with_retry_opts(api, group, version, plural, None, None, None).await
+    list_paginated_with_retry_opts(api, group, version, plural, None, None, None, None, None).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1139,8 +1147,26 @@ pub(crate) async fn list_paginated_with_retry_opts(
     ledger: Option<&SharedLedger>,
     requirement: Option<QueryRequirement>,
     query_namespace: Option<&str>,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
+    client: Option<&Client>,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
     let requirement = requirement.unwrap_or(QueryRequirement::Required);
+
+    // When planner is available, delegate to it for dedup/caching
+    if let (Some(p), Some(c)) = (planner, client) {
+        return crate::kube::scanner::list_all_with_retry_planner(
+            api,
+            group,
+            version,
+            plural,
+            ledger,
+            query_namespace,
+            requirement,
+            Some(p),
+            c,
+        )
+        .await;
+    }
     let gvr = if group.is_empty() {
         format!("{}/{}", version, plural)
     } else {
@@ -1535,7 +1561,7 @@ pub async fn compute_part_of_seeds(
     kind_map: &KindMap,
     client: &Client,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
-    compute_part_of_seeds_opts(target_crds, kind_map, client, None, None).await
+    compute_part_of_seeds_opts(target_crds, kind_map, client, None, None, None).await
 }
 
 /// Fetch a metadata-only CRD catalog. Returns `CrdCatalog::Available` on
@@ -1726,12 +1752,14 @@ async fn list_metadata_paginated_with_retry(
     Ok(all_items)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn compute_part_of_seeds_opts(
     target_crds: &[String],
     kind_map: &KindMap,
     client: &Client,
     ledger: Option<SharedLedger>,
     cached_catalog: Option<&CrdCatalog>,
+    _planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
@@ -1815,6 +1843,7 @@ pub async fn discover_related_crd_instances(
         gk_map,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1829,6 +1858,7 @@ pub async fn discover_related_crd_instances_opts(
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
     cached_catalog: Option<&CrdCatalog>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> RelatedCrdReport {
     let mut actions = Vec::new();
 
@@ -1906,7 +1936,8 @@ pub async fn discover_related_crd_instances_opts(
 
     let related_crd_names: Vec<String> = related_crd_pairs.keys().cloned().collect();
     let related_report =
-        discover_cr_instances_opts(client, &related_crd_names, gvr_map, gk_map, ledger).await;
+        discover_cr_instances_opts(client, &related_crd_names, gvr_map, gk_map, ledger, planner)
+            .await;
 
     let crd_count = related_crd_names.len();
     let instance_count = related_report.instances.len();
@@ -2279,6 +2310,7 @@ pub async fn generate_teardown_plan(
     gvk_map: &GvkMap,
     prune_crds: bool,
     policy: &DecisionPolicy,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
         .iter()
@@ -2346,7 +2378,9 @@ pub async fn generate_teardown_plan(
     }
 
     eprint!("🔍 Discovering CR instances...");
-    let cr_report = discover_cr_instances(client, &target_crds, gvr_map, gk_map).await;
+    let cr_report =
+        discover_cr_instances_opts(client, &target_crds, gvr_map, gk_map, None, planner.clone())
+            .await;
     let api_svc_report = discover_api_service_instances(client, &api_service_kind_infos).await;
     let mut cr_instances = cr_report.instances;
     cr_instances.extend(api_svc_report.instances);
@@ -2363,9 +2397,15 @@ pub async fn generate_teardown_plan(
     } else {
         None
     };
-    let (target_label_pairs, seed_unavailable) =
-        compute_part_of_seeds_opts(&target_crds, kind_map, client, None, crd_catalog.as_ref())
-            .await;
+    let (target_label_pairs, seed_unavailable) = compute_part_of_seeds_opts(
+        &target_crds,
+        kind_map,
+        client,
+        None,
+        crd_catalog.as_ref(),
+        planner.clone(),
+    )
+    .await;
     all_unavailable.extend(seed_unavailable);
 
     let related_report = discover_related_crd_instances_opts(
@@ -2377,6 +2417,7 @@ pub async fn generate_teardown_plan(
         gk_map,
         None,
         crd_catalog.as_ref(),
+        planner.clone(),
     )
     .await;
     eprintln!(

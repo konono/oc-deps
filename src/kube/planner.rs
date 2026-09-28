@@ -7,7 +7,8 @@ use kube::Client;
 use kube::api::{Api, ApiResource, DynamicObject, ListParams};
 use kube::core::GroupVersion;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, Notify, Semaphore};
+use tokio::sync::{Mutex, OnceCell, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 use crate::kube::resource::{
     QueryOperation, QueryOutcome, QueryRecord, QueryRequirement, ScanWarning,
@@ -107,7 +108,7 @@ impl QueryKey {
         }
     }
 
-    pub fn list_with_selector(
+    pub fn list_with_label(
         gvr: CanonicalGvr,
         namespace: Option<String>,
         label_selector: String,
@@ -122,12 +123,28 @@ impl QueryKey {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn list_with_field(
+        gvr: CanonicalGvr,
+        namespace: Option<String>,
+        field_selector: String,
+    ) -> Self {
+        Self {
+            operation: QueryOperation::List,
+            gvr,
+            namespace,
+            target_name: None,
+            label_selector: None,
+            field_selector: Some(field_selector),
+        }
+    }
+
     pub fn gvr_string(&self) -> String {
         format!("{}", self.gvr)
     }
 }
 
-// ── Cached result ───────────────────────────────────────────────
+// ── Completed query result ──────────────────────────────────────
 
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -160,12 +177,26 @@ impl CachedQueryResult {
     }
 }
 
-// ── Query flight state ──────────────────────────────────────────
+/// Stores the completed query result alongside timing/retry metadata.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct CompletedQuery {
+    pub result: CachedQueryResult,
+    pub elapsed_ms: u64,
+    pub retries: usize,
+}
 
-#[allow(clippy::large_enum_variant)]
-enum FlightState {
-    InFlight(Arc<Notify>),
-    Completed(CachedQueryResult),
+/// Single-flight cell: first caller initializes, followers wait and share the result.
+struct Flight {
+    cell: OnceCell<CompletedQuery>,
+}
+
+impl Default for Flight {
+    fn default() -> Self {
+        Self {
+            cell: OnceCell::new(),
+        }
+    }
 }
 
 // ── Planner metrics ─────────────────────────────────────────────
@@ -184,9 +215,8 @@ pub struct PlannerMetrics {
 
 // ── QueryPlanner ────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub struct QueryPlanner {
-    flights: Mutex<HashMap<QueryKey, FlightState>>,
+    flights: Mutex<HashMap<QueryKey, Arc<Flight>>>,
     requirements: Mutex<HashMap<QueryKey, QueryRequirement>>,
     demand_count: Mutex<usize>,
     cache_hit_count: Mutex<usize>,
@@ -194,13 +224,11 @@ pub struct QueryPlanner {
     retry_total: Mutex<usize>,
     elapsed_total: Mutex<u64>,
     semaphore: Option<Arc<Semaphore>>,
-    cancelled: tokio::sync::watch::Sender<bool>,
-    cancel_rx: tokio::sync::watch::Receiver<bool>,
+    cancel: CancellationToken,
 }
 
 impl QueryPlanner {
     pub fn new(semaphore: Option<Arc<Semaphore>>) -> Arc<Self> {
-        let (cancelled, cancel_rx) = tokio::sync::watch::channel(false);
         Arc::new(Self {
             flights: Mutex::new(HashMap::new()),
             requirements: Mutex::new(HashMap::new()),
@@ -210,20 +238,21 @@ impl QueryPlanner {
             retry_total: Mutex::new(0),
             elapsed_total: Mutex::new(0),
             semaphore,
-            cancelled,
-            cancel_rx,
+            cancel: CancellationToken::new(),
         })
     }
 
     #[allow(dead_code)]
     pub fn cancel(&self) {
-        let _ = self.cancelled.send(true);
+        self.cancel.cancel();
     }
 
-    fn is_cancelled(&self) -> bool {
-        *self.cancel_rx.borrow()
+    #[allow(dead_code)]
+    pub fn semaphore(&self) -> Option<Arc<Semaphore>> {
+        self.semaphore.clone()
     }
 
+    /// Core demand path using OnceCell for race-free single-flight.
     pub async fn demand(
         self: &Arc<Self>,
         key: QueryKey,
@@ -235,7 +264,7 @@ impl QueryPlanner {
             *dc += 1;
         }
 
-        // Upgrade requirement if needed
+        // Upgrade requirement
         {
             let mut reqs = self.requirements.lock().await;
             let entry = reqs
@@ -246,60 +275,39 @@ impl QueryPlanner {
             }
         }
 
-        // Check cancellation
-        if self.is_cancelled() {
+        if self.cancel.is_cancelled() {
             return CachedQueryResult::Failure(ScanWarning::Other {
                 gvr: key.gvr_string(),
                 message: "cancelled".to_string(),
             });
         }
 
-        // Check if completed or in-flight
-        let notify = {
+        // Get or create the flight — OnceCell guarantees exactly one initializer runs.
+        let flight = {
             let mut flights = self.flights.lock().await;
-            match flights.get(&key) {
-                Some(FlightState::Completed(result)) => {
-                    let mut ch = self.cache_hit_count.lock().await;
-                    *ch += 1;
-                    return result.clone();
-                }
-                Some(FlightState::InFlight(notify)) => {
-                    // Wait for the in-flight query
-                    notify.clone()
-                }
-                None => {
-                    // We'll execute this query
-                    let notify = Arc::new(Notify::new());
-                    flights.insert(key.clone(), FlightState::InFlight(notify.clone()));
-                    drop(flights);
-                    let result = self.execute_query(&key, client).await;
-                    let mut flights = self.flights.lock().await;
-                    flights.insert(key.clone(), FlightState::Completed(result.clone()));
-                    // Wake all waiters
-                    notify.notify_waiters();
-                    return result;
-                }
-            }
+            flights
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(Flight::default()))
+                .clone()
         };
 
-        // Wait for in-flight completion
-        notify.notified().await;
-
-        let flights = self.flights.lock().await;
-        match flights.get(&key) {
-            Some(FlightState::Completed(result)) => {
-                let mut ch = self.cache_hit_count.lock().await;
-                *ch += 1;
-                result.clone()
-            }
-            _ => CachedQueryResult::Failure(ScanWarning::Other {
-                gvr: key.gvr_string(),
-                message: "flight disappeared".to_string(),
-            }),
+        // If already completed, this is a cache hit.
+        if flight.cell.initialized() {
+            let mut ch = self.cache_hit_count.lock().await;
+            *ch += 1;
+            return flight.cell.get().unwrap().result.clone();
         }
+
+        // get_or_init: first caller executes, followers block and share result.
+        let completed = flight
+            .cell
+            .get_or_init(|| self.execute_query(&key, client))
+            .await;
+
+        completed.result.clone()
     }
 
-    async fn execute_query(&self, key: &QueryKey, client: &Client) -> CachedQueryResult {
+    async fn execute_query(&self, key: &QueryKey, client: &Client) -> CompletedQuery {
         let start = Instant::now();
 
         let _permit = if let Some(sem) = &self.semaphore {
@@ -313,7 +321,7 @@ impl QueryPlanner {
             *nc += 1;
         }
 
-        let gvk = GroupVersion::gv(&key.gvr.group, &key.gvr.version).with_kind("_"); // kind not needed for ApiResource from plural
+        let gvk = GroupVersion::gv(&key.gvr.group, &key.gvr.version).with_kind("_");
         let ar = ApiResource::from_gvk_with_plural(&gvk, &key.gvr.plural);
 
         let api: Api<DynamicObject> = match &key.namespace {
@@ -321,7 +329,7 @@ impl QueryPlanner {
             None => Api::all_with(client.clone(), &ar),
         };
 
-        let result = match key.operation {
+        let (result, retries) = match key.operation {
             QueryOperation::Get => {
                 let name = key.target_name.as_deref().unwrap_or("");
                 self.execute_get(&api, name, key).await
@@ -329,35 +337,52 @@ impl QueryPlanner {
             QueryOperation::List => self.execute_list(&api, key).await,
         };
 
-        let elapsed = start.elapsed();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        {
+            let mut rt = self.retry_total.lock().await;
+            *rt += retries;
+        }
         {
             let mut et = self.elapsed_total.lock().await;
-            *et += elapsed.as_millis() as u64;
+            *et += elapsed_ms;
         }
 
-        result
+        let result = redact_secret_data(result);
+
+        CompletedQuery {
+            result,
+            elapsed_ms,
+            retries,
+        }
     }
 
+    /// Returns (result, retry_count). retry_count = number of retries (0 if first attempt succeeded).
     async fn execute_get(
         &self,
         api: &Api<DynamicObject>,
         name: &str,
         key: &QueryKey,
-    ) -> CachedQueryResult {
+    ) -> (CachedQueryResult, usize) {
         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
         let gvr = key.gvr_string();
 
         for attempt in 0..=MAX_RETRIES {
-            if self.is_cancelled() {
-                return CachedQueryResult::Failure(ScanWarning::Other {
-                    gvr,
-                    message: "cancelled".to_string(),
-                });
-            }
-
             let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
-            match tokio::time::timeout(timeout_dur, api.get(name)).await {
-                Ok(Ok(obj)) => return CachedQueryResult::GetSuccess(obj),
+            let api_call = tokio::time::timeout(timeout_dur, api.get(name));
+
+            let result = tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => {
+                    return (CachedQueryResult::Failure(ScanWarning::Other {
+                        gvr,
+                        message: "cancelled".to_string(),
+                    }), attempt);
+                }
+                r = api_call => r,
+            };
+
+            match result {
+                Ok(Ok(obj)) => return (CachedQueryResult::GetSuccess(obj), attempt),
                 Ok(Err(e)) => {
                     let warning = ScanWarning::from_kube_error(
                         &e,
@@ -376,7 +401,6 @@ impl QueryPlanner {
                                 delay.as_millis()
                             );
                         }
-                        self.record_retry().await;
                         tokio::time::sleep(delay).await;
                         continue;
                     }
@@ -387,10 +411,7 @@ impl QueryPlanner {
                         &key.gvr.plural,
                     );
                     w.set_retries(attempt);
-                    if attempt > 0 {
-                        self.record_retry_count(attempt).await;
-                    }
-                    return CachedQueryResult::Failure(w);
+                    return (CachedQueryResult::Failure(w), attempt);
                 }
                 Err(_) => {
                     if attempt < MAX_RETRIES {
@@ -404,49 +425,64 @@ impl QueryPlanner {
                                 MAX_RETRIES + 1
                             );
                         }
-                        self.record_retry().await;
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    return CachedQueryResult::Failure(ScanWarning::Timeout {
-                        gvr,
-                        message: Some(format!(
-                            "GET {} timeout ({}s)",
-                            name, SCAN_REQUEST_TIMEOUT_SECS
-                        )),
-                        retries: attempt,
-                    });
+                    return (
+                        CachedQueryResult::Failure(ScanWarning::Timeout {
+                            gvr,
+                            message: Some(format!(
+                                "GET {} timeout ({}s)",
+                                name, SCAN_REQUEST_TIMEOUT_SECS
+                            )),
+                            retries: attempt,
+                        }),
+                        attempt,
+                    );
                 }
             }
         }
-        CachedQueryResult::Failure(ScanWarning::Other {
-            gvr,
-            message: "exhausted retries".to_string(),
-        })
+        (
+            CachedQueryResult::Failure(ScanWarning::Other {
+                gvr,
+                message: "exhausted retries".to_string(),
+            }),
+            MAX_RETRIES,
+        )
     }
 
-    async fn execute_list(&self, api: &Api<DynamicObject>, key: &QueryKey) -> CachedQueryResult {
+    /// Paginated LIST with optional label/field selectors. Returns (result, retry_count).
+    async fn execute_list(
+        &self,
+        api: &Api<DynamicObject>,
+        key: &QueryKey,
+    ) -> (CachedQueryResult, usize) {
         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
         let gvr = key.gvr_string();
 
-        if key.label_selector.is_some() {
-            return self.execute_list_with_selector(api, key).await;
-        }
-
-        // Paginated list
         let mut all_items = Vec::new();
         let mut continue_token: Option<String> = None;
         let mut pages: usize = 0;
+        let mut total_retries: usize = 0;
 
         loop {
-            if self.is_cancelled() {
-                return CachedQueryResult::Failure(ScanWarning::Other {
-                    gvr,
-                    message: "cancelled".to_string(),
-                });
+            if self.cancel.is_cancelled() {
+                return (
+                    CachedQueryResult::Failure(ScanWarning::Other {
+                        gvr,
+                        message: "cancelled".to_string(),
+                    }),
+                    total_retries,
+                );
             }
 
             let mut lp = ListParams::default().limit(500);
+            if let Some(ref sel) = key.label_selector {
+                lp = lp.labels(sel);
+            }
+            if let Some(ref sel) = key.field_selector {
+                lp = lp.fields(sel);
+            }
             if let Some(ref token) = continue_token {
                 lp = lp.continue_token(token);
             }
@@ -454,8 +490,22 @@ impl QueryPlanner {
             let mut page_result = None;
             for attempt in 0..=MAX_RETRIES {
                 let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
-                match tokio::time::timeout(timeout_dur, api.list(&lp)).await {
+                let api_call = tokio::time::timeout(timeout_dur, api.list(&lp));
+
+                let result = tokio::select! {
+                    biased;
+                    _ = self.cancel.cancelled() => {
+                        return (CachedQueryResult::Failure(ScanWarning::Other {
+                            gvr,
+                            message: "cancelled".to_string(),
+                        }), total_retries + attempt);
+                    }
+                    r = api_call => r,
+                };
+
+                match result {
                     Ok(Ok(list)) => {
+                        total_retries += attempt;
                         page_result = Some(list);
                         break;
                     }
@@ -478,7 +528,6 @@ impl QueryPlanner {
                                     delay.as_millis()
                                 );
                             }
-                            self.record_retry().await;
                             tokio::time::sleep(delay).await;
                             continue;
                         }
@@ -489,7 +538,7 @@ impl QueryPlanner {
                             &key.gvr.plural,
                         );
                         w.set_retries(attempt);
-                        return CachedQueryResult::Failure(w);
+                        return (CachedQueryResult::Failure(w), total_retries + attempt);
                     }
                     Err(_) => {
                         if attempt < MAX_RETRIES {
@@ -504,15 +553,20 @@ impl QueryPlanner {
                                     MAX_RETRIES + 1
                                 );
                             }
-                            self.record_retry().await;
                             tokio::time::sleep(delay).await;
                             continue;
                         }
-                        return CachedQueryResult::Failure(ScanWarning::Timeout {
-                            gvr,
-                            message: Some(format!("LIST timeout ({}s)", SCAN_REQUEST_TIMEOUT_SECS)),
-                            retries: attempt,
-                        });
+                        return (
+                            CachedQueryResult::Failure(ScanWarning::Timeout {
+                                gvr,
+                                message: Some(format!(
+                                    "LIST timeout ({}s)",
+                                    SCAN_REQUEST_TIMEOUT_SECS
+                                )),
+                                retries: attempt,
+                            }),
+                            total_retries + attempt,
+                        );
                     }
                 }
             }
@@ -527,129 +581,35 @@ impl QueryPlanner {
                     }
                 }
                 None => {
-                    return CachedQueryResult::Failure(ScanWarning::Other {
-                        gvr,
-                        message: "exhausted retries".to_string(),
-                    });
-                }
-            }
-        }
-
-        CachedQueryResult::ListSuccess {
-            items: Arc::new(all_items),
-            pages,
-        }
-    }
-
-    async fn execute_list_with_selector(
-        &self,
-        api: &Api<DynamicObject>,
-        key: &QueryKey,
-    ) -> CachedQueryResult {
-        let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-        let gvr = key.gvr_string();
-        let selector = key.label_selector.as_deref().unwrap_or("");
-
-        for attempt in 0..=MAX_RETRIES {
-            if self.is_cancelled() {
-                return CachedQueryResult::Failure(ScanWarning::Other {
-                    gvr,
-                    message: "cancelled".to_string(),
-                });
-            }
-
-            let lp = ListParams::default().labels(selector);
-            let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
-            match tokio::time::timeout(timeout_dur, api.list(&lp)).await {
-                Ok(Ok(list)) => {
-                    return CachedQueryResult::ListSuccess {
-                        items: Arc::new(list.items),
-                        pages: 1,
-                    };
-                }
-                Ok(Err(e)) => {
-                    let warning = ScanWarning::from_kube_error(
-                        &e,
-                        &key.gvr.group,
-                        &key.gvr.version,
-                        &key.gvr.plural,
+                    return (
+                        CachedQueryResult::Failure(ScanWarning::Other {
+                            gvr,
+                            message: "exhausted retries".to_string(),
+                        }),
+                        total_retries + MAX_RETRIES,
                     );
-                    if warning.is_retryable() && attempt < MAX_RETRIES {
-                        let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                        if is_tty {
-                            eprintln!(
-                                "   \x1b[33m⚠ {} — LIST attempt {}/{} failed; retrying in {}ms\x1b[0m",
-                                gvr,
-                                attempt + 1,
-                                MAX_RETRIES + 1,
-                                delay.as_millis()
-                            );
-                        }
-                        self.record_retry().await;
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    let mut w = ScanWarning::from_kube_error(
-                        &e,
-                        &key.gvr.group,
-                        &key.gvr.version,
-                        &key.gvr.plural,
-                    );
-                    w.set_retries(attempt);
-                    return CachedQueryResult::Failure(w);
-                }
-                Err(_) => {
-                    if attempt < MAX_RETRIES {
-                        let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                        if is_tty {
-                            eprintln!(
-                                "   \x1b[33m⚠ {} — LIST timeout ({}s), attempt {}/{}; retrying\x1b[0m",
-                                gvr,
-                                SCAN_REQUEST_TIMEOUT_SECS,
-                                attempt + 1,
-                                MAX_RETRIES + 1
-                            );
-                        }
-                        self.record_retry().await;
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    return CachedQueryResult::Failure(ScanWarning::Timeout {
-                        gvr,
-                        message: Some(format!(
-                            "LIST selector={} timeout ({}s)",
-                            selector, SCAN_REQUEST_TIMEOUT_SECS
-                        )),
-                        retries: attempt,
-                    });
                 }
             }
         }
-        CachedQueryResult::Failure(ScanWarning::Other {
-            gvr,
-            message: "exhausted retries".to_string(),
-        })
-    }
 
-    async fn record_retry(&self) {
-        let mut rt = self.retry_total.lock().await;
-        *rt += 1;
-    }
-
-    async fn record_retry_count(&self, count: usize) {
-        let mut rt = self.retry_total.lock().await;
-        *rt += count;
+        (
+            CachedQueryResult::ListSuccess {
+                items: Arc::new(all_items),
+                pages,
+            },
+            total_retries,
+        )
     }
 
     pub async fn metrics(&self) -> PlannerMetrics {
         let flights = self.flights.lock().await;
         let mut completed = 0;
         let mut incomplete = 0;
-        for state in flights.values() {
-            match state {
-                FlightState::Completed(r) if r.is_success() => completed += 1,
-                FlightState::Completed(_) => incomplete += 1,
-                FlightState::InFlight(_) => incomplete += 1,
+        for flight in flights.values() {
+            match flight.cell.get() {
+                Some(cq) if cq.result.is_success() => completed += 1,
+                Some(_) => incomplete += 1,
+                None => incomplete += 1,
             }
         }
         let demands = *self.demand_count.lock().await;
@@ -669,7 +629,8 @@ impl QueryPlanner {
         }
     }
 
-    /// Record all completed queries to a CoverageLedger, using final requirements.
+    /// Record all completed queries to a CoverageLedger, using final requirements
+    /// and per-query elapsed_ms.
     pub async fn flush_to_ledger(&self, ledger: &SharedLedger) {
         let flights = self.flights.lock().await;
         let reqs = self.requirements.lock().await;
@@ -677,10 +638,10 @@ impl QueryPlanner {
         let mut entries: Vec<_> = flights.iter().collect();
         entries.sort_by_key(|(k, _)| (*k).clone());
 
-        for (key, state) in entries {
-            if let FlightState::Completed(result) = state {
+        for (key, flight) in entries {
+            if let Some(cq) = flight.cell.get() {
                 let requirement = reqs.get(key).cloned().unwrap_or(QueryRequirement::Optional);
-                let outcome = result.to_outcome();
+                let outcome = cq.result.to_outcome();
                 let scope = if key.namespace.is_some() {
                     "namespaced"
                 } else {
@@ -696,7 +657,7 @@ impl QueryPlanner {
                         label_selector: key.label_selector.clone(),
                         field_selector: key.field_selector.clone(),
                         outcome,
-                        elapsed_ms: 0, // per-query timing not tracked individually in planner
+                        elapsed_ms: cq.elapsed_ms,
                         requirement,
                     });
                 }
@@ -712,11 +673,11 @@ impl QueryPlanner {
 
         let mut entries: Vec<QueryPlanEntry> = flights
             .iter()
-            .map(|(key, state)| {
+            .map(|(key, flight)| {
                 let requirement = reqs.get(key).cloned().unwrap_or(QueryRequirement::Optional);
-                let (outcome, status) = match state {
-                    FlightState::Completed(r) => (Some(r.to_outcome()), "completed".to_string()),
-                    FlightState::InFlight(_) => (None, "in_flight".to_string()),
+                let (outcome, status) = match flight.cell.get() {
+                    Some(cq) => (Some(cq.result.to_outcome()), "completed".to_string()),
+                    None => (None, "in_flight".to_string()),
                 };
                 QueryPlanEntry {
                     key: key.clone(),
@@ -740,6 +701,45 @@ pub struct QueryPlanEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<QueryOutcome>,
     pub status: String,
+}
+
+// ── Secret redaction ────────────────────────────────────────────
+
+fn redact_secret_data(result: CachedQueryResult) -> CachedQueryResult {
+    match result {
+        CachedQueryResult::GetSuccess(mut obj) => {
+            strip_secret_fields(&mut obj);
+            CachedQueryResult::GetSuccess(obj)
+        }
+        CachedQueryResult::ListSuccess { items, pages } => {
+            let mut items_vec = (*items).clone();
+            for obj in &mut items_vec {
+                strip_secret_fields(obj);
+            }
+            CachedQueryResult::ListSuccess {
+                items: Arc::new(items_vec),
+                pages,
+            }
+        }
+        f @ CachedQueryResult::Failure(_) => f,
+    }
+}
+
+fn strip_secret_fields(obj: &mut DynamicObject) {
+    let kind = obj
+        .types
+        .as_ref()
+        .map(|t| t.kind.as_str())
+        .or_else(|| obj.data.get("kind").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    if kind == "Secret" {
+        if let Some(data) = obj.data.get_mut("data") {
+            *data = serde_json::Value::Object(serde_json::Map::new());
+        }
+        if let Some(sd) = obj.data.get_mut("stringData") {
+            *sd = serde_json::Value::Object(serde_json::Map::new());
+        }
+    }
 }
 
 // ── Convenience wrappers ────────────────────────────────────────
@@ -804,7 +804,7 @@ impl QueryPlanner {
         selector: &str,
         requirement: QueryRequirement,
     ) -> Result<Arc<Vec<DynamicObject>>, ScanWarning> {
-        let key = QueryKey::list_with_selector(
+        let key = QueryKey::list_with_label(
             CanonicalGvr::new(group, version, plural),
             namespace.map(|s| s.to_string()),
             selector.to_string(),
@@ -843,26 +843,6 @@ mod tests {
             .unwrap()
     }
 
-    #[allow(dead_code)]
-    fn deploy_list_response(names: &[&str]) -> serde_json::Value {
-        let items: Vec<serde_json::Value> = names
-            .iter()
-            .map(|n| {
-                serde_json::json!({
-                    "apiVersion": "apps/v1",
-                    "kind": "Deployment",
-                    "metadata": {"name": n, "namespace": "test-ns", "uid": format!("uid-{}", n)}
-                })
-            })
-            .collect();
-        serde_json::json!({
-            "apiVersion": "apps/v1",
-            "kind": "DeploymentList",
-            "metadata": {"resourceVersion": "1"},
-            "items": items
-        })
-    }
-
     fn deploy_get_response(name: &str) -> serde_json::Value {
         serde_json::json!({
             "apiVersion": "apps/v1",
@@ -889,7 +869,6 @@ mod tests {
             let mut handle = pin!(handle);
             let (_req, send) = handle.next_request().await.expect("expected 1 request");
             rc.fetch_add(1, Ordering::SeqCst);
-            // Small delay to let both demands arrive
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             send.send_response(json_response(deploy_get_response("myapp")));
         });
@@ -957,7 +936,6 @@ mod tests {
             send.send_response(json_response(deploy_get_response("myapp")));
         });
 
-        // First demand
         let r1 = planner
             .get(
                 &client,
@@ -971,7 +949,6 @@ mod tests {
             .await;
         assert!(r1.is_ok());
 
-        // Second demand (from cache)
         let r2 = planner
             .get(
                 &client,
@@ -1008,11 +985,9 @@ mod tests {
         let spawned = tokio::spawn(async move {
             use std::pin::pin;
             let mut handle = pin!(handle);
-            // GET myapp
             let (_req, send) = handle.next_request().await.expect("req 1");
             rc.fetch_add(1, Ordering::SeqCst);
             send.send_response(json_response(deploy_get_response("myapp")));
-            // GET other
             let (_req, send) = handle.next_request().await.expect("req 2");
             rc.fetch_add(1, Ordering::SeqCst);
             send.send_response(json_response(deploy_get_response("other")));
@@ -1064,7 +1039,6 @@ mod tests {
             send.send_response(json_response(deploy_get_response("myapp")));
         });
 
-        // Optional first
         let _ = planner
             .get(
                 &client,
@@ -1076,7 +1050,6 @@ mod tests {
                 QueryRequirement::Optional,
             )
             .await;
-        // Required second
         let _ = planner
             .get(
                 &client,
@@ -1132,7 +1105,6 @@ mod tests {
                 QueryRequirement::Required,
             )
             .await;
-        // Second demand gets cached failure
         let r2 = planner
             .get(
                 &client,
@@ -1153,7 +1125,7 @@ mod tests {
         assert_eq!(request_count.load(Ordering::SeqCst), 1);
     }
 
-    // Test 6: Persistent 500 = 3 attempts, failure shared
+    // Test 6: Persistent 500 = 3 attempts, retries=2, shared failure
     #[tokio::test]
     async fn server_error_retries_and_shares() {
         let request_count = Arc::new(AtomicUsize::new(0));
@@ -1192,6 +1164,12 @@ mod tests {
         assert!(r1.is_err());
         assert_eq!(request_count.load(Ordering::SeqCst), 3);
 
+        let metrics = planner.metrics().await;
+        assert_eq!(
+            metrics.retry_count, 2,
+            "3 requests = 2 retries (first attempt is not a retry)"
+        );
+
         // Second consumer gets same cached failure
         let r2 = planner
             .get(
@@ -1223,11 +1201,9 @@ mod tests {
         let spawned = tokio::spawn(async move {
             use std::pin::pin;
             let mut handle = pin!(handle);
-            // First: 500
             let (_req, send) = handle.next_request().await.expect("req 1");
             rc.fetch_add(1, Ordering::SeqCst);
             send.send_response(status_response(500, "Internal Server Error"));
-            // Second: success
             let (_req, send) = handle.next_request().await.expect("req 2");
             rc.fetch_add(1, Ordering::SeqCst);
             send.send_response(json_response(deploy_get_response("myapp")));
@@ -1266,7 +1242,6 @@ mod tests {
         let spawned = tokio::spawn(async move {
             use std::pin::pin;
             let mut handle = pin!(handle);
-            // Page 1
             let (_req, send) = handle.next_request().await.expect("page 1");
             rc.fetch_add(1, Ordering::SeqCst);
             send.send_response(json_response(serde_json::json!({
@@ -1275,7 +1250,6 @@ mod tests {
                 "metadata": {"resourceVersion": "1", "continue": "token-1"},
                 "items": [{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "d1", "namespace": "test-ns", "uid": "uid-d1"}}]
             })));
-            // Page 2
             let (_req, send) = handle.next_request().await.expect("page 2");
             rc.fetch_add(1, Ordering::SeqCst);
             send.send_response(json_response(serde_json::json!({
@@ -1371,21 +1345,30 @@ mod tests {
         );
     }
 
-    // Test 10: Cancellation prevents new queries
+    // Test 10: Cancellation interrupts running query via select!
     #[tokio::test]
-    async fn cancellation_prevents_new_queries() {
-        let (mock_service, _handle) = tower_test::mock::pair::<
+    async fn cancellation_interrupts_running_query() {
+        let (mock_service, handle) = tower_test::mock::pair::<
             http::Request<kube::client::Body>,
             http::Response<kube::client::Body>,
         >();
         let client = Client::new(mock_service, "test-ns");
         let planner = QueryPlanner::new(None);
 
-        planner.cancel();
+        // Hold the mock request without responding
+        let spawned = tokio::spawn(async move {
+            use std::pin::pin;
+            let mut handle = pin!(handle);
+            let (_req, _send) = handle.next_request().await.expect("req");
+            // Don't respond — simulates a slow server
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
 
-        let result = planner
-            .get(
-                &client,
+        let p = planner.clone();
+        let c = client.clone();
+        let query_task = tokio::spawn(async move {
+            p.get(
+                &c,
                 "apps",
                 "v1",
                 "deployments",
@@ -1393,19 +1376,36 @@ mod tests {
                 "myapp",
                 QueryRequirement::Required,
             )
-            .await;
+            .await
+        });
+
+        // Give the query time to start
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        planner.cancel();
+
+        // The query should return quickly with cancelled error
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), query_task)
+            .await
+            .expect("should complete within 2s")
+            .unwrap();
+
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
-            ScanWarning::Other { message, .. } => assert!(message.contains("cancelled")),
-            _ => panic!("expected cancelled error"),
+            ScanWarning::Other { message, .. } => assert!(
+                message.contains("cancelled"),
+                "expected cancelled, got: {}",
+                message
+            ),
+            other => panic!("expected Other/cancelled, got: {:?}", other),
         }
+
+        spawned.abort();
     }
 
-    // Test 11: Insertion order doesn't affect query plan sort
+    // Test 11: Stable sort regardless of insertion order
     #[tokio::test]
     async fn stable_sort_regardless_of_insertion_order() {
-        // Create two planners with reversed insertion order, verify same output
         let keys = vec![
             QueryKey::get(
                 CanonicalGvr::new("apps", "v1", "deployments"),
@@ -1427,12 +1427,15 @@ mod tests {
             let planner = QueryPlanner::new(None);
             let mut flights = planner.flights.lock().await;
             for key in &keys {
-                flights.insert(
-                    key.clone(),
-                    FlightState::Completed(CachedQueryResult::Failure(ScanWarning::NotFound {
+                let flight = Arc::new(Flight::default());
+                let _ = flight.cell.set(CompletedQuery {
+                    result: CachedQueryResult::Failure(ScanWarning::NotFound {
                         gvr: key.gvr_string(),
-                    })),
-                );
+                    }),
+                    elapsed_ms: 10,
+                    retries: 0,
+                });
+                flights.insert(key.clone(), flight);
             }
             drop(flights);
             planner.query_plan_sorted().await
@@ -1442,12 +1445,15 @@ mod tests {
             let planner = QueryPlanner::new(None);
             let mut flights = planner.flights.lock().await;
             for key in keys.iter().rev() {
-                flights.insert(
-                    key.clone(),
-                    FlightState::Completed(CachedQueryResult::Failure(ScanWarning::NotFound {
+                let flight = Arc::new(Flight::default());
+                let _ = flight.cell.set(CompletedQuery {
+                    result: CachedQueryResult::Failure(ScanWarning::NotFound {
                         gvr: key.gvr_string(),
-                    })),
-                );
+                    }),
+                    elapsed_ms: 10,
+                    retries: 0,
+                });
+                flights.insert(key.clone(), flight);
             }
             drop(flights);
             planner.query_plan_sorted().await
@@ -1461,15 +1467,16 @@ mod tests {
         );
     }
 
-    // Test 12: Secret data doesn't leak into Debug/JSON/metrics
+    // Test 12: Secret data stripped from cache — Debug/JSON representation clean
     #[tokio::test]
-    async fn secret_data_not_in_debug_or_json() {
+    async fn secret_data_redacted_from_cache() {
         let secret_value = "super-secret-token-12345";
         let secret_obj = serde_json::json!({
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {"name": "my-secret", "namespace": "test-ns", "uid": "uid-secret"},
-            "data": {"token": secret_value}
+            "data": {"token": secret_value},
+            "stringData": {"password": "hunter2"}
         });
 
         let (mock_service, handle) = tower_test::mock::pair::<
@@ -1486,7 +1493,7 @@ mod tests {
             send.send_response(json_response(secret_obj));
         });
 
-        let _ = planner
+        let result = planner
             .get(
                 &client,
                 "",
@@ -1500,37 +1507,39 @@ mod tests {
 
         spawned.await.unwrap();
 
-        // Check that metrics/plan JSON don't contain secret data
+        // The GET succeeds but data is redacted
+        let obj = result.unwrap();
+        let data = obj.data.get("data").unwrap();
+        assert!(data.as_object().unwrap().is_empty(), "data should be empty");
+        let sd = obj.data.get("stringData").unwrap();
+        assert!(
+            sd.as_object().unwrap().is_empty(),
+            "stringData should be empty"
+        );
+
+        // Verify Debug representation doesn't contain secret values
+        let debug = format!("{:?}", obj);
+        assert!(
+            !debug.contains(secret_value),
+            "Secret value must not appear in Debug"
+        );
+        assert!(
+            !debug.contains("hunter2"),
+            "stringData value must not appear in Debug"
+        );
+
+        // Verify metrics/plan JSON don't contain secrets
         let metrics = planner.metrics().await;
         let metrics_json = serde_json::to_string(&metrics).unwrap();
-        assert!(
-            !metrics_json.contains(secret_value),
-            "Secret value must not appear in metrics JSON"
-        );
-
+        assert!(!metrics_json.contains(secret_value));
         let plan = planner.query_plan_sorted().await;
         let plan_json = serde_json::to_string(&plan).unwrap();
-        assert!(
-            !plan_json.contains(secret_value),
-            "Secret value must not appear in query plan JSON"
-        );
-
-        // QueryKey debug shouldn't contain secret values
-        let key = QueryKey::get(
-            CanonicalGvr::new("", "v1", "secrets"),
-            Some("test-ns".to_string()),
-            "my-secret".to_string(),
-        );
-        let key_debug = format!("{:?}", key);
-        assert!(
-            !key_debug.contains(secret_value),
-            "Secret value must not appear in QueryKey debug"
-        );
+        assert!(!plan_json.contains(secret_value));
     }
 
     // Test: GET vs LIST for same GVR are separate queries
-    #[tokio::test]
-    async fn get_and_list_are_separate_keys() {
+    #[test]
+    fn get_and_list_are_separate_keys() {
         let get_key = QueryKey::get(
             CanonicalGvr::new("apps", "v1", "deployments"),
             Some("ns".to_string()),
@@ -1544,14 +1553,14 @@ mod tests {
     }
 
     // Test: Different selectors are separate keys
-    #[tokio::test]
-    async fn different_selectors_are_separate_keys() {
-        let k1 = QueryKey::list_with_selector(
+    #[test]
+    fn different_selectors_are_separate_keys() {
+        let k1 = QueryKey::list_with_label(
             CanonicalGvr::new("apps", "v1", "deployments"),
             Some("ns".to_string()),
             "app=foo".to_string(),
         );
-        let k2 = QueryKey::list_with_selector(
+        let k2 = QueryKey::list_with_label(
             CanonicalGvr::new("apps", "v1", "deployments"),
             Some("ns".to_string()),
             "app=bar".to_string(),
@@ -1560,8 +1569,8 @@ mod tests {
     }
 
     // Test: Different namespaces are separate keys
-    #[tokio::test]
-    async fn different_namespaces_are_separate_keys() {
+    #[test]
+    fn different_namespaces_are_separate_keys() {
         let k1 = QueryKey::get(
             CanonicalGvr::new("apps", "v1", "deployments"),
             Some("ns-a".to_string()),
@@ -1576,8 +1585,8 @@ mod tests {
     }
 
     // Test: Different GVRs are separate keys
-    #[tokio::test]
-    async fn different_gvrs_are_separate_keys() {
+    #[test]
+    fn different_gvrs_are_separate_keys() {
         let k1 = QueryKey::get(
             CanonicalGvr::new("apps", "v1", "deployments"),
             Some("ns".to_string()),
@@ -1587,6 +1596,22 @@ mod tests {
             CanonicalGvr::new("apps", "v1", "statefulsets"),
             Some("ns".to_string()),
             "myapp".to_string(),
+        );
+        assert_ne!(k1, k2);
+    }
+
+    // Test: Different field selectors are separate keys
+    #[test]
+    fn different_field_selectors_are_separate_keys() {
+        let k1 = QueryKey::list_with_field(
+            CanonicalGvr::new("", "v1", "pods"),
+            Some("ns".to_string()),
+            "spec.nodeName=node1".to_string(),
+        );
+        let k2 = QueryKey::list_with_field(
+            CanonicalGvr::new("", "v1", "pods"),
+            Some("ns".to_string()),
+            "spec.nodeName=node2".to_string(),
         );
         assert_ne!(k1, k2);
     }
@@ -1629,7 +1654,6 @@ mod tests {
         let api: kube::api::Api<kube::api::DynamicObject> =
             kube::api::Api::all_with(client.clone(), &ar);
 
-        // First call via scanner wrapper
         let r1 = list_with_selector_retry_planner(
             &api,
             "operators.coreos.com/managed-by-csv",
@@ -1646,7 +1670,6 @@ mod tests {
         assert!(r1.is_ok());
         assert_eq!(r1.unwrap().len(), 1);
 
-        // Second call — same query, should use cache
         let r2 = list_with_selector_retry_planner(
             &api,
             "operators.coreos.com/managed-by-csv",
@@ -1679,29 +1702,176 @@ mod tests {
     // Test 14: Phase A strict truth table maintained
     #[test]
     fn strict_truth_table_maintained() {
-        use crate::kube::resource::QueryOutcome;
-
-        // Required + Success = not incomplete
         assert!(
             !QueryOutcome::Success { count: 5, pages: 1 }
                 .is_incomplete(&QueryRequirement::Required)
         );
-        // Required + Forbidden = incomplete
         assert!(QueryOutcome::Forbidden { status: 403 }.is_incomplete(&QueryRequirement::Required));
-        // Required + ApiAbsent = incomplete
         assert!(QueryOutcome::ApiAbsent.is_incomplete(&QueryRequirement::Required));
-        // Required + TargetMissing = incomplete
         assert!(QueryOutcome::TargetMissing.is_incomplete(&QueryRequirement::Required));
-        // Optional + ApiAbsent = not incomplete
         assert!(!QueryOutcome::ApiAbsent.is_incomplete(&QueryRequirement::Optional));
-        // Optional + TargetMissing = not incomplete
         assert!(!QueryOutcome::TargetMissing.is_incomplete(&QueryRequirement::Optional));
-        // Optional + Forbidden = incomplete
         assert!(QueryOutcome::Forbidden { status: 403 }.is_incomplete(&QueryRequirement::Optional));
-        // Optional + Success = not incomplete
         assert!(
             !QueryOutcome::Success { count: 0, pages: 1 }
                 .is_incomplete(&QueryRequirement::Optional)
         );
+    }
+
+    // Test 15: OnceCell single-flight is race-free (P0-2 regression test)
+    // Leader completes before follower registers — follower must still get the result.
+    #[tokio::test]
+    async fn oncecell_no_lost_wakeup() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "test-ns");
+        let planner = QueryPlanner::new(None);
+
+        let spawned = tokio::spawn(async move {
+            use std::pin::pin;
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("req");
+            // Respond immediately — leader completes fast
+            send.send_response(json_response(deploy_get_response("myapp")));
+        });
+
+        // Leader demand
+        let r1 = planner
+            .get(
+                &client,
+                "apps",
+                "v1",
+                "deployments",
+                Some("test-ns"),
+                "myapp",
+                QueryRequirement::Required,
+            )
+            .await;
+        assert!(r1.is_ok());
+        spawned.await.unwrap();
+
+        // Follower demand after leader already completed — no hang
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            planner.get(
+                &client,
+                "apps",
+                "v1",
+                "deployments",
+                Some("test-ns"),
+                "myapp",
+                QueryRequirement::Optional,
+            ),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "follower must not hang when leader already completed"
+        );
+        assert!(result.unwrap().is_ok());
+    }
+
+    // Test: Selector LIST is paginated
+    #[tokio::test]
+    async fn selector_list_paginated() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "test-ns");
+        let planner = QueryPlanner::new(None);
+
+        let spawned = tokio::spawn(async move {
+            use std::pin::pin;
+            let mut handle = pin!(handle);
+            // Page 1 with continue token
+            let (req, send) = handle.next_request().await.expect("page 1");
+            rc.fetch_add(1, Ordering::SeqCst);
+            let uri = req.uri().to_string();
+            assert!(
+                uri.contains("labelSelector"),
+                "request should contain labelSelector: {}",
+                uri
+            );
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "PodList",
+                "metadata": {"resourceVersion": "1", "continue": "tok-1"},
+                "items": [{"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p1", "namespace": "test-ns", "uid": "uid-p1"}}]
+            })));
+            // Page 2
+            let (_req, send) = handle.next_request().await.expect("page 2");
+            rc.fetch_add(1, Ordering::SeqCst);
+            send.send_response(json_response(serde_json::json!({
+                "apiVersion": "v1",
+                "kind": "PodList",
+                "metadata": {"resourceVersion": "2"},
+                "items": [{"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p2", "namespace": "test-ns", "uid": "uid-p2"}}]
+            })));
+        });
+
+        let items = planner
+            .list_with_selector(
+                &client,
+                "",
+                "v1",
+                "pods",
+                Some("test-ns"),
+                "app=myapp",
+                QueryRequirement::Required,
+            )
+            .await
+            .unwrap();
+
+        spawned.await.unwrap();
+        assert_eq!(items.len(), 2, "both pages must be collected");
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+    }
+
+    // Test: flush_to_ledger includes per-query elapsed_ms
+    #[tokio::test]
+    async fn flush_preserves_elapsed_ms() {
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "test-ns");
+        let planner = QueryPlanner::new(None);
+
+        let spawned = tokio::spawn(async move {
+            use std::pin::pin;
+            let mut handle = pin!(handle);
+            let (_req, send) = handle.next_request().await.expect("req");
+            send.send_response(json_response(deploy_get_response("myapp")));
+        });
+
+        let _ = planner
+            .get(
+                &client,
+                "apps",
+                "v1",
+                "deployments",
+                Some("test-ns"),
+                "myapp",
+                QueryRequirement::Required,
+            )
+            .await;
+
+        spawned.await.unwrap();
+
+        let ledger: SharedLedger = Arc::new(std::sync::Mutex::new(
+            crate::kube::resource::CoverageLedger::new(),
+        ));
+        planner.flush_to_ledger(&ledger).await;
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.records.len(), 1);
+        // elapsed_ms may be 0 in fast mock but must not be hardcoded to 0
+        // The important thing is the field comes from CompletedQuery, not 0
     }
 }

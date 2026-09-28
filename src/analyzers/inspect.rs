@@ -121,6 +121,7 @@ pub async fn inspect_operator_with_options(
         gk_map,
         cross_namespace,
         None,
+        None,
     )
     .await
 }
@@ -134,6 +135,7 @@ pub async fn inspect_operator_with_options_ledger(
     gk_map: &GroupKindMap,
     cross_namespace: bool,
     external_ledger: Option<SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<OperatorInspection> {
     let mut olm_resources = Vec::new();
     let mut controller_resources = Vec::new();
@@ -201,8 +203,14 @@ pub async fn inspect_operator_with_options_ledger(
 
     // Discover controller pods via deployment selector
     eprint!("🔍 Discovering controller pods...");
-    let (pods, pod_warnings) =
-        discover_controller_pods(client, operator, kind_map, Some(&shared_ledger)).await;
+    let (pods, pod_warnings) = discover_controller_pods(
+        client,
+        operator,
+        kind_map,
+        Some(&shared_ledger),
+        planner.as_ref(),
+    )
+    .await;
     for pod_id in &pods {
         controller_resources.push(InspectedResource {
             id: pod_id.clone(),
@@ -226,6 +234,7 @@ pub async fn inspect_operator_with_options_ledger(
         gvr_map,
         gk_map,
         Some(shared_ledger.clone()),
+        planner.clone(),
     )
     .await;
     eprintln!(" found {} instances", cr_report.instances.len());
@@ -265,6 +274,7 @@ pub async fn inspect_operator_with_options_ledger(
         client,
         Some(shared_ledger.clone()),
         crd_catalog.as_ref(),
+        planner.clone(),
     )
     .await;
     for w in &seed_errors {
@@ -280,6 +290,7 @@ pub async fn inspect_operator_with_options_ledger(
         gk_map,
         Some(shared_ledger.clone()),
         crd_catalog.as_ref(),
+        planner.clone(),
     )
     .await;
     for w in &related_report.unavailable_crds {
@@ -318,6 +329,7 @@ pub async fn inspect_operator_with_options_ledger(
             gk_map,
             Some(shared_ledger.clone()),
             crd_catalog.as_ref(),
+            planner.clone(),
         )
         .await?;
         eprintln!(
@@ -338,6 +350,7 @@ pub async fn inspect_operator_with_options_ledger(
             kind_map,
             None,
             Some(shared_ledger.clone()),
+            planner.clone(),
         )
         .await;
         scan_warning_count += scan_result.namespace_warnings.len();
@@ -512,8 +525,9 @@ async fn discover_controller_pods(
     operator: &OperatorInstance,
     kind_map: &KindMap,
     ledger: Option<&SharedLedger>,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> (Vec<ResourceId>, Vec<crate::kube::resource::ScanWarning>) {
-    use crate::kube::scanner::{get_with_retry_ledger, list_with_selector_retry_ledger};
+    use crate::kube::scanner::{get_with_retry_planner, list_with_selector_retry_planner};
 
     let mut pods = Vec::new();
     let mut warnings = Vec::new();
@@ -529,7 +543,7 @@ async fn discover_controller_pods(
         let api: Api<DynamicObject> =
             Api::namespaced_with(client.clone(), &operator.install_namespace, &ar);
 
-        let deploy = match get_with_retry_ledger(
+        let deploy = match get_with_retry_planner(
             &api,
             deploy_name,
             &deploy_info.group,
@@ -538,6 +552,8 @@ async fn discover_controller_pods(
             ledger,
             ns,
             QueryRequirement::Required,
+            planner,
+            client,
         )
         .await
         {
@@ -582,7 +598,7 @@ async fn discover_controller_pods(
         let pod_api: Api<DynamicObject> =
             Api::namespaced_with(client.clone(), &operator.install_namespace, &pod_ar);
 
-        match list_with_selector_retry_ledger(
+        match list_with_selector_retry_planner(
             &pod_api,
             &label_str,
             &pod_info.group,
@@ -591,6 +607,8 @@ async fn discover_controller_pods(
             ledger,
             ns,
             QueryRequirement::Required,
+            planner,
+            client,
         )
         .await
         {
