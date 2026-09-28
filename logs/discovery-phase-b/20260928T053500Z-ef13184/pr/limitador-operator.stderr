@@ -1,0 +1,20 @@
+🔍 Discovering API resources...
+   Discovery: 34.3s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+INFO: Rejected namespace candidate "redhat-ai-gateway-infra/maas-api-route" (invalid DNS label: contains '/')
+  Source: Limitador/limitador field=limits[0].namespace
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 269 resource types in 18.3s
+   openshift-rhcl — 143 resources
+   Scanned 1 namespace(s), 143 total resources
+   Found 7 ownerRef descendants in scanned namespaces
+
+Coverage: 275 queries, 275 success, 0 incomplete, 0 absent, 0 missing (128.6s)
+Query planner: 277 demands, 274 unique, 274 network, 3 cache hits (127.0s)

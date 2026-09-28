@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   Discovery: 35.4s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 5 pods
+🔍 Discovering CR instances...
+ found 4 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: redhat-ods-monitoring] elapsed 0s
+✅ Scanned 271 resource types in 19.8s
+   redhat-ods-monitoring — 27 resources
+[namespace 2/2: openshift-cluster-observability-operator] elapsed 19s
+✅ Scanned 271 resource types in 14.4s
+   openshift-cluster-observability-operator — 81 resources
+   Scanned 2 namespace(s), 108 total resources
+
+Coverage: 611 queries, 611 success, 0 incomplete, 0 absent, 0 missing (201.5s)

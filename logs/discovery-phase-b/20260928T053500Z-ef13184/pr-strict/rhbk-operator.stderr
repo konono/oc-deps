@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: keycloak] elapsed 0s
+✅ Scanned 269 resource types in 11.5s
+   keycloak — 65 resources
+   Scanned 1 namespace(s), 65 total resources
+   Found 14 ownerRef descendants in scanned namespaces
+
+Coverage: 276 queries, 276 success, 0 incomplete, 0 absent, 0 missing (134.0s)
+Query planner: 282 demands, 275 unique, 275 network, 7 cache hits (132.5s)

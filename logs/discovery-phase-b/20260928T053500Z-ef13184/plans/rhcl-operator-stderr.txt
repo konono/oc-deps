@@ -1,0 +1,11 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 3 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhcl-operator.v1.4.3-2026-09-28T06-34-54.158318848_00-00.json
+📄 Execution plan saved to logs/discovery-phase-b/20260928T053500Z-ef13184/plans/rhcl-operator-plan.json
+
+⏱ Discovery: 37.5s, OLM: 2.5s, Plan: 3.4s, Total: 43.6s
