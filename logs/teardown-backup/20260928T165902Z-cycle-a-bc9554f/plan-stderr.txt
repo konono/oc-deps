@@ -1,0 +1,11 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-nfd.4.22.0-202609151747-2026-09-28T17-01-59.595169276_00-00.json
+📄 Execution plan saved to logs/teardown-backup/20260928T165902Z-cycle-a-bc9554f/nfd-plan.json
+
+⏱ Discovery: 35.3s, OLM: 1.6s, Plan: 5.3s, Total: 42.3s

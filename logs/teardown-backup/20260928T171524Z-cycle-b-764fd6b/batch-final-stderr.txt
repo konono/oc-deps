@@ -1,0 +1,3183 @@
+📋 Batch: 15 operator(s) from configs/full-teardown.json
+  1: rhods-operator (+2 explicit)
+  2: rhbk-operator
+  3: leader-worker-set
+  4: job-set
+  5: kueue-operator
+  6: servicemeshoperator3
+  7: nfd
+  8: gpu-operator-certified
+  9: openshift-cert-manager-operator
+  10: rhcl-operator (+4 explicit)
+  11: authorino-operator
+  12: dns-operator
+  13: limitador-operator
+  14: cluster-observability-operator
+  15: opentelemetry-product
+
+📦 Backup dir: /tmp/pr45-cycleb-final-1790622704
+🔍 Baseline gate: verifying 15 target operators...
+  ✅ rhods-operator — rhods-operator.3.5.1 (Succeeded)
+  ✅ rhbk-operator — rhbk-operator.v26.6.7-opr.1 (Succeeded)
+  ✅ leader-worker-set — leader-worker-set.v1.0.1 (Succeeded)
+  ✅ job-set — jobset-operator.v1.0.1 (Succeeded)
+  ✅ kueue-operator — kueue-operator.v1.4.2 (Succeeded)
+  ✅ servicemeshoperator3 — servicemeshoperator3.v3.4.2 (Succeeded)
+  ✅ nfd — nfd.4.22.0-202609151747 (Succeeded)
+  ✅ gpu-operator-certified — gpu-operator-certified.v26.7.1 (Succeeded)
+  ✅ openshift-cert-manager-operator — cert-manager-operator.v1.20.0 (Succeeded)
+  ✅ rhcl-operator — rhcl-operator.v1.4.3 (Succeeded)
+  ✅ authorino-operator — authorino-operator.v1.4.3 (Succeeded)
+  ✅ dns-operator — dns-operator.v1.4.2 (Succeeded)
+  ✅ limitador-operator — limitador-operator.v1.4.2 (Succeeded)
+  ✅ cluster-observability-operator — cluster-observability-operator.v1.5.2 (Succeeded)
+  ✅ opentelemetry-product — opentelemetry-operator.v0.158.0-2 (Succeeded)
+✅ Baseline: 15/15 operators present
+
+
+============================================================
+  [1/15] TEARDOWN rhods-operator
+============================================================
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 13 direct instances
+🔍 Discovering related CRD instances...
+ 71 CRDs, 87 instances
+  62 linked, 25 unlinked (independent REVIEW)
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhods-operator.3.5.1-2026-09-28T19-13-18.454479308_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/0-rhods-operator.json
+
+⏱ Discovery: 37.9s, OLM: 3.5s, Plan: 9.0s, Total: 78.3s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/0-rhods-operator.json
+🔍 Discovering API resources...
+   Discovery: 38.6s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 13 direct instances
+🔍 Discovering related CRD instances...
+ 71 CRDs, 87 instances
+  62 linked, 25 unlinked (independent REVIEW)
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhods-operator.3.5.1-2026-09-28T19-14-33.993860650_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 13 instances
+🔍 Discovering related CRDs...
+ found 87 related instances
+🔍 Discovering namespace scope...
+
+ found 7 candidate namespaces
+🔍 Scanning 7 additional namespace(s)...
+[namespace 1/7: rhods-notebooks] elapsed 0s
+✅ Scanned 269 resource types in 47.0s
+   rhods-notebooks — 25 resources
+[namespace 2/7: rhoai-model-registries] elapsed 46s
+✅ Scanned 269 resource types in 55.6s
+   rhoai-model-registries — 54 resources
+[namespace 3/7: redhat-ods-monitoring] elapsed 102s
+✅ Scanned 269 resource types in 24.8s
+   redhat-ods-monitoring — 27 resources
+[namespace 4/7: models-as-a-service] elapsed 127s
+✅ Scanned 269 resource types in 58.0s
+   models-as-a-service — 28 resources
+[namespace 5/7: redhat-ods-applications] elapsed 185s
+✅ Scanned 269 resource types in 51.4s
+   redhat-ods-applications — 657 resources
+[namespace 6/7: ai-tenants] elapsed 236s
+✅ Scanned 269 resource types in 24.3s
+   ai-tenants — 26 resources
+[namespace 7/7: redhat-ods-operator] elapsed 261s
+✅ Scanned 269 resource types in 24.8s
+   redhat-ods-operator — 46 resources
+   Scanned 7 namespace(s), 863 total resources
+   Found 210 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  317 candidate(s) for rhods-operator.3.5.1
+  317 captured, 0 already absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/rhods-operator/20260928T192053Z-0008b145-0 (317 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9925cd5af6226-8b145.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 32 resources (73 expected to auto-remove) across 8 phases.
+
+  Targets: rhods-operator.3.5.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 6 DELETE, 73 EXPECT
+  Phase 2: 21 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 2 DELETE
+  Phase 6: 16 KEEP
+  Phase 7: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/rhods-operator  (ns: redhat-ods-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/rhods-operator.3.5.1  (ns: redhat-ods-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  Config/default  (cluster-scoped)
+  DELETED  MLflow/mlflow  (cluster-scoped)
+  DELETED  Auth/auth  (cluster-scoped)
+  DELETED  HardwareProfile/nvidia-gpu-1  (ns: redhat-ods-applications)
+  DELETED  DataScienceCluster/default-dsc  (cluster-scoped)
+  DELETED  DSCInitialization/default-dsci  (cluster-scoped)
+  ⏳ wave 1: 1/6 Gone (0s)  ⏳ wave 1: 4/6 Gone (0s)
+  EXPECT   DataSciencePipelines/default-datasciencepipelines  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ModelRegistry/default-modelregistry  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   Ray/default-ray  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   Trainer/default-trainer  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   TrainingOperator/default-trainingoperator  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   TrustyAI/default-trustyai  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   HardwareProfile/default-profile  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   GatewayConfig/default-gateway  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   Monitoring/default-monitoring  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   AIGateway/default-aigateway  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   Dashboard/default-dashboard  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   FeastOperator/default-feastoperator  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   Kserve/default-kserve  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   MLflowOperator/default-mlflowoperator  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   OGX/default-ogx  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   Workbenches/default-workbenches  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   OdhQuickStart/create-aikit-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhQuickStart/create-jupyter-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhQuickStart/deploy-python-model  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhQuickStart/openvino-inference-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhQuickStart/pachyderm-beginner-tutorial-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhQuickStart/using-starburst-enterprise  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/agentic-starter-kits  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/aikit  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/elastic  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/jupyter  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/mlflow  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/nvidia-nim  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/openvino  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/pachyderm  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/pgvector  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/rhoai  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/starburstenterprise  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhApplication/watson-x-ai  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-a2a-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-autogen-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-crewai-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-google-adk-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-hitl-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-langflow-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-langgraph-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-llamaindex-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-memory-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-rag-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/agentic-starter-kits-vanilla-python-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/jupyter-install-python-packages  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/jupyter-update-server-settings  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/jupyter-use-s3-bucket-data  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/jupyter-view-installed-packages  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/openvino-ovms-serving  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/pachyderm-beginner-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/pachyderm-house-pricing-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/rhoai-documentation  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/rhoai-tutorial-fraud  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/starburst-enterprise-requirements  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/starburst-openshift-deployment  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/starburst-openshift-overview  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   OdhDocument/watson-x-use-case  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  EXPECT   AITenant/models-as-a-service  (ns: ai-tenants)
+             managed descendant; controller expected to remove
+  EXPECT   MaasTenantConfig/default-tenant  (ns: models-as-a-service)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterStorageContainer/default  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/torch-distributed  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/torch-distributed-cpu  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/torch-distributed-cpu-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/torch-distributed-cuda130-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/torch-distributed-rocm  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/torch-distributed-rocm714-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/training-hub  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/training-hub-cpu  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/training-hub-rocm  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/training-hub-th09-cpu-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/training-hub-th09-cuda130-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  EXPECT   ClusterTrainingRuntime/training-hub-th09-rocm714-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+
+  ⏳ 5/79 Gone, 0 Deleting, 0 FinalizerBlocked(2s)  ⏳ 26/79 Gone, 0 Deleting, 7 FinalizerBlocked(2s)  ⏳ 26/79 Gone, 0 Deleting, 7 FinalizerBlocked(4s)
+  RECREATED Auth/auth: → 1f33ed03-6df4-4c83-9a70-67809c9b15d9 (iter 1)
+    ↳ re-DELETE Auth/auth: Accepted
+  RECREATED Config/default: → a72ab7a8-8250-407e-8c48-fa1aabd4e820 (iter 1)
+    ↳ re-DELETE Config/default: Accepted
+    ⚠ OdhDocument/openvino-ovms-serving: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/jupyter-update-server-settings: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/mlflow: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/starburst-openshift-overview: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-a2a-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhQuickStart/deploy-python-model: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/aikit: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/agentic-starter-kits: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/rhoai-tutorial-fraud: no deletionTimestamp — skip recovery
+    ⚠ OdhQuickStart/openvino-inference-notebook: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/starburst-openshift-deployment: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/openvino: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/jupyter-use-s3-bucket-data: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/pachyderm-beginner-tutorial: no deletionTimestamp — skip recovery
+    🔧 Kserve/default-kserve: finalizer(s) stripped (kserve-module.opendatahub.io/finalizer)
+    ⚠ OdhDocument/agentic-starter-kits-langgraph-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-langflow-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-crewai-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/nvidia-nim: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/elastic: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/starburstenterprise: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/jupyter-install-python-packages: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/watson-x-ai: no deletionTimestamp — skip recovery
+    ⚠ OdhQuickStart/create-aikit-notebook: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/jupyter: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-rag-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhQuickStart/create-jupyter-notebook: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/rhoai: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/jupyter-view-installed-packages: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-llamaindex-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-google-adk-tutorial: no deletionTimestamp — skip recovery
+    🔧 FeastOperator/default-feastoperator: finalizer(s) stripped (platform.opendatahub.io/finalizer)
+    🔧 OGX/default-ogx: finalizer(s) stripped (components.platform.opendatahub.io/ogx-finalizer)
+    ⚠ OdhApplication/pgvector: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-hitl-tutorial: no deletionTimestamp — skip recovery
+    🔧 MaasTenantConfig/default-tenant: finalizer(s) stripped (maas.opendatahub.io/tenant-cleanup)
+    ⚠ OdhDocument/agentic-starter-kits-memory-tutorial: no deletionTimestamp — skip recovery
+    🔧 AITenant/models-as-a-service: finalizer(s) stripped (maas.opendatahub.io/aitenant-cleanup)
+    ⚠ OdhDocument/agentic-starter-kits-vanilla-python-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/rhoai-documentation: no deletionTimestamp — skip recovery
+    ⚠ OdhQuickStart/pachyderm-beginner-tutorial-notebook: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/agentic-starter-kits-autogen-tutorial: no deletionTimestamp — skip recovery
+    ⚠ OdhApplication/pachyderm: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/starburst-enterprise-requirements: no deletionTimestamp — skip recovery
+    ⚠ OdhDocument/pachyderm-house-pricing-tutorial: no deletionTimestamp — skip recovery
+    🔧 Workbenches/default-workbenches: finalizer(s) stripped (components.platform.opendatahub.io/workbenches-cleanup)
+    🔧 Dashboard/default-dashboard: finalizer(s) stripped (components.platform.opendatahub.io/cleanup)
+    🔧 MLflowOperator/default-mlflowoperator: finalizer(s) stripped (mlflow.opendatahub.io/mlflow-operator-protection)
+
+Phase 2  Remaining cleanup
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-router-route  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-pd-template-nvidia-cuda  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-pd-template-nvidia-cuda  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-s390x  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-template-nvidia-cuda  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-amd-rocm  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-ppc64le  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-template-nvidia-cuda  (ns: redhat-ods-applications)
+  DELETED  OdhDashboardConfig/odh-dashboard-config  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-template  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-template  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler-latency-predictor  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-worker-data-parallel  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-intel-gaudi  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-x86  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tokenizer  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tracing  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-worker-data-parallel  (ns: redhat-ods-applications)
+  DELETED  LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-worker-data-parallel  (ns: redhat-ods-applications)
+  ⏳ wave 1: 1/21 Gone (0s)  ⏳ wave 1: 1/21 Gone (124s)
+  🔧 Attempting finalizer recovery on 20 stalled target(s)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-s390x: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tracing: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-amd-rocm: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler-latency-predictor: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-template-nvidia-cuda: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-template-nvidia-cuda: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tokenizer: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-worker-data-parallel: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-ppc64le: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-worker-data-parallel: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-template: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-x86: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-pd-template-nvidia-cuda: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-template: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-pd-template-nvidia-cuda: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-intel-gaudi: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-worker-data-parallel: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+    🔧 LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-router-route: finalizer(s) stripped (serving.kserve.io/llmisvcconfig-finalizer)
+  🔧 Recovered 20 resource(s) — re-checking Gone
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/rhods-operator.3.5.1  (ns: redhat-ods-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/rhods-operator  (ns: redhat-ods-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/07ed84f7.opendatahub.io  (ns: redhat-ods-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DELETED  ConfigMap/maas-gateway-options  (ns: openshift-ingress)
+  DELETED  Gateway/maas-default-gateway  (ns: openshift-ingress)
+  ⏳ wave 1: 2/2 Gone (0s)
+
+  ⏳ 2/2 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/auths.services.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/datascienceclusters.datasciencecluster.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/datasciencepipelines.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dscinitializations.dscinitialization.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/featuretrackers.features.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gatewayconfigs.services.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/hardwareprofiles.infrastructure.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/kueues.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/modelregistries.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/monitorings.services.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/platforms.config.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/rays.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/sparkoperators.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trainers.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trainingoperators.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trustyais.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/redhat-ods-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  32 deleted, 0 already gone, 0 failed
+
+Planned preserved: 18 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: rhods-operator.3.5.1
+Session: run-18d9925cd5af6226-8b145
+Created: 2026-09-28T19:20:58.615156647+00:00
+
+Execution: ApplyCompleted (8/8 phases)
+Residual audit: 80 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (19)
+  ClusterServiceVersion/rhods-operator.3.5.1 (redhat-ods-operator)
+    controller needed for operand cleanup
+  Lease/07ed84f7.opendatahub.io (redhat-ods-operator)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/auths.services.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/datascienceclusters.datasciencecluster.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/datasciencepipelines.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/dscinitializations.dscinitialization.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/featuretrackers.features.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/gatewayconfigs.services.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/hardwareprofiles.infrastructure.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/kueues.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/modelregistries.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/monitorings.services.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/platforms.config.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/rays.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/sparkoperators.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/trainers.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/trainingoperators.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/trustyais.components.platform.opendatahub.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/redhat-ods-operator
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (80)
+  Deployment/router-default (openshift-ingress)
+    no sufficient operator attribution evidence
+  Service/router-default (openshift-ingress)
+    no sufficient operator attribution evidence
+  Service/router-internal-default (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  Deployment/maas-postgres (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  StatefulSet/ogx-postgres (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  Service/maas-postgres (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  Service/ogx-postgres (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/code-server-notebook (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/jupyter-pytorch-llmcompressor (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/jupyter-rocm-minimal (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/jupyter-rocm-pytorch (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/jupyter-rocm-tensorflow (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/minimal-gpu (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/odh-trustyai-notebook (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/pytorch (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-datascience (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-datascience-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-minimal (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-minimal-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-pytorch (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-pytorch-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-pytorch-llmcompressor (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-pytorch-llmcompressor-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-rocm-pytorch (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-rocm-pytorch-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-rocm-tensorflow (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-rocm-tensorflow-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-tensorflow (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/runtime-tensorflow-2025-2 (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/s2i-generic-data-science-notebook (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/s2i-minimal-notebook (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/tensorflow (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/training-hub-universal-cpu (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/training-hub-universal-cuda (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ImageStream/training-hub-universal-rocm (redhat-ods-applications)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (redhat-ods-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (ai-tenants)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (models-as-a-service)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (models-as-a-service)
+    no sufficient operator attribution evidence
+
+Audit coverage: 172/172 probes succeeded (scope: 5 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 80 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ rhods-operator completed
+
+============================================================
+  [2/15] TEARDOWN rhbk-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 28 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhbk-operator.v26.6.7-opr.1-2026-09-28T19-27-18.699903772_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/1-rhbk-operator.json
+
+⏱ Discovery: 0.0s, OLM: 2.5s, Plan: 3.1s, Total: 5.8s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/1-rhbk-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 28 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhbk-operator.v26.6.7-opr.1-2026-09-28T19-27-24.144873301_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: keycloak] elapsed 0s
+✅ Scanned 269 resource types in 24.7s
+   keycloak — 63 resources
+   Scanned 1 namespace(s), 63 total resources
+   Found 13 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  20 candidate(s) for rhbk-operator.v26.6.7-opr.1
+  20 captured, 0 already absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/rhbk-operator/20260928T192756Z-0008b1b8-0 (20 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d992bf2594be7a-8b1b8.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+
+⚠ This will DELETE 5 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: rhbk-operator.v26.6.7-opr.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 2 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE
+  Phase 5: 2 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/rhbk-operator  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  Keycloak/keycloak  (ns: keycloak)
+  DELETED  KeycloakRealmImport/maas-realm  (ns: keycloak)
+
+  ⏳ wave 1: 2/2 Gone (0s)
+  ⏳ 2/2 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/rhbk-operator  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/keycloak  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  5 deleted, 0 already gone, 0 failed
+
+Planned preserved: 4 KEEP, 0 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: rhbk-operator.v26.6.7-opr.1
+Session: run-18d992bf2594be7a-8b1b8
+Created: 2026-09-28T19:28:00.136565177+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 12 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1 (keycloak)
+    controller needed for operand cleanup
+  CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/keycloaks.k8s.keycloak.org
+    eligible for prune (use --prune-crds to remove)
+  Namespace/keycloak
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (12)
+  StatefulSet/postgres (keycloak)
+    no sufficient operator attribution evidence
+  Service/postgres (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (keycloak)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (keycloak)
+    no sufficient operator attribution evidence
+  Route/keycloak (keycloak)
+    no sufficient operator attribution evidence
+
+Audit coverage: 17/17 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 12 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ rhbk-operator completed
+
+============================================================
+  [3/15] TEARDOWN leader-worker-set
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 27 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-leader-worker-set.v1.0.1-2026-09-28T19-28-20.744673461_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/2-leader-worker-set.json
+
+⏱ Discovery: 0.0s, OLM: 2.7s, Plan: 2.7s, Total: 5.6s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/2-leader-worker-set.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 27 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-leader-worker-set.v1.0.1-2026-09-28T19-28-26.374144391_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-leaderworkerset] elapsed 0s
+✅ Scanned 269 resource types in 25.9s
+   openshift-leaderworkerset — 35 resources
+   Scanned 1 namespace(s), 35 total resources
+🔍 Running targeted adapters... found 0 resources
+  5 candidate(s) for leader-worker-set.v1.0.1
+  5 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/leader-worker-set/20260928T192855Z-0008b1fc-0 (5 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d992cd0017d2e4-8b1fc.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: leader-worker-set.v1.0.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 1 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/leader-worker-set  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/leader-worker-set  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/openshift-lws-operator-lock  (ns: openshift-leaderworkerset)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-leaderworkerset  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: leader-worker-set.v1.0.1
+Session: run-18d992cd0017d2e4-8b1fc
+Created: 2026-09-28T19:28:59.765154752+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 9 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/leader-worker-set.v1.0.1 (openshift-leaderworkerset)
+    controller needed for operand cleanup
+  Lease/openshift-lws-operator-lock (openshift-leaderworkerset)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-leaderworkerset
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (9)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-leaderworkerset)
+    no sufficient operator attribution evidence
+
+Audit coverage: 12/12 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 9 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ leader-worker-set completed
+
+============================================================
+  [4/15] TEARDOWN job-set
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 26 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-jobset-operator.v1.0.1-2026-09-28T19-29-18.752762994_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/3-job-set.json
+
+⏱ Discovery: 0.0s, OLM: 3.9s, Plan: 2.9s, Total: 7.0s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/3-job-set.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 26 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-jobset-operator.v1.0.1-2026-09-28T19-29-24.063899212_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-jobset] elapsed 0s
+✅ Scanned 269 resource types in 17.8s
+   openshift-jobset — 59 resources
+   Scanned 1 namespace(s), 59 total resources
+   Found 19 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  25 candidate(s) for jobset-operator.v1.0.1
+  25 captured, 0 already absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/job-set/20260928T192949Z-0008b23c-0 (25 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d992d967ed888d-8b23c.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 4 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: jobset-operator.v1.0.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 1 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 1 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/job-set  (ns: openshift-jobset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/jobset-operator.v1.0.1  (ns: openshift-jobset)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  JobSetOperator/cluster  (cluster-scoped)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/jobset-operator.v1.0.1  (ns: openshift-jobset)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/job-set  (ns: openshift-jobset)
+
+  REVIEW   Lease/openshift-jobset-operator-lock  (ns: openshift-jobset)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/jobsetoperators.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-jobset  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  4 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: jobset-operator.v1.0.1
+Session: run-18d992d967ed888d-8b23c
+Created: 2026-09-28T19:29:50.960623175+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 9 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/jobset-operator.v1.0.1 (openshift-jobset)
+    controller needed for operand cleanup
+  Lease/openshift-jobset-operator-lock (openshift-jobset)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/jobsetoperators.operator.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-jobset
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (9)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-jobset)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-jobset)
+    no sufficient operator attribution evidence
+
+Audit coverage: 13/13 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 9 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ job-set completed
+
+============================================================
+  [5/15] TEARDOWN kueue-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 25 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-kueue-operator.v1.4.2-2026-09-28T19-30-07.234455197_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/4-kueue-operator.json
+
+⏱ Discovery: 0.0s, OLM: 2.3s, Plan: 2.1s, Total: 4.6s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/4-kueue-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 25 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-kueue-operator.v1.4.2-2026-09-28T19-30-12.239368224_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 2 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-kueue] elapsed 0s
+✅ Scanned 269 resource types in 28.0s
+   openshift-kueue — 35 resources
+   Scanned 1 namespace(s), 35 total resources
+🔍 Running targeted adapters... found 0 resources
+  6 candidate(s) for kueue-operator.v1.4.2
+  6 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/kueue-operator/20260928T193044Z-0008b27c-0 (6 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d992e645a467df-8b27c.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: kueue-operator.v1.4.2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 1 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/kueue-operator  (ns: openshift-kueue)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/kueue-operator.v1.4.2  (ns: openshift-kueue)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/kueue-operator.v1.4.2  (ns: openshift-kueue)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/kueue-operator  (ns: openshift-kueue)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/openshift-kueue-operator-lock  (ns: openshift-kueue)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/kueues.kueue.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-kueue  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: kueue-operator.v1.4.2
+Session: run-18d992e645a467df-8b27c
+Created: 2026-09-28T19:30:46.657673632+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 8 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/kueue-operator.v1.4.2 (openshift-kueue)
+    controller needed for operand cleanup
+  Lease/openshift-kueue-operator-lock (openshift-kueue)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/kueues.kueue.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-kueue
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (8)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-kueue)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-kueue)
+    no sufficient operator attribution evidence
+
+Audit coverage: 12/12 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 8 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ kueue-operator completed
+
+============================================================
+  [6/15] TEARDOWN servicemeshoperator3
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 24 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-servicemeshoperator3.v3.4.2-2026-09-28T19-31-03.141127727_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/5-servicemeshoperator3.json
+
+⏱ Discovery: 0.0s, OLM: 2.2s, Plan: 3.3s, Total: 5.7s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/5-servicemeshoperator3.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 24 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-servicemeshoperator3.v3.4.2-2026-09-28T19-31-12.207504411_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-servicemesh] elapsed 0s
+✅ Scanned 269 resource types in 19.1s
+   openshift-servicemesh — 36 resources
+   Scanned 1 namespace(s), 36 total resources
+🔍 Running targeted adapters... found 0 resources
+  5 candidate(s) for servicemeshoperator3.v3.4.2
+  5 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/servicemeshoperator3/20260928T193135Z-0008b2c9-0 (5 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d992f22958cce5-8b2c9.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: servicemeshoperator3.v3.4.2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 20 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/servicemeshoperator3  (ns: openshift-servicemesh)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/servicemeshoperator3  (ns: openshift-servicemesh)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/sail-operator-lock  (ns: openshift-servicemesh)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/trafficextensions.extensions.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/wasmplugins.extensions.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/destinationrules.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/envoyfilters.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gateways.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/proxyconfigs.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/serviceentries.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/sidecars.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/virtualservices.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/workloadentries.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/workloadgroups.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/ztunnels.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authorizationpolicies.security.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/peerauthentications.security.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/requestauthentications.security.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/telemetries.telemetry.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiocnis.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiorevisions.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiorevisiontags.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istios.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-servicemesh  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 22 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: servicemeshoperator3.v3.4.2
+Session: run-18d992f22958cce5-8b2c9
+Created: 2026-09-28T19:31:37.507893497+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 7 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (23)
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-servicemesh)
+    controller needed for operand cleanup
+  Lease/sail-operator-lock (openshift-servicemesh)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/trafficextensions.extensions.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/wasmplugins.extensions.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/destinationrules.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/envoyfilters.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/gateways.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/proxyconfigs.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/serviceentries.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/sidecars.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/virtualservices.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/workloadentries.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/workloadgroups.networking.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/ztunnels.sailoperator.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/authorizationpolicies.security.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/peerauthentications.security.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/requestauthentications.security.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/telemetries.telemetry.istio.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/istiocnis.sailoperator.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/istiorevisions.sailoperator.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/istiorevisiontags.sailoperator.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/istios.sailoperator.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-servicemesh
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (7)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-servicemesh)
+    no sufficient operator attribution evidence
+
+Audit coverage: 50/50 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 7 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ servicemeshoperator3 completed
+
+============================================================
+  [7/15] TEARDOWN nfd
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-nfd.4.22.0-202609151747-2026-09-28T19-32-02.868778309_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/6-nfd.json
+
+⏱ Discovery: 0.0s, OLM: 2.3s, Plan: 3.5s, Total: 5.9s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/6-nfd.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-nfd.4.22.0-202609151747-2026-09-28T19-32-10.925462868_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-nfd] elapsed 0s
+✅ Scanned 269 resource types in 18.8s
+   openshift-nfd — 64 resources
+[namespace 2/2: y] elapsed 18s
+✅ Scanned 269 resource types in 15.9s
+   y — 0 resources
+   Scanned 2 namespace(s), 64 total resources
+   Found 10 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 2 resources
+  19 candidate(s) for nfd.4.22.0-202609151747
+  19 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/nfd/20260928T193254Z-0008b2fd-0 (19 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d99304aa2859e2-8b2fd.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 3 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 5 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: nfd.4.22.0-202609151747
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 2 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 3 REVIEW
+  Phase 5: 6 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/nfd  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/nfd.4.22.0-202609151747  (ns: openshift-nfd)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  NodeFeatureDiscovery/nfd-instance  (ns: openshift-nfd)
+  SKIPPED  NodeFeature/ip-10-0-23-226.us-east-2.compute.internal (already gone)  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/nfd.4.22.0-202609151747  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/nfd  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io  (ns: openshift-nfd)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/nfd-manager-config  (ns: openshift-nfd)
+             operator-related ConfigMap — verify before deleting
+  REVIEW   ConfigMap/nfd-worker  (ns: openshift-nfd)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeaturerules.nfd.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeatures.nfd.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-nfd  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  4 deleted, 1 already gone, 0 failed
+
+Planned preserved: 8 KEEP, 3 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: nfd.4.22.0-202609151747
+Session: run-18d99304aa2859e2-8b2fd
+Created: 2026-09-28T19:32:56.755967255+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 7 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (11)
+  ClusterServiceVersion/nfd.4.22.0-202609151747 (openshift-nfd)
+    controller needed for operand cleanup
+  Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io (openshift-nfd)
+    leader election lease (holder references operator deployment)
+  ConfigMap/nfd-manager-config (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  ConfigMap/nfd-worker (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-nfd
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (7)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-nfd)
+    no sufficient operator attribution evidence
+
+Audit coverage: 19/19 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 7 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ nfd completed
+
+============================================================
+  [8/15] TEARDOWN gpu-operator-certified
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 22 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-gpu-operator-certified.v26.7.1-2026-09-28T19-33-19.406565475_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/7-gpu-operator-certified.json
+
+⏱ Discovery: 0.0s, OLM: 1.9s, Plan: 3.4s, Total: 5.6s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/7-gpu-operator-certified.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 22 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-gpu-operator-certified.v26.7.1-2026-09-28T19-33-26.040686286_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: nvidia-gpu-operator] elapsed 0s
+✅ Scanned 269 resource types in 26.9s
+   nvidia-gpu-operator — 123 resources
+   Scanned 1 namespace(s), 123 total resources
+   Found 85 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  91 candidate(s) for gpu-operator-certified.v26.7.1
+  91 captured, 0 already absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/gpu-operator-certified/20260928T193416Z-0008b33d-0 (91 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d99317af3d9c94-8b33d.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 4 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: gpu-operator-certified.v26.7.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 1 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 5 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/gpu-operator-certified  (ns: nvidia-gpu-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  ClusterPolicy/gpu-cluster-policy  (cluster-scoped)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/gpu-operator-certified  (ns: nvidia-gpu-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/53822513.nvidia.com  (ns: nvidia-gpu-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/nvidiadrivers.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gpuclusters.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/computedomains.resource.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/computedomaincliques.resource.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/clusterpolicies.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/nvidia-gpu-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  4 deleted, 0 already gone, 0 failed
+
+Planned preserved: 7 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: gpu-operator-certified.v26.7.1
+Session: run-18d99317af3d9c94-8b33d
+Created: 2026-09-28T19:34:18.849350630+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 7 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (8)
+  ClusterServiceVersion/gpu-operator-certified.v26.7.1 (nvidia-gpu-operator)
+    controller needed for operand cleanup
+  Lease/53822513.nvidia.com (nvidia-gpu-operator)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/nvidiadrivers.nvidia.com
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/gpuclusters.nvidia.com
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/computedomains.resource.nvidia.com
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/computedomaincliques.resource.nvidia.com
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/clusterpolicies.nvidia.com
+    eligible for prune (use --prune-crds to remove)
+  Namespace/nvidia-gpu-operator
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (7)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (nvidia-gpu-operator)
+    no sufficient operator attribution evidence
+
+Audit coverage: 17/17 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 7 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ gpu-operator-certified completed
+
+============================================================
+  [9/15] TEARDOWN openshift-cert-manager-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 21 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-cert-manager-operator.v1.20.0-2026-09-28T19-34-40.867109495_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/8-openshift-cert-manager-operator.json
+
+⏱ Discovery: 0.0s, OLM: 3.5s, Plan: 5.0s, Total: 8.7s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/8-openshift-cert-manager-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 21 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-cert-manager-operator.v1.20.0-2026-09-28T19-34-47.029680855_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: cert-manager-operator] elapsed 0s
+✅ Scanned 269 resource types in 16.2s
+   cert-manager-operator — 37 resources
+   Scanned 1 namespace(s), 37 total resources
+🔍 Running targeted adapters... found 0 resources
+  6 candidate(s) for cert-manager-operator.v1.20.0
+  6 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/openshift-cert-manager-operator/20260928T193510Z-0008b380-0 (6 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9932423025a34-8b380.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 2 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 4 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: cert-manager-operator.v1.20.0
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 1 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 2 REVIEW
+  Phase 5: 10 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/openshift-cert-manager-operator  (ns: cert-manager-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/cert-manager-operator.v1.20.0  (ns: cert-manager-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  CertManager/cluster  (cluster-scoped)
+  ⏳ wave 1: 0/1 Gone (0s)  ⏳ wave 1: 0/1 Gone (5s)
+
+  ⏳ 0/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  RECREATED CertManager/cluster: → 96d61c43-074e-4eaf-8a98-2ac36a6f2f28 (iter 1)
+    ↳ re-DELETE CertManager/cluster: Accepted
+  RECREATED CertManager/cluster: → bde17966-7b30-472a-bb11-957ee963e0ff (iter 2)
+    ↳ re-DELETE CertManager/cluster: Accepted
+  RECREATED CertManager/cluster: → cd834da3-250d-4bdf-8936-08fe4535c6c7 (iter 3)
+    ↳ re-DELETE CertManager/cluster: Accepted
+  ✅ Barrier passed (after 3 re-delete iteration(s))
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/cert-manager-operator.v1.20.0  (ns: cert-manager-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/openshift-cert-manager-operator  (ns: cert-manager-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/cert-manager-operator-lock  (ns: cert-manager-operator)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/cert-manager-operator-trusted-ca-bundle  (ns: cert-manager-operator)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/bundles.trust.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/certificaterequests.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/certificates.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/certmanagers.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/challenges.acme.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/clusterissuers.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/issuers.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiocsrs.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/orders.acme.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trustmanagers.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/cert-manager-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  4 deleted, 0 already gone, 0 failed
+
+Planned preserved: 12 KEEP, 2 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: cert-manager-operator.v1.20.0
+Session: run-18d9932423025a34-8b380
+Created: 2026-09-28T19:35:12.019667864+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 7 residuals observed
+
+PLANNED DELETE STILL PRESENT (1)
+  CertManager/cluster (RECREATED — different UID)
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (14)
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (cert-manager-operator)
+    controller needed for operand cleanup
+  Lease/cert-manager-operator-lock (cert-manager-operator)
+    leader election lease (holder references operator deployment)
+  ConfigMap/cert-manager-operator-trusted-ca-bundle (cert-manager-operator)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/bundles.trust.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/certificaterequests.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/certificates.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/certmanagers.operator.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/challenges.acme.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/clusterissuers.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/issuers.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/istiocsrs.operator.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/orders.acme.cert-manager.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/trustmanagers.operator.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/cert-manager-operator
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (6)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (cert-manager-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (cert-manager-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (cert-manager-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (cert-manager-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (cert-manager-operator)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (cert-manager-operator)
+    no sufficient operator attribution evidence
+
+Audit coverage: 22/22 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+🧹 Cleaning 1 planned/saved residual(s)...
+  1 Gone, 0 skipped, 0 failed
+
+📋 6 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ openshift-cert-manager-operator completed
+
+============================================================
+  [10/15] TEARDOWN rhcl-operator
+============================================================
+🔍 Discovering API resources...
+🔍 Discovering operators... found 20 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhcl-operator.v1.4.3-2026-09-28T19-37-07.526969832_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/9-rhcl-operator.json
+
+⏱ Discovery: 38.4s, OLM: 2.5s, Plan: 4.9s, Total: 62.9s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/9-rhcl-operator.json
+🔍 Discovering API resources...
+   Discovery: 36.9s
+🔍 Discovering operators... found 20 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhcl-operator.v1.4.3-2026-09-28T19-38-06.767900956_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-rhcl] elapsed 0s
+✅ Scanned 268 resource types in 20.1s
+   openshift-rhcl — 135 resources
+[namespace 2/2: openshift-ingress] elapsed 20s
+✅ Scanned 268 resource types in 30.5s
+   openshift-ingress — 49 resources
+   Scanned 2 namespace(s), 184 total resources
+   Found 26 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  34 candidate(s) for rhcl-operator.v1.4.3
+  34 captured, 0 already absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/rhcl-operator/20260928T193925Z-0008b3c2-0 (34 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9935f9d04dc4e-8b3c2.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 8 resources (0 expected to auto-remove) across 8 phases.
+
+  Targets: rhcl-operator.v1.4.3
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 2 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 KEEP, 1 REVIEW
+  Phase 5: 4 DELETE
+  Phase 6: 13 KEEP
+  Phase 7: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/rhcl-operator  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/rhcl-operator.v1.4.3  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  Kuadrant/kuadrant  (ns: openshift-rhcl)
+  DELETED  AuthPolicy/maas-gateway-auth  (ns: openshift-ingress)
+
+  ⏳ wave 1: 2/2 Gone (0s)
+  ⏳ 2/2 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/rhcl-operator.v1.4.3  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/f139389e.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DELETED  Deployment/kuadrant-console-plugin  (ns: openshift-rhcl)
+  DELETED  ConfigMap/kuadrant-console-nginx-conf  (ns: openshift-rhcl)
+  DELETED  ConsolePlugin/kuadrant-console-plugin  (cluster-scoped)
+  DELETED  Service/kuadrant-console-plugin  (ns: openshift-rhcl)
+  ⏳ wave 1: 4/4 Gone (0s)
+
+  ⏳ 4/4 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/apikeyapprovals.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apikeyrequests.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apikeys.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apiproducts.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dnspolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/kuadrants.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/oidcpolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/planpolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/ratelimitpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/telemetrypolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/tlspolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/tokenratelimitpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  8 deleted, 0 already gone, 0 failed
+
+Planned preserved: 16 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: rhcl-operator.v1.4.3
+Session: run-18d9935f9d04dc4e-8b3c2
+Created: 2026-09-28T19:39:28.078370626+00:00
+
+Execution: ApplyCompleted (8/8 phases)
+Residual audit: 23 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (17)
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-rhcl)
+    controller needed for operand cleanup
+  OperatorGroup/rhcl-operator (openshift-rhcl)
+    other operators remain in namespace
+  Lease/f139389e.kuadrant.io (openshift-rhcl)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/apikeyapprovals.devportal.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/apikeyrequests.devportal.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/apikeys.devportal.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/apiproducts.devportal.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/authpolicies.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/dnspolicies.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/kuadrants.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/oidcpolicies.extensions.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/planpolicies.extensions.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/ratelimitpolicies.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/telemetrypolicies.extensions.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/tlspolicies.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/tokenratelimitpolicies.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-rhcl
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (23)
+  Deployment/router-default (openshift-ingress)
+    no sufficient operator attribution evidence
+  Service/router-default (openshift-ingress)
+    no sufficient operator attribution evidence
+  Service/router-internal-default (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-ingress)
+    no sufficient operator attribution evidence
+  Deployment/authorino-operator (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Deployment/dns-operator-controller-manager (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Deployment/limitador-operator-controller-manager (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/authorino-operator-metrics (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/authorino-webhooks (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/dns-operator-controller-manager-metrics-service (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/limitador-operator-metrics (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Subscription/authorino-operator-stable-redhat-operators-openshift-marketplace (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Subscription/dns-operator-stable-redhat-operators-openshift-marketplace (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+
+Audit coverage: 50/50 probes succeeded (scope: 2 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 23 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ rhcl-operator completed
+
+============================================================
+  [11/15] TEARDOWN authorino-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 464 types)
+🔍 Discovering operators... found 19 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-authorino-operator.v1.4.3-2026-09-28T19-40-17.131626534_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/10-authorino-operator.json
+
+⏱ Discovery: 0.0s, OLM: 3.1s, Plan: 2.1s, Total: 5.5s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/10-authorino-operator.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 19 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-authorino-operator.v1.4.3-2026-09-28T19-40-25.717969735_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 268 resource types in 30.5s
+   openshift-rhcl — 71 resources
+   Scanned 1 namespace(s), 71 total resources
+🔍 Running targeted adapters... found 0 resources
+  5 candidate(s) for authorino-operator.v1.4.3
+  5 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/authorino-operator/20260928T194101Z-0008b407-0 (5 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d99375f2533b11-8b407.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 2 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: authorino-operator.v1.4.3
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 KEEP, 1 REVIEW
+  Phase 5: 2 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/authorino-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/authorino-operator.v1.4.3  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/authorino-operator.v1.4.3  (ns: openshift-rhcl)
+
+  ⏳ wave 1: 1/1 Gone (2s)
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/aac3a15d.authorino.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/authconfigs.authorino.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authorinos.operator.authorino.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  2 deleted, 0 already gone, 0 failed
+
+Planned preserved: 5 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: authorino-operator.v1.4.3
+Session: run-18d99375f2533b11-8b407
+Created: 2026-09-28T19:41:03.297543107+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 10 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (6)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-rhcl)
+    controller needed for operand cleanup
+  OperatorGroup/rhcl-operator (openshift-rhcl)
+    other operators remain in namespace
+  Lease/aac3a15d.authorino.kuadrant.io (openshift-rhcl)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/authconfigs.authorino.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/authorinos.operator.authorino.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-rhcl
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (10)
+  Deployment/dns-operator-controller-manager (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Deployment/limitador-operator-controller-manager (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/dns-operator-controller-manager-metrics-service (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/limitador-operator-metrics (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Subscription/dns-operator-stable-redhat-operators-openshift-marketplace (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+
+Audit coverage: 12/12 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 10 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ authorino-operator completed
+
+============================================================
+  [12/15] TEARDOWN dns-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 464 types)
+🔍 Discovering operators... found 18 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-dns-operator.v1.4.2-2026-09-28T19-41-21.870451205_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/11-dns-operator.json
+
+⏱ Discovery: 0.0s, OLM: 2.2s, Plan: 3.2s, Total: 5.6s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/11-dns-operator.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 18 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-dns-operator.v1.4.2-2026-09-28T19-41-26.535664373_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 268 resource types in 17.1s
+   openshift-rhcl — 53 resources
+   Scanned 1 namespace(s), 53 total resources
+🔍 Running targeted adapters... found 0 resources
+  5 candidate(s) for dns-operator.v1.4.2
+  5 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/dns-operator/20260928T194149Z-0008b448-0 (5 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d993811c1479a5-8b448.json
+⚠ Plan has 2 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 2 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: dns-operator.v1.4.2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 KEEP, 2 REVIEW
+  Phase 5: 2 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/dns-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/dns-operator.v1.4.2  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/dns-operator.v1.4.2  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/a3f98d6c.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/dns-operator-controller-env  (ns: openshift-rhcl)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/dnshealthcheckprobes.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dnsrecords.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  2 deleted, 0 already gone, 0 failed
+
+Planned preserved: 5 KEEP, 2 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: dns-operator.v1.4.2
+Session: run-18d993811c1479a5-8b448
+Created: 2026-09-28T19:41:52.373152337+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 6 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (7)
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-rhcl)
+    controller needed for operand cleanup
+  OperatorGroup/rhcl-operator (openshift-rhcl)
+    other operators remain in namespace
+  Lease/a3f98d6c.kuadrant.io (openshift-rhcl)
+    leader election lease (holder references operator deployment)
+  ConfigMap/dns-operator-controller-env (openshift-rhcl)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/dnshealthcheckprobes.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/dnsrecords.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-rhcl
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (6)
+  Deployment/limitador-operator-controller-manager (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Service/limitador-operator-metrics (openshift-rhcl)
+    no sufficient operator attribution evidence
+  Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+
+Audit coverage: 12/12 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 6 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ dns-operator completed
+
+============================================================
+  [13/15] TEARDOWN limitador-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 464 types)
+🔍 Discovering operators... found 17 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-limitador-operator.v1.4.2-2026-09-28T19-42-07.480660731_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/12-limitador-operator.json
+
+⏱ Discovery: 0.0s, OLM: 1.7s, Plan: 3.0s, Total: 4.9s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/12-limitador-operator.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 17 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-limitador-operator.v1.4.2-2026-09-28T19-42-11.958320607_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 268 resource types in 22.3s
+   openshift-rhcl — 38 resources
+   Scanned 1 namespace(s), 38 total resources
+🔍 Running targeted adapters... found 0 resources
+  5 candidate(s) for limitador-operator.v1.4.2
+  5 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/limitador-operator/20260928T194237Z-0008b48e-0 (5 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9938c4a0bde84-8b48e.json
+⚠ Plan has 2 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: limitador-operator.v1.4.2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 2 REVIEW
+  Phase 5: 1 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/3745a16e.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/limitador-operator-manager-config  (ns: openshift-rhcl)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/limitadors.limitador.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 2 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: limitador-operator.v1.4.2
+Session: run-18d9938c4a0bde84-8b48e
+Created: 2026-09-28T19:42:39.031048048+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 2 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (5)
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-rhcl)
+    controller needed for operand cleanup
+  Lease/3745a16e.kuadrant.io (openshift-rhcl)
+    leader election lease (holder references operator deployment)
+  ConfigMap/limitador-operator-manager-config (openshift-rhcl)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/limitadors.limitador.kuadrant.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-rhcl
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (2)
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-rhcl)
+    no sufficient operator attribution evidence
+
+Audit coverage: 12/12 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 2 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ limitador-operator completed
+
+============================================================
+  [14/15] TEARDOWN cluster-observability-operator
+============================================================
+🔍 Discovering API resources...
+   (cached, 464 types)
+🔍 Discovering operators... found 16 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-cluster-observability-operator.v1.5.2-2026-09-28T19-43-00.349413340_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/13-cluster-observability-operator.json
+
+⏱ Discovery: 0.0s, OLM: 3.8s, Plan: 4.9s, Total: 8.9s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/13-cluster-observability-operator.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 16 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-cluster-observability-operator.v1.5.2-2026-09-28T19-43-09.569863156_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 5 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-cluster-observability-operator] elapsed 0s
+✅ Scanned 268 resource types in 19.9s
+   openshift-cluster-observability-operator — 73 resources
+   Scanned 1 namespace(s), 73 total resources
+🔍 Running targeted adapters... found 0 resources
+  15 candidate(s) for cluster-observability-operator.v1.5.2
+  15 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/cluster-observability-operator/20260928T194337Z-0008b4d9-0 (15 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9939a5306d6f7-8b4d9.json
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: cluster-observability-operator.v1.5.2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE
+  Phase 5: 18 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/cluster-observability-operator  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/cluster-observability-operator.v1.5.2  (ns: openshift-cluster-observability-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/cluster-observability-operator.v1.5.2  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/cluster-observability-operator  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/alertmanagers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/monitoringstacks.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/observabilityinstallers.observability.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/perses.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesdashboards.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesdatasources.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesglobaldatasources.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/podmonitors.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/probes.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheusagents.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheuses.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheusrules.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/scrapeconfigs.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/servicemonitors.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/thanosqueriers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/thanosrulers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/uiplugins.observability.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-cluster-observability-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 20 KEEP, 0 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: cluster-observability-operator.v1.5.2
+Session: run-18d9939a5306d6f7-8b4d9
+Created: 2026-09-28T19:43:40.508626391+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 1 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (20)
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-cluster-observability-operator)
+    controller needed for operand cleanup
+  CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/alertmanagers.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/monitoringstacks.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/observabilityinstallers.observability.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/perses.perses.dev
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesdashboards.perses.dev
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesdatasources.perses.dev
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesglobaldatasources.perses.dev
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/podmonitors.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/probes.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheusagents.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheuses.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheusrules.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/scrapeconfigs.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/servicemonitors.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/thanosqueriers.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/thanosrulers.monitoring.rhobs
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/uiplugins.observability.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-cluster-observability-operator
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (1)
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-cluster-observability-operator)
+    no sufficient operator attribution evidence
+
+Audit coverage: 32/32 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+📋 1 residual(s) observed.
+  Use 'teardown journal' to review.
+  ✅ cluster-observability-operator completed
+
+============================================================
+  [15/15] TEARDOWN opentelemetry-product
+============================================================
+🔍 Discovering API resources...
+   (cached, 464 types)
+🔍 Discovering operators... found 15 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-opentelemetry-operator.v0.158.0-2-2026-09-28T19-44-05.149593533_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-batch-569442/14-opentelemetry-product.json
+
+⏱ Discovery: 0.0s, OLM: 1.7s, Plan: 4.8s, Total: 6.8s
+📄 Loaded execution plan from /tmp/oc-deps-batch-569442/14-opentelemetry-product.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 15 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-opentelemetry-operator.v0.158.0-2-2026-09-28T19-44-12.204304701_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-opentelemetry-operator] elapsed 0s
+✅ Scanned 268 resource types in 26.9s
+   openshift-opentelemetry-operator — 44 resources
+   Scanned 1 namespace(s), 44 total resources
+🔍 Running targeted adapters... found 0 resources
+  8 candidate(s) for opentelemetry-operator.v0.158.0-2
+  8 captured, 0 already absent
+  ✅ Backup: /tmp/pr45-cycleb-final-1790622704/operator/opentelemetry-product/20260928T194444Z-0008b51b-0 (8 resources)
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d993a9e1f429ff-8b51b.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: opentelemetry-operator.v0.158.0-2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 4 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/opentelemetry-product  (ns: openshift-opentelemetry-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ns: openshift-opentelemetry-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ns: openshift-opentelemetry-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/opentelemetry-product  (ns: openshift-opentelemetry-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/9f7554c3.opentelemetry.io  (ns: openshift-opentelemetry-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/instrumentations.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/opampbridges.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/opentelemetrycollectors.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/targetallocators.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-opentelemetry-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 6 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown status: opentelemetry-operator.v0.158.0-2
+Session: run-18d993a9e1f429ff-8b51b
+Created: 2026-09-28T19:44:46.302396411+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 0 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (7)
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-opentelemetry-operator)
+    controller needed for operand cleanup
+  Lease/9f7554c3.opentelemetry.io (openshift-opentelemetry-operator)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/instrumentations.opentelemetry.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/opampbridges.opentelemetry.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/opentelemetrycollectors.opentelemetry.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/targetallocators.opentelemetry.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-opentelemetry-operator
+    namespace cleanup requires manual verification
+
+Audit coverage: 16/16 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+✅ No residuals observed in scanned scope.
+  ✅ opentelemetry-product completed
+
+📊 Batch results:
+  ✅ rhods-operator
+  ✅ rhbk-operator
+  ✅ leader-worker-set
+  ✅ job-set
+  ✅ kueue-operator
+  ✅ servicemeshoperator3
+  ✅ nfd
+  ✅ gpu-operator-certified
+  ✅ openshift-cert-manager-operator
+  ✅ rhcl-operator
+  ✅ authorino-operator
+  ✅ dns-operator
+  ✅ limitador-operator
+  ✅ cluster-observability-operator
+  ✅ opentelemetry-product
+
+  15 succeeded, 0 skipped, 0 failed, 0 not run

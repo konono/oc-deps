@@ -1871,6 +1871,7 @@ async fn main() -> Result<()> {
                     yes,
                     script,
                     tui: use_tui,
+                    backup_dir,
                 } => {
                     let force = false; // advisory warnings always shown
                     let approve_finalizer_recovery = true; // always enabled
@@ -2140,6 +2141,7 @@ async fn main() -> Result<()> {
                                 &target_operators,
                                 &gk_map,
                                 approve_finalizer_recovery,
+                                vec![], // TUI updates receipts after review overrides
                             )
                             .await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
@@ -2175,6 +2177,9 @@ async fn main() -> Result<()> {
                             &journal_store,
                             &gate,
                             force,
+                            backup_dir.as_deref(),
+                            &current_cluster_identity,
+                            &plan_file,
                         )
                         .await?;
                         return Ok(());
@@ -2416,6 +2421,28 @@ async fn main() -> Result<()> {
                                     plan = mutated;
                                 }
 
+                                // Backup gate: after overrides, before journal+execution
+                                let script_backup_receipts = if let Some(ref bp) = backup_dir {
+                                    let ctx = crate::teardown::backup::BackupGateContext {
+                                        client: &client,
+                                        final_plan: &plan,
+                                        target_operators: target_operators.clone(),
+                                        cluster_identity: &current_cluster_identity,
+                                        plan_path: &plan_file,
+                                        kind_map: &kind_map,
+                                        gvr_map: &gvr_map,
+                                        gk_map: &gk_map,
+                                        gvk_map: &gvk_map,
+                                    };
+                                    crate::teardown::backup::prepare_backup_gate(
+                                        &ctx,
+                                        std::path::Path::new(bp.as_str()),
+                                    )
+                                    .await?
+                                } else {
+                                    vec![]
+                                };
+
                                 // Run executor with the plan
                                 script_journal = if !dry_run {
                                     let store = create_run_journal(
@@ -2424,6 +2451,7 @@ async fn main() -> Result<()> {
                                         &target_operators,
                                         &gk_map,
                                         app.finalizer_recovery_approved,
+                                        script_backup_receipts,
                                     )
                                     .await?;
                                     Some(std::sync::Arc::new(store))
@@ -2778,6 +2806,28 @@ async fn main() -> Result<()> {
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
                     let effective_finalizer_recovery = approve_finalizer_recovery;
 
+                    // Backup gate: uses operator discovery (not plan actions)
+                    let normal_backup_receipts = if let Some(ref bp) = backup_dir {
+                        let ctx = crate::teardown::backup::BackupGateContext {
+                            client: &client,
+                            final_plan: &plan,
+                            target_operators: target_operators.clone(),
+                            cluster_identity: &current_cluster_identity,
+                            plan_path: &plan_file,
+                            kind_map: &kind_map,
+                            gvr_map: &gvr_map,
+                            gk_map: &gk_map,
+                            gvk_map: &gvk_map,
+                        };
+                        crate::teardown::backup::prepare_backup_gate(
+                            &ctx,
+                            std::path::Path::new(bp.as_str()),
+                        )
+                        .await?
+                    } else {
+                        vec![]
+                    };
+
                     // Create RunJournal before first mutation (fail-closed)
                     // Use process lock to prevent dual-writer from resume
                     let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
@@ -2787,6 +2837,7 @@ async fn main() -> Result<()> {
                             &target_operators,
                             &gk_map,
                             effective_finalizer_recovery,
+                            normal_backup_receipts,
                         )
                         .await?;
                         eprintln!("📓 Run journal: {}", store.path().display());
@@ -3556,6 +3607,18 @@ async fn main() -> Result<()> {
                     // Re-verify cluster identity with authoritative journal
                     if !j.cluster_identity.matches(&cluster_id) {
                         bail!("Cluster identity mismatch after lock acquisition");
+                    }
+
+                    // Backup receipt validation: validate every receipt before mutation
+                    if !j.backup_receipts.is_empty() {
+                        eprintln!(
+                            "📦 Validating {} backup receipt(s)...",
+                            j.backup_receipts.len()
+                        );
+                        for receipt in &j.backup_receipts {
+                            crate::teardown::backup::validate_receipt(receipt, &cluster_id)?;
+                            eprintln!("  ✅ Backup intact: {}", receipt.root);
+                        }
                     }
 
                     eprintln!(
@@ -4789,6 +4852,7 @@ async fn main() -> Result<()> {
                     refresh_discovery,
                     dry_run,
                     skip_missing,
+                    backup_dir,
                 } => {
                     let no_cache = refresh_discovery;
                     let config_content = std::fs::read_to_string(&config_path)
@@ -4822,6 +4886,15 @@ async fn main() -> Result<()> {
                         eprintln!("  {}: {}{}", i + 1, entry.name, suffix);
                     }
                     eprintln!();
+
+                    // Setup backup dir if specified
+                    if let Some(ref bdir) = backup_dir {
+                        if bdir.is_empty() {
+                            bail!("--backup-dir path must not be empty");
+                        }
+                        crate::teardown::backup::setup_backup_dir(std::path::Path::new(bdir))?;
+                        eprintln!("📦 Backup dir: {}", bdir);
+                    }
 
                     // Baseline gate: verify all target operators are present (phase is informational)
                     eprintln!(
@@ -4995,6 +5068,11 @@ async fn main() -> Result<()> {
                             }
                             if options.non_interactive {
                                 cmd.arg("--non-interactive");
+                            }
+
+                            // Pass backup dir to child apply process
+                            if let Some(ref bdir) = backup_dir {
+                                cmd.arg("--backup-dir").arg(bdir);
                             }
 
                             cmd.stdin(std::process::Stdio::piped());
@@ -6473,6 +6551,177 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
+
+        Command::Backup { action } => {
+            use crate::cli::BackupAction;
+            match action {
+                BackupAction::Operator {
+                    operator: operator_query,
+                    dir: output_dir,
+                    refresh_discovery,
+                } => {
+                    let t0 = Instant::now();
+                    eprintln!("🔍 Discovering API resources...");
+                    let (kind_map, gvr_map, gk_map, gvk_map) =
+                        build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
+                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                    let cmd_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+                    ));
+                    let cmd_planner = crate::kube::planner::QueryPlanner::new(Some(cmd_semaphore));
+
+                    eprint!("🔍 Discovering operators...");
+                    let all_operators = discover_operators_full(
+                        &client,
+                        &kind_map,
+                        None,
+                        Some(cmd_planner.clone()),
+                    )
+                    .await?;
+                    eprintln!(" found {} operators", all_operators.len());
+
+                    let target_indices = resolve_operator_targets(
+                        std::slice::from_ref(&operator_query),
+                        &all_operators,
+                    )?;
+                    let target_op = &all_operators[target_indices[0]];
+                    let op_name = target_op
+                        .package_name
+                        .as_deref()
+                        .unwrap_or(&target_op.csv.name);
+
+                    eprintln!(
+                        "📦 Backing up operator: {} ({})",
+                        target_op.csv.name, target_op.install_namespace
+                    );
+
+                    // Use shared discovery function (same as operator resources --scope related)
+                    let (candidates, observations, resolved) =
+                        crate::teardown::backup::discover_operator_backup(
+                            &client, target_op, &kind_map, &gvr_map, &gk_map, &gvk_map,
+                        )
+                        .await?;
+
+                    eprintln!("  {} unique resource(s)", candidates.len());
+
+                    let (fetched, _) = crate::teardown::backup::fetch_backup_resources(
+                        &client,
+                        &candidates,
+                        &gvk_map,
+                    )
+                    .await?;
+
+                    let captured = fetched
+                        .iter()
+                        .filter(|r| {
+                            r.state == crate::teardown::backup::BackupResourceState::Captured
+                        })
+                        .count();
+                    let absent = fetched
+                        .iter()
+                        .filter(|r| {
+                            r.state == crate::teardown::backup::BackupResourceState::AlreadyAbsent
+                        })
+                        .count();
+                    eprintln!("  {} captured, {} already absent", captured, absent);
+
+                    let cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                    let selection =
+                        crate::teardown::backup::BackupSelection::operator(vec![resolved]);
+
+                    let target = crate::teardown::backup::operator_target_dir(
+                        std::path::Path::new(&output_dir),
+                        op_name,
+                    )?;
+                    let run_name = crate::teardown::backup::generate_run_name();
+
+                    let receipt = crate::teardown::backup::write_backup_directory(
+                        &fetched,
+                        &cluster_identity,
+                        selection,
+                        observations,
+                        &target,
+                        &run_name,
+                    )?;
+
+                    eprintln!(
+                        "✅ Operator backup: {} ({} resources, tree: {})",
+                        receipt.root,
+                        receipt.resource_count,
+                        &receipt.tree_sha256[..12],
+                    );
+                    return Ok(());
+                }
+                BackupAction::Namespace {
+                    namespace,
+                    dir: output_dir,
+                    refresh_discovery,
+                } => {
+                    let t0 = Instant::now();
+                    eprintln!("🔍 Discovering API resources...");
+                    let (kind_map, _gvr_map, gk_map, gvk_map) =
+                        build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
+                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                    // Validate namespace exists
+                    {
+                        use k8s_openapi::api::core::v1::Namespace;
+                        let ns_api: ::kube::api::Api<Namespace> =
+                            ::kube::api::Api::all(client.clone());
+                        ns_api
+                            .get(&namespace)
+                            .await
+                            .with_context(|| format!("Namespace '{}' does not exist", namespace))?;
+                    }
+
+                    eprintln!("📦 Scanning namespace: {}", namespace);
+
+                    // Use shared namespace scanner (same as existing scan/map path)
+                    let candidates = crate::teardown::backup::discover_namespace_backup(
+                        &client, &namespace, &kind_map, &gk_map,
+                    )
+                    .await?;
+
+                    eprintln!("  {} unique resource(s)", candidates.len());
+
+                    let (fetched, _) = crate::teardown::backup::fetch_backup_resources(
+                        &client,
+                        &candidates,
+                        &gvk_map,
+                    )
+                    .await?;
+
+                    let cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                    let selection = crate::teardown::backup::BackupSelection::namespace(vec![
+                        namespace.clone(),
+                    ]);
+
+                    let target = crate::teardown::backup::namespace_target_dir(
+                        std::path::Path::new(&output_dir),
+                        &namespace,
+                    )?;
+                    let run_name = crate::teardown::backup::generate_run_name();
+
+                    let receipt = crate::teardown::backup::write_backup_directory(
+                        &fetched,
+                        &cluster_identity,
+                        selection,
+                        vec![],
+                        &target,
+                        &run_name,
+                    )?;
+
+                    eprintln!(
+                        "✅ Namespace backup: {} ({} resources, tree: {})",
+                        receipt.root,
+                        receipt.resource_count,
+                        &receipt.tree_sha256[..12],
+                    );
+                    return Ok(());
+                }
+            }
+        }
     }
 }
 
@@ -7792,6 +8041,7 @@ async fn create_run_journal(
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
     _finalizer_recovery_approved: bool,
+    backup_receipts: Vec<crate::teardown::backup::BackupReceipt>,
 ) -> Result<JournalStore> {
     if target_operators.len() > 1 {
         bail!(
@@ -7870,6 +8120,7 @@ async fn create_run_journal(
         cleanup_decisions: Vec::new(),
         finalizer_recovery_approved: true,
         finalizer_recoveries: Vec::new(),
+        backup_receipts,
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;
@@ -9364,6 +9615,7 @@ mod basis_drift_tests {
             cleanup_decisions: decisions,
             finalizer_recovery_approved: false,
             finalizer_recoveries: Vec::new(),
+            backup_receipts: vec![],
         }
     }
 

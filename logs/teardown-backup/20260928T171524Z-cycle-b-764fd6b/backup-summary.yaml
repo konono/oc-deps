@@ -1,0 +1,151 @@
+operators:
+  - operator: authorino-operator
+    run_dir: 20260928T194101Z-0008b407-0
+    selection: operator
+    resource_count: 5
+    contains_secret: false
+    tree_sha256: 628438d4f81d53dacdd1824e950dea3734fb15e3d69eb20e2857aa7980c1cf36
+    resource_set_sha256: b604c36060ff9da7d0cfe036317c25aaefbe02011a7f0a0a878231e9cf1c58ce
+    journal_run_id: run-18d99375f2533b11-8b407
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: cluster-observability-operator
+    run_dir: 20260928T194337Z-0008b4d9-0
+    selection: operator
+    resource_count: 15
+    contains_secret: false
+    tree_sha256: a80661215e2c12ab6c5ed948700042fa1946ccb366da56f58a05632512224897
+    resource_set_sha256: 5e430d2656b700c5a8bd5c62cf76074152fa0f0b843ffac0b5e311e233dd7d64
+    journal_run_id: run-18d9939a5306d6f7-8b4d9
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: dns-operator
+    run_dir: 20260928T194149Z-0008b448-0
+    selection: operator
+    resource_count: 5
+    contains_secret: false
+    tree_sha256: 4ff7be933f6da4315355bf50a31d1b356e0da33aa9550cdc96adb54d805b4b82
+    resource_set_sha256: 8d953b1ba82c47b7051c37ca90e3974cb8bc2ed6e7c2e346a65a4eab909d4642
+    journal_run_id: run-18d993811c1479a5-8b448
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: gpu-operator-certified
+    run_dir: 20260928T193416Z-0008b33d-0
+    selection: operator
+    resource_count: 91
+    contains_secret: true
+    tree_sha256: 70a68b7b7e7f5fd42c760d0dfcd2854ded2bf3087195d5ed82f814ab96adc166
+    resource_set_sha256: 81dbb1eec7e44605dbe2feb91c136fa1ceee4b6147b1c939e9067a2e29aada59
+    journal_run_id: run-18d99317af3d9c94-8b33d
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: job-set
+    run_dir: 20260928T192949Z-0008b23c-0
+    selection: operator
+    resource_count: 25
+    contains_secret: true
+    tree_sha256: e119bbf9444d9a7e0c4b18dc8b52043d1ed18d6410018728add8c04da0c2d3b0
+    resource_set_sha256: b9e7cfec2871f18b0eed01b0edbd4c6e1472004c88ad0e6022833cf11b615918
+    journal_run_id: run-18d992d967ed888d-8b23c
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: kueue-operator
+    run_dir: 20260928T193044Z-0008b27c-0
+    selection: operator
+    resource_count: 6
+    contains_secret: false
+    tree_sha256: 3b1592beaeb6bcbcb1f7dd973b8e9d4dde025f803c3f844a65ce2cfa83c8db7e
+    resource_set_sha256: 29dd6dd7d8f7b8aca6344b8926ffd54ff606d9c8bab5c862ec22215b00ebab0e
+    journal_run_id: run-18d992e645a467df-8b27c
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: leader-worker-set
+    run_dir: 20260928T192855Z-0008b1fc-0
+    selection: operator
+    resource_count: 5
+    contains_secret: false
+    tree_sha256: 9ea34e4971e346995c7f98708ac25fc38041cba4e5c9bcbc392c604698828146
+    resource_set_sha256: 07f2b17184fecdb709a479f241bfdf1a7faf825136213a0270ef3741ad3b6d00
+    journal_run_id: run-18d992cd0017d2e4-8b1fc
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: limitador-operator
+    run_dir: 20260928T194237Z-0008b48e-0
+    selection: operator
+    resource_count: 5
+    contains_secret: false
+    tree_sha256: d77e4252c444607a92d5bf6e6222838b2f281f7468022979f3f6142591ea4041
+    resource_set_sha256: 33a0d551a91a37bc7d60cadc7f85eaeec252dc746856cab401614488bc3e59ff
+    journal_run_id: run-18d9938c4a0bde84-8b48e
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: nfd
+    run_dir: 20260928T193254Z-0008b2fd-0
+    selection: operator
+    resource_count: 19
+    contains_secret: false
+    tree_sha256: 1571425804c1a9744658c5f151d099e6fe127c4da406038dd1a042c8ea94906b
+    resource_set_sha256: 2caa143416fbadf8e72c7bc7d8a247309baa6d0e7bbb0ec3da6bd6d3620d26bb
+    journal_run_id: run-18d99304aa2859e2-8b2fd
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: openshift-cert-manager-operator
+    run_dir: 20260928T193510Z-0008b380-0
+    selection: operator
+    resource_count: 6
+    contains_secret: false
+    tree_sha256: 8166c19bf3d1164d5e5d727b5386ba5c02a4d50a00fbfeab2a666f078709b1df
+    resource_set_sha256: 6a2cc9b8ce0404a0096e21acc9088ad6e64e5bf42342b90bc6a8ca0c1a8e004d
+    journal_run_id: run-18d9932423025a34-8b380
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: opentelemetry-product
+    run_dir: 20260928T194444Z-0008b51b-0
+    selection: operator
+    resource_count: 8
+    contains_secret: false
+    tree_sha256: 3edf779ab939063f73a8f5e063a96433790bdcd9c049fcd94c96c96241eb4dcb
+    resource_set_sha256: 434ee219fc948169395467032de715f8b10fa9d1b5a777ea58f83f14735c648a
+    journal_run_id: run-18d993a9e1f429ff-8b51b
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: rhbk-operator
+    run_dir: 20260928T192756Z-0008b1b8-0
+    selection: operator
+    resource_count: 20
+    contains_secret: true
+    tree_sha256: a22ae502c8cac83273d307e662a60c477dfba2ff703fe6c9a2fd54f55135ba17
+    resource_set_sha256: 1d4d584bf0a78f78de0a1b4f6bb1be446c7f3499047b818544849c5a1dd4443b
+    journal_run_id: run-18d992bf2594be7a-8b1b8
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: rhcl-operator
+    run_dir: 20260928T193925Z-0008b3c2-0
+    selection: operator
+    resource_count: 34
+    contains_secret: true
+    tree_sha256: f2a6020ed9a4c953bba78e0c5e1d01c8fa736e57ff994c340a28f029e90b718f
+    resource_set_sha256: 468e027f1c0f4cfe0c60c909e69303e7bfcca3a952a8cf7e181ea7449530e38c
+    journal_run_id: run-18d9935f9d04dc4e-8b3c2
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: rhods-operator
+    run_dir: 20260928T192053Z-0008b145-0
+    selection: operator
+    resource_count: 317
+    contains_secret: true
+    tree_sha256: ee8e3587e6a966cca130ab2b7b8fc1d68760244e0023d03d223eea3a0e733376
+    resource_set_sha256: 1f8c700883ed37a5573b4511b76304034cf0c182a25fd3d8944de7671faf7f12
+    journal_run_id: run-18d9925cd5af6226-8b145
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact
+  - operator: servicemeshoperator3
+    run_dir: 20260928T193135Z-0008b2c9-0
+    selection: operator
+    resource_count: 5
+    contains_secret: false
+    tree_sha256: 5c4878f4e80415d0faa5fe9c75909e9f3d8cdbd52aed660130492229a0ea2dd1
+    resource_set_sha256: 2629e98a11e05963ecc81a9e617d7c4333f0e7946322aac9e16b9cc5d9bafe20
+    journal_run_id: run-18d992f22958cce5-8b2c9
+    receipt_count: 1
+    resume_validation: exit_0_backup_intact

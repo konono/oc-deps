@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 9;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 11;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -58,6 +58,11 @@ pub struct RunJournal {
     /// Durable record of finalizer recovery actions.
     /// Authority-critical: v9 required, no serde default.
     pub finalizer_recoveries: Vec<FinalizerRecoveryRecord>,
+
+    /// Pre-delete backup receipts (one per target operator).
+    /// When non-empty, resume validates every receipt before allowing mutations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backup_receipts: Vec<crate::teardown::backup::BackupReceipt>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -968,8 +973,8 @@ mod tests {
     // Deleted: test_v5_journal_cleanup_decisions_preserved (old schema migration test)
     // Deleted: test_v5_journal_no_mutation_authority (old schema migration test)
 
-    /// Create a valid v9 journal JSON for field-removal tests.
-    fn make_v9_journal_json() -> serde_json::Value {
+    /// Create a valid v11 journal JSON for field-removal tests.
+    fn make_v11_journal_json() -> serde_json::Value {
         use crate::kube::resource::ResourceId;
         let csv_rid = ResourceId {
             group: "operators.coreos.com".to_string(),
@@ -980,8 +985,8 @@ mod tests {
             uid: Some("uid-csv".to_string()),
         };
         let j = RunJournal {
-            run_id: "test-v9".to_string(),
-            schema_version: 9,
+            run_id: "test-v11".to_string(),
+            schema_version: 11,
             oc_deps_version: "0.1.0".to_string(),
             journal_revision: 1,
             cluster_identity: crate::teardown::plan::ClusterIdentity {
@@ -1032,6 +1037,7 @@ mod tests {
             cleanup_decisions: vec![],
             finalizer_recovery_approved: false,
             finalizer_recoveries: vec![],
+            backup_receipts: vec![],
         };
         serde_json::to_value(&j).unwrap()
     }
@@ -1041,12 +1047,12 @@ mod tests {
     }
 
     #[test]
-    fn v9_missing_re_delete_records_rejected() {
-        let dir = std::env::temp_dir().join(format!("v9-test-{}", std::process::id()));
+    fn v11_missing_re_delete_records_rejected() {
+        let dir = std::env::temp_dir().join(format!("v11-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let mut json = make_v9_journal_json();
+        let mut json = make_v11_journal_json();
         json.pointer_mut("/execution")
             .unwrap()
             .as_object_mut()
@@ -1057,28 +1063,28 @@ mod tests {
         let result = load_journal(&path);
         assert!(
             result.is_err(),
-            "v9 journal without re_delete_records must fail parse"
+            "v11 journal without re_delete_records must fail parse"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn v9_missing_finalizer_fields_rejected() {
-        let dir = std::env::temp_dir().join(format!("v9-fin-test-{}", std::process::id()));
+    fn v11_missing_finalizer_fields_rejected() {
+        let dir = std::env::temp_dir().join(format!("v11-fin-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let mut json = make_v9_journal_json();
+        let mut json = make_v11_journal_json();
         json.as_object_mut()
             .unwrap()
             .remove("finalizer_recovery_approved");
         write_json_to_file(&json, &path);
         assert!(
             load_journal(&path).is_err(),
-            "v9 without finalizer_recovery_approved must fail"
+            "v11 without finalizer_recovery_approved must fail"
         );
 
-        let mut json2 = make_v9_journal_json();
+        let mut json2 = make_v11_journal_json();
         json2
             .as_object_mut()
             .unwrap()
@@ -1086,7 +1092,7 @@ mod tests {
         write_json_to_file(&json2, &path);
         assert!(
             load_journal(&path).is_err(),
-            "v9 without finalizer_recoveries must fail"
+            "v11 without finalizer_recoveries must fail"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1098,12 +1104,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let mut json = make_v9_journal_json();
-        json["schema_version"] = serde_json::json!(8);
+        let mut json = make_v11_journal_json();
+        json["schema_version"] = serde_json::json!(10);
         write_json_to_file(&json, &path);
 
         let result = load_journal(&path);
-        assert!(result.is_err(), "v8 journal must be rejected");
+        assert!(result.is_err(), "v10 journal must be rejected");
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("Unsupported journal schema version"),
@@ -1114,15 +1120,15 @@ mod tests {
     }
 
     #[test]
-    fn v9_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("v9-rt-{}", std::process::id()));
+    fn v11_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("v11-rt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let json = make_v9_journal_json();
+        let json = make_v11_journal_json();
         write_json_to_file(&json, &path);
         let j = load_journal(&path).unwrap();
-        assert_eq!(j.schema_version, 9);
+        assert_eq!(j.schema_version, 11);
         assert!(j.execution.re_delete_records.is_empty());
         assert!(!j.finalizer_recovery_approved);
         let _ = std::fs::remove_dir_all(&dir);

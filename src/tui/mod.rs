@@ -39,6 +39,9 @@ pub async fn run_tui(
     journal_store: &Arc<JournalStore>,
     gate: &Arc<MutationGate>,
     force: bool,
+    backup_dir: Option<&str>,
+    cluster_identity: &crate::teardown::plan::ClusterIdentity,
+    plan_path: &str,
 ) -> Result<()> {
     enable_raw_mode().context("Failed to enable raw mode")?;
     let mut stdout = std::io::stdout();
@@ -58,6 +61,9 @@ pub async fn run_tui(
         journal_store,
         gate,
         force,
+        backup_dir,
+        cluster_identity,
+        plan_path,
     )
     .await;
 
@@ -82,6 +88,9 @@ async fn run_tui_inner(
     journal_store: &Arc<JournalStore>,
     gate: &Arc<MutationGate>,
     force: bool,
+    backup_dir: Option<&str>,
+    cluster_identity: &crate::teardown::plan::ClusterIdentity,
+    plan_path: &str,
 ) -> Result<()> {
     let mut app = AppState::new(journal_store.read().await.finalizer_recovery_approved);
     let mut selected_index: usize = 0;
@@ -384,6 +393,24 @@ async fn run_tui_inner(
         }
     }
 
+    // Backup gate: after overrides applied, before any mutation
+    let tui_backup_receipts = if let Some(bp) = backup_dir {
+        let ctx = crate::teardown::backup::BackupGateContext {
+            client,
+            final_plan: plan,
+            target_operators: target_operators.to_vec(),
+            cluster_identity,
+            plan_path,
+            kind_map,
+            gvr_map,
+            gk_map,
+            gvk_map,
+        };
+        crate::teardown::backup::prepare_backup_gate(&ctx, std::path::Path::new(bp)).await?
+    } else {
+        vec![]
+    };
+
     // P0: Fix finalizer recovery flag + Bound Plan to journal BEFORE mutation.
     let bound_snapshot = plan.clone();
     journal_store
@@ -391,6 +418,7 @@ async fn run_tui_inner(
             j.state = crate::teardown::journal::RunState::Applying;
             j.finalizer_recovery_approved = true;
             j.plan_snapshot = bound_snapshot;
+            j.backup_receipts = tui_backup_receipts;
         })
         .await
         .context("Failed to persist Bound Plan to journal — aborting start")?;

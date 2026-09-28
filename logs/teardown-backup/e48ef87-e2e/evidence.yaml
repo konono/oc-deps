@@ -1,0 +1,30 @@
+tested_commit: e48ef87
+binary_sha256: 068de5d52a82748b328eff62b81c797b88eaee2f912934a4ef9b6a686b52ed1a
+cluster_uid: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+
+operator_backup:
+  command: oc-deps backup operator nfd --dir /tmp/pr45-final-e2e
+  exit_code: 0
+  run_path: /tmp/pr45-final-e2e/operator/nfd/20260928T164831Z-0007fc45-0
+  tree_sha256: e271602bc1e6622ef8d514cb28d9746e8e463832f9a4c21c8e813499c56cb30d
+  resource_count: 19
+  contains_secret_data: false
+
+namespace_backup:
+  command: oc-deps backup namespace openshift-nfd --dir /tmp/pr45-final-e2e
+  exit_code: 0
+  run_path: /tmp/pr45-final-e2e/namespace/openshift-nfd/20260928T164843Z-0007fc83-0
+  resource_count: 67
+  contains_secret_data: true
+
+repeated_run:
+  second_run_path: /tmp/pr45-final-e2e/operator/nfd/20260928T165020Z-0007fefb-0
+  first_run_tree_hash_before: e271602bc1e6622ef8d514cb28d9746e8e463832f9a4c21c8e813499c56cb30d
+  first_run_tree_hash_after: e271602bc1e6622ef8d514cb28d9746e8e463832f9a4c21c8e813499c56cb30d
+  first_run_unchanged: true
+
+permission_violations: 0
+manifest_secret_plaintext_count: 0
+lifecycle_secret_plaintext_count: 0
+
+operator_resources_vs_backup_diff: 0
