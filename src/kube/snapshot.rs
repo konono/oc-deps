@@ -167,55 +167,79 @@ async fn build_snapshot_inner(
 
                 match result {
                     Ok(Ok(list)) => {
-                        let entries: Vec<(String, ResourceEntry)> = list
-                            .items
-                            .into_iter()
-                            .filter_map(|obj| {
-                                let data = obj.data;
-                                let metadata = obj.metadata;
-                                let uid = metadata.uid.clone()?;
-                                let name = metadata.name?;
-                                let ns = metadata.namespace;
+                        let mut entries: Vec<(String, ResourceEntry)> = Vec::new();
+                        let mut obs: Vec<SnapshotObservation> = Vec::new();
+                        for obj in list.items {
+                            let data = obj.data;
+                            let metadata = obj.metadata;
+                            let name = match metadata.name {
+                                Some(n) => n,
+                                None => continue,
+                            };
+                            let ns = metadata.namespace;
+                            let uid = metadata.uid.clone();
 
-                                let owner_refs: Vec<OwnerRefEntry> = metadata
-                                    .owner_references
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|r| OwnerRefEntry {
-                                        api_version: r.api_version,
-                                        kind: r.kind,
-                                        name: r.name,
-                                        uid: r.uid,
-                                        controller: r.controller.unwrap_or(false),
-                                        block_owner_deletion: r.block_owner_deletion.unwrap_or(false),
-                                    })
-                                    .collect();
+                            let owner_refs: Vec<OwnerRefEntry> = metadata
+                                .owner_references
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|r| OwnerRefEntry {
+                                    api_version: r.api_version,
+                                    kind: r.kind,
+                                    name: r.name,
+                                    uid: r.uid,
+                                    controller: r.controller.unwrap_or(false),
+                                    block_owner_deletion: r.block_owner_deletion.unwrap_or(false),
+                                })
+                                .collect();
 
-                                let wk_refs = extract_well_known_refs(&data);
-                                let spec_refs: Vec<SpecRefEntry> = wk_refs
-                                    .into_iter()
-                                    .map(|r| {
-                                        let source = match r.source {
-                                            crate::kube::resource::SpecRefSource::Typed => {
-                                                Some(SpecRefSourceSer::Typed)
-                                            }
-                                            crate::kube::resource::SpecRefSource::Heuristic => {
-                                                Some(SpecRefSourceSer::Heuristic)
-                                            }
-                                        };
-                                        SpecRefEntry {
-                                            target_kind: r.target_kind,
-                                            target_name: r.target_name,
-                                            field_path: r.field_path,
-                                            target_group: None,
-                                            target_namespace: None,
-                                            source,
+                            let wk_refs = extract_well_known_refs(&data);
+                            let spec_refs: Vec<SpecRefEntry> = wk_refs
+                                .into_iter()
+                                .map(|r| {
+                                    let source = match r.source {
+                                        crate::kube::resource::SpecRefSource::Typed => {
+                                            Some(SpecRefSourceSer::Typed)
                                         }
-                                    })
-                                    .collect();
+                                        crate::kube::resource::SpecRefSource::Heuristic => {
+                                            Some(SpecRefSourceSer::Heuristic)
+                                        }
+                                    };
+                                    SpecRefEntry {
+                                        target_kind: r.target_kind,
+                                        target_name: r.target_name,
+                                        field_path: r.field_path,
+                                        target_group: None,
+                                        target_namespace: None,
+                                        source,
+                                    }
+                                })
+                                .collect();
 
-                                let labels =
-                                    metadata.labels.unwrap_or_default().into_iter().collect();
+                            let labels: HashMap<String, String> =
+                                metadata.labels.unwrap_or_default().into_iter().collect();
+
+                            let deletion_timestamp = metadata
+                                .deletion_timestamp
+                                .map(|ts| ts.0.to_string());
+                            let finalizers = metadata.finalizers.filter(|f| !f.is_empty());
+
+                            obs.push(SnapshotObservation {
+                                group: info.group.clone(),
+                                version: info.version.clone(),
+                                resource: info.plural.clone(),
+                                kind: kind.clone(),
+                                namespace: ns.clone(),
+                                name: name.clone(),
+                                uid: uid.clone(),
+                                owner_refs: owner_refs.clone(),
+                                spec_refs: spec_refs.clone(),
+                                deletion_timestamp: deletion_timestamp.clone(),
+                                finalizers: finalizers.clone(),
+                                labels: labels.clone(),
+                            });
+
+                            if let Some(ref uid_val) = uid {
                                 let annotations: HashMap<String, String> = metadata
                                     .annotations
                                     .unwrap_or_default()
@@ -227,14 +251,8 @@ async fn build_snapshot_inner(
                                     .collect();
 
                                 let raw_spec = data.get("spec").cloned();
-
                                 let (data_keys, data_hash, secret_value_hashes) =
                                     extract_data_fields(&kind, &data);
-
-                                let deletion_timestamp = metadata
-                                    .deletion_timestamp
-                                    .map(|ts| ts.0.to_string());
-                                let finalizers = metadata.finalizers.filter(|f| !f.is_empty());
 
                                 let entry = ResourceEntry {
                                     id: ResourceId {
@@ -243,7 +261,7 @@ async fn build_snapshot_inner(
                                         kind: kind.clone(),
                                         namespace: ns,
                                         name,
-                                        uid: Some(uid.clone()),
+                                        uid: Some(uid_val.clone()),
                                     },
                                     owner_refs,
                                     spec_refs,
@@ -261,11 +279,10 @@ async fn build_snapshot_inner(
                                         resource: info.plural.clone(),
                                     }]),
                                 };
-
-                                Some((uid, entry))
-                            })
-                            .collect();
-                        return Some(entries);
+                                entries.push((uid_val.clone(), entry));
+                            }
+                        }
+                        return Some((entries, obs));
                     }
                     Ok(Err(e)) => {
                         let mut warning = ScanWarning::from_kube_error(
@@ -377,10 +394,12 @@ async fn build_snapshot_inner(
     }
 
     let mut resources = HashMap::new();
-    for entries in results.into_iter().flatten() {
+    let mut all_observations = Vec::new();
+    for (entries, obs) in results.into_iter().flatten() {
         for (uid, entry) in entries {
             resources.insert(uid, entry);
         }
+        all_observations.extend(obs);
     }
 
     let warnings = match Arc::try_unwrap(scan_errors) {
@@ -401,6 +420,27 @@ async fn build_snapshot_inner(
         )
     };
 
+    all_observations.sort_by(|a, b| {
+        (
+            &a.group,
+            &a.version,
+            &a.resource,
+            &a.kind,
+            &a.namespace,
+            &a.name,
+            &a.uid,
+        )
+            .cmp(&(
+                &b.group,
+                &b.version,
+                &b.resource,
+                &b.kind,
+                &b.namespace,
+                &b.name,
+                &b.uid,
+            ))
+    });
+
     let snapshot = ClusterSnapshot {
         schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
         resources,
@@ -415,6 +455,7 @@ async fn build_snapshot_inner(
             incomplete_namespaces: incomplete,
             ..Default::default()
         }),
+        observations: all_observations,
     };
 
     Ok(snapshot)
@@ -1081,6 +1122,7 @@ mod tests {
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![],
             scope: None,
+            observations: vec![],
         }
     }
 
@@ -1093,6 +1135,7 @@ mod tests {
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![ns.into()],
             scope: None,
+            observations: vec![],
         }
     }
 

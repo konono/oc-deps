@@ -21,6 +21,10 @@ cargo run -- --map -n <namespace>              # all dependency trees in namespa
 cargo run -- -o json deployment/<name>         # JSON output
 cargo run -- -o table deployment/<name>        # table output
 
+# Snapshot audit (offline, no cluster connection)
+cargo run -- snapshot audit before.json after.json --plan plan1.json --plan plan2.json -o json
+cargo run -- snapshot audit before.json after.json -o tree  # no plans = all UnexplainedChange
+
 # Lint and format
 cargo clippy
 cargo fmt

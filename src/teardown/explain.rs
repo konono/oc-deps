@@ -589,6 +589,7 @@ mod tests {
             taken_at: String::new(),
             namespaces: vec![],
             scope: None,
+            observations: vec![],
         }
     }
 

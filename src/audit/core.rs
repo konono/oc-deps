@@ -163,12 +163,34 @@ struct PhysicalEntity {
 }
 
 fn build_physical_entities(obs: &AuditObservationSet) -> HashMap<String, PhysicalEntity> {
+    // Sort observations by stable key before folding to ensure canonical identity is deterministic
+    let mut sorted_obs: Vec<&AuditObservation> = obs
+        .observations
+        .iter()
+        .filter(|o| o.uid.as_ref().is_some_and(|u| !u.is_empty()))
+        .collect();
+    sorted_obs.sort_by(|a, b| {
+        (
+            &a.group,
+            &a.version,
+            &a.resource,
+            &a.kind,
+            &a.namespace,
+            &a.name,
+        )
+            .cmp(&(
+                &b.group,
+                &b.version,
+                &b.resource,
+                &b.kind,
+                &b.namespace,
+                &b.name,
+            ))
+    });
+
     let mut entities: HashMap<String, PhysicalEntity> = HashMap::new();
-    for o in &obs.observations {
-        let uid = match &o.uid {
-            Some(u) if !u.is_empty() => u.clone(),
-            _ => continue,
-        };
+    for o in sorted_obs {
+        let uid = o.uid.as_ref().unwrap().clone();
         let api = (o.group.clone(), o.version.clone(), o.resource.clone());
         if let Some(ent) = entities.get_mut(&uid) {
             if !ent.observed_apis.contains(&api) {
@@ -194,6 +216,10 @@ fn build_physical_entities(obs: &AuditObservationSet) -> HashMap<String, Physica
                 },
             );
         }
+    }
+    // Sort observed_apis for determinism
+    for ent in entities.values_mut() {
+        ent.observed_apis.sort();
     }
     entities
 }
@@ -226,7 +252,6 @@ pub fn uid_null_fingerprint(o: &AuditObservation) -> String {
 // ──────────────────────────────────────────────────────────────
 
 pub fn snapshot_to_observation_set(snap: &ClusterSnapshot) -> AuditObservationSet {
-    let mut observations = Vec::new();
     let mut warnings = Vec::new();
     let has_deletion_ts = snap.schema_version >= Some(4);
     let has_spec_ref_source = snap.schema_version >= Some(4);
@@ -241,73 +266,143 @@ pub fn snapshot_to_observation_set(snap: &ClusterSnapshot) -> AuditObservationSe
         );
     }
 
-    for entry in snap.resources.values() {
-        let apis = entry.observed_apis.as_ref();
-        let base_api = (
-            entry.id.group.clone(),
-            entry.id.version.clone(),
-            String::new(),
-        );
-
-        let api_list: Vec<(String, String, String)> = if let Some(apis) = apis {
-            apis.iter()
-                .map(|a| (a.group.clone(), a.version.clone(), a.resource.clone()))
-                .collect()
-        } else {
-            vec![base_api]
-        };
-
-        for (group, version, resource) in &api_list {
-            let owner_refs: Vec<ObsOwnerRef> = entry
-                .owner_refs
-                .iter()
-                .map(|r| ObsOwnerRef {
-                    api_version: r.api_version.clone(),
-                    kind: r.kind.clone(),
-                    name: r.name.clone(),
-                    uid: r.uid.clone(),
-                    controller: r.controller,
-                    block_owner_deletion: r.block_owner_deletion,
-                })
-                .collect();
-
-            let spec_refs: Vec<ObsSpecRef> = entry
-                .spec_refs
-                .iter()
-                .map(|r| {
-                    let source = match &r.source {
-                        Some(SpecRefSourceSer::Typed) => SpecRefSourceLabel::Typed,
-                        Some(SpecRefSourceSer::Heuristic) => SpecRefSourceLabel::Heuristic,
-                        None => SpecRefSourceLabel::Unknown,
-                    };
-                    ObsSpecRef {
-                        target_kind: r.target_kind.clone(),
-                        target_name: r.target_name.clone(),
-                        field_path: r.field_path.clone(),
-                        target_group: r.target_group.clone(),
-                        target_namespace: r.target_namespace.clone(),
-                        source,
-                    }
-                })
-                .collect();
-
-            observations.push(AuditObservation {
-                group: group.clone(),
-                version: version.clone(),
-                resource: resource.clone(),
-                kind: entry.id.kind.clone(),
-                namespace: entry.id.namespace.clone(),
-                name: entry.id.name.clone(),
-                uid: entry.id.uid.clone(),
-                owner_refs,
-                spec_refs,
-                deletion_timestamp: entry.deletion_timestamp.clone(),
-                finalizers: entry.finalizers.clone(),
-                labels: entry.labels.clone(),
-                annotations: entry.annotations.clone(),
-            });
+    // Propagate scan coverage warnings
+    if !snap.scan_warnings.is_empty() {
+        warnings.push(format!(
+            "Snapshot had {} scan warnings (some API types may be missing)",
+            snap.scan_warnings.len()
+        ));
+    }
+    if let Some(scope) = &snap.scope {
+        for inc in &scope.incomplete_namespaces {
+            warnings.push(format!(
+                "Namespace {} had incomplete scan ({} warnings)",
+                inc.namespace,
+                inc.warnings.len()
+            ));
         }
     }
+
+    // Prefer v4 observations if available; fall back to resources map
+    let observations = if !snap.observations.is_empty() {
+        snap.observations
+            .iter()
+            .map(|o| {
+                let owner_refs = o
+                    .owner_refs
+                    .iter()
+                    .map(|r| ObsOwnerRef {
+                        api_version: r.api_version.clone(),
+                        kind: r.kind.clone(),
+                        name: r.name.clone(),
+                        uid: r.uid.clone(),
+                        controller: r.controller,
+                        block_owner_deletion: r.block_owner_deletion,
+                    })
+                    .collect();
+                let spec_refs = o
+                    .spec_refs
+                    .iter()
+                    .map(|r| {
+                        let source = match &r.source {
+                            Some(SpecRefSourceSer::Typed) => SpecRefSourceLabel::Typed,
+                            Some(SpecRefSourceSer::Heuristic) => SpecRefSourceLabel::Heuristic,
+                            None => SpecRefSourceLabel::Unknown,
+                        };
+                        ObsSpecRef {
+                            target_kind: r.target_kind.clone(),
+                            target_name: r.target_name.clone(),
+                            field_path: r.field_path.clone(),
+                            target_group: r.target_group.clone(),
+                            target_namespace: r.target_namespace.clone(),
+                            source,
+                        }
+                    })
+                    .collect();
+                AuditObservation {
+                    group: o.group.clone(),
+                    version: o.version.clone(),
+                    resource: o.resource.clone(),
+                    kind: o.kind.clone(),
+                    namespace: o.namespace.clone(),
+                    name: o.name.clone(),
+                    uid: o.uid.clone(),
+                    owner_refs,
+                    spec_refs,
+                    deletion_timestamp: o.deletion_timestamp.clone(),
+                    finalizers: o.finalizers.clone(),
+                    labels: o.labels.clone(),
+                    annotations: HashMap::new(),
+                }
+            })
+            .collect()
+    } else {
+        snap.resources
+            .values()
+            .flat_map(|entry| {
+                let apis = entry.observed_apis.as_ref();
+                let api_list: Vec<(String, String, String)> = if let Some(apis) = apis {
+                    apis.iter()
+                        .map(|a| (a.group.clone(), a.version.clone(), a.resource.clone()))
+                        .collect()
+                } else {
+                    vec![(
+                        entry.id.group.clone(),
+                        entry.id.version.clone(),
+                        String::new(),
+                    )]
+                };
+                api_list.into_iter().map(move |(group, version, resource)| {
+                    let owner_refs = entry
+                        .owner_refs
+                        .iter()
+                        .map(|r| ObsOwnerRef {
+                            api_version: r.api_version.clone(),
+                            kind: r.kind.clone(),
+                            name: r.name.clone(),
+                            uid: r.uid.clone(),
+                            controller: r.controller,
+                            block_owner_deletion: r.block_owner_deletion,
+                        })
+                        .collect();
+                    let spec_refs = entry
+                        .spec_refs
+                        .iter()
+                        .map(|r| {
+                            let source = match &r.source {
+                                Some(SpecRefSourceSer::Typed) => SpecRefSourceLabel::Typed,
+                                Some(SpecRefSourceSer::Heuristic) => SpecRefSourceLabel::Heuristic,
+                                None => SpecRefSourceLabel::Unknown,
+                            };
+                            ObsSpecRef {
+                                target_kind: r.target_kind.clone(),
+                                target_name: r.target_name.clone(),
+                                field_path: r.field_path.clone(),
+                                target_group: r.target_group.clone(),
+                                target_namespace: r.target_namespace.clone(),
+                                source,
+                            }
+                        })
+                        .collect();
+                    AuditObservation {
+                        group,
+                        version,
+                        resource,
+                        kind: entry.id.kind.clone(),
+                        namespace: entry.id.namespace.clone(),
+                        name: entry.id.name.clone(),
+                        uid: entry.id.uid.clone(),
+                        owner_refs,
+                        spec_refs,
+                        deletion_timestamp: entry.deletion_timestamp.clone(),
+                        finalizers: entry.finalizers.clone(),
+                        labels: entry.labels.clone(),
+                        annotations: entry.annotations.clone(),
+                    }
+                })
+            })
+            .collect()
+    };
 
     AuditObservationSet {
         observations,
@@ -537,29 +632,47 @@ fn build_plan_action_index(
         }
     }
 
-    // Detect conflicts: same UID, different action from different operators
+    // Detect collisions: same UID across multiple operators (diagnostic only).
+    // KEEP/REVIEW/WAIT do not negate DELETE — they record that other operators'
+    // plans preserved the resource. Only conflicting full identities on the same
+    // UID (e.g. different group/kind/ns/name) are true identity conflicts.
     for (uid, actions) in &uid_actions {
         let operators: HashSet<_> = actions.iter().map(|a| &a.operator).collect();
         if operators.len() > 1 {
-            let distinct_actions: HashSet<_> =
-                actions.iter().map(|a| a.action.to_string()).collect();
-            if distinct_actions.len() > 1 {
+            let mut ops: Vec<_> = operators.iter().map(|s| s.as_str()).collect();
+            ops.sort();
+            let action_summary: Vec<String> = {
+                let mut pairs: Vec<_> = actions
+                    .iter()
+                    .map(|a| format!("{}:{}", a.operator, a.action))
+                    .collect();
+                pairs.sort();
+                pairs.dedup();
+                pairs
+            };
+            collision_warnings.push(format!(
+                "UID {} appears in {} operators: {} (actions: {})",
+                &uid[..12.min(uid.len())],
+                operators.len(),
+                ops.join(", "),
+                action_summary.join(", "),
+            ));
+
+            // Identity conflict: same UID, different full identity across DELETE actions
+            let delete_identities: HashSet<_> = actions
+                .iter()
+                .filter(|a| a.action == ExecutionAction::Delete)
+                .map(|a| {
+                    (
+                        &a.full_key.group,
+                        &a.full_key.kind,
+                        &a.full_key.namespace,
+                        &a.full_key.name,
+                    )
+                })
+                .collect();
+            if delete_identities.len() > 1 {
                 conflicted_uids.insert(uid.clone());
-                let mut ops: Vec<_> = operators.iter().map(|s| s.as_str()).collect();
-                ops.sort();
-                collision_warnings.push(format!(
-                    "UID {} has conflicting actions from operators: {}",
-                    &uid[..12.min(uid.len())],
-                    ops.join(", ")
-                ));
-            } else {
-                let mut ops: Vec<_> = operators.iter().map(|s| s.as_str()).collect();
-                ops.sort();
-                collision_warnings.push(format!(
-                    "UID {} appears in multiple operators (same action): {}",
-                    &uid[..12.min(uid.len())],
-                    ops.join(", ")
-                ));
             }
         }
     }
@@ -585,15 +698,18 @@ fn group_from_api_version(api_version: &str) -> &str {
     api_version.rsplit_once('/').map(|(g, _)| g).unwrap_or("")
 }
 
-fn verified_owner_edge(oref: &ObsOwnerRef, entities: &HashMap<String, PhysicalEntity>) -> bool {
-    if let Some(parent) = entities.get(&oref.uid) {
-        let oref_group = group_from_api_version(&oref.api_version);
-        parent.identity.kind == oref.kind
-            && parent.identity.name == oref.name
-            && parent.identity.group == oref_group
-    } else {
-        false
-    }
+fn verified_owner_edge(
+    child: &PhysicalEntity,
+    oref: &ObsOwnerRef,
+    parent: &PhysicalEntity,
+) -> bool {
+    let oref_group = group_from_api_version(&oref.api_version);
+    let namespace_ok = parent.identity.namespace.is_none()
+        || parent.identity.namespace == child.identity.namespace;
+    namespace_ok
+        && parent.identity.kind == oref.kind
+        && parent.identity.name == oref.name
+        && parent.identity.group == oref_group
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -887,7 +1003,9 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
     let mut parent_to_children: HashMap<String, Vec<String>> = HashMap::new();
     for (uid, ent) in &pre_ents {
         for oref in &ent.owner_refs {
-            if verified_owner_edge(oref, &pre_ents) {
+            if let Some(parent) = pre_ents.get(&oref.uid)
+                && verified_owner_edge(ent, oref, parent)
+            {
                 parent_to_children
                     .entry(oref.uid.clone())
                     .or_default()
@@ -1067,14 +1185,23 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
             continue;
         }
         for oref in &ent.owner_refs {
-            if removed_uids.contains(&oref.uid) {
-                orphan_owner_refs.push(OrphanOwnerRefEntry {
-                    uid: uid.clone(),
-                    identity: ent.identity.clone(),
-                    deleted_owner_kind: oref.kind.clone(),
-                    deleted_owner_name: oref.name.clone(),
-                    deleted_owner_uid: oref.uid.clone(),
-                });
+            if !removed_uids.contains(&oref.uid) {
+                continue;
+            }
+            if let Some(pre_owner) = pre_ents.get(&oref.uid) {
+                let oref_group = group_from_api_version(&oref.api_version);
+                if pre_owner.identity.kind == oref.kind
+                    && pre_owner.identity.name == oref.name
+                    && pre_owner.identity.group == oref_group
+                {
+                    orphan_owner_refs.push(OrphanOwnerRefEntry {
+                        uid: uid.clone(),
+                        identity: ent.identity.clone(),
+                        deleted_owner_kind: oref.kind.clone(),
+                        deleted_owner_name: oref.name.clone(),
+                        deleted_owner_uid: oref.uid.clone(),
+                    });
+                }
             }
         }
     }
@@ -1923,6 +2050,7 @@ mod tests {
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![],
             scope: None,
+            observations: vec![],
         };
         let obs = snapshot_to_observation_set(&snap);
         assert!(
@@ -1933,11 +2061,11 @@ mod tests {
     }
 
     #[test]
-    fn plan_conflict_unexplained() {
+    fn keep_does_not_negate_delete() {
         let entry = make_obs("", "Sub", Some("ns"), "s1", Some("uid-s1"));
         let before = make_obs_set(vec![entry]);
         let after = make_obs_set(vec![]);
-        // Two plans with conflicting actions from different operators
+        // DELETE from one operator, KEEP from another — KEEP does not negate DELETE
         let plan1 = make_plan(vec![(
             "",
             "Sub",
@@ -1963,10 +2091,46 @@ mod tests {
         let r = &report.removals[0];
         assert_eq!(
             r.classification,
-            AuditClassification::UnexplainedChange,
-            "conflicting actions must not strong-classify"
+            AuditClassification::PlannedDirectDelete,
+            "KEEP from another operator does not negate DELETE"
         );
         assert!(!report.plan_collision_warnings.is_empty());
+    }
+
+    #[test]
+    fn identity_conflict_same_uid_different_identity_unexplained() {
+        let entry = make_obs("", "Sub", Some("ns"), "s1", Some("uid-s1"));
+        let before = make_obs_set(vec![entry]);
+        let after = make_obs_set(vec![]);
+        // Same UID, different identity across DELETEs → true conflict
+        let plan1 = make_plan(vec![(
+            "",
+            "Sub",
+            Some("ns"),
+            "s1",
+            "uid-s1",
+            ExecutionAction::Delete,
+        )]);
+        let mut plan2 = make_plan(vec![(
+            "other.group",
+            "Sub",
+            Some("ns"),
+            "s1",
+            "uid-s1",
+            ExecutionAction::Delete,
+        )]);
+        plan2.cluster_identity.kube_system_uid = "kube-uid".into();
+        let report = audit(
+            before,
+            after,
+            vec![("1-op-a.json".into(), plan1), ("2-op-b.json".into(), plan2)],
+        );
+        let r = &report.removals[0];
+        assert_eq!(
+            r.classification,
+            AuditClassification::UnexplainedChange,
+            "different identity DELETEs on same UID → conflict"
+        );
     }
 
     #[test]
@@ -2221,5 +2385,176 @@ mod tests {
         let after = make_obs_set(vec![]);
         let report = audit(before, after, vec![]);
         assert_eq!(report.removals.len(), 2, "both UIDs must appear");
+    }
+
+    #[test]
+    fn namespaced_owner_different_namespace_not_in_closure() {
+        let parent = make_obs(
+            "apps",
+            "Deployment",
+            Some("ns-a"),
+            "dep",
+            Some("uid-parent"),
+        );
+        let mut child = make_obs("", "Pod", Some("ns-b"), "pod", Some("uid-child"));
+        child.owner_refs.push(ObsOwnerRef {
+            api_version: "apps/v1".into(),
+            kind: "Deployment".into(),
+            name: "dep".into(),
+            uid: "uid-parent".into(),
+            controller: true,
+            block_owner_deletion: false,
+        });
+
+        let before = make_obs_set(vec![parent, child]);
+        let after = make_obs_set(vec![]);
+        let plan = make_plan(vec![(
+            "apps",
+            "Deployment",
+            Some("ns-a"),
+            "dep",
+            "uid-parent",
+            ExecutionAction::Delete,
+        )]);
+        let report = audit(before, after, vec![("plan.json".into(), plan)]);
+        let child_r = report
+            .removals
+            .iter()
+            .find(|r| r.uid == "uid-child")
+            .unwrap();
+        assert_eq!(
+            child_r.classification,
+            AuditClassification::UnexplainedChange,
+            "namespaced owner in different namespace must not be in closure"
+        );
+    }
+
+    #[test]
+    fn cluster_scoped_owner_can_own_namespaced_child() {
+        let parent = make_obs(
+            "apiextensions.k8s.io",
+            "CustomResourceDefinition",
+            None,
+            "widgets.example.io",
+            Some("uid-crd"),
+        );
+        let mut child = make_obs("", "ConfigMap", Some("ns"), "cm", Some("uid-cm"));
+        child.owner_refs.push(ObsOwnerRef {
+            api_version: "apiextensions.k8s.io/v1".into(),
+            kind: "CustomResourceDefinition".into(),
+            name: "widgets.example.io".into(),
+            uid: "uid-crd".into(),
+            controller: true,
+            block_owner_deletion: false,
+        });
+
+        let before = make_obs_set(vec![parent, child]);
+        let after = make_obs_set(vec![]);
+        let plan = make_plan(vec![(
+            "apiextensions.k8s.io",
+            "CustomResourceDefinition",
+            None,
+            "widgets.example.io",
+            "uid-crd",
+            ExecutionAction::Delete,
+        )]);
+        let report = audit(before, after, vec![("plan.json".into(), plan)]);
+        let child_r = report.removals.iter().find(|r| r.uid == "uid-cm").unwrap();
+        assert_eq!(
+            child_r.classification,
+            AuditClassification::OwnerRefGcDescendant,
+            "cluster-scoped parent can own namespaced child"
+        );
+    }
+
+    #[test]
+    fn orphan_wrong_identity_not_reported() {
+        let parent = make_obs("", "Dep", Some("ns"), "dep1", Some("uid-parent"));
+        let mut child = make_obs("", "RS", Some("ns"), "rs1", Some("uid-child"));
+        child.owner_refs.push(ObsOwnerRef {
+            api_version: "v1".into(),
+            kind: "WrongKind".into(),
+            name: "wrong-name".into(),
+            uid: "uid-parent".into(),
+            controller: true,
+            block_owner_deletion: false,
+        });
+
+        let before = make_obs_set(vec![parent, child.clone()]);
+        let after = make_obs_set(vec![child]);
+        let plan = make_plan(vec![(
+            "",
+            "Dep",
+            Some("ns"),
+            "dep1",
+            "uid-parent",
+            ExecutionAction::Delete,
+        )]);
+        let report = audit(before, after, vec![("plan.json".into(), plan)]);
+        assert_eq!(
+            report.orphan_owner_refs.len(),
+            0,
+            "stale/wrong identity ownerRef must not be reported as orphan"
+        );
+    }
+
+    #[test]
+    fn canonical_alias_order_independent() {
+        let obs1 = make_obs("events.k8s.io", "Event", Some("ns"), "ev1", Some("uid-ev"));
+        let mut obs2 = make_obs("", "Event", Some("ns"), "ev1", Some("uid-ev"));
+        obs2.resource = "events".into();
+
+        let before_a = make_obs_set(vec![obs1.clone(), obs2.clone()]);
+        let before_b = make_obs_set(vec![obs2, obs1]);
+        let after = make_obs_set(vec![]);
+
+        let report_a = audit(before_a, after.clone(), vec![]);
+        let report_b = audit(before_b, after, vec![]);
+
+        let json_a = serde_json::to_string_pretty(&report_a).unwrap();
+        let json_b = serde_json::to_string_pretty(&report_b).unwrap();
+        assert_eq!(json_a, json_b, "alias order must not affect output");
+    }
+
+    #[test]
+    fn incomplete_scope_produces_capability_warning() {
+        use crate::kube::resource::*;
+        let snap = ClusterSnapshot {
+            schema_version: Some(4),
+            resources: HashMap::new(),
+            scan_warnings: vec![ScanWarning::Forbidden {
+                gvr: "v1/secrets".into(),
+                status: 403,
+            }],
+            cluster_url: "https://api.test:6443".into(),
+            taken_at: "2026-01-01T00:00:00Z".into(),
+            namespaces: vec!["ns".into()],
+            scope: Some(SnapshotScope {
+                mode: "single-namespace".into(),
+                incomplete_namespaces: vec![IncompleteNamespace {
+                    namespace: "ns".into(),
+                    warnings: vec![ScanWarning::Forbidden {
+                        gvr: "v1/secrets".into(),
+                        status: 403,
+                    }],
+                    error: None,
+                }],
+                ..Default::default()
+            }),
+            observations: vec![],
+        };
+        let obs = snapshot_to_observation_set(&snap);
+        assert!(
+            obs.capability_warnings
+                .iter()
+                .any(|w| w.contains("scan warnings")),
+            "scan warnings must propagate"
+        );
+        assert!(
+            obs.capability_warnings
+                .iter()
+                .any(|w| w.contains("incomplete")),
+            "incomplete scope must propagate"
+        );
     }
 }

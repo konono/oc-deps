@@ -1553,6 +1553,7 @@ async fn main() -> Result<()> {
                         complete_namespaces,
                         incomplete_namespaces,
                     }),
+                    observations: vec![],
                 };
 
                 let resource_count = snapshot.resources.len();
