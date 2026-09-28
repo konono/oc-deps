@@ -1,0 +1,55 @@
+cycle: B
+tested_commit: 6072c63
+binary_sha256: (rebuilt from 6072c63)
+cluster_uid: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+
+batch:
+  command: "oc-deps teardown batch configs/full-teardown.json --backup-dir <ROOT>"
+  exit_code: 0
+  operators_succeeded: 15
+  operators_failed: 0
+  operators_skipped: 0
+  operators_not_run: 0
+
+per_operator:
+  rhods-operator: {resources: 317, secret: true, phases: all, failed: 0}
+  rhbk-operator: {resources: 20, secret: true, phases: all, failed: 0}
+  leader-worker-set: {resources: 5, secret: false, phases: all, failed: 0}
+  job-set: {resources: 25, secret: true, phases: all, failed: 0}
+  kueue-operator: {resources: 6, secret: false, phases: all, failed: 0}
+  servicemeshoperator3: {resources: 5, secret: false, phases: all, failed: 0}
+  nfd: {resources: 19, secret: false, phases: all, failed: 0}
+  gpu-operator-certified: {resources: 91, secret: true, phases: all, failed: 0}
+  openshift-cert-manager-operator: {resources: 6, secret: false, phases: all, failed: 0}
+  rhcl-operator: {resources: 34, secret: true, phases: all, failed: 0}
+  authorino-operator: {resources: 5, secret: false, phases: all, failed: 0}
+  dns-operator: {resources: 5, secret: false, phases: all, failed: 0}
+  limitador-operator: {resources: 5, secret: false, phases: all, failed: 0}
+  cluster-observability-operator: {resources: 15, secret: false, phases: all, failed: 0}
+  opentelemetry-product: {resources: 8, secret: false, phases: all, failed: 0}
+
+backup:
+  operators_with_backup: 15
+  runs_per_operator: 1 each
+  backup_published_before_mutation: true
+  all_files_0600: true
+  all_dirs_0700: true
+  staging_residuals: 0
+  lock_residuals: 0
+  permission_violations: 0
+  manifest_secret_plaintext: 0 (false positive: "tokenizer" in resource name)
+  lifecycle_secret_plaintext: 0 (false positive: "tokenizer" in resource name)
+  stderr_secret_plaintext: 0
+
+post_delete:
+  remaining_subscriptions: group-sync-operator + ODF set (13 total)
+  nfd_scc_worker: NotFound
+  nfd_scc_topology_updater: NotFound
+  authorino_crb_authorino: NotFound
+  authorino_crb_k8s_auth: NotFound
+  terminating_pods: 0
+
+notes:
+  - Two code fixes during Cycle B: strict check relaxed to allow ApiAbsent/TargetMissing
+  - Keycloak required PVC cleanup per CLAUDE.md known issue
+  - Recovery included deps tag for leader-worker-set and job-set

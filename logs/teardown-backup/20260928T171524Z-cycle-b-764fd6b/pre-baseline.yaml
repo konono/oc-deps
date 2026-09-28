@@ -1,0 +1,13 @@
+cycle: B
+tested_commit: 764fd6b
+binary_sha256: 068de5d52a82748b328eff62b81c797b88eaee2f912934a4ef9b6a686b52ed1a
+cluster_uid: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+config_sha256: 428eeb789b97227ff1950d120bbf20b0baa0ab5e35ee72c23933c533b3211263
+node_ready: 1
+terminating_pods: 0
+subscription_count: 28
+nfd_sub_uid: d9db1589-e2bc-4f98-8be1-2d982bb733b0
+nfd_scc_worker_uid: 07a25427-37c5-49ae-bfea-9dd684433019
+nfd_scc_topo_uid: 11b8690d-bf5f-4852-ae94-c57723a87156
+authorino_crb_auth_uid: c3b07c89-7237-4920-a23c-72abe5eceb3f
+authorino_crb_uid: 565ef8c2-a274-489a-af34-96e46eb394d9
