@@ -1,0 +1,53 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "ClusterRoleBinding",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:45:07Z",
+                "name": "authorino-authorino",
+                "resourceVersion": "12473365",
+                "uid": "a6f19010-7793-4998-8249-7c23b5533c37"
+            },
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "ClusterRole",
+                "name": "authorino-manager-role"
+            },
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": "authorino-authorino",
+                    "namespace": "openshift-rhcl"
+                }
+            ]
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "ClusterRoleBinding",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:45:07Z",
+                "name": "authorino-authorino-k8s-auth",
+                "resourceVersion": "12473367",
+                "uid": "7a2ef25c-44ce-4a0c-a6de-f918652a107c"
+            },
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "ClusterRole",
+                "name": "authorino-manager-k8s-auth-role"
+            },
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": "authorino-authorino",
+                    "namespace": "openshift-rhcl"
+                }
+            ]
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

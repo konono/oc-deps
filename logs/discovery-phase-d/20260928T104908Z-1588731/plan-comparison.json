@@ -1,0 +1,21 @@
+{
+  "plan_count": 15,
+  "all_non_empty": true,
+  "plans": {
+    "authorino-operator": 13,
+    "cert-manager-operator": 21,
+    "cluster-observability-operator": 27,
+    "dns-operator": 9,
+    "gpu-operator-certified": 12,
+    "job-set": 8,
+    "kueue-operator": 7,
+    "leader-worker-set": 7,
+    "limitador-operator": 9,
+    "nfd": 16,
+    "opentelemetry-product": 10,
+    "rhbk-operator": 9,
+    "rhcl-operator": 22,
+    "rhods-operator": 127,
+    "servicemeshoperator3": 36
+  }
+}
