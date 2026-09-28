@@ -464,13 +464,23 @@ pub async fn discover_operators(
     client: &Client,
     kind_map: &KindMap,
 ) -> Result<Vec<OperatorInstance>> {
-    discover_operators_opts(client, kind_map, None).await
+    discover_operators_full(client, kind_map, None, None).await
 }
 
 pub async fn discover_operators_opts(
     client: &Client,
     kind_map: &KindMap,
     ledger: Option<crate::kube::scanner::SharedLedger>,
+) -> Result<Vec<OperatorInstance>> {
+    discover_operators_full(client, kind_map, ledger, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_operators_full(
+    client: &Client,
+    kind_map: &KindMap,
+    ledger: Option<crate::kube::scanner::SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<Vec<OperatorInstance>> {
     let csv_info = match kind_map.get("ClusterServiceVersion") {
         Some(info) => info.clone(),
@@ -486,24 +496,52 @@ pub async fn discover_operators_opts(
     let sub_ar = ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
     let sub_api: Api<DynamicObject> = Api::all_with(client.clone(), &sub_ar);
 
-    let (csv_result, sub_result) = tokio::join!(
-        list_all_paginated_opts(
+    let (csv_result, sub_result) = if let Some(ref p) = planner {
+        let csv_fut = crate::kube::scanner::list_with_selector_retry_planner(
             &csv_api,
-            Some(CANONICAL_CSV_LABEL_SELECTOR),
+            CANONICAL_CSV_LABEL_SELECTOR,
             &csv_info.group,
             &csv_info.version,
             &csv_info.plural,
             ledger.as_ref(),
-        ),
-        list_all_paginated_opts(
-            &sub_api,
             None,
+            crate::kube::resource::QueryRequirement::Required,
+            Some(p),
+            client,
+        );
+        let sub_fut = crate::kube::scanner::list_all_with_retry_planner(
+            &sub_api,
             "operators.coreos.com",
             "v1alpha1",
             "subscriptions",
             ledger.as_ref(),
-        ),
-    );
+            None,
+            crate::kube::resource::QueryRequirement::Required,
+            Some(p),
+            client,
+        );
+        let (csv_r, sub_r) = tokio::join!(csv_fut, sub_fut);
+        (csv_r, sub_r)
+    } else {
+        tokio::join!(
+            list_all_paginated_opts(
+                &csv_api,
+                Some(CANONICAL_CSV_LABEL_SELECTOR),
+                &csv_info.group,
+                &csv_info.version,
+                &csv_info.plural,
+                ledger.as_ref(),
+            ),
+            list_all_paginated_opts(
+                &sub_api,
+                None,
+                "operators.coreos.com",
+                "v1alpha1",
+                "subscriptions",
+                ledger.as_ref(),
+            ),
+        )
+    };
     let csv_items = csv_result.map_err(|w| anyhow::anyhow!("{}", w))?;
     let sub_items = sub_result.map_err(|w| anyhow::anyhow!("{}", w))?;
 

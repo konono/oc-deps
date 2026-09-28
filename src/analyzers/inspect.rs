@@ -89,6 +89,8 @@ pub struct OperatorInspection {
     pub incomplete_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage_ledger: Option<CoverageLedger>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_planner: Option<crate::kube::planner::PlannerMetrics>,
 }
 
 impl OperatorInspection {
@@ -481,6 +483,7 @@ pub async fn inspect_operator_with_options_ledger(
         coverage: snapshot_coverage,
         incomplete_count: snapshot_incomplete,
         coverage_ledger: snapshot_ledger,
+        query_planner: None,
     })
 }
 
@@ -933,6 +936,7 @@ mod tests {
             coverage: None,
             incomplete_count: 0,
             coverage_ledger: None,
+            query_planner: None,
         };
         let json = serde_json::to_string(&inspection).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1053,6 +1057,7 @@ mod tests {
             coverage: Some(ledger.summary()),
             incomplete_count: 0,
             coverage_ledger: Some(ledger),
+            query_planner: None,
         };
 
         let json = serde_json::to_string_pretty(&inspection).unwrap();
@@ -1091,6 +1096,7 @@ mod tests {
             coverage: None,
             incomplete_count: 0,
             coverage_ledger: None,
+            query_planner: None,
         };
 
         assert!(
@@ -1134,6 +1140,7 @@ mod tests {
             coverage: Some(ledger.summary()),
             incomplete_count: 0,
             coverage_ledger: Some(ledger),
+            query_planner: None,
         };
 
         assert_eq!(inspection.scan_warning_count, 0);
@@ -1190,6 +1197,7 @@ mod tests {
                 coverage: Some(ledger.summary()),
                 incomplete_count: incomplete,
                 coverage_ledger: Some(ledger),
+                query_planner: None,
             }
         };
 

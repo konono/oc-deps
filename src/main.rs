@@ -44,7 +44,7 @@ use crate::analyzers::inspect::{
 };
 use crate::analyzers::namespace_scope::discover_operator_namespaces_opts;
 use crate::analyzers::olm::{
-    WhoManagesInput, compute_operator_dependencies, discover_operators, discover_operators_opts,
+    WhoManagesInput, compute_operator_dependencies, discover_operators, discover_operators_full,
     print_operators, print_who_manages, who_manages, who_manages_opts,
 };
 use crate::analyzers::selector::{
@@ -1625,9 +1625,16 @@ async fn main() -> Result<()> {
                         build_kind_lookup_cached(&client, &config, no_cache).await?;
                     let t_discovery = t0.elapsed();
 
+                    let plan_planner = crate::kube::planner::QueryPlanner::new(None);
                     let t_olm = Instant::now();
                     eprint!("🔍 Discovering operators...");
-                    let all_operators = discover_operators(&client, &kind_map).await?;
+                    let all_operators = discover_operators_full(
+                        &client,
+                        &kind_map,
+                        None,
+                        Some(plan_planner.clone()),
+                    )
+                    .await?;
                     eprintln!(" found {} operators", all_operators.len());
                     let t_olm = t_olm.elapsed();
 
@@ -5031,10 +5038,16 @@ async fn main() -> Result<()> {
             let cmd_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
                 std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
             );
+            let cmd_planner = crate::kube::planner::QueryPlanner::new(None);
 
             eprint!("🔍 Discovering operators...");
-            let all_operators =
-                discover_operators_opts(&client, &kind_map, Some(cmd_ledger.clone())).await?;
+            let all_operators = discover_operators_full(
+                &client,
+                &kind_map,
+                Some(cmd_ledger.clone()),
+                Some(cmd_planner.clone()),
+            )
+            .await?;
             eprintln!(" found {} operators", all_operators.len());
 
             let target_indices = resolve_operator_targets(&[operator_query], &all_operators)?;
@@ -5051,10 +5064,41 @@ async fn main() -> Result<()> {
             )
             .await?;
 
+            // Flush planner records to ledger and attach metrics
+            cmd_planner.flush_to_ledger(&cmd_ledger).await;
+            let mut inspection = inspection;
+            inspection.query_planner = Some(cmd_planner.metrics().await);
+
             print_inspection_top(&inspection, &output, verbose);
             if let Some(ref ledger) = inspection.coverage_ledger {
                 crate::kube::resource::format_coverage_summary(ledger, verbose);
             }
+
+            // Print query planner metrics
+            {
+                let metrics = cmd_planner.metrics().await;
+                let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+                if is_tty {
+                    eprintln!(
+                        "📊 Query planner: {} demands, {} unique, {} network, {} cache hits ({:.1}s)",
+                        metrics.total_demands,
+                        metrics.unique_queries,
+                        metrics.network_queries,
+                        metrics.cache_hits,
+                        metrics.total_elapsed_ms as f64 / 1000.0
+                    );
+                } else {
+                    eprintln!(
+                        "Query planner: {} demands, {} unique, {} network, {} cache hits ({:.1}s)",
+                        metrics.total_demands,
+                        metrics.unique_queries,
+                        metrics.network_queries,
+                        metrics.cache_hits,
+                        metrics.total_elapsed_ms as f64 / 1000.0
+                    );
+                }
+            }
+
             if strict && inspection.should_exit_strict() {
                 std::process::exit(2);
             }
@@ -5107,6 +5151,7 @@ async fn main() -> Result<()> {
             let trace_ledger: crate::kube::scanner::SharedLedger = std::sync::Arc::new(
                 std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
             );
+            let trace_planner = crate::kube::planner::QueryPlanner::new(None);
             let (mut index, mut scan_warnings) = if kind_info.namespaced {
                 crate::kube::scanner::scan_namespace_with_semaphore(
                     &client,
@@ -5262,8 +5307,13 @@ async fn main() -> Result<()> {
 
             // Cross-namespace scan using confirmed operator
             if cross_namespace && let Some(csv_name) = &confirmed_csv {
-                let operators =
-                    discover_operators_opts(&client, &kind_map, Some(trace_ledger.clone())).await?;
+                let operators = discover_operators_full(
+                    &client,
+                    &kind_map,
+                    Some(trace_ledger.clone()),
+                    Some(trace_planner.clone()),
+                )
+                .await?;
                 let csv_query = csv_name.to_string();
                 if let Ok(indices) = resolve_operator_targets(&[csv_query], &operators)
                     && let Some(&idx) = indices.first()
@@ -5335,6 +5385,8 @@ async fn main() -> Result<()> {
             } else {
                 "namespace"
             };
+            // Flush planner records to ledger
+            trace_planner.flush_to_ledger(&trace_ledger).await;
             let (trace_coverage, trace_coverage_ledger) = {
                 let mut ledger = trace_ledger.lock().unwrap();
                 if ledger.records.is_empty() {

@@ -15,12 +15,12 @@ use crate::analyzers::spec_ref::{collect_string_values, extract_well_known_refs}
 use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::*;
 
-const MAX_RETRIES: usize = 2;
-const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
+pub const MAX_RETRIES: usize = 2;
+pub const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
 
 pub type SharedLedger = Arc<std::sync::Mutex<CoverageLedger>>;
 
-fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
+pub fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
     if group.is_empty() {
         format!("{}/{}", version, plural)
     } else {
@@ -58,6 +58,115 @@ fn record_to_ledger(
             elapsed_ms: elapsed.as_millis() as u64,
             requirement,
         });
+    }
+}
+
+pub type SharedPlanner = Arc<crate::kube::planner::QueryPlanner>;
+
+/// GET with planner dedup. When planner is present, deduplicates against other consumers.
+/// Falls back to get_with_retry_ledger when no planner.
+/// When planner is used, ledger recording is skipped here — use planner.flush_to_ledger() at end.
+#[allow(clippy::too_many_arguments, dead_code)]
+pub async fn get_with_retry_planner(
+    api: &Api<DynamicObject>,
+    name: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+    planner: Option<&SharedPlanner>,
+    client: &Client,
+) -> std::result::Result<DynamicObject, ScanWarning> {
+    if let Some(p) = planner {
+        return p
+            .get(client, group, version, plural, namespace, name, requirement)
+            .await;
+    }
+    get_with_retry_ledger(
+        api,
+        name,
+        group,
+        version,
+        plural,
+        ledger,
+        namespace,
+        requirement,
+    )
+    .await
+}
+
+/// LIST all with planner dedup. When planner is present, deduplicates against other consumers.
+/// Falls back to list_all_with_retry_ledger when no planner.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_all_with_retry_planner(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+    planner: Option<&SharedPlanner>,
+    client: &Client,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    if let Some(p) = planner {
+        let result = p
+            .list_all(client, group, version, plural, namespace, requirement)
+            .await;
+        match result {
+            Ok(items) => Ok(items.as_ref().clone()),
+            Err(w) => Err(w),
+        }
+    } else {
+        list_all_with_retry_ledger(api, group, version, plural, ledger, namespace, requirement)
+            .await
+    }
+}
+
+/// LIST with label selector + planner dedup.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_with_selector_retry_planner(
+    api: &Api<DynamicObject>,
+    selector: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+    planner: Option<&SharedPlanner>,
+    client: &Client,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    if let Some(p) = planner {
+        let result = p
+            .list_with_selector(
+                client,
+                group,
+                version,
+                plural,
+                namespace,
+                selector,
+                requirement,
+            )
+            .await;
+        match result {
+            Ok(items) => Ok(items.as_ref().clone()),
+            Err(w) => Err(w),
+        }
+    } else {
+        list_with_selector_retry_ledger(
+            api,
+            selector,
+            group,
+            version,
+            plural,
+            ledger,
+            namespace,
+            requirement,
+        )
+        .await
     }
 }
 
