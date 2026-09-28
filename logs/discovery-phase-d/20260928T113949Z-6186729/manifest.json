@@ -4,7 +4,7 @@
   "git_branch": "feature/discovery-targeted-adapter-nfd",
   "base_commit": "6186729",
   "destructive_e2e_tested_source_tree": "d289cfa",
-  "evidence_commit": "96f94d9",
+  "evidence_commit": "containing git commit",
   "binary_sha256": "3a7e70ce8e1c50a847d365de34b7619f86fc37b0a361c2a6100b7ffe33944fd9",
   "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
   "cycle_a": {
