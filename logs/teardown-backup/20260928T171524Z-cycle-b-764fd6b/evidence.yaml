@@ -1,7 +1,9 @@
 cycle: B
-tested_commit: 6072c63
-binary_sha256: (rebuilt from 6072c63)
+destructive_e2e_tested_commit: 6072c63
+final_tested_code_commit: 227a0c6
+final_binary_sha256: eb724f680f3541848e99301bb3128047f5bee192acbfa39d324daaca2be3f245
 cluster_uid: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+config_sha256: 428eeb789b97227ff1950d120bbf20b0baa0ab5e35ee72c23933c533b3211263
 
 batch:
   command: "oc-deps teardown batch configs/full-teardown.json --backup-dir <ROOT>"

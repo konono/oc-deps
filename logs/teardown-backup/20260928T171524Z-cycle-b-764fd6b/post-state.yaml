@@ -1,0 +1,50 @@
+explicit_cleanup_targets:
+  - group: gateway.networking.k8s.io
+    version: v1
+    kind: Gateway
+    namespace: openshift-ingress
+    name: maas-default-gateway
+    status: NotFound
+    command_exit: 1
+  - group: ""
+    version: v1
+    kind: ConfigMap
+    namespace: openshift-ingress
+    name: maas-gateway-options
+    status: NotFound
+    command_exit: 1
+  - group: console.openshift.io
+    version: v1
+    kind: ConsolePlugin
+    namespace: null
+    name: kuadrant-console-plugin
+    status: NotFound
+    command_exit: 1
+  - group: apps
+    version: v1
+    kind: Deployment
+    namespace: openshift-rhcl
+    name: kuadrant-console-plugin
+    status: NotFound
+    command_exit: 1
+  - group: ""
+    version: v1
+    kind: Service
+    namespace: openshift-rhcl
+    name: kuadrant-console-plugin
+    status: NotFound
+    command_exit: 1
+  - group: ""
+    version: v1
+    kind: ConfigMap
+    namespace: openshift-rhcl
+    name: kuadrant-console-nginx-conf
+    status: NotFound
+    command_exit: 1
+crds: 394
+pvs: 7
+pvcs: 8
+deleting_apiservices: 0
+node_ready: 1
+remaining_subscriptions: 13
+terminating_pods: 0
