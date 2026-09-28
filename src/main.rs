@@ -2141,7 +2141,7 @@ async fn main() -> Result<()> {
                                 &target_operators,
                                 &gk_map,
                                 approve_finalizer_recovery,
-                                None, // TUI updates receipt after review overrides
+                                vec![], // TUI updates receipts after review overrides
                             )
                             .await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
@@ -2422,23 +2422,25 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Backup gate: after overrides, before journal+execution
-                                let script_backup_receipt = if let Some(ref bp) = backup_dir {
+                                let script_backup_receipts = if let Some(ref bp) = backup_dir {
                                     let ctx = crate::teardown::backup::BackupGateContext {
                                         client: &client,
                                         final_plan: &plan,
                                         target_operators: target_operators.clone(),
                                         cluster_identity: &current_cluster_identity,
                                         plan_path: &plan_file,
+                                        kind_map: &kind_map,
+                                        gvr_map: &gvr_map,
+                                        gk_map: &gk_map,
                                         gvk_map: &gvk_map,
                                     };
-                                    let r = crate::teardown::backup::prepare_backup_gate(
+                                    crate::teardown::backup::prepare_backup_gate(
                                         &ctx,
                                         std::path::Path::new(bp.as_str()),
                                     )
-                                    .await?;
-                                    Some(r)
+                                    .await?
                                 } else {
-                                    None
+                                    vec![]
                                 };
 
                                 // Run executor with the plan
@@ -2449,7 +2451,7 @@ async fn main() -> Result<()> {
                                         &target_operators,
                                         &gk_map,
                                         app.finalizer_recovery_approved,
-                                        script_backup_receipt,
+                                        script_backup_receipts,
                                     )
                                     .await?;
                                     Some(std::sync::Arc::new(store))
@@ -2804,24 +2806,26 @@ async fn main() -> Result<()> {
                     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
                     let effective_finalizer_recovery = approve_finalizer_recovery;
 
-                    // Backup gate: final plan is ready (no overrides in normal path)
-                    let normal_backup_receipt = if let Some(ref bp) = backup_dir {
+                    // Backup gate: uses operator discovery (not plan actions)
+                    let normal_backup_receipts = if let Some(ref bp) = backup_dir {
                         let ctx = crate::teardown::backup::BackupGateContext {
                             client: &client,
                             final_plan: &plan,
                             target_operators: target_operators.clone(),
                             cluster_identity: &current_cluster_identity,
                             plan_path: &plan_file,
+                            kind_map: &kind_map,
+                            gvr_map: &gvr_map,
+                            gk_map: &gk_map,
                             gvk_map: &gvk_map,
                         };
-                        let r = crate::teardown::backup::prepare_backup_gate(
+                        crate::teardown::backup::prepare_backup_gate(
                             &ctx,
                             std::path::Path::new(bp.as_str()),
                         )
-                        .await?;
-                        Some(r)
+                        .await?
                     } else {
-                        None
+                        vec![]
                     };
 
                     // Create RunJournal before first mutation (fail-closed)
@@ -2833,7 +2837,7 @@ async fn main() -> Result<()> {
                             &target_operators,
                             &gk_map,
                             effective_finalizer_recovery,
-                            normal_backup_receipt,
+                            normal_backup_receipts,
                         )
                         .await?;
                         eprintln!("📓 Run journal: {}", store.path().display());
@@ -3605,12 +3609,16 @@ async fn main() -> Result<()> {
                         bail!("Cluster identity mismatch after lock acquisition");
                     }
 
-                    // Backup receipt validation: if the journal has a receipt,
-                    // verify the backup file is intact before resuming mutations
-                    if let Some(ref receipt) = j.backup_receipt {
-                        eprintln!("📦 Validating backup receipt...");
-                        crate::teardown::backup::validate_receipt(receipt, &cluster_id)?;
-                        eprintln!("  ✅ Backup intact: {}", receipt.root);
+                    // Backup receipt validation: validate every receipt before mutation
+                    if !j.backup_receipts.is_empty() {
+                        eprintln!(
+                            "📦 Validating {} backup receipt(s)...",
+                            j.backup_receipts.len()
+                        );
+                        for receipt in &j.backup_receipts {
+                            crate::teardown::backup::validate_receipt(receipt, &cluster_id)?;
+                            eprintln!("  ✅ Backup intact: {}", receipt.root);
+                        }
                     }
 
                     eprintln!(
@@ -6584,75 +6592,19 @@ async fn main() -> Result<()> {
                         .unwrap_or(&target_op.csv.name);
 
                     eprintln!(
-                        "📦 Inspecting operator: {} ({})",
+                        "📦 Backing up operator: {} ({})",
                         target_op.csv.name, target_op.install_namespace
                     );
 
-                    let inspection = inspect_operator_with_options_ledger(
-                        &client,
-                        target_op,
-                        &kind_map,
-                        &gvr_map,
-                        &gk_map,
-                        true,
-                        None,
-                        Some(cmd_planner.clone()),
-                    )
-                    .await?;
-
-                    // Collect all discovered resources by UID
-                    let mut candidates: Vec<crate::teardown::backup::BackupCandidate> = Vec::new();
-                    for category in &inspection.categories {
-                        for res in &category.resources {
-                            let uid = match &res.id.uid {
-                                Some(u) if !u.is_empty() => u.clone(),
-                                _ => continue,
-                            };
-                            let identity =
-                                crate::teardown::backup::BackupResourceIdentity::from_resource_id(
-                                    &res.id, &uid,
-                                );
-                            let source = crate::teardown::backup::BackupSource::operator_discovery(
-                                &target_op.csv.name,
-                                &category.label,
-                                &format!("{:?}", res.relationship),
-                            );
-                            if let Some(existing) =
-                                candidates.iter_mut().find(|c| c.identity.uid == uid)
-                            {
-                                if existing.identity != identity {
-                                    bail!(
-                                        "UID {} has conflicting identity: {}/{} vs {}/{}",
-                                        uid,
-                                        existing.identity.kind,
-                                        existing.identity.name,
-                                        identity.kind,
-                                        identity.name
-                                    );
-                                }
-                                if !existing.sources.contains(&source) {
-                                    existing.sources.push(source);
-                                }
-                            } else {
-                                candidates.push(crate::teardown::backup::BackupCandidate {
-                                    identity,
-                                    sources: vec![source],
-                                });
-                            }
-                        }
-                    }
-
-                    // Include adapter cleanup targets
-                    let mut observations = Vec::new();
-                    crate::teardown::backup::add_adapter_candidates(
-                        &mut candidates,
-                        &inspection.adapter_reports,
-                        &mut observations,
-                    )?;
+                    // Use shared discovery function (same as operator resources --scope related)
+                    let (candidates, observations, resolved) =
+                        crate::teardown::backup::discover_operator_backup(
+                            &client, target_op, &kind_map, &gvr_map, &gk_map, &gvk_map,
+                        )
+                        .await?;
 
                     eprintln!("  {} unique resource(s)", candidates.len());
 
-                    // Fetch raw content
                     let (fetched, _) = crate::teardown::backup::fetch_backup_resources(
                         &client,
                         &candidates,
@@ -6675,13 +6627,8 @@ async fn main() -> Result<()> {
                     eprintln!("  {} captured, {} already absent", captured, absent);
 
                     let cluster_identity = journal::fetch_cluster_identity(&client).await?;
-                    let selection = crate::teardown::backup::BackupSelection::operator(vec![
-                        crate::teardown::backup::ResolvedOperatorIdentity {
-                            package_name: target_op.package_name.clone().unwrap_or_default(),
-                            csv_name: target_op.csv.name.clone(),
-                            install_namespace: target_op.install_namespace.clone(),
-                        },
-                    ]);
+                    let selection =
+                        crate::teardown::backup::BackupSelection::operator(vec![resolved]);
 
                     let target = crate::teardown::backup::operator_target_dir(
                         std::path::Path::new(&output_dir),
@@ -6713,7 +6660,7 @@ async fn main() -> Result<()> {
                 } => {
                     let t0 = Instant::now();
                     eprintln!("🔍 Discovering API resources...");
-                    let (_kind_map, _gvr_map, _gk_map, gvk_map) =
+                    let (kind_map, _gvr_map, gk_map, gvk_map) =
                         build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
                     eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -6730,68 +6677,11 @@ async fn main() -> Result<()> {
 
                     eprintln!("📦 Scanning namespace: {}", namespace);
 
-                    let mut candidates: Vec<crate::teardown::backup::BackupCandidate> = Vec::new();
-
-                    for ((_group, _version, kind), info) in &gvk_map {
-                        if !info.namespaced || !info.listable {
-                            continue;
-                        }
-
-                        let gvk = ::kube::api::GroupVersionKind {
-                            group: info.group.clone(),
-                            version: info.version.clone(),
-                            kind: kind.clone(),
-                        };
-                        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-                        let api: ::kube::api::Api<::kube::api::DynamicObject> =
-                            ::kube::api::Api::namespaced_with(client.clone(), &namespace, &ar);
-
-                        match api.list(&::kube::api::ListParams::default()).await {
-                            Ok(list) => {
-                                for obj in list {
-                                    let uid = match obj.metadata.uid.as_deref() {
-                                        Some(u) if !u.is_empty() => u.to_string(),
-                                        _ => continue,
-                                    };
-                                    let rid = crate::kube::resource::ResourceId {
-                                        group: info.group.clone(),
-                                        version: info.version.clone(),
-                                        kind: kind.clone(),
-                                        namespace: Some(namespace.clone()),
-                                        name: obj.metadata.name.clone().unwrap_or_default(),
-                                        uid: Some(uid.clone()),
-                                    };
-                                    let identity = crate::teardown::backup::BackupResourceIdentity::from_resource_id(&rid, &uid);
-                                    let source =
-                                        crate::teardown::backup::BackupSource::namespace_scan(
-                                            &namespace,
-                                        );
-                                    if let Some(existing) =
-                                        candidates.iter_mut().find(|c| c.identity.uid == uid)
-                                    {
-                                        if !existing.sources.contains(&source) {
-                                            existing.sources.push(source);
-                                        }
-                                    } else {
-                                        candidates.push(crate::teardown::backup::BackupCandidate {
-                                            identity,
-                                            sources: vec![source],
-                                        });
-                                    }
-                                }
-                            }
-                            Err(::kube::Error::Api(ref e)) if e.code == 403 || e.code == 404 => {}
-                            Err(e) => {
-                                bail!(
-                                    "Failed to LIST {}/{} in namespace {}: {} — backup cannot proceed",
-                                    info.group,
-                                    kind,
-                                    namespace,
-                                    e
-                                );
-                            }
-                        }
-                    }
+                    // Use shared namespace scanner (same as existing scan/map path)
+                    let candidates = crate::teardown::backup::discover_namespace_backup(
+                        &client, &namespace, &kind_map, &gk_map,
+                    )
+                    .await?;
 
                     eprintln!("  {} unique resource(s)", candidates.len());
 
@@ -8151,7 +8041,7 @@ async fn create_run_journal(
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
     _finalizer_recovery_approved: bool,
-    backup_receipt: Option<crate::teardown::backup::BackupReceipt>,
+    backup_receipts: Vec<crate::teardown::backup::BackupReceipt>,
 ) -> Result<JournalStore> {
     if target_operators.len() > 1 {
         bail!(
@@ -8230,7 +8120,7 @@ async fn create_run_journal(
         cleanup_decisions: Vec::new(),
         finalizer_recovery_approved: true,
         finalizer_recoveries: Vec::new(),
-        backup_receipt,
+        backup_receipts,
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;
@@ -9725,7 +9615,7 @@ mod basis_drift_tests {
             cleanup_decisions: decisions,
             finalizer_recovery_approved: false,
             finalizer_recoveries: Vec::new(),
-            backup_receipt: None,
+            backup_receipts: vec![],
         }
     }
 

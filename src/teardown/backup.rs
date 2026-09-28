@@ -68,6 +68,7 @@ pub struct BackupSource {
 }
 
 impl BackupSource {
+    #[allow(dead_code)]
     pub fn plan_action(phase: u32, action: &str, reason: &str) -> Self {
         Self {
             source_type: "plan_action".to_string(),
@@ -156,6 +157,7 @@ pub struct BackupSelection {
 }
 
 impl BackupSelection {
+    #[allow(dead_code)]
     pub fn teardown_plan(operators: Vec<String>) -> Self {
         Self {
             selection_type: "teardown_plan".to_string(),
@@ -281,6 +283,7 @@ pub struct BackupReceipt {
 //  Candidate extraction — fail closed on missing UIDs
 // ──────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub fn extract_candidates(plan: &TeardownPlan) -> Result<Vec<BackupCandidate>> {
     let mut by_uid: BTreeMap<String, BackupCandidate> = BTreeMap::new();
 
@@ -822,11 +825,11 @@ fn resource_dir_path(identity: &BackupResourceIdentity) -> Result<String> {
     let kind = sanitize_path_component(&identity.kind)?;
     let ns = sanitize_path_component(identity.namespace.as_deref().unwrap_or("_cluster"))?;
     let name = sanitize_path_component(&identity.name)?;
-    let uid_short = &identity.uid[..12.min(identity.uid.len())];
+    let uid_safe = sanitize_path_component(&identity.uid)?;
 
     Ok(format!(
         "resources/{}/{}/{}/{}/{}--{}",
-        group, version, kind, ns, name, uid_short,
+        group, version, kind, ns, name, uid_safe,
     ))
 }
 
@@ -1148,15 +1151,19 @@ pub fn validate_receipt(receipt: &BackupReceipt, current_cluster: &ClusterIdenti
     // Verify each indexed file
     let mut actual_hashes: BTreeMap<String, String> = BTreeMap::new();
     for entry in &manifest.resources {
-        if entry.state == BackupResourceState::AlreadyAbsent {
-            continue;
-        }
         let res_dir = root.join(&entry.relative_path);
-        for (filename, expected_sha) in [
-            ("raw.yaml", &entry.raw_sha256),
-            ("recreate.yaml", &entry.recreate_sha256),
-            ("lifecycle.yaml", &entry.lifecycle_sha256),
-        ] {
+        // AlreadyAbsent resources have lifecycle.yaml but no raw/recreate
+        let files_to_check: Vec<(&str, &Option<String>)> =
+            if entry.state == BackupResourceState::AlreadyAbsent {
+                vec![("lifecycle.yaml", &entry.lifecycle_sha256)]
+            } else {
+                vec![
+                    ("raw.yaml", &entry.raw_sha256),
+                    ("recreate.yaml", &entry.recreate_sha256),
+                    ("lifecycle.yaml", &entry.lifecycle_sha256),
+                ]
+            };
+        for (filename, expected_sha) in files_to_check {
             if let Some(expected) = expected_sha {
                 let file_path = res_dir.join(filename);
                 let data = std::fs::read(&file_path)
@@ -1217,11 +1224,14 @@ pub fn validate_receipt(receipt: &BackupReceipt, current_cluster: &ClusterIdenti
 //  Run name generation
 // ──────────────────────────────────────────────────────────────
 
+static RUN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn generate_run_name() -> String {
     let now = chrono::Utc::now();
     let ts = now.format("%Y%m%dT%H%M%SZ");
-    let short_id = format!("{:08x}", std::process::id());
-    format!("{}-{}", ts, short_id)
+    let pid = std::process::id();
+    let seq = RUN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{:08x}-{}", ts, pid, seq)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1242,109 +1252,243 @@ pub fn namespace_target_dir(root: &Path, namespace: &str) -> PathBuf {
 
 pub struct BackupGateContext<'a> {
     pub client: &'a kube::Client,
+    #[allow(dead_code)]
     pub final_plan: &'a TeardownPlan,
     pub target_operators: Vec<&'a crate::analyzers::olm::OperatorInstance>,
     pub cluster_identity: &'a ClusterIdentity,
     #[allow(dead_code)]
     pub plan_path: &'a str,
+    pub kind_map: &'a crate::kube::discovery::KindMap,
+    pub gvr_map: &'a crate::kube::discovery::GvrMap,
+    pub gk_map: &'a crate::kube::discovery::GroupKindMap,
     pub gvk_map: &'a crate::kube::discovery::GvkMap,
+}
+
+/// Shared operator backup discovery: uses the same inspection as
+/// `operator resources --scope related`, producing the exact same identity set.
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_operator_backup(
+    client: &kube::Client,
+    operator: &crate::analyzers::olm::OperatorInstance,
+    kind_map: &crate::kube::discovery::KindMap,
+    gvr_map: &crate::kube::discovery::GvrMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+    _gvk_map: &crate::kube::discovery::GvkMap,
+) -> Result<(
+    Vec<BackupCandidate>,
+    Vec<CleanupContractObservation>,
+    ResolvedOperatorIdentity,
+)> {
+    let cmd_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+    ));
+    let cmd_planner = crate::kube::planner::QueryPlanner::new(Some(cmd_semaphore));
+
+    let inspection = crate::analyzers::inspect::inspect_operator_with_options_ledger(
+        client,
+        operator,
+        kind_map,
+        gvr_map,
+        gk_map,
+        true, // cross_namespace = related scope
+        None,
+        Some(cmd_planner.clone()),
+    )
+    .await?;
+
+    // Fail closed on incomplete coverage
+    if inspection.should_exit_strict() {
+        bail!(
+            "Operator {} discovery is incomplete ({} warnings, {} incomplete) — \
+             backup cannot proceed",
+            operator.csv.name,
+            inspection.scan_warning_count,
+            inspection.incomplete_count,
+        );
+    }
+
+    let mut candidates: Vec<BackupCandidate> = Vec::new();
+    let mut observations = Vec::new();
+
+    // Collect all discovered resources by UID
+    for category in &inspection.categories {
+        for res in &category.resources {
+            let uid = match &res.id.uid {
+                Some(u) if !u.is_empty() => u.clone(),
+                _ => {
+                    bail!(
+                        "Discovered resource {}/{} has no UID — backup cannot proceed",
+                        res.id.kind,
+                        res.id.name,
+                    );
+                }
+            };
+
+            let identity = BackupResourceIdentity::from_resource_id(&res.id, &uid);
+            let source = BackupSource::operator_discovery(
+                &operator.csv.name,
+                &category.label,
+                &format!("{:?}", res.relationship),
+            );
+
+            if let Some(existing) = candidates.iter_mut().find(|c| c.identity.uid == uid) {
+                if existing.identity != identity {
+                    bail!(
+                        "UID {} has conflicting identity: {}/{} vs {}/{}",
+                        uid,
+                        existing.identity.kind,
+                        existing.identity.name,
+                        identity.kind,
+                        identity.name,
+                    );
+                }
+                if !existing.sources.contains(&source) {
+                    existing.sources.push(source);
+                }
+            } else {
+                candidates.push(BackupCandidate {
+                    identity,
+                    sources: vec![source],
+                });
+            }
+        }
+    }
+
+    // Include adapter cleanup targets
+    add_adapter_candidates(
+        &mut candidates,
+        &inspection.adapter_reports,
+        &mut observations,
+    )?;
+
+    let resolved = ResolvedOperatorIdentity {
+        package_name: operator.package_name.clone().unwrap_or_default(),
+        csv_name: operator.csv.name.clone(),
+        install_namespace: operator.install_namespace.clone(),
+    };
+
+    Ok((candidates, observations, resolved))
+}
+
+/// Shared namespace backup discovery: uses the existing namespace scanner,
+/// producing the same identity set as the scan/map path.
+pub async fn discover_namespace_backup(
+    client: &kube::Client,
+    namespace: &str,
+    kind_map: &crate::kube::discovery::KindMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<Vec<BackupCandidate>> {
+    let (index, warnings) =
+        crate::kube::scanner::scan_namespace(client, namespace, kind_map, false, false, false)
+            .await?;
+
+    // Fail closed on scan warnings (403/timeout/500 on required APIs)
+    let required_failures: Vec<&crate::kube::resource::ScanWarning> =
+        warnings.iter().filter(|w| !w.is_not_found()).collect();
+    if !required_failures.is_empty() {
+        bail!(
+            "Namespace {} scan has {} required failure(s) — backup cannot proceed: {}",
+            namespace,
+            required_failures.len(),
+            required_failures
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+        );
+    }
+
+    let mut candidates: Vec<BackupCandidate> = Vec::new();
+
+    for (uid, info) in &index.by_uid {
+        // Resolve version from gk_map (ResourceInfo has no version field)
+        let gk_key = (info.group.clone(), info.kind.clone());
+        let version = match gk_map.get(&gk_key) {
+            Some(ki) => ki.version.clone(),
+            None => {
+                bail!(
+                    "Cannot resolve version for {}/{} (group={}) — backup cannot proceed",
+                    info.kind,
+                    info.name,
+                    info.group,
+                );
+            }
+        };
+
+        let identity = BackupResourceIdentity {
+            group: info.group.clone(),
+            version,
+            kind: info.kind.clone(),
+            namespace: info.namespace.clone(),
+            name: info.name.clone(),
+            uid: uid.clone(),
+        };
+
+        let source = BackupSource::namespace_scan(namespace);
+        candidates.push(BackupCandidate {
+            identity,
+            sources: vec![source],
+        });
+    }
+
+    Ok(candidates)
 }
 
 pub async fn prepare_backup_gate(
     ctx: &BackupGateContext<'_>,
     backup_root: &Path,
-) -> Result<BackupReceipt> {
-    eprintln!("\n📦 Backup: capturing pre-delete resource state...");
+) -> Result<Vec<BackupReceipt>> {
+    eprintln!("\n📦 Backup: capturing pre-delete resource state via operator discovery...");
 
-    let mut candidates = extract_candidates(ctx.final_plan)?;
-    eprintln!("  {} candidate(s) from plan actions", candidates.len());
+    let mut all_receipts = Vec::new();
 
-    // Run adapters for cleanup-contract targets
-    let mut observations = Vec::new();
-    {
-        let plan_rids: Vec<ResourceId> = ctx
-            .final_plan
-            .phases
+    for op in &ctx.target_operators {
+        let (candidates, observations, resolved) = discover_operator_backup(
+            ctx.client,
+            op,
+            ctx.kind_map,
+            ctx.gvr_map,
+            ctx.gk_map,
+            ctx.gvk_map,
+        )
+        .await?;
+
+        eprintln!("  {} candidate(s) for {}", candidates.len(), op.csv.name,);
+
+        let (fetched, _) = fetch_backup_resources(ctx.client, &candidates, ctx.gvk_map).await?;
+
+        let captured = fetched
             .iter()
-            .flat_map(|p| &p.actions)
-            .filter_map(|a| match a {
-                Action::Delete { resource, .. }
-                | Action::ExpectGone { resource, .. }
-                | Action::WaitGone { resource } => Some(resource.clone()),
-                _ => None,
-            })
-            .collect();
-
-        let cr_resources: Vec<crate::analyzers::inspect::InspectedResource> = plan_rids
+            .filter(|r| r.state == BackupResourceState::Captured)
+            .count();
+        let absent = fetched
             .iter()
-            .map(|rid| crate::analyzers::inspect::InspectedResource {
-                id: rid.clone(),
-                source_id: None,
-                relationship: crate::analyzers::inspect::Relationship::OwnedCrdInstance,
-                evidence: "plan-action".to_string(),
-                confidence: crate::analyzers::inspect::Confidence::Managed,
-            })
-            .collect();
+            .filter(|r| r.state == BackupResourceState::AlreadyAbsent)
+            .count();
+        eprintln!("  {} captured, {} already absent", captured, absent);
 
-        let planner = crate::kube::planner::QueryPlanner::new(None);
-        for op in &ctx.target_operators {
-            let reports = crate::analyzers::adapters::run_adapters(
-                ctx.client,
-                op,
-                Some(&planner),
-                &cr_resources,
-            )
-            .await;
-            add_adapter_candidates(&mut candidates, &reports, &mut observations)?;
-        }
+        let selection = BackupSelection::operator(vec![resolved]);
+        let op_name = op.package_name.as_deref().unwrap_or(&op.csv.name);
+        let target = operator_target_dir(backup_root, op_name);
+        let run_name = generate_run_name();
+
+        let receipt = write_backup_directory(
+            &fetched,
+            ctx.cluster_identity,
+            selection,
+            observations,
+            &target,
+            &run_name,
+        )?;
+
+        eprintln!(
+            "  ✅ Backup: {} ({} resources)",
+            receipt.root, receipt.resource_count,
+        );
+        all_receipts.push(receipt);
     }
 
-    eprintln!("  {} total candidate(s)", candidates.len());
-
-    let (fetched, _contains_secrets) =
-        fetch_backup_resources(ctx.client, &candidates, ctx.gvk_map).await?;
-
-    let captured = fetched
-        .iter()
-        .filter(|r| r.state == BackupResourceState::Captured)
-        .count();
-    let absent = fetched
-        .iter()
-        .filter(|r| r.state == BackupResourceState::AlreadyAbsent)
-        .count();
-    eprintln!("  {} captured, {} already absent", captured, absent);
-
-    let operator_names: Vec<String> = ctx
-        .target_operators
-        .iter()
-        .map(|op| op.csv.name.clone())
-        .collect();
-    let selection = BackupSelection::teardown_plan(operator_names);
-
-    // Write to operator-specific directory under backup_root
-    let op_name = ctx
-        .target_operators
-        .first()
-        .map(|op| op.package_name.as_deref().unwrap_or(&op.csv.name))
-        .unwrap_or("unknown");
-    let target = operator_target_dir(backup_root, op_name);
-    let run_name = generate_run_name();
-
-    let receipt = write_backup_directory(
-        &fetched,
-        ctx.cluster_identity,
-        selection,
-        observations,
-        &target,
-        &run_name,
-    )?;
-
-    eprintln!(
-        "  ✅ Backup written: {} ({} resources)",
-        receipt.root, receipt.resource_count,
-    );
-
-    Ok(receipt)
+    Ok(all_receipts)
 }
 
 /// Setup backup root directory with 0700 permissions.
@@ -1734,17 +1878,17 @@ mod tests {
         assert!(run_dir.join("manifest.yaml").exists());
         assert!(
             run_dir
-                .join("resources/core/v1/ConfigMap/ns/cm1--uid123456789/raw.yaml")
+                .join("resources/core/v1/ConfigMap/ns/cm1--uid123456789a/raw.yaml")
                 .exists()
         );
         assert!(
             run_dir
-                .join("resources/core/v1/ConfigMap/ns/cm1--uid123456789/recreate.yaml")
+                .join("resources/core/v1/ConfigMap/ns/cm1--uid123456789a/recreate.yaml")
                 .exists()
         );
         assert!(
             run_dir
-                .join("resources/core/v1/ConfigMap/ns/cm1--uid123456789/lifecycle.yaml")
+                .join("resources/core/v1/ConfigMap/ns/cm1--uid123456789a/lifecycle.yaml")
                 .exists()
         );
 
@@ -1755,7 +1899,7 @@ mod tests {
 
         // Verify raw.yaml contains the data
         let raw_content = std::fs::read_to_string(
-            run_dir.join("resources/core/v1/ConfigMap/ns/cm1--uid123456789/raw.yaml"),
+            run_dir.join("resources/core/v1/ConfigMap/ns/cm1--uid123456789a/raw.yaml"),
         )
         .unwrap();
         assert!(raw_content.contains("k:") || raw_content.contains("\"k\""));

@@ -4803,8 +4803,8 @@ mod tests {
     fn residual_cleanup_schema_gate_rejects_old_schema() {
         let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
         assert_eq!(
-            current, 10,
-            "Schema version must be 10 for cleanup gate to work correctly"
+            current, 11,
+            "Schema version must be 11 for cleanup gate to work correctly"
         );
     }
 
@@ -5882,7 +5882,7 @@ mod tests {
             cleanup_decisions: vec![],
             finalizer_recovery_approved: true,
             finalizer_recoveries: vec![],
-            backup_receipt: None,
+            backup_receipts: vec![],
         };
         let dir = std::env::temp_dir().join(format!(
             "oc-deps-test-recovery-{:?}",
