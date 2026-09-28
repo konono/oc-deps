@@ -809,6 +809,11 @@ pub async fn scan_namespace_with_semaphore(
         }
     }
 
+    // Stable sort so same-UID API aliases are always inserted in the same order
+    scan_targets.sort_by(|(kind_a, a), (kind_b, b)| {
+        (&a.group, &a.version, &a.plural, kind_a).cmp(&(&b.group, &b.version, &b.plural, kind_b))
+    });
+
     let total = scan_targets.len();
     let scanned = Arc::new(AtomicUsize::new(0));
     let scan_start = std::time::Instant::now();
@@ -1074,8 +1079,10 @@ pub async fn scan_namespace_with_semaphore(
     } else {
         DEFAULT_API_CONCURRENCY
     };
+    // buffered preserves input order so same-UID aliases deterministically pick the
+    // first group in sorted scan_targets order, regardless of server response timing.
     let results: Vec<Result<Vec<ScanItem>, ScanWarning>> = futures::stream::iter(futs)
-        .buffer_unordered(concurrency)
+        .buffered(concurrency)
         .collect()
         .await;
 
@@ -2972,5 +2979,150 @@ mod tests {
                 uri
             );
         }
+    }
+
+    #[tokio::test]
+    async fn scan_api_alias_deterministic_regardless_of_response_order() {
+        // Two groups serve the same Kind with the same UID.
+        // Regardless of which API responds first, the chosen group must be stable.
+        let shared_uid = "uid-shared-12345";
+
+        // group-a sorts before group-b
+        let mut kind_map_fast_a = KindMap::new();
+        kind_map_fast_a.insert(
+            "Widget".to_string(),
+            KindInfo {
+                group: "alpha.example.com".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map_fast_a.insert(
+            "Widget".to_string(),
+            KindInfo {
+                group: "alpha.example.com".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        // We can't insert two entries with the same kind name in a HashMap.
+        // Instead, test via extra_apis parameter which adds the second group.
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "WidgetA".to_string(),
+            KindInfo {
+                group: "alpha.example.com".to_string(),
+                version: "v1".to_string(),
+                plural: "widgetsa".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        kind_map.insert(
+            "WidgetB".to_string(),
+            KindInfo {
+                group: "beta.example.com".to_string(),
+                version: "v1".to_string(),
+                plural: "widgetsb".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        fn make_list_with_uid(
+            group: &str,
+            kind: &str,
+            _plural: &str,
+            uid: &str,
+        ) -> serde_json::Value {
+            serde_json::json!({
+                "apiVersion": format!("{}/v1", group),
+                "kind": format!("{}List", kind),
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": format!("{}/v1", group),
+                    "kind": kind,
+                    "metadata": {
+                        "name": "shared-widget",
+                        "namespace": "test-ns",
+                        "uid": uid,
+                        "labels": {},
+                        "annotations": {}
+                    }
+                }]
+            })
+        }
+
+        // Run 1: alpha responds fast, beta responds slow
+        let run = |alpha_delay_ms: u64, beta_delay_ms: u64| {
+            let km = kind_map.clone();
+            async move {
+                let uid = shared_uid.to_string();
+                let (mock_service, handle) =
+                    tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+                let client = Client::new(mock_service, "test-ns");
+
+                let uid_for_task = uid.clone();
+                let spawned = tokio::spawn(async move {
+                    let mut handle = std::pin::pin!(handle);
+                    for _ in 0..2 {
+                        let (req, send) = handle.next_request().await.expect("req");
+                        let uri = req.uri().to_string();
+                        if uri.contains("widgetsa") {
+                            tokio::time::sleep(std::time::Duration::from_millis(alpha_delay_ms))
+                                .await;
+                            send.send_response(json_response(make_list_with_uid(
+                                "alpha.example.com",
+                                "WidgetA",
+                                "widgetsa",
+                                &uid_for_task,
+                            )));
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(beta_delay_ms))
+                                .await;
+                            send.send_response(json_response(make_list_with_uid(
+                                "beta.example.com",
+                                "WidgetB",
+                                "widgetsb",
+                                &uid_for_task,
+                            )));
+                        }
+                    }
+                });
+
+                let (index, _warnings) = scan_namespace_with_semaphore(
+                    &client,
+                    "test-ns",
+                    &km,
+                    false,
+                    false,
+                    false,
+                    None,
+                    &[],
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+
+                spawned.await.unwrap();
+
+                let info = index.by_uid.get(&uid.to_string()).unwrap();
+                (info.group.clone(), info.kind.clone())
+            }
+        };
+
+        let (group1, kind1) = run(1, 50).await; // alpha fast
+        let (group2, kind2) = run(50, 1).await; // beta fast
+
+        assert_eq!(
+            group1, group2,
+            "same UID must resolve to same group regardless of response order: run1={}/{} run2={}/{}",
+            group1, kind1, group2, kind2
+        );
     }
 }
