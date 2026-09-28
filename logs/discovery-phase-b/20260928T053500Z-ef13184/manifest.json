@@ -5,7 +5,8 @@
   "round": 5,
   "comparison_mode": "interleaved back-to-back per operator",
   "tested_code_commit": "ef13184",
-  "evidence_commit": "set after commit",
+  "evidence_commit": null,
+  "evidence_commit_note": "containing git commit is the evidence revision",
   "base_commit": "bc3076e",
   "base_binary_sha256": "a390171a4c21281f1cf63ddfd0690d9aec8347065f8eb2205131c1f7a0397d56",
   "pr_binary_sha256": "94d87a2d8b33e7e261db1a146b0e06969df7e73e9ac6929a5330927b5def843b",
@@ -19,12 +20,36 @@
       "resource_identical": "11/15",
       "relationship_identical": "11/15",
       "warning_identical": "15/15",
-      "diffs": {
-        "cause": "API alias stabilization via groups_alphabetical + sorted scan_targets + buffered stream",
-        "detail": "4 operators have Role/RoleBinding with same UID served by both authorization.openshift.io and rbac.authorization.k8s.io. PR deterministically selects rbac.authorization.k8s.io (alphabetically first). Base uses authorization.openshift.io (nondeterministic HashMap order).",
-        "operators": ["authorino-operator", "gpu-operator-certified", "rhcl-operator", "rhods-operator"],
-        "alias_stability": "3 consecutive PR runs all select rbac.authorization.k8s.io"
-      }
+      "diffs": [
+        {
+          "operator": "authorino-operator",
+          "type": "api_alias",
+          "detail": "2 Role/RoleBinding same-UID alias swap: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "gpu-operator-certified",
+          "type": "api_alias",
+          "detail": "Role/RoleBinding same-UID alias swaps: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "rhcl-operator",
+          "type": "api_alias",
+          "detail": "2 Role/RoleBinding same-UID alias swap: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "rhods-operator",
+          "type": "api_alias",
+          "count": 34,
+          "detail": "34 Role/RoleBinding same-UID alias swaps: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "rhods-operator",
+          "type": "cluster_mutation",
+          "count": 4,
+          "detail": "base-only: PodMonitor/kubeflow-trainer-controller-manager-metrics-monitor, PodMonitor/kubeflow-training-operator-metrics-monitor, ServiceMonitor/controller-manager-metrics-monitor, ServiceMonitor/data-science-pipelines-operator-service-monitor"
+        }
+      ],
+      "alias_stability": "3 consecutive PR runs all select rbac.authorization.k8s.io"
     },
     "teardown_plan": {
       "total": 15,
