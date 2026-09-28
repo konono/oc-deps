@@ -589,7 +589,7 @@ pub enum SpecRefSourceSer {
     Heuristic,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedApi {
     pub group: String,
     pub version: String,

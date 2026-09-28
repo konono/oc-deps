@@ -515,11 +515,23 @@ async fn build_snapshot_from_targets(
         );
     }
 
-    let mut resources = HashMap::new();
+    let mut resources: HashMap<String, ResourceEntry> = HashMap::new();
     let mut all_observations = Vec::new();
     for (entries, obs) in results.into_iter().flatten() {
         for (uid, entry) in entries {
-            resources.insert(uid, entry);
+            if let Some(existing) = resources.get_mut(&uid) {
+                if let (Some(existing_apis), Some(new_apis)) =
+                    (&mut existing.observed_apis, &entry.observed_apis)
+                {
+                    for api in new_apis {
+                        if !existing_apis.contains(api) {
+                            existing_apis.push(api.clone());
+                        }
+                    }
+                }
+            } else {
+                resources.insert(uid, entry);
+            }
         }
         all_observations.extend(obs);
     }
@@ -2425,6 +2437,120 @@ mod tests {
                 observed_apis: None,
             },
         )
+    }
+
+    #[tokio::test]
+    async fn all_served_gvrs_two_apis_same_uid_and_uid_null() {
+        use crate::kube::discovery::GvkMap;
+
+        // Register 2 served GVRs for "Widget" kind in different groups
+        let mut gvk_map = GvkMap::new();
+        gvk_map.insert(
+            (
+                "group-a".to_string(),
+                "v1".to_string(),
+                "Widget".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "group-a".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gvk_map.insert(
+            (
+                "group-b".to_string(),
+                "v1".to_string(),
+                "Widget".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "group-b".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Expect 2 LIST requests (one per served GVR)
+            for i in 0..2 {
+                let (_req, send) = handle.next_request().await.expect("expected request");
+                rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if i == 0 {
+                    // First GVR returns: 1 object with UID + 1 UID-null
+                    send.send_response(mock_json_response(serde_json::json!({
+                        "apiVersion": "group-a/v1", "kind": "WidgetList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [
+                            {"apiVersion": "group-a/v1", "kind": "Widget",
+                             "metadata": {"name": "w1", "namespace": "test-ns", "uid": "uid-shared"}},
+                            {"apiVersion": "group-a/v1", "kind": "Widget",
+                             "metadata": {"name": "pm1", "namespace": "test-ns"}}
+                        ]
+                    })));
+                } else {
+                    // Second GVR returns same UID under different group
+                    send.send_response(mock_json_response(serde_json::json!({
+                        "apiVersion": "group-b/v1", "kind": "WidgetList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [
+                            {"apiVersion": "group-b/v1", "kind": "Widget",
+                             "metadata": {"name": "w1", "namespace": "test-ns", "uid": "uid-shared"}}
+                        ]
+                    })));
+                }
+            }
+        });
+
+        let result = build_snapshot_all_gvrs(
+            &client,
+            &config,
+            "test-ns",
+            &gvk_map,
+            false,
+            ScanScope::NamespacedOnly,
+            None,
+        )
+        .await;
+        spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "2 served GVRs = 2 requests"
+        );
+        assert_eq!(
+            snap.observations.len(),
+            3,
+            "3 raw observations (2 with UID + 1 null)"
+        );
+        assert_eq!(snap.resources.len(), 1, "1 physical resource (same UID)");
+
+        let entry = snap.resources.get("uid-shared").unwrap();
+        let apis = entry.observed_apis.as_ref().unwrap();
+        assert_eq!(apis.len(), 2, "2 observed APIs for same UID");
+
+        let uid_null_obs: Vec<_> = snap
+            .observations
+            .iter()
+            .filter(|o| o.uid.is_none())
+            .collect();
+        assert_eq!(uid_null_obs.len(), 1, "UID-null observation preserved");
+        assert_eq!(uid_null_obs[0].name, "pm1");
     }
 
     #[test]

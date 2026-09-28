@@ -2,7 +2,7 @@
   "phase": "C",
   "workstream": 4,
   "timestamp": "20260928T092305Z",
-  "tested_code_commit": "b8c5177965130c7780b2e082db9109676b508be6",
+  "tested_code_commit": "e504df61ad71be4f3c731a4b4e00e06ede23eb71",
   "base_commit": "9293f41",
   "binary_sha256": "32a8dd55352e456b508f5cc4085b0aa1737e3eeeadb417124e1435720aae3ac5",
   "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
@@ -49,5 +49,6 @@
     "dangling_edges": 12,
     "dangling_targets": 2
   },
-  "evidence_commit": "569403969f083ca366a4a2b471525b9ba952001a"
+  "evidence_commit": "bedf30608281e2bdae29bb9b57a7567db135daaa",
+  "notes": "Live evidence created from binary at e504df6. Subsequent commits (bedf306) add clippy fix, tower mock test, and resource alias merge \u2014 no classification logic change."
 }

@@ -1014,12 +1014,12 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
     let pre_null: Vec<_> = before
         .observations
         .iter()
-        .filter(|o| !o.uid.as_ref().is_some_and(|u| !u.is_empty()))
+        .filter(|o| o.uid.as_ref().is_none_or(|u| u.is_empty()))
         .collect();
     let post_null: Vec<_> = after
         .observations
         .iter()
-        .filter(|o| !o.uid.as_ref().is_some_and(|u| !u.is_empty()))
+        .filter(|o| o.uid.as_ref().is_none_or(|u| u.is_empty()))
         .collect();
     let pre_null_fps = null_fingerprint_groups(&pre_null);
     let post_null_fps = null_fingerprint_groups(&post_null);
