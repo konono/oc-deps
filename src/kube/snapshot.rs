@@ -474,23 +474,44 @@ async fn build_snapshot_from_targets(
     }
 
     // Heuristic spec-ref extraction: match spec string values against namespace resource names
-    let resource_names: HashSet<String> = resources.values().map(|e| e.id.name.clone()).collect();
+    // Build name → Vec<kind> map for resolving heuristic targets
+    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in resources.values() {
+        by_name
+            .entry(entry.id.name.clone())
+            .or_default()
+            .push(entry.id.kind.clone());
+    }
+    for kinds in by_name.values_mut() {
+        kinds.sort();
+        kinds.dedup();
+    }
+
     for entry in resources.values_mut() {
         if let Some(ref spec) = entry.raw_spec {
             let mut path = vec!["spec".to_string()];
             let mut strings = Vec::new();
             crate::analyzers::spec_ref::collect_string_values(spec, &mut path, &mut strings);
+
+            let already_found: HashSet<(String, String)> = entry
+                .spec_refs
+                .iter()
+                .map(|r| (r.target_kind.clone(), r.target_name.clone()))
+                .collect();
+
             for (field_path, value) in strings {
-                if resource_names.contains(&value) && value != entry.id.name {
-                    let already_typed = entry
-                        .spec_refs
-                        .iter()
-                        .any(|r| r.target_name == value && r.field_path == field_path);
-                    if !already_typed {
+                if value == entry.id.name {
+                    continue;
+                }
+                if let Some(kinds) = by_name.get(&value) {
+                    for kind in kinds {
+                        if already_found.contains(&(kind.clone(), value.clone())) {
+                            continue;
+                        }
                         entry.spec_refs.push(SpecRefEntry {
-                            target_kind: String::new(),
-                            target_name: value,
-                            field_path,
+                            target_kind: kind.clone(),
+                            target_name: value.clone(),
+                            field_path: field_path.clone(),
                             target_group: None,
                             target_namespace: None,
                             source: Some(SpecRefSourceSer::Heuristic),

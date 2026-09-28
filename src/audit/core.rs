@@ -2864,4 +2864,71 @@ mod tests {
             "namespaced owner in different namespace must not be reported as orphan"
         );
     }
+
+    #[test]
+    fn heuristic_dangling_with_correct_kind() {
+        // Pre has a ConfigMap that the deployment references via heuristic string match
+        let pre_cm = make_obs("", "ConfigMap", Some("ns"), "shared-config", Some("uid-cm"));
+        let mut dep = make_obs("apps", "Deployment", Some("ns"), "dep1", Some("uid-dep"));
+        // Simulate heuristic ref with correct kind
+        dep.spec_refs.push(ObsSpecRef {
+            target_kind: "ConfigMap".into(),
+            target_name: "shared-config".into(),
+            field_path: "spec.template.spec.containers.[0].env.[0].value".into(),
+            target_group: None,
+            target_namespace: None,
+            source: SpecRefSourceLabel::Heuristic,
+        });
+
+        let before = make_obs_set(vec![pre_cm, dep.clone()]);
+        let after = make_obs_set(vec![dep]);
+        let report = audit(before, after, vec![]);
+        assert_eq!(
+            report.dangling_spec_refs.len(),
+            1,
+            "heuristic ref to removed ConfigMap should be dangling"
+        );
+        assert_eq!(report.dangling_spec_refs[0].target_kind, "ConfigMap");
+        assert_eq!(report.dangling_spec_refs[0].ref_type, "heuristic");
+    }
+
+    #[test]
+    fn heuristic_same_name_two_kinds_two_edges() {
+        let cm = make_obs("", "ConfigMap", Some("ns"), "shared-name", Some("uid-cm"));
+        let secret = make_obs("", "Secret", Some("ns"), "shared-name", Some("uid-sec"));
+        let mut dep = make_obs("apps", "Deployment", Some("ns"), "dep1", Some("uid-dep"));
+        dep.spec_refs.push(ObsSpecRef {
+            target_kind: "ConfigMap".into(),
+            target_name: "shared-name".into(),
+            field_path: "spec.env.val".into(),
+            target_group: None,
+            target_namespace: None,
+            source: SpecRefSourceLabel::Heuristic,
+        });
+        dep.spec_refs.push(ObsSpecRef {
+            target_kind: "Secret".into(),
+            target_name: "shared-name".into(),
+            field_path: "spec.env.val".into(),
+            target_group: None,
+            target_namespace: None,
+            source: SpecRefSourceLabel::Heuristic,
+        });
+
+        let before = make_obs_set(vec![cm.clone(), secret.clone(), dep.clone()]);
+        // Both targets removed
+        let after = make_obs_set(vec![dep]);
+        let report = audit(before, after, vec![]);
+        assert_eq!(
+            report.dangling_spec_refs.len(),
+            2,
+            "two kinds with same name → two dangling edges"
+        );
+        let kinds: HashSet<_> = report
+            .dangling_spec_refs
+            .iter()
+            .map(|d| d.target_kind.as_str())
+            .collect();
+        assert!(kinds.contains("ConfigMap"));
+        assert!(kinds.contains("Secret"));
+    }
 }
