@@ -851,8 +851,15 @@ impl StagingGuard {
 
 impl Drop for StagingGuard {
     fn drop(&mut self) {
-        if self.armed {
-            let _ = std::fs::remove_dir_all(&self.path);
+        if self.armed
+            && let Err(e) = std::fs::remove_dir_all(&self.path)
+        {
+            eprintln!(
+                "⛔ SECURITY: Failed to clean up staging directory {} — \
+                 may contain Secret data: {}",
+                self.path.display(),
+                e,
+            );
         }
     }
 }
@@ -943,7 +950,13 @@ pub fn write_backup_directory(
     create_dir_private(target_dir)?;
 
     // Create staging directory (sibling of final)
-    let staging_name = format!(".staging-{}-{}", run_name, std::process::id());
+    let staging_seq = RUN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staging_name = format!(
+        ".staging-{}-{}-{}",
+        run_name,
+        std::process::id(),
+        staging_seq
+    );
     let staging_dir = target_dir.join(&staging_name);
     if staging_dir.exists() {
         bail!("Staging directory {} already exists", staging_dir.display());
@@ -1092,8 +1105,37 @@ pub fn write_backup_directory(
     }
     sync_dir(&staging_dir)?;
 
-    // Atomic publish: rename staging → final
+    // Atomic publish: reserve final name via create_new lock, then rename
     let final_dir = target_dir.join(run_name);
+    let lock_path = target_dir.join(format!(".lock-{}", run_name));
+    let _lock_file = std::fs::File::create_new(&lock_path).with_context(|| {
+        format!(
+            "Cannot reserve backup name {} — already exists or concurrent write",
+            final_dir.display(),
+        )
+    })?;
+    // Lock acquired — clean up on failure
+    struct LockGuard {
+        path: PathBuf,
+        armed: bool,
+    }
+    impl LockGuard {
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+    }
+    impl Drop for LockGuard {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+    let mut lock_guard = LockGuard {
+        path: lock_path.clone(),
+        armed: true,
+    };
+
     if final_dir.exists() {
         bail!(
             "Target run directory {} already exists — will not overwrite",
@@ -1108,6 +1150,11 @@ pub fn write_backup_directory(
         )
     })?;
     guard.disarm();
+
+    // Clean up lock file after successful publish
+    std::fs::remove_file(&lock_path)
+        .with_context(|| format!("Failed to remove lock file {}", lock_path.display()))?;
+    lock_guard.disarm();
 
     // fsync parent for crash consistency
     sync_dir(target_dir)?;
@@ -1356,6 +1403,13 @@ pub fn validate_receipt(receipt: &BackupReceipt, current_cluster: &ClusterIdenti
         .iter()
         .filter(|e| e.state == BackupResourceState::AlreadyAbsent)
         .count();
+    if manifest.coverage.total != manifest.resources.len() {
+        bail!(
+            "Coverage total mismatch: manifest.coverage.total {} vs resources.len() {}",
+            manifest.coverage.total,
+            manifest.resources.len(),
+        );
+    }
     if manifest.coverage.captured != actual_captured
         || manifest.coverage.already_absent != actual_absent
     {
@@ -1465,20 +1519,33 @@ pub struct BackupGateContext<'a> {
     pub gvk_map: &'a crate::kube::discovery::GvkMap,
 }
 
-/// Resolve a live UID for a resource that inspection returned without one
-/// (e.g., CSV installStrategy Deployments/ServiceAccounts).
+/// Resolve a live UID for a resource that inspection returned without one.
+/// Uses exact GVK from gvk_map and planner for single-flight/cache + coverage.
 async fn resolve_live_uid(
     client: &kube::Client,
     res: &crate::analyzers::inspect::InspectedResource,
+    gvk_map: &crate::kube::discovery::GvkMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
+    ledger: &crate::kube::scanner::SharedLedger,
+    planner: &crate::kube::scanner::SharedPlanner,
 ) -> Result<String> {
     use kube::api::{Api, ApiResource, DynamicObject};
 
-    let gk_key = (res.id.group.clone(), res.id.kind.clone());
-    let info = gk_map.get(&gk_key).with_context(|| {
+    // Resolve version: prefer res.id.version, fallback to gk_map preferred
+    let version = if !res.id.version.is_empty() {
+        res.id.version.clone()
+    } else {
+        gk_map
+            .get(&(res.id.group.clone(), res.id.kind.clone()))
+            .map(|i| i.version.clone())
+            .unwrap_or_default()
+    };
+
+    let gvk_key = (res.id.group.clone(), version.clone(), res.id.kind.clone());
+    let info = gvk_map.get(&gvk_key).with_context(|| {
         format!(
-            "Cannot resolve API for {}/{} — UID resolution failed",
-            res.id.kind, res.id.name,
+            "Exact GVK ({}/{}/{}) not served — UID resolution failed for {}/{}",
+            res.id.group, version, res.id.kind, res.id.kind, res.id.name,
         )
     })?;
 
@@ -1495,12 +1562,17 @@ async fn resolve_live_uid(
         Api::all_with(client.clone(), &ar)
     };
 
-    let obj = crate::kube::scanner::get_with_retry(
+    let obj = crate::kube::scanner::get_with_retry_planner(
         &api,
         &res.id.name,
         &info.group,
         &info.version,
         &info.plural,
+        Some(ledger),
+        res.id.namespace.as_deref(),
+        crate::kube::resource::QueryRequirement::Required,
+        Some(planner),
+        client,
     )
     .await
     .map_err(|w| {
@@ -1523,27 +1595,53 @@ async fn resolve_live_uid(
             )
         })?;
 
-    // Verify identity
-    if let Some(tm) = &obj.types {
-        let (group, _version) = split_api_version(&tm.api_version);
-        if group != res.id.group || tm.kind != res.id.kind {
-            bail!(
-                "Identity mismatch for {}/{}: expected {}/{} got {}/{}",
-                res.id.kind,
-                res.id.name,
-                res.id.group,
-                res.id.kind,
-                group,
-                tm.kind,
-            );
-        }
+    // Full identity verification
+    let tm = obj
+        .types
+        .as_ref()
+        .context("GET response missing TypeMeta for UID resolution")?;
+    let (ret_group, ret_version) = split_api_version(&tm.api_version);
+    if ret_group != res.id.group {
+        bail!(
+            "Group mismatch for {}/{}: expected {:?} got {:?}",
+            res.id.kind,
+            res.id.name,
+            res.id.group,
+            ret_group,
+        );
+    }
+    if ret_version != version {
+        bail!(
+            "Version mismatch for {}/{}: expected {:?} got {:?}",
+            res.id.kind,
+            res.id.name,
+            version,
+            ret_version,
+        );
+    }
+    if tm.kind != res.id.kind {
+        bail!(
+            "Kind mismatch for {}/{}: expected {:?} got {:?}",
+            res.id.kind,
+            res.id.name,
+            res.id.kind,
+            tm.kind,
+        );
     }
     if obj.metadata.name.as_deref() != Some(&res.id.name) {
         bail!(
-            "Name mismatch for {}: expected {} got {:?}",
-            res.id.kind,
+            "Name mismatch: expected {:?} got {:?}",
             res.id.name,
             obj.metadata.name,
+        );
+    }
+    if obj.metadata.namespace != res.id.namespace {
+        bail!(
+            "Namespace mismatch for {}/{}: expected {:?} got {:?}",
+            res.id.kind,
+            res.id.name,
+            res.id.namespace,
+            obj.metadata.namespace,
         );
     }
 
@@ -1561,7 +1659,7 @@ pub async fn discover_operator_backup(
     kind_map: &crate::kube::discovery::KindMap,
     gvr_map: &crate::kube::discovery::GvrMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
-    _gvk_map: &crate::kube::discovery::GvkMap,
+    gvk_map: &crate::kube::discovery::GvkMap,
 ) -> Result<(
     Vec<BackupCandidate>,
     Vec<CleanupContractObservation>,
@@ -1575,7 +1673,7 @@ pub async fn discover_operator_backup(
         std::sync::Mutex::new(crate::kube::resource::CoverageLedger::new()),
     );
 
-    let mut inspection = crate::analyzers::inspect::inspect_operator_with_options_ledger(
+    let inspection = crate::analyzers::inspect::inspect_operator_with_options_ledger(
         client,
         operator,
         kind_map,
@@ -1587,39 +1685,18 @@ pub async fn discover_operator_backup(
     )
     .await?;
 
-    // Flush planner to ledger and update coverage (same boundary as operator resources)
-    cmd_planner.flush_to_ledger(&cmd_ledger).await;
-    {
-        let mut ledger = cmd_ledger.lock().unwrap();
-        let (coverage, incomplete, snapshot) = ledger.snapshot();
-        inspection.coverage = coverage;
-        inspection.incomplete_count = incomplete;
-        inspection.coverage_ledger = snapshot;
-    }
-
-    // Fail closed on incomplete coverage
-    if inspection.should_exit_strict() {
-        bail!(
-            "Operator {} discovery is incomplete ({} warnings, {} incomplete) — \
-             backup cannot proceed",
-            operator.csv.name,
-            inspection.scan_warning_count,
-            inspection.incomplete_count,
-        );
-    }
-
     let mut candidates: Vec<BackupCandidate> = Vec::new();
     let mut observations = Vec::new();
 
-    // Collect all discovered resources, resolving missing UIDs via exact GET
+    // Collect all discovered resources, resolving missing UIDs via planner GET
     for category in &inspection.categories {
         for res in &category.resources {
             let uid = match &res.id.uid {
                 Some(u) if !u.is_empty() => u.clone(),
                 _ => {
-                    // installStrategy resources (Deployment/ServiceAccount) have no UID
-                    // from inspection — resolve via live GET
-                    resolve_live_uid(client, res, gk_map).await?
+                    // installStrategy resources have no UID — resolve via planner GET
+                    resolve_live_uid(client, res, gvk_map, gk_map, &cmd_ledger, &cmd_planner)
+                        .await?
                 }
             };
 
@@ -1669,6 +1746,26 @@ pub async fn discover_operator_backup(
         &inspection.adapter_reports,
         &mut observations,
     )?;
+
+    // Flush planner to ledger AFTER all UID resolution GETs, then strict check
+    cmd_planner.flush_to_ledger(&cmd_ledger).await;
+    let mut inspection = inspection;
+    {
+        let mut ledger = cmd_ledger.lock().unwrap();
+        let (coverage, incomplete, snapshot) = ledger.snapshot();
+        inspection.coverage = coverage;
+        inspection.incomplete_count = incomplete;
+        inspection.coverage_ledger = snapshot;
+    }
+    if inspection.should_exit_strict() {
+        bail!(
+            "Operator {} discovery is incomplete ({} warnings, {} incomplete) — \
+             backup cannot proceed",
+            operator.csv.name,
+            inspection.scan_warning_count,
+            inspection.incomplete_count,
+        );
+    }
 
     let resolved = ResolvedOperatorIdentity {
         package_name: operator.package_name.clone().unwrap_or_default(),
@@ -2667,6 +2764,185 @@ mod tests {
             "error must mention extra file"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Concurrent no-clobber ──
+
+    #[test]
+    fn concurrent_same_run_name_one_success() {
+        let dir = std::env::temp_dir().join(format!("backup-conc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    write_backup_directory(
+                        &[],
+                        &ClusterIdentity {
+                            api_server: "https://test".to_string(),
+                            kube_system_uid: "uid-ks".to_string(),
+                        },
+                        BackupSelection::namespace(vec!["ns".to_string()]),
+                        vec![],
+                        &dir,
+                        "fixed-run",
+                    )
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly 1 success expected");
+
+        // No staging or lock residuals
+        let residuals: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with(".staging-") || n.starts_with(".lock-")
+            })
+            .collect();
+        assert_eq!(residuals.len(), 0, "no staging/lock residuals");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Repeated backup creates separate dirs ──
+
+    #[test]
+    fn repeated_backup_separate_dirs() {
+        let dir = std::env::temp_dir().join(format!("backup-repeat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let r1 = write_backup_directory(
+            &[],
+            &test_cluster(),
+            BackupSelection::namespace(vec!["ns".to_string()]),
+            vec![],
+            &dir,
+            &generate_run_name(),
+        )
+        .unwrap();
+
+        let r2 = write_backup_directory(
+            &[],
+            &test_cluster(),
+            BackupSelection::namespace(vec!["ns".to_string()]),
+            vec![],
+            &dir,
+            &generate_run_name(),
+        )
+        .unwrap();
+
+        assert_ne!(r1.root, r2.root, "different run names");
+        assert!(validate_receipt(&r1, &test_cluster()).is_ok());
+        assert!(validate_receipt(&r2, &test_cluster()).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Validator regression tests ──
+
+    fn write_test_backup(dir: &Path) -> BackupReceipt {
+        let fetched = vec![FetchedResource {
+            identity: BackupResourceIdentity {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                kind: "ConfigMap".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "cm1".to_string(),
+                uid: "uid123456789a".to_string(),
+            },
+            sources: vec![BackupSource::operator_discovery("test", "OLM", "owned")],
+            state: BackupResourceState::Captured,
+            raw: Some(
+                serde_json::json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "cm1"}, "data": {"k": "v"}}),
+            ),
+            recreate: Some(
+                serde_json::json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "cm1"}, "data": {"k": "v"}}),
+            ),
+            deferred: Some(DeferredLifecycle {
+                owner_references: vec![],
+                finalizers: vec![],
+            }),
+            omitted: Some(vec![]),
+        }];
+        write_backup_directory(
+            &fetched,
+            &test_cluster(),
+            BackupSelection::operator(vec![ResolvedOperatorIdentity {
+                package_name: "t".to_string(),
+                csv_name: "t.v1".to_string(),
+                install_namespace: "ns".to_string(),
+            }]),
+            vec![],
+            dir,
+            "test-run",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn validate_wrong_schema_version() {
+        let dir = std::env::temp_dir().join(format!("val-schema-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let receipt = write_test_backup(&dir);
+
+        // Tamper schema version in manifest
+        let manifest_path = std::path::Path::new(&receipt.root).join("manifest.yaml");
+        let content = std::fs::read_to_string(&manifest_path).unwrap();
+        let tampered = content.replace("schema_version: 2", "schema_version: 99");
+        std::fs::write(&manifest_path, tampered).unwrap();
+
+        let mut bad_receipt = receipt;
+        bad_receipt.manifest_sha256 =
+            compute_sha256(std::fs::read(manifest_path).unwrap().as_slice());
+        let result = validate_receipt(&bad_receipt, &test_cluster());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("schema version"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_tree_hash_mismatch() {
+        let dir = std::env::temp_dir().join(format!("val-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let receipt = write_test_backup(&dir);
+
+        let mut bad_receipt = receipt;
+        bad_receipt.tree_sha256 = "wrong".to_string();
+        let result = validate_receipt(&bad_receipt, &test_cluster());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("tree hash") || err.contains("Tree hash"),
+            "err: {}",
+            err
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_coverage_total_mismatch() {
+        let dir = std::env::temp_dir().join(format!("val-cov-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let receipt = write_test_backup(&dir);
+
+        // Tamper coverage.total in manifest
+        let manifest_path = std::path::Path::new(&receipt.root).join("manifest.yaml");
+        let content = std::fs::read_to_string(&manifest_path).unwrap();
+        let tampered = content.replace("total: 1", "total: 99");
+        std::fs::write(&manifest_path, &tampered).unwrap();
+
+        let mut bad_receipt = receipt;
+        bad_receipt.manifest_sha256 = compute_sha256(tampered.as_bytes());
+        let result = validate_receipt(&bad_receipt, &test_cluster());
+        // Should fail on manifest SHA or coverage mismatch
+        assert!(result.is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

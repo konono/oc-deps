@@ -603,7 +603,7 @@ Operator backup contains exactly the resources `oc-deps operator resources --sco
 backups/operator/nfd/20260929T012345Z-<id>/
   manifest.yaml          # Index, coverage, selection, hashes (no Secrets)
   resources/
-    nfd.kubernetes.io/v1/NodeFeatureDiscovery/openshift-nfd/nfd-instance--<uid12>/
+    nfd.kubernetes.io/v1/NodeFeatureDiscovery/openshift-nfd/nfd-instance--<uid>/
       raw.yaml            # Exact API response including server fields
       recreate.yaml       # Sanitized for re-creation
       lifecycle.yaml      # Identity, sources, deferred ownerRefs/finalizers, file hashes
