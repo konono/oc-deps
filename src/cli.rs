@@ -359,6 +359,10 @@ pub enum TeardownAction {
         /// Enable TUI mode
         #[arg(long)]
         tui: bool,
+
+        /// Save pre-delete backup bundle to this path before executing
+        #[arg(long, value_name = "PATH")]
+        backup_file: Option<String>,
     },
 
     /// Show plan coverage: COVERED BY PLAN / INTENTIONALLY PRESERVED / NOT COVERED
@@ -425,6 +429,10 @@ pub enum TeardownAction {
         /// Skip operators not found in the cluster instead of failing
         #[arg(long)]
         skip_missing: bool,
+
+        /// Save per-operator backup bundles to this directory
+        #[arg(long, value_name = "DIR")]
+        backup_dir: Option<String>,
     },
 
     /// Show teardown run journal for an operator (with live residual audit)

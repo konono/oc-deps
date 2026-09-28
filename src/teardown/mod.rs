@@ -1,5 +1,6 @@
 pub mod app;
 pub mod audit;
+pub mod backup;
 pub mod events;
 pub mod executor;
 pub mod explain;

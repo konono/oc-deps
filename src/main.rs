@@ -1871,6 +1871,7 @@ async fn main() -> Result<()> {
                     yes,
                     script,
                     tui: use_tui,
+                    backup_file,
                 } => {
                     let force = false; // advisory warnings always shown
                     let approve_finalizer_recovery = true; // always enabled
@@ -2130,6 +2131,102 @@ async fn main() -> Result<()> {
                         Ok(path) => eprintln!("📄 Plan saved to {}", path),
                         Err(e) => eprintln!("⚠ Could not save plan: {}", e),
                     }
+
+                    // Backup gate: if --backup-file specified, capture all delete targets
+                    // before any mutation can occur
+                    let _backup_receipt: Option<crate::teardown::backup::BackupReceipt> =
+                        if let Some(ref backup_path) = backup_file {
+                            if backup_path.is_empty() {
+                                bail!("--backup-file path must not be empty");
+                            }
+                            let backup_target = std::path::Path::new(backup_path);
+
+                            eprintln!("\n📦 Backup: capturing pre-delete resource state...");
+
+                            // Extract candidates from plan actions
+                            let mut candidates = crate::teardown::backup::extract_candidates(&plan);
+                            eprintln!("  {} candidate(s) from plan actions", candidates.len());
+
+                            // Run adapters for cleanup-contract targets
+                            {
+                                let adapter_reports = crate::analyzers::adapters::run_adapters(
+                                    &client,
+                                    target_operators[0],
+                                    None,
+                                    &[],
+                                )
+                                .await;
+                                crate::teardown::backup::add_adapter_candidates(
+                                    &mut candidates,
+                                    &adapter_reports,
+                                )?;
+                            }
+
+                            eprintln!(
+                                "  {} total candidate(s) (including cleanup-contract)",
+                                candidates.len()
+                            );
+
+                            // Fetch all candidates from cluster
+                            let (resources, contains_secrets) =
+                                crate::teardown::backup::fetch_backup_resources(
+                                    &client,
+                                    &candidates,
+                                    &kind_map,
+                                    &gk_map,
+                                )
+                                .await?;
+
+                            let captured = resources
+                                .iter()
+                                .filter(|r| {
+                                    r.state
+                                        == crate::teardown::backup::BackupResourceState::Captured
+                                })
+                                .count();
+                            let absent = resources
+                                .iter()
+                                .filter(|r| {
+                                    r.state
+                                        == crate::teardown::backup::BackupResourceState::AlreadyAbsent
+                                })
+                                .count();
+                            eprintln!("  {} captured, {} already absent", captured, absent);
+
+                            // Compute plan SHA-256
+                            let plan_sha =
+                                crate::teardown::backup::compute_plan_sha256(&plan_file)?;
+
+                            let operator_names: Vec<String> = target_operators
+                                .iter()
+                                .map(|op| op.csv.name.clone())
+                                .collect();
+
+                            let bundle = crate::teardown::backup::build_bundle(
+                                resources,
+                                &current_cluster_identity,
+                                &plan_sha,
+                                &plan_file,
+                                operator_names,
+                                contains_secrets,
+                                vec![],
+                            );
+
+                            let receipt = crate::teardown::backup::write_backup_bundle(
+                                &bundle,
+                                backup_target,
+                            )?;
+                            eprintln!(
+                                "  ✅ Backup written: {} ({} resources, SHA-256: {})",
+                                receipt.path,
+                                receipt.resource_count,
+                                &receipt.sha256[..12]
+                            );
+
+                            Some(receipt)
+                        } else {
+                            None
+                        };
 
                     // TUI mode: ratatui interactive Plan Review → Execution → Residual Cleanup
                     if use_tui && !dry_run {
@@ -4789,6 +4886,7 @@ async fn main() -> Result<()> {
                     refresh_discovery,
                     dry_run,
                     skip_missing,
+                    backup_dir,
                 } => {
                     let no_cache = refresh_discovery;
                     let config_content = std::fs::read_to_string(&config_path)
@@ -4822,6 +4920,15 @@ async fn main() -> Result<()> {
                         eprintln!("  {}: {}{}", i + 1, entry.name, suffix);
                     }
                     eprintln!();
+
+                    // Setup backup dir if specified
+                    if let Some(ref bdir) = backup_dir {
+                        if bdir.is_empty() {
+                            bail!("--backup-dir path must not be empty");
+                        }
+                        crate::teardown::backup::setup_backup_dir(std::path::Path::new(bdir))?;
+                        eprintln!("📦 Backup dir: {}", bdir);
+                    }
 
                     // Baseline gate: verify all target operators are present (phase is informational)
                     eprintln!(
@@ -4995,6 +5102,17 @@ async fn main() -> Result<()> {
                             }
                             if options.non_interactive {
                                 cmd.arg("--non-interactive");
+                            }
+
+                            // Pass backup file path for this operator
+                            if let Some(ref bdir) = backup_dir {
+                                let bp = crate::teardown::backup::batch_backup_path(
+                                    std::path::Path::new(bdir),
+                                    i,
+                                    op_name,
+                                );
+                                cmd.arg("--backup-file")
+                                    .arg(bp.to_string_lossy().to_string());
                             }
 
                             cmd.stdin(std::process::Stdio::piped());
@@ -7870,6 +7988,7 @@ async fn create_run_journal(
         cleanup_decisions: Vec::new(),
         finalizer_recovery_approved: true,
         finalizer_recoveries: Vec::new(),
+        backup_receipt: None,
     };
 
     let path = journal::run_path(&cluster_id, &run_id)?;
@@ -9364,6 +9483,7 @@ mod basis_drift_tests {
             cleanup_decisions: decisions,
             finalizer_recovery_approved: false,
             finalizer_recoveries: Vec::new(),
+            backup_receipt: None,
         }
     }
 
