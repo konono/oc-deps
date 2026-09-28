@@ -892,6 +892,17 @@ pub fn relationship_display(r: &Relationship) -> &'static str {
     }
 }
 
+pub fn format_resource_identity(id: &ResourceId) -> String {
+    format!(
+        "{}/{}/{} ns={} uid={}",
+        id.group,
+        id.kind,
+        id.name,
+        id.namespace.as_deref().unwrap_or("cluster"),
+        id.uid.as_deref().unwrap_or("none"),
+    )
+}
+
 fn print_inspection_table(inspection: &OperatorInspection) {
     use comfy_table::Table;
 
@@ -951,39 +962,51 @@ fn print_inspection_table(inspection: &OperatorInspection) {
             "Status",
             "Target",
             "Resolution",
-            "Source",
+            "Source Contract",
+            "Matched CSV",
             "Root",
         ]);
         for report in &inspection.adapter_reports {
             if report.results.is_empty() {
-                let source = report
+                let (source_contract, csv) = report
                     .evidence
                     .as_ref()
-                    .map(|e| e.matched_csv_version.as_str())
-                    .unwrap_or("");
+                    .map(|e| {
+                        (
+                            format!("{}@{}", e.source_url, e.source_commit),
+                            e.matched_csv_version.clone(),
+                        )
+                    })
+                    .unwrap_or_default();
                 let reason = report.status_reason.as_deref().unwrap_or("");
                 adapter_table.add_row(vec![
                     &report.adapter_id,
                     &report.status.to_string(),
                     "",
                     reason,
-                    source,
+                    &source_contract,
+                    &csv,
                     "",
                 ]);
             }
             for r in &report.results {
-                let target = format!("{}/{}", r.resource.id.kind, r.resource.id.name);
+                let target = format_resource_identity(&r.resource.id);
+                let source_contract = format!(
+                    "{}@{}",
+                    r.adapter_evidence.source_url, r.adapter_evidence.source_commit
+                );
                 let root = r
                     .resource
                     .source_id
                     .as_ref()
-                    .map(|s| format!("{}/{}", s.kind, s.name))
+                    .map(format_resource_identity)
                     .unwrap_or_default();
                 adapter_table.add_row(vec![
                     &report.adapter_id,
                     &report.status.to_string(),
                     &target,
                     &r.resolution.to_string(),
+                    &source_contract,
                     &r.adapter_evidence.matched_csv_version,
                     &root,
                 ]);
@@ -1423,5 +1446,37 @@ mod tests {
             vec![(QueryOutcome::ListUnsupported, QueryRequirement::Required)],
         );
         assert!(i.should_exit_strict());
+    }
+
+    #[test]
+    fn format_resource_identity_full() {
+        let id = ResourceId {
+            group: "operator.authorino.kuadrant.io".to_string(),
+            version: "v1beta2".to_string(),
+            kind: "Authorino".to_string(),
+            namespace: Some("openshift-rhcl".to_string()),
+            name: "authorino".to_string(),
+            uid: Some("uid-123".to_string()),
+        };
+        let formatted = format_resource_identity(&id);
+        assert_eq!(
+            formatted,
+            "operator.authorino.kuadrant.io/Authorino/authorino ns=openshift-rhcl uid=uid-123"
+        );
+    }
+
+    #[test]
+    fn format_resource_identity_cluster_scoped_no_uid() {
+        let id = ResourceId {
+            group: "rbac.authorization.k8s.io".to_string(),
+            version: "v1".to_string(),
+            kind: "ClusterRoleBinding".to_string(),
+            namespace: None,
+            name: "authorino-authorino".to_string(),
+            uid: None,
+        };
+        let formatted = format_resource_identity(&id);
+        assert!(formatted.contains("ns=cluster"));
+        assert!(formatted.contains("uid=none"));
     }
 }

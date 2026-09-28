@@ -1,21 +1,113 @@
 {
-  "plan_count": 15,
-  "all_non_empty": true,
-  "plans": {
-    "authorino-operator": 13,
-    "cert-manager-operator": 21,
-    "cluster-observability-operator": 27,
-    "dns-operator": 9,
-    "gpu-operator-certified": 12,
-    "job-set": 8,
-    "kueue-operator": 7,
-    "leader-worker-set": 7,
-    "limitador-operator": 9,
-    "nfd": 16,
-    "opentelemetry-product": 10,
-    "rhbk-operator": 9,
-    "rhcl-operator": 22,
-    "rhods-operator": 127,
-    "servicemeshoperator3": 36
+  "all_match": true,
+  "operator_count": 15,
+  "all_base_non_empty": true,
+  "all_pr_non_empty": true,
+  "operators": {
+    "authorino-operator": {
+      "base_count": 13,
+      "pr_count": 13,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "cert-manager-operator": {
+      "base_count": 21,
+      "pr_count": 21,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "cluster-observability-operator": {
+      "base_count": 27,
+      "pr_count": 27,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "dns-operator": {
+      "base_count": 9,
+      "pr_count": 9,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "gpu-operator-certified": {
+      "base_count": 12,
+      "pr_count": 12,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "job-set": {
+      "base_count": 8,
+      "pr_count": 8,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "kueue-operator": {
+      "base_count": 7,
+      "pr_count": 7,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "leader-worker-set": {
+      "base_count": 7,
+      "pr_count": 7,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "limitador-operator": {
+      "base_count": 9,
+      "pr_count": 9,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "nfd": {
+      "base_count": 16,
+      "pr_count": 16,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "opentelemetry-product": {
+      "base_count": 10,
+      "pr_count": 10,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "rhbk-operator": {
+      "base_count": 9,
+      "pr_count": 9,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "rhcl-operator": {
+      "base_count": 22,
+      "pr_count": 22,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "rhods-operator": {
+      "base_count": 127,
+      "pr_count": 127,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "servicemeshoperator3": {
+      "base_count": 36,
+      "pr_count": 36,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    }
   }
 }
