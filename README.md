@@ -453,6 +453,8 @@ Only `Resolved` targets with verified identity (apiVersion, kind, name, non-empt
 
 **Authorino adapter** (`authorino-finalizer-cleanup`): Discovers ClusterRoleBindings created by the Authorino CR finalizer. CRB names are derived from each live Authorino CR root: `{root.name}-authorino` and `{root.name}-authorino-k8s-auth`. Bound to exact `package=authorino-operator` + `CSV=authorino-operator.v1.4.3`. Source: `Kuadrant/authorino-operator@e8623b50` (`cleanupClusterScopedPermissions` / `authorinoClusterRoleBindingName`).
 
+**NFD adapter** (`nfd-finalizer-cleanup`): Discovers SecurityContextConstraints created by the NFD operator's finalizer cleanup. SCC names are hardcoded deterministic: `nfd-worker` and `nfd-topology-updater`. The namespaced `NodeFeatureDiscovery` root cannot ownerRef cluster-scoped SCCs, so the controller uses finalizer cleanup with `DeleteSCC()`. Bound to exact `package=nfd` + `CSV=nfd.4.22.0-202609151747`. Source: `openshift/cluster-nfd-operator@3931a619` (`finalizeComponents` / `handleSCCs`). Multiple roots return `Unknown/Ambiguous` because the fixed SCC names are shared and cannot be safely attributed.
+
 Tree and table outputs include an adapter section showing status, resolution, source contract, and root identity per target.
 
 **`--scope related`** discovers candidate namespaces from:

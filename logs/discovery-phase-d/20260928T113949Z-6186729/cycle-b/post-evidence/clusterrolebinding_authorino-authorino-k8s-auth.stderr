@@ -1,0 +1,1 @@
+Error from server (NotFound): clusterrolebindings.rbac.authorization.k8s.io "authorino-authorino-k8s-auth" not found

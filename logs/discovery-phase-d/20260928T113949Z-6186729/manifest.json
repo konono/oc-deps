@@ -1,0 +1,53 @@
+{
+  "description": "NFD SCC targeted adapter - D0 qualification + Cycle A/B destructive E2E",
+  "date": "2026-09-28",
+  "git_branch": "feature/discovery-targeted-adapter-nfd",
+  "base_commit": "6186729",
+  "destructive_e2e_tested_source_tree": "d289cfa",
+  "evidence_commit": "containing git commit",
+  "binary_sha256": "3a7e70ce8e1c50a847d365de34b7619f86fc37b0a361c2a6100b7ffe33944fd9",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "cycle_a": {
+    "operator": "nfd",
+    "result": "PASS",
+    "phases": "7/7",
+    "deleted": 5,
+    "failed": 0,
+    "drift": 0,
+    "scc_pre": {
+      "nfd-worker": "92260225-9c47-4101-91e5-b1f8289003d2",
+      "nfd-topology-updater": "f61f2b31-4ab0-48b0-a180-db06b5c34c6b"
+    },
+    "scc_post": "NotFound (finalizer cleanup)",
+    "scc_in_plan": false,
+    "scc_cleanup_mechanism": "controller finalizer deletes deterministic names on NodeFeatureDiscovery CR deletion"
+  },
+  "recovery": {
+    "method": "ansible --tags nfd",
+    "result": "PASS",
+    "operators_restored": "15/15",
+    "scc_new_uids": {
+      "nfd-worker": "285569e4-9b83-4931-a509-79d4617fef58",
+      "nfd-topology-updater": "1f78f493-eacb-4162-83a7-fda2fbaa8ee3"
+    }
+  },
+  "cycle_b": {
+    "operators": 15,
+    "result": "PASS",
+    "all_exit_0": true,
+    "all_failed_0": true,
+    "all_drift_0": true,
+    "remaining_subs": ["group-sync-operator", "ODF storage operators"],
+    "known_residual_pods": ["keycloak/postgres", "maas-postgres", "ogx-postgres", "model-catalog"],
+    "post_evidence": {
+      "directory": "cycle-b/post-evidence/",
+      "resources": [
+        {"resource": "scc/nfd-worker", "exit": 1, "result": "NotFound"},
+        {"resource": "scc/nfd-topology-updater", "exit": 1, "result": "NotFound"},
+        {"resource": "clusterrolebinding/authorino-authorino", "exit": 1, "result": "NotFound"},
+        {"resource": "clusterrolebinding/authorino-authorino-k8s-auth", "exit": 1, "result": "NotFound"},
+        {"resource": "terminating-pods", "exit": 0, "result": "empty (0 Terminating)"}
+      ]
+    }
+  }
+}
