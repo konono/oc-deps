@@ -50,5 +50,5 @@
     "dangling_targets": 2
   },
   "evidence_commit": "containing git commit (self-referential)",
-  "notes": "Live evidence created from binary at e504df6. Subsequent commits (bedf306) add clippy fix, tower mock test, and resource alias merge \u2014 no classification logic change."
+  "notes": "Live evidence created from binary at e504df6. Subsequent commits add clippy fix, tower mock test, and resource alias merge \u2014 no classification logic change."
 }
