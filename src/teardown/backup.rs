@@ -478,6 +478,82 @@ pub fn sanitize_for_recreate(
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Live identity validation
+// ──────────────────────────────────────────────────────────────
+
+fn split_api_version(api_version: &str) -> (&str, &str) {
+    match api_version.rsplit_once('/') {
+        Some((group, version)) => (group, version),
+        None => ("", api_version),
+    }
+}
+
+fn validate_live_identity(
+    candidate: &BackupCandidate,
+    obj: &kube::api::DynamicObject,
+) -> Result<()> {
+    let tm = obj
+        .types
+        .as_ref()
+        .context("GET response missing apiVersion/kind (TypeMeta)")?;
+    let (group, version) = split_api_version(&tm.api_version);
+    if group != candidate.identity.group {
+        bail!(
+            "group mismatch for {}/{}: expected {:?} got {:?}",
+            candidate.identity.kind,
+            candidate.identity.name,
+            candidate.identity.group,
+            group,
+        );
+    }
+    if version != candidate.identity.version {
+        bail!(
+            "version mismatch for {}/{}: expected {:?} got {:?}",
+            candidate.identity.kind,
+            candidate.identity.name,
+            candidate.identity.version,
+            version,
+        );
+    }
+    if tm.kind != candidate.identity.kind {
+        bail!(
+            "kind mismatch for {}/{}: expected {:?} got {:?}",
+            candidate.identity.kind,
+            candidate.identity.name,
+            candidate.identity.kind,
+            tm.kind,
+        );
+    }
+    if obj.metadata.name.as_deref() != Some(candidate.identity.name.as_str()) {
+        bail!(
+            "name mismatch: expected {:?} got {:?}",
+            candidate.identity.name,
+            obj.metadata.name,
+        );
+    }
+    if obj.metadata.namespace != candidate.identity.namespace {
+        bail!(
+            "namespace mismatch for {}/{}: expected {:?} got {:?}",
+            candidate.identity.kind,
+            candidate.identity.name,
+            candidate.identity.namespace,
+            obj.metadata.namespace,
+        );
+    }
+    let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+    if live_uid != candidate.identity.uid {
+        bail!(
+            "UID mismatch for {}/{}: expected {} got {}",
+            candidate.identity.kind,
+            candidate.identity.name,
+            candidate.identity.uid,
+            live_uid,
+        );
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Fetch candidates from cluster — uses get_with_retry + GvkMap
 // ──────────────────────────────────────────────────────────────
 
@@ -541,17 +617,8 @@ pub async fn fetch_backup_resources(
         .await
         {
             Ok(obj) => {
-                let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
-                if live_uid != candidate.identity.uid {
-                    bail!(
-                        "UID mismatch for {}/{}: expected {} got {} — \
-                         resource has been recreated, backup cannot proceed",
-                        candidate.identity.kind,
-                        candidate.identity.name,
-                        candidate.identity.uid,
-                        live_uid,
-                    );
-                }
+                validate_live_identity(candidate, &obj)
+                    .context("live identity validation failed — backup cannot proceed")?;
 
                 let raw = serde_json::to_value(&obj)?;
                 if candidate.identity.kind == "Secret" {
@@ -782,8 +849,13 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
                 target.display()
             )
         })?;
-        // link succeeded — remove temp, keep target
-        let _ = std::fs::remove_file(&tmp_path);
+        // link succeeded — remove temp (propagate error to avoid Secret-bearing residue)
+        std::fs::remove_file(&tmp_path).with_context(|| {
+            format!(
+                "Failed to remove temp backup {} — Secret-bearing copy may remain",
+                tmp_path.display()
+            )
+        })?;
         tmp_guard.disarm();
     }
 
@@ -853,13 +925,15 @@ pub fn write_backup_bundle(bundle: &BackupBundle, target: &Path) -> Result<Backu
     let _: BackupBundle = serde_json::from_slice(&readback)
         .with_context(|| "Backup readback parse failed — file is corrupted")?;
 
-    // All verification passed — disarm target guard
-    target_guard.disarm();
+    // fsync parent directory for crash consistency — must succeed before receipt
+    let dir_fd = std::fs::File::open(parent)
+        .with_context(|| format!("Failed to open backup directory {}", parent.display()))?;
+    dir_fd
+        .sync_all()
+        .with_context(|| format!("Failed to fsync backup directory {}", parent.display()))?;
 
-    // fsync parent directory
-    if let Ok(dir) = std::fs::File::open(parent) {
-        let _ = dir.sync_all();
-    }
+    // All verification + durability passed — disarm target guard
+    target_guard.disarm();
 
     if bundle.contains_secret_data {
         eprintln!(
@@ -2076,8 +2150,519 @@ mod tests {
         assert!(!bundle.candidate_set_sha256.is_empty());
         let json = serde_json::to_string(&bundle).unwrap();
         assert!(json.contains("candidate_set_sha256"));
-        // Recompute must match
         let recomputed = candidate_set_hash_from_resources(&bundle.resources);
         assert_eq!(bundle.candidate_set_sha256, recomputed);
+    }
+
+    // ── Identity validation tests ──
+
+    fn make_candidate(
+        group: &str,
+        version: &str,
+        kind: &str,
+        ns: Option<&str>,
+        name: &str,
+        uid: &str,
+    ) -> BackupCandidate {
+        BackupCandidate {
+            identity: BackupResourceIdentity {
+                group: group.to_string(),
+                version: version.to_string(),
+                kind: kind.to_string(),
+                namespace: ns.map(|s| s.to_string()),
+                name: name.to_string(),
+                uid: uid.to_string(),
+            },
+            sources: vec![],
+        }
+    }
+
+    fn make_dyn_obj(
+        api_version: &str,
+        kind: &str,
+        ns: Option<&str>,
+        name: &str,
+        uid: &str,
+    ) -> kube::api::DynamicObject {
+        kube::api::DynamicObject {
+            types: Some(kube::api::TypeMeta {
+                api_version: api_version.to_string(),
+                kind: kind.to_string(),
+            }),
+            metadata: kube::core::ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: ns.map(|s| s.to_string()),
+                uid: Some(uid.to_string()),
+                ..Default::default()
+            },
+            data: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn validate_identity_all_match() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj("apps/v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        assert!(validate_live_identity(&c, &obj).is_ok());
+    }
+
+    #[test]
+    fn validate_identity_core_group() {
+        let c = make_candidate("", "v1", "ConfigMap", Some("ns"), "cm1", "uid-1");
+        let obj = make_dyn_obj("v1", "ConfigMap", Some("ns"), "cm1", "uid-1");
+        assert!(validate_live_identity(&c, &obj).is_ok());
+    }
+
+    #[test]
+    fn validate_identity_wrong_group() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj(
+            "extensions/v1beta1",
+            "Deployment",
+            Some("ns"),
+            "dep1",
+            "uid-1",
+        );
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("group mismatch"), "err: {}", err);
+    }
+
+    #[test]
+    fn validate_identity_wrong_version() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj("apps/v1beta1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("version mismatch"), "err: {}", err);
+    }
+
+    #[test]
+    fn validate_identity_wrong_kind() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj("apps/v1", "StatefulSet", Some("ns"), "dep1", "uid-1");
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("kind mismatch"), "err: {}", err);
+    }
+
+    #[test]
+    fn validate_identity_wrong_name() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj("apps/v1", "Deployment", Some("ns"), "other", "uid-1");
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("name mismatch"), "err: {}", err);
+    }
+
+    #[test]
+    fn validate_identity_wrong_namespace() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj("apps/v1", "Deployment", Some("other-ns"), "dep1", "uid-1");
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("namespace mismatch"), "err: {}", err);
+    }
+
+    #[test]
+    fn validate_identity_wrong_uid() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = make_dyn_obj("apps/v1", "Deployment", Some("ns"), "dep1", "uid-2");
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("UID mismatch"), "err: {}", err);
+    }
+
+    #[test]
+    fn validate_identity_missing_type_meta() {
+        let c = make_candidate("apps", "v1", "Deployment", Some("ns"), "dep1", "uid-1");
+        let obj = kube::api::DynamicObject {
+            types: None,
+            metadata: kube::core::ObjectMeta {
+                name: Some("dep1".to_string()),
+                namespace: Some("ns".to_string()),
+                uid: Some("uid-1".to_string()),
+                ..Default::default()
+            },
+            data: serde_json::json!({}),
+        };
+        let err = validate_live_identity(&c, &obj).unwrap_err().to_string();
+        assert!(err.contains("TypeMeta"), "err: {}", err);
+    }
+
+    #[test]
+    fn split_api_version_core() {
+        let (g, v) = split_api_version("v1");
+        assert_eq!(g, "");
+        assert_eq!(v, "v1");
+    }
+
+    #[test]
+    fn split_api_version_grouped() {
+        let (g, v) = split_api_version("apps/v1");
+        assert_eq!(g, "apps");
+        assert_eq!(v, "v1");
+    }
+
+    #[test]
+    fn split_api_version_deep_group() {
+        let (g, v) = split_api_version("operator.authorino.kuadrant.io/v1beta2");
+        assert_eq!(g, "operator.authorino.kuadrant.io");
+        assert_eq!(v, "v1beta2");
+    }
+
+    // ── Async tower mock tests for fetch_backup_resources ──
+
+    use ::kube::client::Body;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn mock_json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
+
+    fn mock_status_response(code: u16, reason: &str) -> http::Response<Body> {
+        let body = serde_json::json!({
+            "apiVersion": "v1", "kind": "Status",
+            "metadata": {},
+            "status": "Failure",
+            "reason": reason,
+            "code": code
+        });
+        http::Response::builder()
+            .status(code)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn test_gvk_map() -> crate::kube::discovery::GvkMap {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            ("".to_string(), "v1".to_string(), "ConfigMap".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        m.insert(
+            (
+                "apps".to_string(),
+                "v1".to_string(),
+                "Deployment".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                plural: "deployments".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        m
+    }
+
+    fn configmap_obj(name: &str, ns: &str, uid: &str) -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": name,
+                "namespace": ns,
+                "uid": uid,
+                "resourceVersion": "100",
+                "creationTimestamp": "2026-01-01T00:00:00Z",
+            },
+            "data": {"key": "value"}
+        })
+    }
+
+    #[tokio::test]
+    async fn fetch_200_configmap_captures_with_identity() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                assert!(
+                    req.uri()
+                        .to_string()
+                        .contains("/namespaces/ns/configmaps/cm1"),
+                    "URI must target exact resource: {}",
+                    req.uri()
+                );
+                send.send_response(mock_json_response(configmap_obj("cm1", "ns", "uid-cm")));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let candidates = vec![make_candidate(
+            "",
+            "v1",
+            "ConfigMap",
+            Some("ns"),
+            "cm1",
+            "uid-cm",
+        )];
+        let gvk_map = test_gvk_map();
+
+        let (resources, contains_secrets) = fetch_backup_resources(&client, &candidates, &gvk_map)
+            .await
+            .unwrap();
+
+        drop(client);
+        spawned.abort();
+
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].state, BackupResourceState::Captured);
+        assert!(resources[0].raw_object.is_some());
+        assert!(resources[0].recreate_manifest.is_some());
+        assert!(!contains_secrets);
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_404_records_already_absent() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(mock_status_response(404, "NotFound"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let candidates = vec![make_candidate(
+            "",
+            "v1",
+            "ConfigMap",
+            Some("ns"),
+            "cm1",
+            "uid-cm",
+        )];
+
+        let (resources, _) = fetch_backup_resources(&client, &candidates, &test_gvk_map())
+            .await
+            .unwrap();
+
+        drop(client);
+        spawned.abort();
+
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].state, BackupResourceState::AlreadyAbsent);
+        assert!(resources[0].raw_object.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_403_fails_one_request() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(mock_status_response(403, "Forbidden"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let candidates = vec![make_candidate(
+            "",
+            "v1",
+            "ConfigMap",
+            Some("ns"),
+            "cm1",
+            "uid-cm",
+        )];
+
+        let result = fetch_backup_resources(&client, &candidates, &test_gvk_map()).await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "403 must not retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_persistent_500_fails_after_retries() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(mock_status_response(500, "InternalServerError"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let candidates = vec![make_candidate(
+            "",
+            "v1",
+            "ConfigMap",
+            Some("ns"),
+            "cm1",
+            "uid-cm",
+        )];
+
+        let result = fetch_backup_resources(&client, &candidates, &test_gvk_map()).await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            3,
+            "500 must retry 3 times"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_wrong_identity_fails() {
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                // Return object with wrong kind
+                send.send_response(mock_json_response(serde_json::json!({
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {
+                        "name": "cm1",
+                        "namespace": "ns",
+                        "uid": "uid-cm",
+                        "resourceVersion": "1",
+                        "creationTimestamp": "2026-01-01T00:00:00Z",
+                    },
+                })));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        let candidates = vec![make_candidate(
+            "",
+            "v1",
+            "ConfigMap",
+            Some("ns"),
+            "cm1",
+            "uid-cm",
+        )];
+
+        let result = fetch_backup_resources(&client, &candidates, &test_gvk_map()).await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(err.contains("kind mismatch"), "err: {}", err);
+    }
+
+    #[tokio::test]
+    async fn fetch_exact_gvk_miss_zero_requests() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                send.send_response(mock_status_response(200, "OK"));
+            }
+        });
+
+        let client = ::kube::Client::new(mock_service, "default");
+        // Use a version that doesn't exist in GvkMap
+        let candidates = vec![make_candidate(
+            "",
+            "v2beta1",
+            "ConfigMap",
+            Some("ns"),
+            "cm1",
+            "uid-cm",
+        )];
+
+        let result = fetch_backup_resources(&client, &candidates, &test_gvk_map()).await;
+
+        drop(client);
+        spawned.abort();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not served"));
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            0,
+            "GVK miss must issue zero GETs"
+        );
+    }
+
+    // ── Resume receipt validation helper test ──
+
+    #[test]
+    fn resume_receipt_validation_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("resume-rt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backup.json");
+
+        // Create a plan and compute its bound hash
+        let plan = make_plan(vec![Action::Delete {
+            resource: rid("Deployment", "d1", Some("uid-1")),
+            reason: "root".to_string(),
+        }]);
+        let plan_sha = bound_plan_sha256(&plan).unwrap();
+
+        // Build bundle with that plan hash
+        let bundle = build_bundle(
+            vec![],
+            &test_cluster(),
+            &plan_sha,
+            "/tmp/plan.json",
+            vec![],
+            false,
+            vec![],
+            vec![],
+            candidate_set_hash_from_resources(&[]),
+        );
+        let receipt = write_backup_bundle(&bundle, &path).unwrap();
+
+        // Validate with same plan → success
+        let result = validate_receipt(&receipt, &test_cluster(), &plan_sha);
+        assert!(result.is_ok(), "valid receipt must pass: {:?}", result);
+
+        // Validate with different plan → failure
+        let mut altered_plan = plan.clone();
+        altered_plan.phases[0].actions.push(Action::Delete {
+            resource: rid("ConfigMap", "cm-extra", Some("uid-extra")),
+            reason: "added".to_string(),
+        });
+        let altered_sha = bound_plan_sha256(&altered_plan).unwrap();
+        let result = validate_receipt(&receipt, &test_cluster(), &altered_sha);
+        assert!(result.is_err(), "altered plan must fail validation");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
