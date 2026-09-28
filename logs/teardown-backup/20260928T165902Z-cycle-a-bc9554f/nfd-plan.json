@@ -1,0 +1,195 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-28T17:01:59.595169276+00:00",
+  "targets": [
+    {
+      "package_name": "nfd",
+      "install_namespace": "openshift-nfd",
+      "csv_name_pattern": "nfd.4.22.0-202609151747"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-nfd",
+          "name": "nfd",
+          "uid": "df9f6cec-3051-4c88-831f-1f07e65577eb",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-nfd",
+          "name": "nfd.4.22.0-202609151747",
+          "uid": "06da988b-a089-4294-9e5d-2c8a6cbc95c0",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "nfd.k8s-sigs.io",
+          "kind": "NodeFeature",
+          "namespace": "openshift-nfd",
+          "name": "ip-10-0-23-226.us-east-2.compute.internal",
+          "uid": "9fa8faa9-32a3-485e-ad1d-f416b6cea0f5",
+          "action": "DELETE"
+        },
+        {
+          "group": "nfd.openshift.io",
+          "kind": "NodeFeatureDiscovery",
+          "namespace": "openshift-nfd",
+          "name": "nfd-instance",
+          "uid": "ce2107d9-0fcc-45cd-a5c3-fc71671b6a63",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-nfd",
+          "name": "nfd.4.22.0-202609151747",
+          "uid": "06da988b-a089-4294-9e5d-2c8a6cbc95c0",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-nfd",
+          "name": "nfd",
+          "uid": "31e75e47-6eab-4027-ae75-37561a3afaf6",
+          "action": "DELETE"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-nfd",
+          "name": "39f5e5c3.nodefeaturediscoveries.nfd.openshift.io",
+          "uid": "b2186edc-2ea3-436b-81ac-ec207104d480",
+          "action": "REVIEW"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-nfd",
+          "name": "nfd-manager-config",
+          "uid": "5cab5247-9dc4-4bf0-b2a1-897380b59c67",
+          "action": "REVIEW"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-nfd",
+          "name": "nfd-worker",
+          "uid": "8cd6afe3-e00f-4b2f-ae3f-deb6e99f6c5e",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nodefeaturediscoveries.nfd.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nodefeaturegroups.nfd.k8s-sigs.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nodefeaturerules.nfd.k8s-sigs.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nodefeaturerules.nfd.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nodefeatures.nfd.k8s-sigs.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "nodefeatures.nfd.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-nfd",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

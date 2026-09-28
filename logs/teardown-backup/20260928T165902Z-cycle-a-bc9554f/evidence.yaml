@@ -1,0 +1,71 @@
+cycle: A
+tested_commit: bc9554f
+binary_sha256: 068de5d52a82748b328eff62b81c797b88eaee2f912934a4ef9b6a686b52ed1a
+cluster_uid: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+
+pre_baseline:
+  node_ready: 1
+  terminating_pods: 0
+  nfd_subscription_uid: df9f6cec-3051-4c88-831f-1f07e65577eb
+  nfd_csv: nfd.4.22.0-202609151747
+  nfd_csv_uid: 06da988b-a089-4294-9e5d-2c8a6cbc95c0
+  nfd_cr: nfd-instance
+  nfd_cr_uid: ce2107d9-0fcc-45cd-a5c3-fc71671b6a63
+  scc_nfd_worker_uid: 0eddf8bc-9749-45a2-a7ba-6b6ed00663c3
+  scc_nfd_topology_updater_uid: 949120b7-c46c-47c7-8b63-224848c834ec
+  operator_resources_count: 19
+
+plan:
+  command: "oc-deps teardown plan nfd --approve-scope root --approve-scope independent --approve-scope label-only --approve-scope operator-group --refresh-discovery --file nfd-plan.json"
+  exit_code: 0
+  actions: "5 DELETE, 0 EXPECT, 8 KEEP, 3 REVIEW"
+  prune_crds: false
+
+apply:
+  command: "oc-deps teardown apply nfd-plan.json -y --backup-dir /tmp/pr45-cycle-a-backup"
+  exit_code: 0
+  run_id: run-18d98ad57032fa14-816e1
+  phases_completed: 7/7
+  deleted: 5
+  already_gone: 0
+  failed: 0
+
+backup:
+  run_path: /tmp/pr45-cycle-a-backup/operator/nfd/20260928T170255Z-000816e1-0
+  run_count: 1
+  selection_type: operator
+  resource_count: 19
+  contains_secret_data: false
+  tree_sha256: e271602bc1e6622ef8d514cb28d9746e8e463832f9a4c21c8e813499c56cb30d
+  resource_set_sha256: f629c1cc20a3169f910a4f2a02b9e805e46625184294b86a496bcdbe7789f8f5
+  backup_published_before_first_mutation: true
+  all_files_0600: true
+  all_dirs_0700: true
+  permission_violations: 0
+  manifest_secret_plaintext: 0
+  lifecycle_secret_plaintext: 0
+  deploy_uid_present: true
+  service_account_uid_present: true
+  nfd_scc_count: 2
+
+journal:
+  schema_version: 11
+  state: ApplyCompleted
+  backup_receipts_count: 1
+  receipt_root: /tmp/pr45-cycle-a-backup/operator/nfd/20260928T170255Z-000816e1-0
+  receipt_resource_count: 19
+
+post_delete:
+  subscription_nfd: NotFound
+  csv_nfd: NotFound
+  nodefeaturediscovery: NotFound
+  scc_nfd_worker: NotFound
+  scc_nfd_topology_updater: NotFound
+  terminating_pods: 0
+  drift: 0
+
+resume:
+  command: "oc-deps teardown resume --run run-18d98ad57032fa14-816e1"
+  exit_code: 0
+  backup_intact_message: "✅ Backup intact: /tmp/pr45-cycle-a-backup/operator/nfd/20260928T170255Z-000816e1-0"
+  no_mutations: true

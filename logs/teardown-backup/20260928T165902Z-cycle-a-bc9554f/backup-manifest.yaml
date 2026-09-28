@@ -1,0 +1,359 @@
+capability_warnings:
+- Service clusterIP/nodePort, PVC volumeName, and CRD webhook defaults are not generically detectable.
+cluster_identity:
+  api_server: https://api.sno-disconnected.sandbox3768.opentlc.com:6443/
+  kube_system_uid: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+contains_secret_data: false
+coverage:
+  already_absent: 0
+  captured: 19
+  total: 19
+created_at: 2026-09-28T17:02:55.964569478+00:00
+limitations:
+- ownerRef-derived unplanned cascade children are not captured.
+- Storage reclaim and derived storage side effects are not captured.
+oc_deps_version: 0.1.0
+resource_set_sha256: f629c1cc20a3169f910a4f2a02b9e805e46625184294b86a496bcdbe7789f8f5
+resources:
+- identity:
+    group: ''
+    kind: ConfigMap
+    name: nfd-worker
+    namespace: openshift-nfd
+    uid: 8cd6afe3-e00f-4b2f-ae3f-deb6e99f6c5e
+    version: v1
+  lifecycle_sha256: f8a26b0c173683fc42c680e8991cce3aa717501ae254daf92df59282106831d6
+  raw_sha256: 5e9287c8ed799fbbafc62487a5ad1880b8a20ce47d4b85dfe873140c76218690
+  recreate_sha256: 2e71a5f549fad9d10efa173114cf11f9f5ae75cb26db8589bc2524d43a88814a
+  relative_path: resources/core/v1/ConfigMap/openshift-nfd/nfd-worker--8cd6afe3-e00f-4b2f-ae3f-deb6e99f6c5e
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: ''
+    kind: Pod
+    name: nfd-controller-manager-c85889c94-nt2qc
+    namespace: openshift-nfd
+    uid: 29f9ef1e-fc4d-4bbd-a013-d10ed3eb2b81
+    version: v1
+  lifecycle_sha256: 459364ef56f08730ebcd1179e8fb1e22d75707d8ece8fe6535f3f0c98f15a88e
+  raw_sha256: 2d415aae6815c044f2701184907aa4e5ea4984acc774f86319385d3a3445a0fa
+  recreate_sha256: b7ea45cf8819a3aae5ba0b0f4055c94cde692c91d0f97a8770f0501513ca2f47
+  relative_path: resources/core/v1/Pod/openshift-nfd/nfd-controller-manager-c85889c94-nt2qc--29f9ef1e-fc4d-4bbd-a013-d10ed3eb2b81
+  sources:
+  - category: Controller
+    operator: nfd.4.22.0-202609151747
+    relationship: SelectorMatch
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: ''
+    kind: Pod
+    name: nfd-gc-7df65f9876-f4k6f
+    namespace: openshift-nfd
+    uid: b909a17a-6056-4939-93eb-de4c3cdf934a
+    version: v1
+  lifecycle_sha256: e87134dbbf6394c23350367a72d22e69411f80c0b5b402c8c7851828f04674e4
+  raw_sha256: 1f1ab0fce85348ac9a3bda1d3a7e181a045c81d48b5fae7b151f5307e957d877
+  recreate_sha256: 0619972feb0b59486080aaea73fe922ad036736a9164fe8e1ed1cc4e2c315c53
+  relative_path: resources/core/v1/Pod/openshift-nfd/nfd-gc-7df65f9876-f4k6f--b909a17a-6056-4939-93eb-de4c3cdf934a
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: ''
+    kind: Pod
+    name: nfd-master-56f459b98b-t4zps
+    namespace: openshift-nfd
+    uid: 6a9775bb-4b67-4383-b1bc-350b1e094f34
+    version: v1
+  lifecycle_sha256: b0b5c1344dd48f2b771a44cb857668a450550ac633166c03d7d16f818aec678b
+  raw_sha256: ae5d6d42da05104f41f116b08693a4100b75533a4ee888553424165f9896fbfe
+  recreate_sha256: d932a8a7f152c7992d83756a198e0b478f0cfef04a33ccb5ead22db121bcb158
+  relative_path: resources/core/v1/Pod/openshift-nfd/nfd-master-56f459b98b-t4zps--6a9775bb-4b67-4383-b1bc-350b1e094f34
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: ''
+    kind: Pod
+    name: nfd-worker-ctc58
+    namespace: openshift-nfd
+    uid: f13f9b53-1b17-4b5f-8be5-5bc580b18426
+    version: v1
+  lifecycle_sha256: 688421ba67f72bc402ceadf6e9a46a67e8bb5fad4d0b7d7e17b387b9395fc46d
+  raw_sha256: 9288a94a90286cf1bcf20ea0483976da042232e8a7757cb409dd64e14a18f6be
+  recreate_sha256: e4dbed8a42e45558dcd0f6acf2dcdafc49cdd90b14633b79e1b65fc335da72ed
+  relative_path: resources/core/v1/Pod/openshift-nfd/nfd-worker-ctc58--f13f9b53-1b17-4b5f-8be5-5bc580b18426
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: ''
+    kind: ServiceAccount
+    name: nfd-manager
+    namespace: openshift-nfd
+    uid: c06a72ca-79f6-402d-b866-a60f75b1cb52
+    version: v1
+  lifecycle_sha256: 07a7c76f892d262369e224f431423256c4d5ffa25c5cba33ddbbb9ef84d66a63
+  raw_sha256: 2587aeb9fb831ab32352282d854ddd530773a8b36afcda8f795f9da2c04c20ca
+  recreate_sha256: f32e35706f4e45af2e50985613d2f438dfadeded99b3cb41a20560f9a7ccfb1a
+  relative_path: resources/core/v1/ServiceAccount/openshift-nfd/nfd-manager--c06a72ca-79f6-402d-b866-a60f75b1cb52
+  sources:
+  - category: Controller
+    operator: nfd.4.22.0-202609151747
+    relationship: InstallStrategy
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: ControllerRevision
+    name: nfd-worker-55b66cfbc7
+    namespace: openshift-nfd
+    uid: 8e45cea2-1ffb-40dc-8ee2-b8a2e379a2cd
+    version: v1
+  lifecycle_sha256: 6c05abda5da83b31ce908712670ca05f5492d05de2570aeab78a5c3418fe8127
+  raw_sha256: ceff3bf0b6dac74c699b0dba978f3920846b176573cba7c52f356936c06fae67
+  recreate_sha256: 8332cedd796f02720606072436100bc4061e472a7f893ec2a0d25d9fe64c1453
+  relative_path: resources/apps/v1/ControllerRevision/openshift-nfd/nfd-worker-55b66cfbc7--8e45cea2-1ffb-40dc-8ee2-b8a2e379a2cd
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: DaemonSet
+    name: nfd-worker
+    namespace: openshift-nfd
+    uid: bcfac8e5-65ce-4087-a219-96e1e0b658b3
+    version: v1
+  lifecycle_sha256: a4f62e17d69a2d3bc7e2c90fce6ba71f7ac90ead42bafc0d8a81139498d58083
+  raw_sha256: ddaac7d0f6d28df61b6dc40e80839f6f126d766d8344641f86d99c325df521de
+  recreate_sha256: 8df1cde3df4045e4f0c235b390caa6711e020c6bf3ae3bf7c8e2cba817f3ffda
+  relative_path: resources/apps/v1/DaemonSet/openshift-nfd/nfd-worker--bcfac8e5-65ce-4087-a219-96e1e0b658b3
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: Deployment
+    name: nfd-controller-manager
+    namespace: openshift-nfd
+    uid: ae860e82-9923-4551-a2c6-49a63a619b54
+    version: v1
+  lifecycle_sha256: 994efb0cd4dc728ce5f327b1b7c21d392d255dfb6c70358429e416e516192b8c
+  raw_sha256: af7bc6f68275be8ca02761bec896930afca778fff6d23b22a1985e5d2712db71
+  recreate_sha256: 38566fde92566570e93327b03c84ae9f73e6652a288999599e458bbf19685ea4
+  relative_path: resources/apps/v1/Deployment/openshift-nfd/nfd-controller-manager--ae860e82-9923-4551-a2c6-49a63a619b54
+  sources:
+  - category: Controller
+    operator: nfd.4.22.0-202609151747
+    relationship: InstallStrategy
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: Deployment
+    name: nfd-gc
+    namespace: openshift-nfd
+    uid: 9109bafc-a8dc-4e1e-ba49-908879be2ceb
+    version: v1
+  lifecycle_sha256: cd81089b68fc908a0ecfd7a89b377f21c95b79469c4988a1e4e3bcb3c239cf16
+  raw_sha256: 859bf3635c93aaba190e92096d8c74a7b9fdfa820828cdd0c6612d7d998ac135
+  recreate_sha256: df0bf8adcd53b3915dfc6f29b2287ee4b447e4c187df77513cf4659a0265134f
+  relative_path: resources/apps/v1/Deployment/openshift-nfd/nfd-gc--9109bafc-a8dc-4e1e-ba49-908879be2ceb
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: Deployment
+    name: nfd-master
+    namespace: openshift-nfd
+    uid: f0cdbeb7-b5f8-4e52-aac4-9ffc87979c6e
+    version: v1
+  lifecycle_sha256: 38a2506b10448f01ef360cf31dc8fbbe6e4208b7f21d5df014a6221c31246a0a
+  raw_sha256: 3ffdb555cc2fd4e6f11f1b2ba45e0593457a0f50944b6ccb08f4d5f5ffeb08ee
+  recreate_sha256: dbe588aa25a6f4cc477336d48311c2afd4fe6365d58afb7d487b07a2f02eb904
+  relative_path: resources/apps/v1/Deployment/openshift-nfd/nfd-master--f0cdbeb7-b5f8-4e52-aac4-9ffc87979c6e
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: ReplicaSet
+    name: nfd-gc-7df65f9876
+    namespace: openshift-nfd
+    uid: 2c77ffd4-91f6-40c0-b359-030fb69f03c0
+    version: v1
+  lifecycle_sha256: 1dd45d3b37dd21fd7f83a4f287faf4cca28d04b8a271d4fc5214b384c88889e6
+  raw_sha256: 48ecb6cc392a584b1dd74d882adc6252de4873cf60f9d625577463e40082e527
+  recreate_sha256: a904a285fdbe96cfa4f37243984ee8f2b3762f8b74e1b1709e4466ca2f707b65
+  relative_path: resources/apps/v1/ReplicaSet/openshift-nfd/nfd-gc-7df65f9876--2c77ffd4-91f6-40c0-b359-030fb69f03c0
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: apps
+    kind: ReplicaSet
+    name: nfd-master-56f459b98b
+    namespace: openshift-nfd
+    uid: 69fa2e25-5267-4945-8b63-304f841ba772
+    version: v1
+  lifecycle_sha256: 35e358667a1bfc68b59d391e37845b0ce1b34e0953d7a9ced719f90648b85741
+  raw_sha256: 2d88fffd6c3e99bdf9d015c504f3bf818aefde159a2f2b0530b4e568fde2b18a
+  recreate_sha256: 9d49710636fad28622fdb154755d7b461c3d73d54eeabffe123b1874eff77990
+  relative_path: resources/apps/v1/ReplicaSet/openshift-nfd/nfd-master-56f459b98b--69fa2e25-5267-4945-8b63-304f841ba772
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnerRef
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: nfd.k8s-sigs.io
+    kind: NodeFeature
+    name: ip-10-0-23-226.us-east-2.compute.internal
+    namespace: openshift-nfd
+    uid: 9fa8faa9-32a3-485e-ad1d-f416b6cea0f5
+    version: v1alpha1
+  lifecycle_sha256: 31b07961b28a47553b61b1cc8ecb42672362e495ed52513e7c062690042bd6c1
+  raw_sha256: 5cc2e5517d8b1593847f93dd3e818d7da71c530dd0add464c3eafc502ea4020f
+  recreate_sha256: 4deca4382f744cacc0d9a3e130b314667c3863b6b51c39ca45a1bdd6ed3e45ae
+  relative_path: resources/nfd.k8s-sigs.io/v1alpha1/NodeFeature/openshift-nfd/ip-10-0-23-226.us-east-2.compute.internal--9fa8faa9-32a3-485e-ad1d-f416b6cea0f5
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnedCrdInstance
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: nfd.openshift.io
+    kind: NodeFeatureDiscovery
+    name: nfd-instance
+    namespace: openshift-nfd
+    uid: ce2107d9-0fcc-45cd-a5c3-fc71671b6a63
+    version: v1
+  lifecycle_sha256: 98296562abe3c9ca96c83bff93a5ea1239fd566711dcbaf5f094412781e7629e
+  raw_sha256: 4b58387c035be85168f09a3ece38a4de9216329dbb78551347c24615cd6cb727
+  recreate_sha256: c1a83ab21f803849e4a5ce2e596368321718f0c849a0e1b5500c216c015ccdb5
+  relative_path: resources/nfd.openshift.io/v1/NodeFeatureDiscovery/openshift-nfd/nfd-instance--ce2107d9-0fcc-45cd-a5c3-fc71671b6a63
+  sources:
+  - category: CR Instances (owned CRDs)
+    operator: nfd.4.22.0-202609151747
+    relationship: OwnedCrdInstance
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: operators.coreos.com
+    kind: ClusterServiceVersion
+    name: nfd.4.22.0-202609151747
+    namespace: openshift-nfd
+    uid: 06da988b-a089-4294-9e5d-2c8a6cbc95c0
+    version: v1alpha1
+  lifecycle_sha256: e2367e52842ceeb75da2f65a2e33128305dd55b7c279bcd1811bfed832027ce9
+  raw_sha256: b0be12dea2bb29dc351ec7d666e4f71ca5b0c25682184ff0b1a28dbb4b14a30d
+  recreate_sha256: be65bf8be597e59e07d28b1d108081da5e58e8c8ee0a92539a0ddd7d7f6ea0a6
+  relative_path: resources/operators.coreos.com/v1alpha1/ClusterServiceVersion/openshift-nfd/nfd.4.22.0-202609151747--06da988b-a089-4294-9e5d-2c8a6cbc95c0
+  sources:
+  - category: OLM
+    operator: nfd.4.22.0-202609151747
+    relationship: Olm
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: operators.coreos.com
+    kind: Subscription
+    name: nfd
+    namespace: openshift-nfd
+    uid: df9f6cec-3051-4c88-831f-1f07e65577eb
+    version: v1alpha1
+  lifecycle_sha256: 5453efd62c61989cbaec24f703fcb6f867da830dc5631572a51ba7a0e7271689
+  raw_sha256: 7654395a28612168bfc1f78b7dd83d4e5a5d0033f3ec74e934fa4008f9a7915f
+  recreate_sha256: b45ac9dc0e0e7c8b094eaac68ffa11e1857f8d7dc344fbdc186ebed787a77c1d
+  relative_path: resources/operators.coreos.com/v1alpha1/Subscription/openshift-nfd/nfd--df9f6cec-3051-4c88-831f-1f07e65577eb
+  sources:
+  - category: OLM
+    operator: nfd.4.22.0-202609151747
+    relationship: Olm
+    source_type: operator_discovery
+  state: Captured
+- identity:
+    group: security.openshift.io
+    kind: SecurityContextConstraints
+    name: nfd-topology-updater
+    namespace: null
+    uid: 949120b7-c46c-47c7-8b63-224848c834ec
+    version: v1
+  lifecycle_sha256: cfc4136da83544ccdead5839e8fb1e75bb324ee1b291d355df09bdea41eb97dd
+  raw_sha256: c7375d255268cee59c7f681ab347ccd03e2068efd827794fb5837a5a5631fa31
+  recreate_sha256: ac0d055b8395b1c92eb626f98c4c600e984f148fadcd3efd1e7148bb467c534a
+  relative_path: resources/security.openshift.io/v1/SecurityContextConstraints/_cluster/nfd-topology-updater--949120b7-c46c-47c7-8b63-224848c834ec
+  sources:
+  - category: Targeted Adapter (cleanup contract)
+    operator: nfd.4.22.0-202609151747
+    relationship: CleansUp
+    source_type: operator_discovery
+  - adapter_id: nfd-finalizer-cleanup
+    root_kind: NodeFeatureDiscovery
+    source_contract: CleansUp
+    source_type: cleanup_contract
+  state: Captured
+- identity:
+    group: security.openshift.io
+    kind: SecurityContextConstraints
+    name: nfd-worker
+    namespace: null
+    uid: 0eddf8bc-9749-45a2-a7ba-6b6ed00663c3
+    version: v1
+  lifecycle_sha256: 4e90988126af2e604dc1f78eb358d7f7ccb8693ab6bcb0e84adcbca4cfd39db6
+  raw_sha256: ff8484744b43d2e0af2c35b7796708a4a81392180c1748170ae86a3d088b4cf3
+  recreate_sha256: fdd5bb84159458f6605a7a2af9e8c51b43fd7c83f372e9beb595439e5b208df7
+  relative_path: resources/security.openshift.io/v1/SecurityContextConstraints/_cluster/nfd-worker--0eddf8bc-9749-45a2-a7ba-6b6ed00663c3
+  sources:
+  - category: Targeted Adapter (cleanup contract)
+    operator: nfd.4.22.0-202609151747
+    relationship: CleansUp
+    source_type: operator_discovery
+  - adapter_id: nfd-finalizer-cleanup
+    root_kind: NodeFeatureDiscovery
+    source_contract: CleansUp
+    source_type: cleanup_contract
+  state: Captured
+restore_notes:
+- recreate.yaml is a best-effort candidate; kind-specific allocated/defaulted/immutable fields may require review.
+restore_supported: false
+schema_version: 2
+selection:
+  operators:
+  - csv_name: nfd.4.22.0-202609151747
+    install_namespace: openshift-nfd
+    package_name: nfd
+  selection_type: operator
+tree_sha256: e271602bc1e6622ef8d514cb28d9746e8e463832f9a4c21c8e813499c56cb30d

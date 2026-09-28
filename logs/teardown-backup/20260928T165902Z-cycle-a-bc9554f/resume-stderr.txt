@@ -1,0 +1,137 @@
+Run run-18d98ad57032fa14-816e1 is ApplyCompleted — re-entering Residual Cleanup
+📦 Validating 1 backup receipt(s)...
+  ✅ Backup intact: /tmp/pr45-cycle-a-backup/operator/nfd/20260928T170255Z-000816e1-0
+Resuming run run-18d98ad57032fa14-816e1 (state: ApplyCompleted, operator: nfd.4.22.0-202609151747)
+  7/7 phases completed, 5 deleted
+🔍 Re-discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+  Operator generation absent — teardown may have completed. Check status.
+  Resuming from phase 7/7
+Resuming Residual Cleanup stage.
+
+Teardown status: nfd.4.22.0-202609151747
+Session: run-18d98ad57032fa14-816e1
+Created: 2026-09-28T17:02:58.541384708+00:00
+
+Execution: InteractiveCleanup (7/7 phases)
+Residual audit: 10 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (11)
+  ClusterServiceVersion/nfd.4.22.0-202609151747 (openshift-nfd)
+    controller needed for operand cleanup
+  Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io (openshift-nfd)
+    leader election lease (holder references operator deployment)
+  ConfigMap/nfd-manager-config (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  ConfigMap/nfd-worker (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-nfd
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (10)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhods-operator.3.5.1 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+
+Audit coverage: 19/19 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
+
+Teardown status: nfd.4.22.0-202609151747
+Session: run-18d98ad57032fa14-816e1
+Created: 2026-09-28T17:02:58.541384708+00:00
+
+Execution: ApplyCompleted (7/7 phases)
+Residual audit: 10 residuals observed
+
+PLANNED DELETE STILL PRESENT
+  none
+
+PLANNED EXPECT-GONE STILL PRESENT
+  none
+
+EXPECTED PRESERVED (11)
+  ClusterServiceVersion/nfd.4.22.0-202609151747 (openshift-nfd)
+    controller needed for operand cleanup
+  Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io (openshift-nfd)
+    leader election lease (holder references operator deployment)
+  ConfigMap/nfd-manager-config (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  ConfigMap/nfd-worker (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.openshift.io
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-nfd
+    namespace cleanup requires manual verification
+
+UNATTRIBUTED (10)
+  ClusterServiceVersion/authorino-operator.v1.4.3 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cert-manager-operator.v1.20.0 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/dns-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/kueue-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/limitador-operator.v1.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/opentelemetry-operator.v0.158.0-2 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhcl-operator.v1.4.3 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/rhods-operator.3.5.1 (openshift-nfd)
+    no sufficient operator attribution evidence
+  ClusterServiceVersion/servicemeshoperator3.v3.4.2 (openshift-nfd)
+    no sufficient operator attribution evidence
+
+Audit coverage: 19/19 probes succeeded (scope: 1 namespace(s))
+  Scope: install namespace + plan action namespaces only.
+  Residuals in namespaces outside this footprint are not covered.
