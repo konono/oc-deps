@@ -1,0 +1,93 @@
+{
+  "qualification": "D0-NFD-SCC",
+  "date": "2026-09-28",
+  "base_commit": "6186729",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "d0_1_corpus": {
+    "corpus_path": "logs/discovery-baseline/20260926-cycle-b2-3c77a17/full-corpus.tar.zst",
+    "pre_scc_nfd_worker": {
+      "apiVersion": "security.openshift.io/v1",
+      "kind": "SecurityContextConstraints",
+      "name": "nfd-worker",
+      "uid": "2cee9106-d6f9-4a26-bbef-5db55051d0aa",
+      "source": "phase1-evidence-graph.json entities"
+    },
+    "pre_scc_nfd_topology_updater": {
+      "apiVersion": "security.openshift.io/v1",
+      "kind": "SecurityContextConstraints",
+      "name": "nfd-topology-updater",
+      "uid": "2b5602c2-4ef0-4c54-a79f-05886402218d",
+      "source": "phase1-evidence-graph.json entities"
+    },
+    "post_scc_absent": true,
+    "plans_scc_count": 0,
+    "plans_total": 15,
+    "plans_all_nonempty": true,
+    "nfd_resources_scc_count": 0,
+    "generic_miss_confirmed": true
+  },
+  "d0_2_live": {
+    "subscription": {
+      "name": "nfd",
+      "namespace": "openshift-nfd",
+      "package": "nfd",
+      "channel": "stable",
+      "currentCSV": "nfd.4.22.0-202609151747"
+    },
+    "csv": {
+      "name": "nfd.4.22.0-202609151747",
+      "version": "4.22.0-202609151747",
+      "phase": "Succeeded",
+      "image": "registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:71767491d1a2373dd30fa1a4508144f6ddff9a24fa97888e02a00e8cf388e89d"
+    },
+    "live_sccs": [
+      {
+        "name": "nfd-worker",
+        "uid": "92260225-9c47-4101-91e5-b1f8289003d2"
+      },
+      {
+        "name": "nfd-topology-updater",
+        "uid": "f61f2b31-4ab0-48b0-a180-db06b5c34c6b"
+      }
+    ],
+    "master_binary_scc_count": 0,
+    "oc_scc_count": 2,
+    "miss_confirmed": true
+  },
+  "d0_3_source": {
+    "repository": "openshift/cluster-nfd-operator",
+    "branch": "release-4.22",
+    "commit": "3931a6191fa842897327f105a862f58f59db1a7d",
+    "revision_match": "approximate",
+    "scc_creation": {
+      "file": "internal/controllers/nodefeaturediscovery_reconciler.go",
+      "function": "handleSCCs",
+      "lines": "275-301",
+      "names": [
+        "nfd-worker",
+        "nfd-topology-updater"
+      ],
+      "method": "controllerutil.CreateOrPatch with hardcoded deterministic names"
+    },
+    "scc_deletion": {
+      "file": "internal/controllers/nodefeaturediscovery_reconciler.go",
+      "function": "finalizeComponents",
+      "lines": "223-255",
+      "cleanup_lines": "250,255",
+      "finalizer_name": "nfd-finalizer"
+    },
+    "scc_api": {
+      "file": "internal/scc/scc.go",
+      "delete_function": "DeleteSCC",
+      "lines": "138-148"
+    }
+  },
+  "d0_4_generic_limitation": {
+    "reason": "namespaced NodeFeatureDiscovery root cannot ownerRef cluster-scoped SecurityContextConstraints",
+    "csv_inventory": false,
+    "label_tuple": false,
+    "spec_ref": false,
+    "ownerRef": false
+  },
+  "verdict": "ALL PASS"
+}

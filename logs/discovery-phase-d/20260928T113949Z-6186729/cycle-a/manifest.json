@@ -1,0 +1,38 @@
+{
+  "cycle": "A",
+  "operator": "nfd",
+  "description": "NFD individual teardown",
+  "git_commit": "6186729",
+  "binary_sha256": "3a7e70ce8e1c50a847d365de34b7619f86fc37b0a361c2a6100b7ffe33944fd9",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "pre_state": {
+    "subscription": "nfd/openshift-nfd",
+    "csv": "nfd.4.22.0-202609151747",
+    "nfd_root": "nfd-instance uid=00bdaaed-a3e3-4f26-91de-fea4ea600220",
+    "scc_nfd_worker": "uid=92260225-9c47-4101-91e5-b1f8289003d2",
+    "scc_nfd_topology_updater": "uid=f61f2b31-4ab0-48b0-a180-db06b5c34c6b"
+  },
+  "plan": {
+    "delete": 5,
+    "expect_gone": 0,
+    "keep": 8,
+    "review": 3,
+    "scc_in_plan": false,
+    "scc_cleanup_mechanism": "finalizer cleanup by NFD controller when NodeFeatureDiscovery CR deleted"
+  },
+  "apply": {
+    "phases_completed": "7/7",
+    "deleted": 5,
+    "already_gone": 0,
+    "failed": 0,
+    "drift": 0
+  },
+  "post_state": {
+    "subscription": "NotFound",
+    "csv": "NotFound",
+    "nfd_root": "NotFound",
+    "scc_nfd_worker": "NotFound",
+    "scc_nfd_topology_updater": "NotFound",
+    "terminating": 0
+  }
+}

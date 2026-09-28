@@ -1,0 +1,122 @@
+[
+  {
+    "index": 1,
+    "operator": "rhods-operator",
+    "phases": "8/8",
+    "deleted": 37,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 2,
+    "operator": "rhbk-operator",
+    "phases": "7/7",
+    "deleted": 5,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 3,
+    "operator": "leader-worker-set",
+    "phases": "7/7",
+    "deleted": 3,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 4,
+    "operator": "job-set",
+    "phases": "7/7",
+    "deleted": 4,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 5,
+    "operator": "kueue-operator",
+    "phases": "7/7",
+    "deleted": 3,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 6,
+    "operator": "servicemeshoperator3",
+    "phases": "7/7",
+    "deleted": 3,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 7,
+    "operator": "nfd",
+    "phases": "7/7",
+    "deleted": 5,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 8,
+    "operator": "gpu-operator-certified",
+    "phases": "7/7",
+    "deleted": 4,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 9,
+    "operator": "openshift-cert-manager-operator",
+    "phases": "7/7",
+    "deleted": 4,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 10,
+    "operator": "rhcl-operator",
+    "phases": "8/8",
+    "deleted": 8,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 11,
+    "operator": "authorino-operator",
+    "phases": "7/7",
+    "deleted": 2,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 12,
+    "operator": "dns-operator",
+    "phases": "7/7",
+    "deleted": 2,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 13,
+    "operator": "limitador-operator",
+    "phases": "7/7",
+    "deleted": 3,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 14,
+    "operator": "cluster-observability-operator",
+    "phases": "7/7",
+    "deleted": 3,
+    "already_gone": 0,
+    "failed": 0
+  },
+  {
+    "index": 15,
+    "operator": "opentelemetry-product",
+    "phases": "7/7",
+    "deleted": 3,
+    "already_gone": 0,
+    "failed": 0
+  }
+]

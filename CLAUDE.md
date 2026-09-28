@@ -63,7 +63,7 @@ All logic lives in a single file: `src/main.rs`.
 - Adapter results are merged into `OperatorInspection.adapter_reports` (full structured JSON)
 - Only Resolved targets with verified identity (apiVersion/kind/name/UID) enter categories
 - GET uses `QueryRequirement::Optional` — 404 is normal absence, not strict failure
-- Currently: `authorino-finalizer-cleanup` adapter for Authorino CRBs
+- Currently: `authorino-finalizer-cleanup` adapter for Authorino CRBs, `nfd-finalizer-cleanup` adapter for NFD SCCs
 
 **Output formats:** Tree (default, `kind/name` for easy `oc get/edit` copy-paste), Table, JSON
 

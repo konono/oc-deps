@@ -1,4 +1,5 @@
 pub mod authorino;
+pub mod nfd;
 
 use kube::Client;
 use serde::{Deserialize, Serialize};
@@ -88,6 +89,23 @@ pub async fn run_adapters(
         } else {
             reports.push(AdapterReport {
                 adapter_id: authorino::ADAPTER_ID.to_string(),
+                status: AdapterReportStatus::Unknown,
+                status_reason: Some("no query planner available".to_string()),
+                evidence: None,
+                results: vec![],
+                diagnostics: vec![],
+                incomplete: false,
+            });
+        }
+    }
+
+    if nfd::matches_operator(operator) {
+        let roots = nfd::find_nfd_roots(cr_resources);
+        if let Some(p) = planner {
+            reports.push(nfd::discover(client, operator, p, &roots).await);
+        } else {
+            reports.push(AdapterReport {
+                adapter_id: nfd::ADAPTER_ID.to_string(),
                 status: AdapterReportStatus::Unknown,
                 status_reason: Some("no query planner available".to_string()),
                 evidence: None,
