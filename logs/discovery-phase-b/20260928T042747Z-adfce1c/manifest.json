@@ -1,0 +1,79 @@
+{
+  "phase": "B",
+  "workstream": 3,
+  "run_id": "20260928T042747Z-adfce1c",
+  "round": 4,
+  "comparison_mode": "interleaved back-to-back per operator",
+  "tested_code_commit": "adfce1c",
+  "evidence_commit": "to be set after commit",
+  "base_commit": "bc3076e",
+  "base_binary_sha256": "a390171a4c21281f1cf63ddfd0690d9aec8347065f8eb2205131c1f7a0397d56",
+  "pr_binary_sha256": "62036afff4ca8285760e62551826bcd9d4e531b51175044cc463dd6c887deace",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "results": {
+    "operator_resources": {
+      "total": 15,
+      "pr_exit_0": 15,
+      "strict_pass": 15,
+      "resource_identical": "12/15",
+      "relationship_identical": "12/15",
+      "warning_identical": "15/15",
+      "diffs": [
+        {
+          "operator": "authorino-operator",
+          "type": "API alias stabilization",
+          "detail": "Same UID Role/RoleBinding: base selects rbac.authorization.k8s.io (buffer_unordered nondeterminism), PR selects authorization.openshift.io (sorted + buffered determinism). Intentional code change effect.",
+          "uids": ["30015981-862f-4658-a9c9-0ff4e55657fd", "1053aa74-d986-414d-bcfd-1d9391d33b28"]
+        },
+        {
+          "operator": "gpu-operator-certified",
+          "type": "cluster mutation",
+          "detail": "-3 PrometheusRule (removed from cluster between base and PR runs within same window)"
+        },
+        {
+          "operator": "rhods-operator",
+          "type": "cluster mutation",
+          "detail": "-4 PodMonitor/ServiceMonitor (removed from cluster between base and PR runs within same window)"
+        }
+      ],
+      "ledger_includes_planner_queries": "15/15"
+    },
+    "teardown_plan": {
+      "total": 15,
+      "all_exit_0": true,
+      "phase_a_plan_match": "15/15",
+      "note": "leader-worker-set had transient Connect error on first attempt, succeeded on retry"
+    },
+    "query_planner_live_metrics": {
+      "total_demands": 7566,
+      "total_network_queries": 7242,
+      "total_cache_hits": 324
+    },
+    "artifacts": {
+      "base_operator_resources": "base/*.json (15 files)",
+      "pr_operator_resources": "pr/*.json (15 files)",
+      "pr_strict": "pr-strict/*.json (15 files)",
+      "plans": "plans/*-plan.json (15 files)",
+      "subscriptions": "subscriptions.json",
+      "csvs": "csvs.json",
+      "comparison": "comparison/operator-comparison.json"
+    },
+    "quality_gates": {
+      "cargo_fmt": "pass",
+      "cargo_clippy": "pass",
+      "cargo_test": "1062 pass, 0 fail (24 kube::planner + 1 scanner alias)",
+      "cargo_build_release": "pass"
+    },
+    "corpus": {
+      "sha256_verified": true,
+      "byte_identical": true,
+      "provider_operands": "25/25"
+    }
+  },
+  "safety_exclusions": {
+    "probe_uid": "not cached — safety boundary for apply-time revalidation",
+    "explicit_reference_guard": "not cached — inbound-ref check at plan/apply time",
+    "executor_fresh_queries": "not cached — mutable state checks during teardown apply",
+    "metadata_only_crd_catalog": "existing command-scope cache, not planner-managed"
+  }
+}

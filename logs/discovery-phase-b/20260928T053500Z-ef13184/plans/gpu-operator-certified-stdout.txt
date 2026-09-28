@@ -1,0 +1,60 @@
+Targets
+  gpu-operator-certified.v26.7.1 (ns: nvidia-gpu-operator) (Subscription/gpu-operator-certified@nvidia-gpu-operator)
+
+Preflight
+  ✓ Subscription resolved (gpu-operator-certified.v26.7.1) — Subscription/gpu-operator-certified found — will be deleted in Phase 0
+  ✓ CSV health (gpu-operator-certified.v26.7.1) — phase=Succeeded
+  ✓ Controller available (gpu-operator-certified.v26.7.1) — gpu-operator: Available (1)
+  ! Provenance — 1 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/gpu-operator-certified  (ns: nvidia-gpu-operator)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE ClusterPolicy/gpu-cluster-policy  (cluster-scoped)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/gpu-operator-certified  (ns: nvidia-gpu-operator)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/53822513.nvidia.com  (ns: nvidia-gpu-operator)
+         leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/nvidiadrivers.nvidia.com  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/gpuclusters.nvidia.com  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/computedomains.resource.nvidia.com  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/computedomaincliques.resource.nvidia.com  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/clusterpolicies.nvidia.com  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/nvidia-gpu-operator  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  1 CRs have uncertain provenance (owned API, but origin unknown)
+  5 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 4 DELETE, 0 EXPECT-GONE, 7 KEEP, 1 REVIEW
+  0 blockers, 2 warnings

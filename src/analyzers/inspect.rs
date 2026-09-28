@@ -89,6 +89,8 @@ pub struct OperatorInspection {
     pub incomplete_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage_ledger: Option<CoverageLedger>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_planner: Option<crate::kube::planner::PlannerMetrics>,
 }
 
 impl OperatorInspection {
@@ -99,6 +101,36 @@ impl OperatorInspection {
                 .coverage_ledger
                 .as_ref()
                 .is_some_and(|l| l.has_incomplete())
+    }
+
+    /// Sort all parallel-collected arrays for deterministic output.
+    pub fn sort_for_output(&mut self) {
+        fn resource_sort_key(r: &InspectedResource) -> impl Ord + '_ {
+            (
+                &r.id.group,
+                &r.id.version,
+                &r.id.kind,
+                &r.id.namespace,
+                &r.id.name,
+                &r.id.uid,
+                &r.evidence,
+            )
+        }
+        for cat in &mut self.categories {
+            cat.resources
+                .sort_by(|a, b| resource_sort_key(a).cmp(&resource_sort_key(b)));
+        }
+        if let Some(ref mut ns_scope) = self.namespace_scope {
+            for cand in ns_scope.iter_mut() {
+                cand.evidence
+                    .sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+            }
+            ns_scope.sort_by(|a, b| a.namespace.cmp(&b.namespace));
+        }
+        self.warnings.sort();
+        self.scope_warnings.sort();
+        self.rejected_namespace_candidates
+            .sort_by(|a, b| a.value.cmp(&b.value));
     }
 }
 
@@ -119,6 +151,7 @@ pub async fn inspect_operator_with_options(
         gk_map,
         cross_namespace,
         None,
+        None,
     )
     .await
 }
@@ -132,6 +165,7 @@ pub async fn inspect_operator_with_options_ledger(
     gk_map: &GroupKindMap,
     cross_namespace: bool,
     external_ledger: Option<SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<OperatorInspection> {
     let mut olm_resources = Vec::new();
     let mut controller_resources = Vec::new();
@@ -199,8 +233,14 @@ pub async fn inspect_operator_with_options_ledger(
 
     // Discover controller pods via deployment selector
     eprint!("🔍 Discovering controller pods...");
-    let (pods, pod_warnings) =
-        discover_controller_pods(client, operator, kind_map, Some(&shared_ledger)).await;
+    let (pods, pod_warnings) = discover_controller_pods(
+        client,
+        operator,
+        kind_map,
+        Some(&shared_ledger),
+        planner.as_ref(),
+    )
+    .await;
     for pod_id in &pods {
         controller_resources.push(InspectedResource {
             id: pod_id.clone(),
@@ -224,6 +264,7 @@ pub async fn inspect_operator_with_options_ledger(
         gvr_map,
         gk_map,
         Some(shared_ledger.clone()),
+        planner.clone(),
     )
     .await;
     eprintln!(" found {} instances", cr_report.instances.len());
@@ -263,6 +304,7 @@ pub async fn inspect_operator_with_options_ledger(
         client,
         Some(shared_ledger.clone()),
         crd_catalog.as_ref(),
+        planner.clone(),
     )
     .await;
     for w in &seed_errors {
@@ -278,6 +320,7 @@ pub async fn inspect_operator_with_options_ledger(
         gk_map,
         Some(shared_ledger.clone()),
         crd_catalog.as_ref(),
+        planner.clone(),
     )
     .await;
     for w in &related_report.unavailable_crds {
@@ -316,6 +359,7 @@ pub async fn inspect_operator_with_options_ledger(
             gk_map,
             Some(shared_ledger.clone()),
             crd_catalog.as_ref(),
+            planner.clone(),
         )
         .await?;
         eprintln!(
@@ -336,6 +380,7 @@ pub async fn inspect_operator_with_options_ledger(
             kind_map,
             None,
             Some(shared_ledger.clone()),
+            planner.clone(),
         )
         .await;
         scan_warning_count += scan_result.namespace_warnings.len();
@@ -481,6 +526,7 @@ pub async fn inspect_operator_with_options_ledger(
         coverage: snapshot_coverage,
         incomplete_count: snapshot_incomplete,
         coverage_ledger: snapshot_ledger,
+        query_planner: None,
     })
 }
 
@@ -509,8 +555,9 @@ async fn discover_controller_pods(
     operator: &OperatorInstance,
     kind_map: &KindMap,
     ledger: Option<&SharedLedger>,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> (Vec<ResourceId>, Vec<crate::kube::resource::ScanWarning>) {
-    use crate::kube::scanner::{get_with_retry_ledger, list_with_selector_retry_ledger};
+    use crate::kube::scanner::{get_with_retry_planner, list_with_selector_retry_planner};
 
     let mut pods = Vec::new();
     let mut warnings = Vec::new();
@@ -526,7 +573,7 @@ async fn discover_controller_pods(
         let api: Api<DynamicObject> =
             Api::namespaced_with(client.clone(), &operator.install_namespace, &ar);
 
-        let deploy = match get_with_retry_ledger(
+        let deploy = match get_with_retry_planner(
             &api,
             deploy_name,
             &deploy_info.group,
@@ -535,6 +582,8 @@ async fn discover_controller_pods(
             ledger,
             ns,
             QueryRequirement::Required,
+            planner,
+            client,
         )
         .await
         {
@@ -579,7 +628,7 @@ async fn discover_controller_pods(
         let pod_api: Api<DynamicObject> =
             Api::namespaced_with(client.clone(), &operator.install_namespace, &pod_ar);
 
-        match list_with_selector_retry_ledger(
+        match list_with_selector_retry_planner(
             &pod_api,
             &label_str,
             &pod_info.group,
@@ -588,6 +637,8 @@ async fn discover_controller_pods(
             ledger,
             ns,
             QueryRequirement::Required,
+            planner,
+            client,
         )
         .await
         {
@@ -933,6 +984,7 @@ mod tests {
             coverage: None,
             incomplete_count: 0,
             coverage_ledger: None,
+            query_planner: None,
         };
         let json = serde_json::to_string(&inspection).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1053,6 +1105,7 @@ mod tests {
             coverage: Some(ledger.summary()),
             incomplete_count: 0,
             coverage_ledger: Some(ledger),
+            query_planner: None,
         };
 
         let json = serde_json::to_string_pretty(&inspection).unwrap();
@@ -1091,6 +1144,7 @@ mod tests {
             coverage: None,
             incomplete_count: 0,
             coverage_ledger: None,
+            query_planner: None,
         };
 
         assert!(
@@ -1134,6 +1188,7 @@ mod tests {
             coverage: Some(ledger.summary()),
             incomplete_count: 0,
             coverage_ledger: Some(ledger),
+            query_planner: None,
         };
 
         assert_eq!(inspection.scan_warning_count, 0);
@@ -1190,6 +1245,7 @@ mod tests {
                 coverage: Some(ledger.summary()),
                 incomplete_count: incomplete,
                 coverage_ledger: Some(ledger),
+                query_planner: None,
             }
         };
 

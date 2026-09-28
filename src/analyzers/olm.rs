@@ -464,13 +464,23 @@ pub async fn discover_operators(
     client: &Client,
     kind_map: &KindMap,
 ) -> Result<Vec<OperatorInstance>> {
-    discover_operators_opts(client, kind_map, None).await
+    discover_operators_full(client, kind_map, None, None).await
 }
 
 pub async fn discover_operators_opts(
     client: &Client,
     kind_map: &KindMap,
     ledger: Option<crate::kube::scanner::SharedLedger>,
+) -> Result<Vec<OperatorInstance>> {
+    discover_operators_full(client, kind_map, ledger, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_operators_full(
+    client: &Client,
+    kind_map: &KindMap,
+    ledger: Option<crate::kube::scanner::SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<Vec<OperatorInstance>> {
     let csv_info = match kind_map.get("ClusterServiceVersion") {
         Some(info) => info.clone(),
@@ -486,24 +496,52 @@ pub async fn discover_operators_opts(
     let sub_ar = ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
     let sub_api: Api<DynamicObject> = Api::all_with(client.clone(), &sub_ar);
 
-    let (csv_result, sub_result) = tokio::join!(
-        list_all_paginated_opts(
+    let (csv_result, sub_result) = if let Some(ref p) = planner {
+        let csv_fut = crate::kube::scanner::list_with_selector_retry_planner(
             &csv_api,
-            Some(CANONICAL_CSV_LABEL_SELECTOR),
+            CANONICAL_CSV_LABEL_SELECTOR,
             &csv_info.group,
             &csv_info.version,
             &csv_info.plural,
             ledger.as_ref(),
-        ),
-        list_all_paginated_opts(
-            &sub_api,
             None,
+            crate::kube::resource::QueryRequirement::Required,
+            Some(p),
+            client,
+        );
+        let sub_fut = crate::kube::scanner::list_all_with_retry_planner(
+            &sub_api,
             "operators.coreos.com",
             "v1alpha1",
             "subscriptions",
             ledger.as_ref(),
-        ),
-    );
+            None,
+            crate::kube::resource::QueryRequirement::Required,
+            Some(p),
+            client,
+        );
+        let (csv_r, sub_r) = tokio::join!(csv_fut, sub_fut);
+        (csv_r, sub_r)
+    } else {
+        tokio::join!(
+            list_all_paginated_opts(
+                &csv_api,
+                Some(CANONICAL_CSV_LABEL_SELECTOR),
+                &csv_info.group,
+                &csv_info.version,
+                &csv_info.plural,
+                ledger.as_ref(),
+            ),
+            list_all_paginated_opts(
+                &sub_api,
+                None,
+                "operators.coreos.com",
+                "v1alpha1",
+                "subscriptions",
+                ledger.as_ref(),
+            ),
+        )
+    };
     let csv_items = csv_result.map_err(|w| anyhow::anyhow!("{}", w))?;
     let sub_items = sub_result.map_err(|w| anyhow::anyhow!("{}", w))?;
 
@@ -1313,12 +1351,13 @@ pub fn infer_operator_from_labels(labels: &HashMap<String, String>) -> Option<(S
 pub async fn who_manages(
     input: &WhoManagesInput<'_>,
 ) -> std::result::Result<WhoManagesResult, WhoManagesError> {
-    who_manages_opts(input, None).await
+    who_manages_opts(input, None, None).await
 }
 
 pub async fn who_manages_opts(
     input: &WhoManagesInput<'_>,
     ledger: Option<crate::kube::scanner::SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> std::result::Result<WhoManagesResult, WhoManagesError> {
     let client = input.client;
     let kind = input.kind;
@@ -1373,7 +1412,7 @@ pub async fn who_manages_opts(
         } else {
             None
         };
-        let obj = match crate::kube::scanner::get_with_retry_ledger(
+        let obj = match crate::kube::scanner::get_with_retry_planner(
             &api,
             &current_name,
             &info.group,
@@ -1382,6 +1421,8 @@ pub async fn who_manages_opts(
             ledger.as_ref(),
             ns_for_ledger,
             crate::kube::resource::QueryRequirement::Required,
+            planner.as_ref(),
+            client,
         )
         .await
         {
@@ -1492,7 +1533,7 @@ pub async fn who_manages_opts(
                 } else {
                     None
                 };
-                match crate::kube::scanner::get_with_retry_ledger(
+                match crate::kube::scanner::get_with_retry_planner(
                     &next_api,
                     &oref.name,
                     &next_info.group,
@@ -1501,6 +1542,8 @@ pub async fn who_manages_opts(
                     ledger.as_ref(),
                     parent_ns_for_ledger,
                     crate::kube::resource::QueryRequirement::Required,
+                    planner.as_ref(),
+                    client,
                 )
                 .await
                 {
@@ -1567,7 +1610,9 @@ pub async fn who_manages_opts(
     if !chain_broken {
         for step in &steps {
             if step.kind == "ClusterServiceVersion" {
-                let operators = discover_operators_opts(client, kind_map, ledger.clone()).await?;
+                let operators =
+                    discover_operators_full(client, kind_map, ledger.clone(), planner.clone())
+                        .await?;
                 let matched_op = operators.iter().find(|op| {
                     op.csv.name == step.name
                         && step.namespace.as_deref() == Some(op.install_namespace.as_str())
@@ -1605,7 +1650,9 @@ pub async fn who_manages_opts(
             };
 
             if let Some(crd_name) = crd_name_for_lookup {
-                let operators = discover_operators_opts(client, kind_map, ledger.clone()).await?;
+                let operators =
+                    discover_operators_full(client, kind_map, ledger.clone(), planner.clone())
+                        .await?;
                 let matched_op = operators
                     .iter()
                     .find(|op| op.owned_crds.contains(&crd_name));
@@ -2481,7 +2528,7 @@ mod tests {
             gk_map: &gk_map,
         };
 
-        let result = who_manages_opts(&input, Some(ledger.clone())).await;
+        let result = who_manages_opts(&input, Some(ledger.clone()), None).await;
         // input borrows client/km/gk_map — just abort the mock handler
         spawned.abort();
 

@@ -1,0 +1,22 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 3 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-rhcl] elapsed 0s
+✅ Scanned 268 resource types in 17.8s
+   openshift-rhcl — 144 resources
+[namespace 2/2: openshift-ingress] elapsed 17s
+✅ Scanned 268 resource types in 15.9s
+   openshift-ingress — 139 resources
+   Scanned 2 namespace(s), 283 total resources
+   Found 26 ownerRef descendants in scanned namespaces
+
+Coverage: 554 queries, 554 success, 0 incomplete, 0 absent, 0 missing (191.8s)
+Query planner: 580 demands, 553 unique, 553 network, 27 cache hits (190.1s)

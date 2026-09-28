@@ -1,0 +1,131 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-28T05:20:56.260395729+00:00",
+  "targets": [
+    {
+      "package_name": "job-set",
+      "install_namespace": "openshift-jobset",
+      "csv_name_pattern": "jobset-operator.v1.0.1"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-jobset",
+          "name": "job-set",
+          "uid": "f8e7dd2b-f9e3-46ae-9a51-fef21dacd3d8",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-jobset",
+          "name": "jobset-operator.v1.0.1",
+          "uid": "38dd73e9-f576-4cde-a6ba-408d88b4844d",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "operator.openshift.io",
+          "kind": "JobSetOperator",
+          "namespace": null,
+          "name": "cluster",
+          "uid": "abb3381c-a882-41e2-8173-8edd759e9111",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-jobset",
+          "name": "jobset-operator.v1.0.1",
+          "uid": "38dd73e9-f576-4cde-a6ba-408d88b4844d",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-jobset",
+          "name": "job-set",
+          "uid": "72bbc813-6413-46ec-ab90-35a1760f0192",
+          "action": "DELETE"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-jobset",
+          "name": "openshift-jobset-operator-lock",
+          "uid": "ff993506-48a5-4d76-bd83-39a7a360f427",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "jobsetoperators.operator.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-jobset",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

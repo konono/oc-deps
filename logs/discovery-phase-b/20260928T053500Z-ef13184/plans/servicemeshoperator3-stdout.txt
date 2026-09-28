@@ -1,0 +1,108 @@
+Targets
+  servicemeshoperator3.v3.4.2 (ns: openshift-servicemesh) (Subscription/servicemeshoperator3@openshift-servicemesh)
+
+Preflight
+  ✓ Subscription resolved (servicemeshoperator3.v3.4.2) — Subscription/servicemeshoperator3 found — will be deleted in Phase 0
+  ✓ CSV health (servicemeshoperator3.v3.4.2) — phase=Succeeded
+  ✓ Controller available (servicemeshoperator3.v3.4.2) — servicemesh-operator3: Available (1)
+  ! Provenance — 10 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/servicemeshoperator3  (ns: openshift-servicemesh)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE DestinationRule/data-science-tls-rule  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE DestinationRule/maas-api-backend-tls  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE DestinationRule/payload-pre-processing  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE DestinationRule/payload-processing  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE EnvoyFilter/data-science-authn-filter  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE EnvoyFilter/kuadrant-auth-maas-default-gateway  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE EnvoyFilter/kuadrant-maas-default-gateway  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE EnvoyFilter/kuadrant-ratelimiting-maas-default-gateway  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE EnvoyFilter/maas-default-gateway-authn-ssl  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+  DELETE EnvoyFilter/payload-processing  (ns: openshift-ingress)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/servicemeshoperator3  (ns: openshift-servicemesh)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/sail-operator-lock  (ns: openshift-servicemesh)
+         leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/trafficextensions.extensions.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/wasmplugins.extensions.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/destinationrules.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/envoyfilters.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/gateways.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/proxyconfigs.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/serviceentries.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/sidecars.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/virtualservices.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/workloadentries.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/workloadgroups.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/ztunnels.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/authorizationpolicies.security.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/peerauthentications.security.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/requestauthentications.security.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/telemetries.telemetry.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiocnis.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiorevisions.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiorevisiontags.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istios.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-servicemesh  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  10 CRs have uncertain provenance (owned API, but origin unknown)
+  20 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 13 DELETE, 0 EXPECT-GONE, 22 KEEP, 1 REVIEW
+  0 blockers, 2 warnings

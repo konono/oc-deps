@@ -132,7 +132,10 @@ pub async fn discover_operator_namespaces(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> Result<NamespaceScopeResult> {
-    discover_operator_namespaces_opts(client, operator, kind_map, gvr_map, gk_map, None, None).await
+    discover_operator_namespaces_opts(
+        client, operator, kind_map, gvr_map, gk_map, None, None, None,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -144,6 +147,7 @@ pub async fn discover_operator_namespaces_opts(
     gk_map: &GroupKindMap,
     ledger: Option<crate::kube::scanner::SharedLedger>,
     cached_catalog: Option<&crate::kube::resource::CrdCatalog>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<NamespaceScopeResult> {
     let mut ns_evidence: HashMap<String, Vec<NamespaceEvidence>> = HashMap::new();
     let mut info_messages = Vec::new();
@@ -163,6 +167,7 @@ pub async fn discover_operator_namespaces_opts(
         &operator.install_namespace,
         kind_map,
         ledger.as_ref(),
+        planner.as_ref(),
     )
     .await;
     match og_result {
@@ -191,6 +196,7 @@ pub async fn discover_operator_namespaces_opts(
             gvr_map,
             gk_map,
             ledger.clone(),
+            planner.clone(),
         )
         .await;
         scan_failures.extend(cr_report.unavailable_crds);
@@ -213,6 +219,7 @@ pub async fn discover_operator_namespaces_opts(
             gvr_map,
             gk_map,
             ledger.as_ref(),
+            planner.as_ref(),
         )
         .await;
         scan_failures.extend(spec_failures);
@@ -238,6 +245,7 @@ pub async fn discover_operator_namespaces_opts(
         client,
         ledger.clone(),
         cached_catalog,
+        planner.clone(),
     )
     .await;
     scan_failures.extend(seed_errors);
@@ -252,6 +260,7 @@ pub async fn discover_operator_namespaces_opts(
             gk_map,
             ledger.clone(),
             cached_catalog,
+            planner.clone(),
         )
         .await;
         scan_failures.extend(related_report.unavailable_crds);
@@ -342,7 +351,7 @@ async fn discover_spec_namespace_refs(
     Vec<ScanWarning>,
     Vec<RejectedNamespaceCandidate>,
 ) {
-    discover_spec_namespace_refs_opts(client, target_crds, gvr_map, gk_map, None).await
+    discover_spec_namespace_refs_opts(client, target_crds, gvr_map, gk_map, None, None).await
 }
 
 async fn discover_spec_namespace_refs_opts(
@@ -351,6 +360,7 @@ async fn discover_spec_namespace_refs_opts(
     gvr_map: &crate::kube::discovery::GvrMap,
     gk_map: &crate::kube::discovery::GroupKindMap,
     ledger: Option<&crate::kube::scanner::SharedLedger>,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> (
     Vec<(String, String, String, String)>,
     Vec<ScanWarning>,
@@ -389,6 +399,8 @@ async fn discover_spec_namespace_refs_opts(
             ledger,
             Some(crate::kube::resource::QueryRequirement::Optional),
             None,
+            planner,
+            Some(client),
         )
         .await
         {
@@ -565,7 +577,7 @@ async fn discover_operator_group_targets(
     install_namespace: &str,
     _kind_map: &KindMap,
 ) -> std::result::Result<OgTargets, ScanWarning> {
-    discover_operator_group_targets_opts(client, install_namespace, _kind_map, None).await
+    discover_operator_group_targets_opts(client, install_namespace, _kind_map, None, None).await
 }
 
 async fn discover_operator_group_targets_opts(
@@ -573,6 +585,7 @@ async fn discover_operator_group_targets_opts(
     install_namespace: &str,
     _kind_map: &KindMap,
     ledger: Option<&crate::kube::scanner::SharedLedger>,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> std::result::Result<OgTargets, ScanWarning> {
     let og_gvk = GroupVersion::gv("operators.coreos.com", "v1").with_kind("OperatorGroup");
     let og_ar = ApiResource::from_gvk_with_plural(&og_gvk, "operatorgroups");
@@ -587,6 +600,8 @@ async fn discover_operator_group_targets_opts(
         ledger,
         Some(crate::kube::resource::QueryRequirement::Required),
         Some(install_namespace),
+        planner,
+        Some(client),
     )
     .await?;
 
@@ -648,15 +663,18 @@ pub async fn scan_candidate_namespaces(
     kind_map: &KindMap,
     already_scanned: Option<&str>,
 ) -> MultiNamespaceScanResult {
-    scan_candidate_namespaces_with_ledger(client, candidates, kind_map, already_scanned, None).await
+    scan_candidate_namespaces_with_ledger(client, candidates, kind_map, already_scanned, None, None)
+        .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn scan_candidate_namespaces_with_ledger(
     client: &Client,
     candidates: &[CandidateNamespace],
     kind_map: &KindMap,
     already_scanned: Option<&str>,
     coverage_ledger: Option<crate::kube::scanner::SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> MultiNamespaceScanResult {
     let mut combined_index = NamespaceIndex::new();
     let mut all_scan_warnings = Vec::new();
@@ -708,6 +726,7 @@ pub async fn scan_candidate_namespaces_with_ledger(
             None,
             &[],
             coverage_ledger.clone(),
+            planner.clone(),
         )
         .await;
         match result {
@@ -1319,6 +1338,7 @@ mod tests {
             "test-install-ns",
             &kind_map,
             Some(&ledger),
+            None,
         )
         .await;
         spawned.await.unwrap();

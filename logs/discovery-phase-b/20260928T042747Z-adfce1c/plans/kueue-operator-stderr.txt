@@ -1,0 +1,12 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+📄 Plan saved to /tmp/oc-deps-plans/teardown-kueue-operator.v1.4.2-2026-09-28T05-21-01.088909584_00-00.json
+📄 Execution plan saved to logs/discovery-phase-b/20260928T042747Z-adfce1c/plans/kueue-operator-plan.json
+
+⏱ Discovery: 0.0s, OLM: 2.3s, Plan: 2.3s, Total: 4.8s

@@ -1,0 +1,98 @@
+{
+  "phase": "B",
+  "workstream": 3,
+  "run_id": "20260928T053500Z-ef13184",
+  "round": 5,
+  "comparison_mode": "interleaved back-to-back per operator",
+  "tested_code_commit": "ef13184",
+  "evidence_commit": null,
+  "evidence_commit_note": "containing git commit is the evidence revision",
+  "base_commit": "bc3076e",
+  "base_binary_sha256": "a390171a4c21281f1cf63ddfd0690d9aec8347065f8eb2205131c1f7a0397d56",
+  "pr_binary_sha256": "94d87a2d8b33e7e261db1a146b0e06969df7e73e9ac6929a5330927b5def843b",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "results": {
+    "operator_resources": {
+      "total": 15,
+      "pr_exit_0": 15,
+      "base_exit_0": 15,
+      "strict_pass": 15,
+      "resource_identical": "11/15",
+      "relationship_identical": "11/15",
+      "warning_identical": "15/15",
+      "diffs": [
+        {
+          "operator": "authorino-operator",
+          "type": "api_alias",
+          "detail": "2 Role/RoleBinding same-UID alias swap: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "gpu-operator-certified",
+          "type": "api_alias",
+          "detail": "Role/RoleBinding same-UID alias swaps: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "rhcl-operator",
+          "type": "api_alias",
+          "detail": "2 Role/RoleBinding same-UID alias swap: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "rhods-operator",
+          "type": "api_alias",
+          "count": 34,
+          "detail": "34 Role/RoleBinding same-UID alias swaps: authorization.openshift.io → rbac.authorization.k8s.io"
+        },
+        {
+          "operator": "rhods-operator",
+          "type": "cluster_mutation",
+          "count": 4,
+          "detail": "base-only: PodMonitor/kubeflow-trainer-controller-manager-metrics-monitor, PodMonitor/kubeflow-training-operator-metrics-monitor, ServiceMonitor/controller-manager-metrics-monitor, ServiceMonitor/data-science-pipelines-operator-service-monitor"
+        }
+      ],
+      "alias_stability": "3 consecutive PR runs all select rbac.authorization.k8s.io"
+    },
+    "teardown_plan": {
+      "total": 15,
+      "all_exit_0": true,
+      "phase_a_match": "15/15",
+      "action_counts": {
+        "authorino-operator": 13,
+        "cert-manager-operator": 21,
+        "cluster-observability-operator": 27,
+        "dns-operator": 9,
+        "gpu-operator-certified": 12,
+        "job-set": 8,
+        "kueue-operator": 7,
+        "leader-worker-set": 7,
+        "limitador-operator": 9,
+        "nfd": 16,
+        "opentelemetry-product": 10,
+        "rhbk-operator": 9,
+        "rhcl-operator": 22,
+        "rhods-operator": 127,
+        "servicemeshoperator3": 36
+      }
+    },
+    "query_planner_live": {
+      "total_demands": 7565,
+      "total_cache_hits": 324
+    },
+    "quality_gates": {
+      "cargo_fmt": "pass",
+      "cargo_clippy": "pass",
+      "cargo_test": "1063 pass, 0 fail (final HEAD: see CI)",
+      "cargo_build_release": "pass"
+    },
+    "corpus": {
+      "sha256_verified": true,
+      "byte_identical": true,
+      "provider_operands": "25/25"
+    }
+  },
+  "safety_exclusions": {
+    "probe_uid": "not cached — apply-time revalidation",
+    "explicit_reference_guard": "not cached — inbound-ref check",
+    "executor_fresh_queries": "not cached — mutable state checks",
+    "metadata_only_crd_catalog": "existing command-scope cache"
+  }
+}

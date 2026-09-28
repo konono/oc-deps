@@ -1,0 +1,5777 @@
+{
+  "operator_name": "gpu-operator-certified",
+  "csv_name": "gpu-operator-certified.v26.7.1",
+  "install_namespace": "nvidia-gpu-operator",
+  "subscription_name": "gpu-operator-certified",
+  "owned_crds": [
+    "nvidiadrivers.nvidia.com",
+    "gpuclusters.nvidia.com",
+    "computedomains.resource.nvidia.com",
+    "computedomaincliques.resource.nvidia.com",
+    "clusterpolicies.nvidia.com"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-certified",
+            "uid": "a133f34c-0f19-4547-9ed8-9d6436176164"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-certified.v26.7.1",
+            "uid": "e9f156be-8626-4ce7-b8be-5fa96218ea88"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-6f47785c9b-bsjdm",
+            "uid": "4422dc2f-3863-4915-abdc-89de98fbd4d2"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "9524b86f-a32d-4d29-ad26-fd7eac76c9db"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator-584f874d56",
+            "uid": "6463c86b-dd1d-4851-8e67-f0630d0d22bb"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "7cde8a8a-8ccd-4769-94e6-9a72a64818ec"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-operator-validator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "5b6dcb07-b5e3-4dd6-ad3e-55063a4881d6"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "1c286cc7-1c88-47f1-9f78-fb255685ae4a"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": "463108d0-fe9d-4732-b364-57bd5688ce58"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0-vb9fd",
+            "uid": "52433110-4e23-47db-a517-0419e5e7155c"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0",
+            "uid": "d439aee4-05b9-40dc-ba8b-3662f6836960"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-driver-daemonset-9.8.20260908-0",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "ed8498cf-401a-481e-a8ae-6fe5dbeb87db"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "da0826aa-1070-42e6-a5ac-f44d9be5656f"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "ac7dc3b2-4bd1-464b-b74f-7899558a5074"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "prometheus-k8s",
+            "uid": "796eda5a-39ea-4a3d-85b5-d7f6868865c6"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-f6b8b7769",
+            "uid": "278dad1d-5235-4323-87a2-ed7b37195758"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "1c286cc7-1c88-47f1-9f78-fb255685ae4a"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset",
+            "uid": "c422cce9-fdfe-471b-ab65-3d24452a7eff"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager-dockercfg-64z8x",
+            "uid": "26c2c119-7370-4eaa-82fc-cfca7ae0c3e6"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "a5d53e24-28b3-46eb-ac42-3f2de5854cc8"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-mig-manager",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "d959ab3b-e198-40e0-9543-6a03a1619a23"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "18dec3fc-6de0-4b5b-a799-892728762523"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-cuda-validator-gblzc",
+            "uid": "59a99517-8043-470b-aae5-04017830aa20"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "default-gpu-clients",
+            "uid": "a7be99a2-8d48-43fb-886c-a53c0d42dc80"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-dockercfg-924bh",
+            "uid": "236ca5d3-48fb-4b6b-9bca-1b0d51d06376"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "588a0a62-e326-4b5a-9eb0-758c68e3270b"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "prometheus-k8s",
+            "uid": "56e1cc97-62ab-4ae3-8b5a-fd1010845f4b"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "20aa6fc3-fb7b-40d7-a44f-b3c26a95db5a"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon-dockercfg-j52kl",
+            "uid": "1692a61c-32ee-4152-9542-dd4062cccc6d"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "9c17f31f-cc97-4221-8787-5103c141fb6a"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-device-plugin-mps-control-daemon",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator-dockercfg-xxws5",
+            "uid": "dab72840-790c-4179-9524-4534f1179154"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "a98fd92f-fc13-4a4c-ad6f-9b329af6e0fe"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-operator-validator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "5b15d53a-2b69-4e53-878c-b0c3ff908e21"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "60ba3386-a749-47bf-953e-7e6f1ae8d892"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "a5d53e24-28b3-46eb-ac42-3f2de5854cc8"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "aed0f2eb-16c5-40f8-b562-c869228128bf"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager-entrypoint",
+            "uid": "fe3bca1b-2c6c-4001-a9bd-b95e510f00d6"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-entrypoint",
+            "uid": "3befe555-b156-430b-bcef-122d3c8f256f"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-6557f58dcf",
+            "uid": "3cabd4f7-43c3-4148-9223-21e0b9438f8b"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "5b6dcb07-b5e3-4dd6-ad3e-55063a4881d6"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-q5d75",
+            "uid": "8352db3a-397b-40f3-b607-744335faeb85"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "2dc3e3eb-5aee-40a0-9d51-c5b6b25ed18e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "PrometheusRule",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "a3a10a70-4882-407c-9a30-fe667eaf2703"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0-64c5cc5d87",
+            "uid": "a836e401-ff00-49bd-8e92-cec410cc1e67"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0",
+            "uid": "d439aee4-05b9-40dc-ba8b-3662f6836960"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-driver-daemonset-9.8.20260908-0",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery-dockercfg-v7k6d",
+            "uid": "d72b73e7-5508-4bfe-b9b1-d6945f98ab5d"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "aed0f2eb-16c5-40f8-b562-c869228128bf"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-gpu-feature-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "64e4fdb8-52e7-434e-9151-6de52481e0de"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "06f1f4fd-9380-48c6-a81a-d100379d2726"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "e12be82a-9563-475e-a79e-c2b55016c539"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "b26773bb-6478-42ba-bab8-94a6220fe4fa"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "ce665eae-3a6b-47ec-a6a5-c67f17a457d1"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator-sgccx",
+            "uid": "3de24d8e-20fe-4cb9-8914-5dbaa52e63be"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "7cde8a8a-8ccd-4769-94e6-9a72a64818ec"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-operator-validator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-8r7gm",
+            "uid": "bfe2d0a7-bed2-4f7c-9773-05d33b57dc5e"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "1ddff96c-a504-4e3e-9d68-2d092f2f1a11"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "PrometheusRule",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-operator-metrics",
+            "uid": "611827c4-a63b-48a8-97a6-8958aa541af8"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-dockercfg-ppsft",
+            "uid": "06508176-4ea4-4558-ae86-b900a4b02d24"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "cea39acc-cd8f-499f-a01c-6436d2eed1f9"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-entrypoint",
+            "uid": "a29a1247-7836-491b-9109-807ccc2f1293"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-dockercfg-tnw75",
+            "uid": "6d778a36-ddfa-42de-a1b6-99f73c8bb730"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "9524b86f-a32d-4d29-ad26-fd7eac76c9db"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-container-toolkit",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "02a0275d-a69b-4d85-abbf-6cfb45a7bea2"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "ServiceMonitor",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": "376eb23a-5608-42e8-bd2f-5b884deb9936"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-dockercfg-lh8vg",
+            "uid": "9ff76d69-f7bb-4797-9caa-e17bb5247ac9"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "5e954b43-6ee1-4190-8b0e-df69a1367eec"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-device-plugin",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "0cb3dbea-c3fc-46a0-85ef-b2890e9f3e0f"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-t5ccz",
+            "uid": "019bc6c8-e681-4f8b-be62-d422b033f492"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "6e1fba92-50a6-424e-a883-4e7b6d8f0954"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "f745b78c-51cc-4b61-85b2-f2554d2d44d6"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-daemonset-9.8.20260908-0",
+            "uid": "d439aee4-05b9-40dc-ba8b-3662f6836960"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-dockercfg-4n4x2",
+            "uid": "8f44893b-e568-4e2d-98dc-0511503cbecf"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "5b15d53a-2b69-4e53-878c-b0c3ff908e21"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "b22a6f37-01e9-4685-ac3c-acaf87b08b7d"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "de59fb68-d94c-444d-948a-63ea3f8abc29"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery-6c7bb984b",
+            "uid": "b7aab659-6ec9-4f1a-9a1a-d6bad0fd36cf"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery",
+            "uid": "1a8d47b6-1b16-4aa5-8334-a86b316c1d81"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/gpu-feature-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "default-mig-parted-config",
+            "uid": "1378b737-2e5a-4294-a306-c1f88b6c4c95"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-dockercfg-l4jxr",
+            "uid": "da6a63a5-a455-4ff0-aaba-08c8f3944876"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "18dec3fc-6de0-4b5b-a799-892728762523"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/nvidia-driver",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset-5d859fb4bd",
+            "uid": "fa0fd3e2-8edd-4ca5-9ba3-0ae5e3a68fb9"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset",
+            "uid": "332b0654-cbea-455d-8e7f-1610e4e3f7b0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-device-plugin-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "588a0a62-e326-4b5a-9eb0-758c68e3270b"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "ServiceMonitor",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "dead36ce-e2fa-468b-856b-6081d17cd81d"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon-77d699845b",
+            "uid": "2fbf3085-b0a0-4f14-b713-78c90bc434b7"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "e79e5b80-8e97-48e4-bc97-db9dc358a7f0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-device-plugin-mps-control-daemon",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-gpu-feature-discovery",
+            "uid": "2bbed52f-3aa9-4832-a669-ceee337ad98f"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-29s4p",
+            "uid": "512219f9-4d8f-41b0-9a87-b82cad54f85a"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "1c286cc7-1c88-47f1-9f78-fb255685ae4a"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "1ddff96c-a504-4e3e-9d68-2d092f2f1a11"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "2dc3e3eb-5aee-40a0-9d51-c5b6b25ed18e"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "675d2e09-396c-4fff-9a52-d15143272afd"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator-p9sdr",
+            "uid": "99de519d-fb64-486e-aa1e-0ed0a873002f"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-operator",
+            "uid": "463108d0-fe9d-4732-b364-57bd5688ce58"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/gpu-operator",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "monitoring.coreos.com",
+            "version": "v1",
+            "kind": "PrometheusRule",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-alerts",
+            "uid": "7c1207e0-cdfc-4024-bb52-7743af49e1b9"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "7cde8a8a-8ccd-4769-94e6-9a72a64818ec"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin",
+            "uid": "5e954b43-6ee1-4190-8b0e-df69a1367eec"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery",
+            "uid": "1a8d47b6-1b16-4aa5-8334-a86b316c1d81"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "e79e5b80-8e97-48e4-bc97-db9dc358a7f0"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "cea39acc-cd8f-499f-a01c-6436d2eed1f9"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset-vc5td",
+            "uid": "cebd9e62-7ccc-4332-8d9b-ed5151bf7d6d"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset",
+            "uid": "c422cce9-fdfe-471b-ab65-3d24452a7eff"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-container-toolkit-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ConfigMap",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver-startup-probe",
+            "uid": "39e1d168-43dc-401a-b73c-7453bbc723e3"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter-rbrqh",
+            "uid": "b505a5ba-8518-476f-a76d-83234e7cc18d"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "5b6dcb07-b5e3-4dd6-ad3e-55063a4881d6"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-dcgm-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "c0ba4c9c-deb1-4cef-88b7-af9d57b74cdc"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit",
+            "uid": "26738ede-b907-4482-b5ee-656a65579654"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter-6fdb89ccdf",
+            "uid": "5304211b-fad5-4d0a-9e0d-8adf38a07891"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "2dc3e3eb-5aee-40a0-9d51-c5b6b25ed18e"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-node-status-exporter",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-exporter",
+            "uid": "35ac8ea9-8240-4003-801b-77d148d18568"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm-sxw9d",
+            "uid": "3bf83f35-3279-4329-9001-5aa76225f8a5"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-dcgm",
+            "uid": "0cb3dbea-c3fc-46a0-85ef-b2890e9f3e0f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/nvidia-dcgm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset",
+            "uid": "332b0654-cbea-455d-8e7f-1610e4e3f7b0"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset-654wc",
+            "uid": "d9ce3962-bf4e-4469-a293-ffb2176d6ea5"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-daemonset",
+            "uid": "332b0654-cbea-455d-8e7f-1610e4e3f7b0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-device-plugin-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-operator-validator",
+            "uid": "a98fd92f-fc13-4a4c-ad6f-9b329af6e0fe"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "rbac.authorization.k8s.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-driver",
+            "uid": "a721fab9-0616-48c5-96bf-352ed316bcac"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager-646f9ddf9f",
+            "uid": "1e151b95-3c8f-43b9-b6d4-ba53df6e50ff"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-mig-manager",
+            "uid": "ac7dc3b2-4bd1-464b-b74f-7899558a5074"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-mig-manager",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-device-plugin-mps-control-daemon",
+            "uid": "9c17f31f-cc97-4221-8787-5103c141fb6a"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset-68fc9c98df",
+            "uid": "0384039f-103a-4877-ad0e-ddae64143907"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-container-toolkit-daemonset",
+            "uid": "c422cce9-fdfe-471b-ab65-3d24452a7eff"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/nvidia-container-toolkit-daemonset",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery-2zm7s",
+            "uid": "e0049930-ba0e-413c-bca1-29f53ccf842a"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "DaemonSet",
+            "namespace": "nvidia-gpu-operator",
+            "name": "gpu-feature-discovery",
+            "uid": "1a8d47b6-1b16-4aa5-8334-a86b316c1d81"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of DaemonSet/gpu-feature-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "nvidia-gpu-operator",
+            "name": "nvidia-node-status-exporter",
+            "uid": "6e1fba92-50a6-424e-a883-4e7b6d8f0954"
+          },
+          "source_id": {
+            "group": "nvidia.com",
+            "version": "v1",
+            "kind": "ClusterPolicy",
+            "namespace": null,
+            "name": "gpu-cluster-policy",
+            "uid": "8563c283-dd74-4d85-bbb7-5ba97d6ee29c"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ClusterPolicy/gpu-cluster-policy",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "nvidia-gpu-operator",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus"
+      ]
+    }
+  ],
+  "scan_warning_count": 0,
+  "coverage": {
+    "total_queries": 290,
+    "success": 290,
+    "incomplete": 0,
+    "api_absent": 0,
+    "target_missing": 0,
+    "total_elapsed_ms": 127760
+  },
+  "incomplete_count": 0,
+  "coverage_ledger": {
+    "schema_version": 1,
+    "records": [
+      {
+        "gvr": "acme.cert-manager.io/v1/challenges",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "acme.cert-manager.io/v1/orders",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apiextensions.k8s.io/v1/customresourcedefinitions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 395,
+          "pages": 1
+        },
+        "elapsed_ms": 1081,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "app.k8s.io/v1beta1/applications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps.openshift.io/v1/deploymentconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 266,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/controllerrevisions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 840,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/daemonsets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 867,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 383,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "Get",
+        "target_name": "gpu-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/replicasets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/statefulsets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 448,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/cronworkflows",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowartifactgctasks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 821,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workfloweventbindings",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 291,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflows",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtaskresults",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtasksets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 283,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtemplates",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 409,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorino.kuadrant.io/v1beta3/authconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindingrestrictions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 437,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling.openshift.io/v1beta1/machineautoscalers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling/v2/horizontalpodautoscalers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 812,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/cronjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/jobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/buildconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 289,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/builds",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 452,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpoolradosnamespaces",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 411,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpools",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 283,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbucketnotifications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbuckettopics",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1019,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclients",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclusters",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 286,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephcosidrivers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1008,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemmirrors",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 426,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystems",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemsubvolumegroups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnfses",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 847,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnvmeofgateways",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 589,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectrealms",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreaccounts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstores",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreusers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzonegroups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzones",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 178,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephrbdmirrors",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 283,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificaterequests",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 407,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificates",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 264,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/issuers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 853,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cloudcredential.openshift.io/v1/credentialsrequests",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "config.openshift.io/v1/imagepolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "console.openshift.io/v1/odhquickstarts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1008,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 340,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "coordination.k8s.io/v1/leases",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 659,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/cephconnections",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofilemappings",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofiles",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/drivers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/operatorconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/csiaddonsnodes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 389,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationcronjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 831,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 450,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacecronjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 638,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacejobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhapplications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 809,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhdocuments",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "datasciencepipelinesapplications.opendatahub.io/v1/datasciencepipelinesapplications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyapprovals",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyrequests",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeys",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 203,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apiproducts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "discovery.k8s.io/v1/endpointslices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/trafficextensions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/wasmplugins",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 337,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/oidcpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/planpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 411,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/telemetrypolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 993,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "feast.dev/v1/featurestores",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 180,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/backendtlspolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 264,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/gateways",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/grpcroutes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/httproutes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1beta1/referencegrants",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 245,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "groupsnapshot.storage.openshift.io/v1beta1/volumegroupsnapshots",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 579,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "helm.openshift.io/v1beta1/projecthelmchartrepositories",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreams",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreamtags",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagetags",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.networking.x-k8s.io/v1alpha2/inferencepools",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 274,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.opendatahub.io/v1alpha1/externalproviders",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 439,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediations",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediationtemplates",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.opendatahub.io/v1/hardwareprofiles",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 261,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ingress.operator.openshift.io/v1/dnsrecords",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 471,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddressclaims",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddresses",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 262,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "jobset.x-k8s.io/v1alpha2/jobsets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 341,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1/network-attachment-definitions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 523,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1alpha1/ipamclaims",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloakrealmimports",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 431,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloaks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressfirewalls",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressqoses",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressservices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 214,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/userdefinednetworks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 458,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/authpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/dnspolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/ratelimitpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/tlspolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 823,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/dnshealthcheckprobes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 578,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/tokenratelimitpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 452,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1beta1/kuadrants",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 823,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/jaxjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1022,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/mpijobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 551,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/notebooks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 597,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/paddlejobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 537,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/pytorchjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/tfjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 179,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/xgboostjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 415,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/scheduledworkflows",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/viewers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 283,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "limitador.kuadrant.io/v1alpha1/limitadors",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 345,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferencemodelrewrites",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 458,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferenceobjectives",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 267,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/aitenants",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/externalmodels",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 295,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasauthpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 410,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasmodelrefs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 652,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maassubscriptions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maastenantconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/tenants",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1/controlplanemachinesets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinehealthchecks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 553,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machines",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinesets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 638,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/baremetalhosts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/bmceventsubscriptions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 291,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/dataimages",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/firmwareschemas",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 407,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hardwaredata",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwarecomponents",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwaresettings",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostupdatepolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 449,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/preprovisioningimages",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 407,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metrics.k8s.io/v1beta1/pods",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 8,
+          "pages": 1
+        },
+        "elapsed_ms": 290,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "mlflow.kubeflow.org/v1/mlflowconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/alertmanagers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1013,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/podmonitors",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 626,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/probes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheuses",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheusrules",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/servicemonitors",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 640,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/thanosrulers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 183,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertingrules",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertrelabelconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/alertmanagerconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/monitoringstacks",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 285,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/prometheusagents",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 471,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/scrapeconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/thanosqueriers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/egressrouters",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/operatorpkis",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 456,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/destinationrules",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/serviceentries",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 349,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/sidecars",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/virtualservices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadentries",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadgroups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 286,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1alpha3/envoyfilters",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 437,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1beta1/proxyconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/networkpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturegroups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturerules",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 310,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeatures",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.openshift.io/v1/nodefeaturediscoveries",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 258,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nim.opendatahub.io/v1/accounts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1019,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/backingstores",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 266,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/bucketclasses",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 285,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/namespacestores",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaaaccounts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 832,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaas",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1/clusterpolicies",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 617,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1/clusterpolicies",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1/clusterpolicies",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Optional"
+      },
+      {
+        "gvr": "nvidia.com/v1alpha1/gpuclusters",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1alpha1/gpuclusters",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1alpha1/gpuclusters",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Optional"
+      },
+      {
+        "gvr": "nvidia.com/v1alpha1/nvidiadrivers",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1alpha1/nvidiadrivers",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nvidia.com/v1alpha1/nvidiadrivers",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 247,
+        "requirement": "Optional"
+      },
+      {
+        "gvr": "objectbucket.io/v1alpha1/objectbucketclaims",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 290,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "observability.openshift.io/v1alpha1/observabilityinstallers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 443,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/ocsinitializations",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageautoscalers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 299,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusterpeers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 256,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusters",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 658,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/tlsprofiles",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1alpha1/storageconsumers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 401,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ogx.io/v1beta1/ogxservers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 245,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opendatahub.io/v1alpha/odhdashboardconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 388,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/instrumentations",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 254,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/opampbridges",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 853,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/targetallocators",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1beta1/opentelemetrycollectors",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 658,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.authorino.kuadrant.io/v1beta1/authorinos",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 658,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/ingresscontrollers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 451,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/catalogsources",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 588,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "scope": "cluster",
+        "operation": "List",
+        "label_selector": "!olm.copiedFrom",
+        "outcome": {
+          "outcome": "Success",
+          "count": 29,
+          "pages": 1
+        },
+        "elapsed_ms": 1888,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 11,
+          "pages": 1
+        },
+        "elapsed_ms": 1968,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/installplans",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 802,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/subscriptions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 28,
+          "pages": 1
+        },
+        "elapsed_ms": 1233,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v2/operatorconditions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 537,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "packages.operators.coreos.com/v1/packagemanifests",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 617,
+          "pages": 1
+        },
+        "elapsed_ms": 16947,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/perses",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 284,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdashboards",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 275,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdatasources",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 853,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelines",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelineversions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "policy/v1/poddisruptionbudgets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 338,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/backups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/clusters",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/databases",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 633,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/failoverquorums",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1008,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/imagecatalogs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 641,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/poolers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/publications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/scheduledbackups",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/subscriptions",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "quota.openshift.io/v1/appliedclusterresourcequotas",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ramendr.openshift.io/v1alpha1/recipes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 652,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayclusters",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/raycronjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 429,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 565,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayservices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "rbac.authorization.k8s.io/v1/rolebindings",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 16,
+          "pages": 1
+        },
+        "elapsed_ms": 580,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "rbac.authorization.k8s.io/v1/roles",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 13,
+          "pages": 1
+        },
+        "elapsed_ms": 488,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "redhatcop.redhat.io/v1alpha1/groupsyncs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumegroupreplications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 384,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumereplications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 295,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaims",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 639,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaimtemplates",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 250,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 432,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Optional"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 430,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Optional"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 296,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "route.openshift.io/v1/routes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/authorizationpolicies",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/peerauthentications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/requestauthentications",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/inferencegraphs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 448,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/servingruntimes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/trainedmodels",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 309,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceserviceconfigs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 529,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceservices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 239,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1beta1/inferenceservices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 462,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "snapshot.storage.k8s.io/v1/volumesnapshots",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 295,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "storage.k8s.io/v1/csistoragecapacities",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 831,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "telemetry.istio.io/v1/telemetries",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 644,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templateinstances",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 577,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templates",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 994,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainingruntimes",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainjobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/evalhubs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/trustyaiservices",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 439,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/guardrailsorchestrators",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 847,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/lmevaljobs",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/nemoguardrails",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/profiles",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/tuneds",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 350,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/configmaps",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 1479,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/endpoints",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 631,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/limitranges",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/persistentvolumeclaims",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 826,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 760,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "label_selector": "app=gpu-operator,app.kubernetes.io/component=gpu-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/podtemplates",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/replicationcontrollers",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 313,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/resourcequotas",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 855,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/secrets",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 14,
+          "pages": 1
+        },
+        "elapsed_ms": 771,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/serviceaccounts",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 14,
+          "pages": 1
+        },
+        "elapsed_ms": 466,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/services",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/ippools",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 568,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/nodeslicepools",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 537,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/overlappingrangeipreservations",
+        "namespace": "nvidia-gpu-operator",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 261,
+        "requirement": "Required"
+      }
+    ]
+  }
+}

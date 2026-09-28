@@ -1,0 +1,54 @@
+Targets
+  rhbk-operator.v26.6.7-opr.1 (ns: keycloak) (Subscription/rhbk-operator@keycloak)
+
+Preflight
+  ✓ Subscription resolved (rhbk-operator.v26.6.7-opr.1) — Subscription/rhbk-operator found — will be deleted in Phase 0
+  ✓ CSV health (rhbk-operator.v26.6.7-opr.1) — phase=Succeeded
+  ✓ Controller available (rhbk-operator.v26.6.7-opr.1) — rhbk-operator: Available (1)
+  ! Provenance — 2 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/rhbk-operator  (ns: keycloak)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE Keycloak/keycloak  (ns: keycloak)
+         independent CR approved via --approve-scope independent
+  DELETE KeycloakRealmImport/maas-realm  (ns: keycloak)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/rhbk-operator  (ns: keycloak)
+         operator group approved via --approve-scope operator-group
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/keycloak  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  2 CRs have uncertain provenance (owned API, but origin unknown)
+  2 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 5 DELETE, 0 EXPECT-GONE, 4 KEEP, 0 REVIEW
+  0 blockers, 2 warnings

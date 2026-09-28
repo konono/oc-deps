@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: nvidia-gpu-operator] elapsed 0s
+✅ Scanned 269 resource types in 16.0s
+   nvidia-gpu-operator — 126 resources
+   Scanned 1 namespace(s), 126 total resources
+   Found 85 ownerRef descendants in scanned namespaces
+
+Coverage: 279 queries, 279 success, 0 incomplete, 0 absent, 0 missing (126.4s)
+Query planner: 289 demands, 278 unique, 278 network, 11 cache hits (123.6s)

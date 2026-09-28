@@ -1,0 +1,65 @@
+{
+  "phase": "B",
+  "workstream": 3,
+  "run_id": "20260928T021906Z-13b52ad",
+  "comparison_mode": "back-to-back same cluster window",
+  "base_commit": "bc3076e",
+  "pr_commit": "13b52ad",
+  "base_binary_sha256": "a390171a4c21281f1cf63ddfd0690d9aec8347065f8eb2205131c1f7a0397d56",
+  "pr_binary_sha256": "6a5765b5f50a5e3762218239d47a0b0f00d6901510a7faa59ae09710c400a118",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "results": {
+    "operator_resources": {
+      "total": 15,
+      "base_exit_0": 15,
+      "pr_exit_0": 15,
+      "strict_pass": 15,
+      "json_valid": 15,
+      "resource_identical": "15/15",
+      "warning_identical": "15/15"
+    },
+    "trace": {
+      "base_exit": 0,
+      "pr_exit": 0
+    },
+    "teardown_plan": {
+      "pr_exit": 0,
+      "csv": "rhods-operator.3.5.1"
+    },
+    "query_planner_live_metrics": {
+      "total_demands": 7561,
+      "total_network_queries": 7237,
+      "total_cache_hits": 324,
+      "deduplicated_queries": 324,
+      "note": "324 queries saved across 15 operators via command-scope dedup"
+    },
+    "per_operator_cache_hits": {
+      "authorino-operator": 5,
+      "cert-manager-operator": 21,
+      "cluster-observability-operator": 40,
+      "dns-operator": 5,
+      "gpu-operator-certified": 11,
+      "job-set": 6,
+      "kueue-operator": 3,
+      "leader-worker-set": 6,
+      "limitador-operator": 3,
+      "nfd": 13,
+      "opentelemetry-product": 10,
+      "rhbk-operator": 7,
+      "rhcl-operator": 27,
+      "rhods-operator": 107,
+      "servicemeshoperator3": 60
+    },
+    "corpus": {
+      "sha256_verified": true,
+      "byte_identical": true,
+      "provider_operands": "25/25"
+    },
+    "quality_gates": {
+      "cargo_fmt": "pass",
+      "cargo_clippy": "pass",
+      "cargo_test": "1060 pass, 0 fail",
+      "cargo_build_release": "pass"
+    }
+  }
+}

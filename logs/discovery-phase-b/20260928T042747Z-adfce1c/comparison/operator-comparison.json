@@ -1,0 +1,246 @@
+{
+  "operators": {
+    "authorino-operator": {
+      "cache_hits": 5,
+      "coverage_total": 277,
+      "demands": 281,
+      "ledger_records": 277,
+      "network": 276,
+      "relationship_count": 27,
+      "relationship_identical": false,
+      "resource_count": 27,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "cert-manager-operator": {
+      "cache_hits": 21,
+      "coverage_total": 553,
+      "demands": 573,
+      "ledger_records": 553,
+      "network": 552,
+      "relationship_count": 9,
+      "relationship_identical": true,
+      "resource_count": 9,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "cluster-observability-operator": {
+      "cache_hits": 40,
+      "coverage_total": 569,
+      "demands": 608,
+      "ledger_records": 569,
+      "network": 568,
+      "relationship_count": 19,
+      "relationship_identical": true,
+      "resource_count": 19,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "dns-operator": {
+      "cache_hits": 5,
+      "coverage_total": 276,
+      "demands": 280,
+      "ledger_records": 276,
+      "network": 275,
+      "relationship_count": 5,
+      "relationship_identical": true,
+      "resource_count": 5,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "gpu-operator-certified": {
+      "cache_hits": 11,
+      "coverage_total": 279,
+      "demands": 289,
+      "ledger_records": 279,
+      "network": 278,
+      "relationship_count": 91,
+      "relationship_identical": false,
+      "resource_count": 91,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "job-set": {
+      "cache_hits": 6,
+      "coverage_total": 278,
+      "demands": 283,
+      "ledger_records": 278,
+      "network": 277,
+      "relationship_count": 25,
+      "relationship_identical": true,
+      "resource_count": 25,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "kueue-operator": {
+      "cache_hits": 3,
+      "coverage_total": 274,
+      "demands": 276,
+      "ledger_records": 274,
+      "network": 273,
+      "relationship_count": 6,
+      "relationship_identical": true,
+      "resource_count": 6,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "leader-worker-set": {
+      "cache_hits": 6,
+      "coverage_total": 278,
+      "demands": 283,
+      "ledger_records": 278,
+      "network": 277,
+      "relationship_count": 5,
+      "relationship_identical": true,
+      "resource_count": 5,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "limitador-operator": {
+      "cache_hits": 3,
+      "coverage_total": 275,
+      "demands": 277,
+      "ledger_records": 275,
+      "network": 274,
+      "relationship_count": 15,
+      "relationship_identical": true,
+      "resource_count": 15,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "nfd": {
+      "cache_hits": 13,
+      "coverage_total": 549,
+      "demands": 561,
+      "ledger_records": 549,
+      "network": 548,
+      "relationship_count": 17,
+      "relationship_identical": true,
+      "resource_count": 17,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "opentelemetry-product": {
+      "cache_hits": 10,
+      "coverage_total": 280,
+      "demands": 289,
+      "ledger_records": 280,
+      "network": 279,
+      "relationship_count": 8,
+      "relationship_identical": true,
+      "resource_count": 8,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "rhbk-operator": {
+      "cache_hits": 7,
+      "coverage_total": 277,
+      "demands": 283,
+      "ledger_records": 277,
+      "network": 276,
+      "relationship_count": 21,
+      "relationship_identical": true,
+      "resource_count": 21,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "rhcl-operator": {
+      "cache_hits": 27,
+      "coverage_total": 556,
+      "demands": 582,
+      "ledger_records": 556,
+      "network": 555,
+      "relationship_count": 35,
+      "relationship_identical": true,
+      "resource_count": 35,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "rhods-operator": {
+      "cache_hits": 107,
+      "coverage_total": 1975,
+      "demands": 2081,
+      "ledger_records": 1975,
+      "network": 1974,
+      "relationship_count": 322,
+      "relationship_identical": false,
+      "resource_count": 322,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "servicemeshoperator3": {
+      "cache_hits": 60,
+      "coverage_total": 561,
+      "demands": 620,
+      "ledger_records": 561,
+      "network": 560,
+      "relationship_count": 15,
+      "relationship_identical": true,
+      "resource_count": 15,
+      "resource_identical": true,
+      "warning_identical": true
+    }
+  },
+  "plans": {
+    "authorino-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "cert-manager-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "cluster-observability-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "dns-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "gpu-operator-certified": {
+      "action_count": 0,
+      "match": true
+    },
+    "job-set": {
+      "action_count": 0,
+      "match": true
+    },
+    "kueue-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "leader-worker-set": {
+      "action_count": 0,
+      "match": true
+    },
+    "limitador-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "nfd": {
+      "action_count": 0,
+      "match": true
+    },
+    "opentelemetry-product": {
+      "action_count": 0,
+      "match": true
+    },
+    "rhbk-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "rhcl-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "rhods-operator": {
+      "action_count": 0,
+      "match": true
+    },
+    "servicemeshoperator3": {
+      "action_count": 0,
+      "match": true
+    }
+  }
+}

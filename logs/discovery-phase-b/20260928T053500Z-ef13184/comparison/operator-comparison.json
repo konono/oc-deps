@@ -1,0 +1,231 @@
+{
+  "operators": {
+    "authorino-operator": {
+      "cache_hits": 5,
+      "demands": 280,
+      "relationship_identical": false,
+      "resource_count": 27,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "cert-manager-operator": {
+      "cache_hits": 21,
+      "demands": 573,
+      "relationship_identical": true,
+      "resource_count": 9,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "cluster-observability-operator": {
+      "cache_hits": 40,
+      "demands": 606,
+      "relationship_identical": true,
+      "resource_count": 19,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "dns-operator": {
+      "cache_hits": 5,
+      "demands": 280,
+      "relationship_identical": true,
+      "resource_count": 5,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "gpu-operator-certified": {
+      "cache_hits": 11,
+      "demands": 289,
+      "relationship_identical": false,
+      "resource_count": 91,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "job-set": {
+      "cache_hits": 6,
+      "demands": 283,
+      "relationship_identical": true,
+      "resource_count": 25,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "kueue-operator": {
+      "cache_hits": 3,
+      "demands": 277,
+      "relationship_identical": true,
+      "resource_count": 6,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "leader-worker-set": {
+      "cache_hits": 6,
+      "demands": 283,
+      "relationship_identical": true,
+      "resource_count": 5,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "limitador-operator": {
+      "cache_hits": 3,
+      "demands": 277,
+      "relationship_identical": true,
+      "resource_count": 15,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "nfd": {
+      "cache_hits": 13,
+      "demands": 561,
+      "relationship_identical": true,
+      "resource_count": 17,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "opentelemetry-product": {
+      "cache_hits": 10,
+      "demands": 289,
+      "relationship_identical": true,
+      "resource_count": 8,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "rhbk-operator": {
+      "cache_hits": 7,
+      "demands": 282,
+      "relationship_identical": true,
+      "resource_count": 21,
+      "resource_identical": true,
+      "warning_identical": true
+    },
+    "rhcl-operator": {
+      "cache_hits": 27,
+      "demands": 582,
+      "relationship_identical": false,
+      "resource_count": 35,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "rhods-operator": {
+      "cache_hits": 107,
+      "demands": 2081,
+      "relationship_identical": false,
+      "resource_count": 322,
+      "resource_identical": false,
+      "warning_identical": true
+    },
+    "servicemeshoperator3": {
+      "cache_hits": 60,
+      "demands": 622,
+      "relationship_identical": true,
+      "resource_count": 15,
+      "resource_identical": true,
+      "warning_identical": true
+    }
+  },
+  "plans": {
+    "authorino-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 13,
+      "phase_b_count": 13
+    },
+    "cert-manager-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 21,
+      "phase_b_count": 21
+    },
+    "cluster-observability-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 27,
+      "phase_b_count": 27
+    },
+    "dns-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 9,
+      "phase_b_count": 9
+    },
+    "gpu-operator-certified": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 12,
+      "phase_b_count": 12
+    },
+    "job-set": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 8,
+      "phase_b_count": 8
+    },
+    "kueue-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 7,
+      "phase_b_count": 7
+    },
+    "leader-worker-set": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 7,
+      "phase_b_count": 7
+    },
+    "limitador-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 9,
+      "phase_b_count": 9
+    },
+    "nfd": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 16,
+      "phase_b_count": 16
+    },
+    "opentelemetry-product": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 10,
+      "phase_b_count": 10
+    },
+    "rhbk-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 9,
+      "phase_b_count": 9
+    },
+    "rhcl-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 22,
+      "phase_b_count": 22
+    },
+    "rhods-operator": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 127,
+      "phase_b_count": 127
+    },
+    "servicemeshoperator3": {
+      "match": true,
+      "only_base": 0,
+      "only_pr": 0,
+      "phase_a_count": 36,
+      "phase_b_count": 36
+    }
+  }
+}

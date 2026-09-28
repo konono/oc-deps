@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   Discovery: 34.8s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-jobset] elapsed 0s
+✅ Scanned 268 resource types in 27.2s
+   openshift-jobset — 60 resources
+   Scanned 1 namespace(s), 60 total resources
+   Found 19 ownerRef descendants in scanned namespaces
+
+Coverage: 283 queries, 283 success, 0 incomplete, 0 absent, 0 missing (143.1s)

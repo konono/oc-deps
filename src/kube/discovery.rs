@@ -30,6 +30,86 @@ pub async fn load_config_and_client() -> Result<(Config, Client)> {
     Ok((config, client))
 }
 
+/// Pure helper: populate maps from versioned + recommended resources for one API group.
+/// versioned uses or_insert (first wins), recommended uses insert (overwrites — preferred).
+/// Called per group in groups_alphabetical() order.
+pub(crate) fn populate_kind_maps(
+    versioned: &[(kube::api::ApiResource, kube::discovery::ApiCapabilities)],
+    recommended: &[(kube::api::ApiResource, kube::discovery::ApiCapabilities)],
+    kind_map: &mut KindMap,
+    gvr_map: &mut GvrMap,
+    gk_map: &mut GroupKindMap,
+    gvk_map: &mut GvkMap,
+) {
+    for (ar, caps) in versioned {
+        let kind = ar.kind.clone();
+        let group_name = ar.group.clone();
+        let plural = ar.plural.clone();
+        let namespaced = caps.scope == Scope::Namespaced;
+        let listable = caps.supports_operation(verbs::LIST);
+
+        let info = KindInfo {
+            group: group_name.clone(),
+            version: ar.version.clone(),
+            plural: plural.clone(),
+            namespaced,
+            listable,
+        };
+
+        let gvr_key = if group_name.is_empty() {
+            plural.clone()
+        } else {
+            format!("{}.{}", plural, group_name)
+        };
+
+        kind_map.entry(kind.clone()).or_insert_with(|| info.clone());
+        gk_map
+            .entry((group_name.clone(), kind.clone()))
+            .or_insert_with(|| info.clone());
+        gvk_map
+            .entry((group_name.clone(), ar.version.clone(), kind.clone()))
+            .or_insert_with(|| info);
+        gvr_map
+            .entry(gvr_key.to_lowercase())
+            .or_insert_with(|| kind.clone());
+        if !group_name.is_empty() {
+            let singular_key = format!("{}.{}", kind.to_lowercase(), group_name);
+            gvr_map.entry(singular_key).or_insert_with(|| kind.clone());
+        }
+    }
+
+    for (ar, caps) in recommended {
+        let kind = ar.kind.clone();
+        let group_name = ar.group.clone();
+        let plural = ar.plural.clone();
+        let namespaced = caps.scope == Scope::Namespaced;
+        let listable = caps.supports_operation(verbs::LIST);
+
+        let info = KindInfo {
+            group: group_name.clone(),
+            version: ar.version.clone(),
+            plural: plural.clone(),
+            namespaced,
+            listable,
+        };
+
+        kind_map.insert(kind.clone(), info.clone());
+        gk_map.insert((group_name.clone(), kind.clone()), info.clone());
+        gvk_map.insert((group_name.clone(), ar.version.clone(), kind.clone()), info);
+
+        let gvr_key = if group_name.is_empty() {
+            plural.clone()
+        } else {
+            format!("{}.{}", plural, group_name)
+        };
+        gvr_map.insert(gvr_key.to_lowercase(), kind.clone());
+        if !group_name.is_empty() {
+            let singular_key = format!("{}.{}", kind.to_lowercase(), group_name);
+            gvr_map.insert(singular_key, kind.clone());
+        }
+    }
+}
+
 pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, GroupKindMap, GvkMap)> {
     let discovery = Discovery::new(client.clone()).run().await?;
     let mut kind_map = KindMap::new();
@@ -37,76 +117,23 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, Grou
     let mut gk_map = GroupKindMap::new();
     let mut gvk_map = GvkMap::new();
 
-    for group in discovery.groups() {
+    for group in discovery.groups_alphabetical() {
+        let mut versioned = Vec::new();
         for version in group.versions() {
             for (ar, caps) in group.versioned_resources(version) {
-                let kind = ar.kind.clone();
-                let group_name = ar.group.clone();
-                let plural = ar.plural.clone();
-                let namespaced = caps.scope == Scope::Namespaced;
-                let listable = caps.supports_operation(verbs::LIST);
-
-                let info = KindInfo {
-                    group: group_name.clone(),
-                    version: ar.version.clone(),
-                    plural: plural.clone(),
-                    namespaced,
-                    listable,
-                };
-
-                let gvr_key = if group_name.is_empty() {
-                    plural.clone()
-                } else {
-                    format!("{}.{}", plural, group_name)
-                };
-
-                kind_map.entry(kind.clone()).or_insert_with(|| info.clone());
-                gk_map
-                    .entry((group_name.clone(), kind.clone()))
-                    .or_insert_with(|| info.clone());
-                gvk_map
-                    .entry((group_name.clone(), ar.version.clone(), kind.clone()))
-                    .or_insert_with(|| info);
-                gvr_map
-                    .entry(gvr_key.to_lowercase())
-                    .or_insert_with(|| kind.clone());
-                if !group_name.is_empty() {
-                    let singular_key = format!("{}.{}", kind.to_lowercase(), group_name);
-                    gvr_map.entry(singular_key).or_insert_with(|| kind.clone());
-                }
+                versioned.push((ar, caps));
             }
         }
+        let recommended = group.recommended_resources();
 
-        for (ar, caps) in group.recommended_resources() {
-            let kind = ar.kind.clone();
-            let group_name = ar.group.clone();
-            let plural = ar.plural.clone();
-            let namespaced = caps.scope == Scope::Namespaced;
-            let listable = caps.supports_operation(verbs::LIST);
-
-            let info = KindInfo {
-                group: group_name.clone(),
-                version: ar.version.clone(),
-                plural: plural.clone(),
-                namespaced,
-                listable,
-            };
-
-            kind_map.insert(kind.clone(), info.clone());
-            gk_map.insert((group_name.clone(), kind.clone()), info.clone());
-            gvk_map.insert((group_name.clone(), ar.version.clone(), kind.clone()), info);
-
-            let gvr_key = if group_name.is_empty() {
-                plural.clone()
-            } else {
-                format!("{}.{}", plural, group_name)
-            };
-            gvr_map.insert(gvr_key.to_lowercase(), kind.clone());
-            if !group_name.is_empty() {
-                let singular_key = format!("{}.{}", kind.to_lowercase(), group_name);
-                gvr_map.insert(singular_key, kind.clone());
-            }
-        }
+        populate_kind_maps(
+            &versioned,
+            &recommended,
+            &mut kind_map,
+            &mut gvr_map,
+            &mut gk_map,
+            &mut gvk_map,
+        );
     }
 
     Ok((kind_map, gvr_map, gk_map, gvk_map))
@@ -740,5 +767,70 @@ mod tests {
             "v1".to_string(),
             "Widget".to_string()
         )));
+    }
+
+    fn make_ar_caps(
+        group: &str,
+        version: &str,
+        kind: &str,
+        plural: &str,
+    ) -> (kube::api::ApiResource, kube::discovery::ApiCapabilities) {
+        let ar = kube::api::ApiResource {
+            group: group.to_string(),
+            version: version.to_string(),
+            api_version: if group.is_empty() {
+                version.to_string()
+            } else {
+                format!("{}/{}", group, version)
+            },
+            kind: kind.to_string(),
+            plural: plural.to_string(),
+        };
+        let caps = kube::discovery::ApiCapabilities {
+            scope: kube::discovery::Scope::Namespaced,
+            subresources: vec![],
+            operations: vec!["list".to_string(), "get".to_string()],
+        };
+        (ar, caps)
+    }
+
+    #[test]
+    fn populate_kind_maps_recommended_overwrites_versioned() {
+        // Production: versioned uses or_insert (first wins), recommended uses insert (overwrites).
+        // When groups_alphabetical enumerates alpha then beta, and beta has a recommended Widget,
+        // beta wins — matching production behavior.
+        let alpha_versioned = vec![make_ar_caps("alpha.example.com", "v1", "Widget", "widgets")];
+        let alpha_recommended = vec![];
+        let beta_versioned = vec![make_ar_caps("beta.example.com", "v1", "Widget", "widgets")];
+        let beta_recommended = vec![make_ar_caps("beta.example.com", "v1", "Widget", "widgets")];
+
+        let mut km = KindMap::new();
+        let mut gvr = GvrMap::new();
+        let mut gk = GroupKindMap::new();
+        let mut gvk = GvkMap::new();
+
+        // Simulate groups_alphabetical: alpha first, then beta
+        populate_kind_maps(
+            &alpha_versioned,
+            &alpha_recommended,
+            &mut km,
+            &mut gvr,
+            &mut gk,
+            &mut gvk,
+        );
+        populate_kind_maps(
+            &beta_versioned,
+            &beta_recommended,
+            &mut km,
+            &mut gvr,
+            &mut gk,
+            &mut gvk,
+        );
+
+        assert_eq!(
+            km.get("Widget").unwrap().group,
+            "beta.example.com",
+            "recommended insert must overwrite versioned or_insert"
+        );
     }
 }

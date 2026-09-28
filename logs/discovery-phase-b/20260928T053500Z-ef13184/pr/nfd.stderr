@@ -1,0 +1,21 @@
+🔍 Discovering API resources...
+   Discovery: 39.3s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-nfd] elapsed 0s
+✅ Scanned 269 resource types in 22.1s
+   openshift-nfd — 67 resources
+[namespace 2/2: y] elapsed 22s
+✅ Scanned 269 resource types in 12.6s
+   y — 0 resources
+   Scanned 2 namespace(s), 67 total resources
+   Found 10 ownerRef descendants in scanned namespaces
+
+Coverage: 549 queries, 549 success, 0 incomplete, 0 absent, 0 missing (205.1s)
+Query planner: 561 demands, 548 unique, 548 network, 13 cache hits (204.4s)

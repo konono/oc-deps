@@ -15,12 +15,12 @@ use crate::analyzers::spec_ref::{collect_string_values, extract_well_known_refs}
 use crate::kube::discovery::{GroupKindMap, KindMap};
 use crate::kube::resource::*;
 
-const MAX_RETRIES: usize = 2;
-const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
+pub const MAX_RETRIES: usize = 2;
+pub const SCAN_REQUEST_TIMEOUT_SECS: u64 = 30;
 
 pub type SharedLedger = Arc<std::sync::Mutex<CoverageLedger>>;
 
-fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
+pub fn canonical_gvr(group: &str, version: &str, plural: &str) -> String {
     if group.is_empty() {
         format!("{}/{}", version, plural)
     } else {
@@ -58,6 +58,115 @@ fn record_to_ledger(
             elapsed_ms: elapsed.as_millis() as u64,
             requirement,
         });
+    }
+}
+
+pub type SharedPlanner = Arc<crate::kube::planner::QueryPlanner>;
+
+/// GET with planner dedup. When planner is present, deduplicates against other consumers.
+/// Falls back to get_with_retry_ledger when no planner.
+/// When planner is used, ledger recording is skipped here — use planner.flush_to_ledger() at end.
+#[allow(clippy::too_many_arguments)]
+pub async fn get_with_retry_planner(
+    api: &Api<DynamicObject>,
+    name: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+    planner: Option<&SharedPlanner>,
+    client: &Client,
+) -> std::result::Result<DynamicObject, ScanWarning> {
+    if let Some(p) = planner {
+        return p
+            .get(client, group, version, plural, namespace, name, requirement)
+            .await;
+    }
+    get_with_retry_ledger(
+        api,
+        name,
+        group,
+        version,
+        plural,
+        ledger,
+        namespace,
+        requirement,
+    )
+    .await
+}
+
+/// LIST all with planner dedup. When planner is present, deduplicates against other consumers.
+/// Falls back to list_all_with_retry_ledger when no planner.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_all_with_retry_planner(
+    api: &Api<DynamicObject>,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+    planner: Option<&SharedPlanner>,
+    client: &Client,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    if let Some(p) = planner {
+        let result = p
+            .list_all(client, group, version, plural, namespace, requirement)
+            .await;
+        match result {
+            Ok(items) => Ok(items.as_ref().clone()),
+            Err(w) => Err(w),
+        }
+    } else {
+        list_all_with_retry_ledger(api, group, version, plural, ledger, namespace, requirement)
+            .await
+    }
+}
+
+/// LIST with label selector + planner dedup.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_with_selector_retry_planner(
+    api: &Api<DynamicObject>,
+    selector: &str,
+    group: &str,
+    version: &str,
+    plural: &str,
+    ledger: Option<&SharedLedger>,
+    namespace: Option<&str>,
+    requirement: QueryRequirement,
+    planner: Option<&SharedPlanner>,
+    client: &Client,
+) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
+    if let Some(p) = planner {
+        let result = p
+            .list_with_selector(
+                client,
+                group,
+                version,
+                plural,
+                namespace,
+                selector,
+                requirement,
+            )
+            .await;
+        match result {
+            Ok(items) => Ok(items.as_ref().clone()),
+            Err(w) => Err(w),
+        }
+    } else {
+        list_with_selector_retry_ledger(
+            api,
+            selector,
+            group,
+            version,
+            plural,
+            ledger,
+            namespace,
+            requirement,
+        )
+        .await
     }
 }
 
@@ -623,6 +732,7 @@ pub async fn scan_namespace(
         None,
         &[],
         None,
+        None,
     )
     .await
 }
@@ -660,6 +770,7 @@ pub async fn scan_namespace_with_extra_apis(
         None,
         &extra,
         None,
+        None,
     )
     .await
 }
@@ -675,6 +786,7 @@ pub async fn scan_namespace_with_semaphore(
     api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
     extra_apis: &[(String, crate::kube::discovery::KindInfo)],
     coverage_ledger: Option<SharedLedger>,
+    planner: Option<SharedPlanner>,
 ) -> Result<(NamespaceIndex, Vec<ScanWarning>)> {
     let skip_kinds: HashSet<&str> = if include_events {
         HashSet::new()
@@ -697,12 +809,18 @@ pub async fn scan_namespace_with_semaphore(
         }
     }
 
+    // Stable sort so same-UID API aliases are always inserted in the same order
+    scan_targets.sort_by(|(kind_a, a), (kind_b, b)| {
+        (&a.group, &a.version, &a.plural, kind_a).cmp(&(&b.group, &b.version, &b.plural, kind_b))
+    });
+
     let total = scan_targets.len();
     let scanned = Arc::new(AtomicUsize::new(0));
     let scan_start = std::time::Instant::now();
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
 
     let api_sem = api_semaphore.clone();
+    let planner_ref = planner.clone();
 
     let futs = scan_targets.into_iter().map(|(kind, info)| {
         let client = client.clone();
@@ -710,224 +828,248 @@ pub async fn scan_namespace_with_semaphore(
         let scanned = scanned.clone();
         let sem = api_sem.clone();
         let ledger = coverage_ledger.clone();
+        let planner = planner_ref.clone();
 
         async move {
             let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-            let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
+            let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), &ns, &ar);
             let gvr_canonical = canonical_gvr(&info.group, &info.version, &info.plural);
-            let query_start = Instant::now();
 
-            let mut last_err = None;
-            for attempt in 0..=MAX_RETRIES {
-                let _permit = if let Some(s) = &sem {
-                    Some(s.acquire().await.expect("semaphore closed"))
-                } else {
-                    None
-                };
-                let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
-                let result =
-                    tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await;
-                if attempt == 0 {
-                    let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-                    if is_tty {
-                        let elapsed = scan_start.elapsed().as_secs();
-                        eprint!(
-                            "\r\x1b[2K🔍 Scanning resources... ({}/{}, {}s)",
-                            count, total, elapsed
-                        );
-                    }
-                }
-
-                match result {
-                    Ok(Ok(list)) => {
-                        let item_count = list.items.len();
-                        let items: Vec<ScanItem> = list
-                            .items
-                            .into_iter()
-                            .filter_map(|obj| {
-                                let data = obj.data;
-                                let metadata = obj.metadata;
-                                let uid = metadata.uid?;
-                                let name = metadata.name?;
-                                let ns = metadata.namespace;
-                                let owner_refs = metadata
-                                    .owner_references
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|r| OwnerRef {
-                                        api_version: r.api_version,
-                                        kind: r.kind,
-                                        name: r.name,
-                                        uid: r.uid,
-                                        controller: r.controller.unwrap_or(false),
-                                    })
-                                    .collect();
-
-                                let (wk_refs, spec_strs) = if refs {
-                                    let wk = extract_well_known_refs(&data);
-                                    let mut strs = Vec::new();
-                                    if let Some(spec) = data.get("spec") {
-                                        let mut path = vec!["spec".to_string()];
-                                        collect_string_values(spec, &mut path, &mut strs);
-                                    }
-                                    (wk, strs)
-                                } else {
-                                    (vec![], vec![])
-                                };
-
-                                let labels =
-                                    metadata.labels.unwrap_or_default().into_iter().collect();
-                                let annotations = metadata
-                                    .annotations
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .collect();
-
-                                let pod_template = if show_spec {
-                                    extract_pod_template(&kind, &data)
-                                } else {
-                                    None
-                                };
-
-                                Some((
-                                    ResourceInfo {
-                                        group: info.group.clone(),
-                                        kind: kind.clone(),
-                                        name,
-                                        namespace: ns,
-                                        uid,
-                                        owner_refs,
-                                        labels,
-                                        annotations,
-                                        pod_template,
-                                    },
-                                    wk_refs,
-                                    spec_strs,
-                                ))
-                            })
-                            .collect();
-                        if let Some(ref l) = ledger {
-                            record_to_ledger(
-                                l,
-                                &gvr_canonical,
-                                Some(&ns),
-                                QueryOperation::List,
-                                None,
-                                None,
-                                QueryOutcome::Success {
-                                    count: item_count,
-                                    pages: 1,
-                                },
-                                query_start.elapsed(),
-                                QueryRequirement::Required,
-                            );
-                        }
-                        return Ok(items);
-                    }
-                    Ok(Err(e)) => {
-                        let mut warning = ScanWarning::from_kube_error(
-                            &e,
-                            &info.group,
-                            &info.version,
-                            &info.plural,
-                        );
-                        if warning.is_retryable() && attempt < MAX_RETRIES {
-                            let delay =
-                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                            let gvr_d = if info.group.is_empty() {
-                                format!("{}/{}", info.version, info.plural)
-                            } else {
-                                format!("{}/{}/{}", info.group, info.version, info.plural)
-                            };
-                            warn_retry(
-                                is_tty,
-                                &format!(
-                                    "{} — scan LIST attempt {}/{} failed; retrying as {}/{} in {}ms",
-                                    gvr_d, attempt + 1, MAX_RETRIES + 1, attempt + 2, MAX_RETRIES + 1, delay.as_millis()
-                                ),
-                            );
-                            tokio::time::sleep(delay).await;
-                            last_err = Some(warning);
-                            continue;
-                        }
-                        warning.set_retries(attempt);
-                        if let Some(ref l) = ledger {
-                            record_to_ledger(
-                                l,
-                                &gvr_canonical,
-                                Some(&ns),
-                                QueryOperation::List,
-                                None,
-                                None,
-                                scan_warning_to_outcome(&warning),
-                                query_start.elapsed(),
-                                QueryRequirement::Required,
-                            );
-                        }
-                        return Err(warning);
-                    }
-                    Err(_elapsed) => {
-                        let gvr = if info.group.is_empty() {
-                            format!("{}/{}", info.version, info.plural)
-                        } else {
-                            format!("{}/{}/{}", info.group, info.version, info.plural)
-                        };
-                        let warning = ScanWarning::Timeout {
-                            gvr: gvr.clone(),
-                            message: Some(format!(
-                                "request timeout ({}s)",
-                                SCAN_REQUEST_TIMEOUT_SECS
-                            )),
-                            retries: attempt,
-                        };
-                        if attempt < MAX_RETRIES {
-                            let delay =
-                                std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                            warn_retry(
-                                is_tty,
-                                &format!(
-                                    "{} — scan LIST timeout ({}s), attempt {}/{} failed; retrying as {}/{}",
-                                    gvr, SCAN_REQUEST_TIMEOUT_SECS, attempt + 1, MAX_RETRIES + 1, attempt + 2, MAX_RETRIES + 1
-                                ),
-                            );
-                            tokio::time::sleep(delay).await;
-                            last_err = Some(warning);
-                            continue;
-                        }
-                        if let Some(ref l) = ledger {
-                            record_to_ledger(
-                                l,
-                                &gvr_canonical,
-                                Some(&ns),
-                                QueryOperation::List,
-                                None,
-                                None,
-                                scan_warning_to_outcome(&warning),
-                                query_start.elapsed(),
-                                QueryRequirement::Required,
-                            );
-                        }
-                        return Err(warning);
-                    }
-                }
-            }
-            let mut w = last_err.unwrap();
-            w.set_retries(MAX_RETRIES);
-            if let Some(ref l) = ledger {
-                record_to_ledger(
-                    l,
-                    &gvr_canonical,
-                    Some(&ns),
-                    QueryOperation::List,
-                    None,
-                    None,
-                    scan_warning_to_outcome(&w),
-                    query_start.elapsed(),
-                    QueryRequirement::Required,
+            let count = scanned.fetch_add(1, Ordering::Relaxed) + 1;
+            if is_tty {
+                let elapsed = scan_start.elapsed().as_secs();
+                eprint!(
+                    "\r\x1b[2K🔍 Scanning resources... ({}/{}, {}s)",
+                    count, total, elapsed
                 );
             }
-            Err(w)
+
+            // When planner is available, route the LIST through it for dedup/caching.
+            // The planner handles retry, timeout, and semaphore internally.
+            let list_items: Vec<DynamicObject> = if let Some(ref p) = planner {
+                match p
+                    .list_all(
+                        &client,
+                        &info.group,
+                        &info.version,
+                        &info.plural,
+                        Some(&ns),
+                        crate::kube::resource::QueryRequirement::Required,
+                    )
+                    .await
+                {
+                    Ok(items) => items.as_ref().clone(),
+                    Err(w) => return Err(w),
+                }
+            } else {
+                // Legacy path: inline retry with optional semaphore and ledger
+                let query_start = Instant::now();
+                let mut last_err = None;
+                let mut got_items = None;
+                for attempt in 0..=MAX_RETRIES {
+                    let _permit = if let Some(s) = &sem {
+                        Some(s.acquire().await.expect("semaphore closed"))
+                    } else {
+                        None
+                    };
+                    let timeout_dur = std::time::Duration::from_secs(SCAN_REQUEST_TIMEOUT_SECS);
+                    let result =
+                        tokio::time::timeout(timeout_dur, api.list(&ListParams::default())).await;
+
+                    match result {
+                        Ok(Ok(list)) => {
+                            let item_count = list.items.len();
+                            if let Some(ref l) = ledger {
+                                record_to_ledger(
+                                    l,
+                                    &gvr_canonical,
+                                    Some(&ns),
+                                    QueryOperation::List,
+                                    None,
+                                    None,
+                                    QueryOutcome::Success {
+                                        count: item_count,
+                                        pages: 1,
+                                    },
+                                    query_start.elapsed(),
+                                    QueryRequirement::Required,
+                                );
+                            }
+                            got_items = Some(list.items);
+                            break;
+                        }
+                        Ok(Err(e)) => {
+                            let mut warning = ScanWarning::from_kube_error(
+                                &e,
+                                &info.group,
+                                &info.version,
+                                &info.plural,
+                            );
+                            if warning.is_retryable() && attempt < MAX_RETRIES {
+                                let delay =
+                                    std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                                warn_retry(
+                                    is_tty,
+                                    &format!(
+                                        "{} — scan LIST attempt {}/{} failed; retrying in {}ms",
+                                        gvr_canonical,
+                                        attempt + 1,
+                                        MAX_RETRIES + 1,
+                                        delay.as_millis()
+                                    ),
+                                );
+                                tokio::time::sleep(delay).await;
+                                last_err = Some(warning);
+                                continue;
+                            }
+                            warning.set_retries(attempt);
+                            if let Some(ref l) = ledger {
+                                record_to_ledger(
+                                    l,
+                                    &gvr_canonical,
+                                    Some(&ns),
+                                    QueryOperation::List,
+                                    None,
+                                    None,
+                                    scan_warning_to_outcome(&warning),
+                                    query_start.elapsed(),
+                                    QueryRequirement::Required,
+                                );
+                            }
+                            return Err(warning);
+                        }
+                        Err(_elapsed) => {
+                            let warning = ScanWarning::Timeout {
+                                gvr: gvr_canonical.clone(),
+                                message: Some(format!(
+                                    "request timeout ({}s)",
+                                    SCAN_REQUEST_TIMEOUT_SECS
+                                )),
+                                retries: attempt,
+                            };
+                            if attempt < MAX_RETRIES {
+                                let delay =
+                                    std::time::Duration::from_millis(500 * (attempt as u64 + 1));
+                                warn_retry(
+                                    is_tty,
+                                    &format!(
+                                        "{} — scan LIST timeout ({}s), attempt {}/{}; retrying",
+                                        gvr_canonical,
+                                        SCAN_REQUEST_TIMEOUT_SECS,
+                                        attempt + 1,
+                                        MAX_RETRIES + 1
+                                    ),
+                                );
+                                tokio::time::sleep(delay).await;
+                                last_err = Some(warning);
+                                continue;
+                            }
+                            if let Some(ref l) = ledger {
+                                record_to_ledger(
+                                    l,
+                                    &gvr_canonical,
+                                    Some(&ns),
+                                    QueryOperation::List,
+                                    None,
+                                    None,
+                                    scan_warning_to_outcome(&warning),
+                                    query_start.elapsed(),
+                                    QueryRequirement::Required,
+                                );
+                            }
+                            return Err(warning);
+                        }
+                    }
+                }
+                match got_items {
+                    Some(items) => items,
+                    None => {
+                        let mut w = last_err.unwrap();
+                        w.set_retries(MAX_RETRIES);
+                        if let Some(ref l) = ledger {
+                            record_to_ledger(
+                                l,
+                                &gvr_canonical,
+                                Some(&ns),
+                                QueryOperation::List,
+                                None,
+                                None,
+                                scan_warning_to_outcome(&w),
+                                query_start.elapsed(),
+                                QueryRequirement::Required,
+                            );
+                        }
+                        return Err(w);
+                    }
+                }
+            };
+
+            // Process items into ScanItems (same for both planner and legacy paths)
+            let items: Vec<ScanItem> = list_items
+                .into_iter()
+                .filter_map(|obj| {
+                    let data = obj.data;
+                    let metadata = obj.metadata;
+                    let uid = metadata.uid?;
+                    let name = metadata.name?;
+                    let ns = metadata.namespace;
+                    let owner_refs = metadata
+                        .owner_references
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|r| OwnerRef {
+                            api_version: r.api_version,
+                            kind: r.kind,
+                            name: r.name,
+                            uid: r.uid,
+                            controller: r.controller.unwrap_or(false),
+                        })
+                        .collect();
+
+                    let (wk_refs, spec_strs) = if refs {
+                        let wk = extract_well_known_refs(&data);
+                        let mut strs = Vec::new();
+                        if let Some(spec) = data.get("spec") {
+                            let mut path = vec!["spec".to_string()];
+                            collect_string_values(spec, &mut path, &mut strs);
+                        }
+                        (wk, strs)
+                    } else {
+                        (vec![], vec![])
+                    };
+
+                    let labels = metadata.labels.unwrap_or_default().into_iter().collect();
+                    let annotations = metadata
+                        .annotations
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+
+                    let pod_template = if show_spec {
+                        extract_pod_template(&kind, &data)
+                    } else {
+                        None
+                    };
+
+                    Some((
+                        ResourceInfo {
+                            group: info.group.clone(),
+                            kind: kind.clone(),
+                            name,
+                            namespace: ns,
+                            uid,
+                            owner_refs,
+                            labels,
+                            annotations,
+                            pod_template,
+                        },
+                        wk_refs,
+                        spec_strs,
+                    ))
+                })
+                .collect();
+            Ok(items)
         }
     });
 
@@ -937,8 +1079,10 @@ pub async fn scan_namespace_with_semaphore(
     } else {
         DEFAULT_API_CONCURRENCY
     };
+    // buffered preserves input order so same-UID aliases deterministically pick the
+    // first group in sorted scan_targets order, regardless of server response timing.
     let results: Vec<Result<Vec<ScanItem>, ScanWarning>> = futures::stream::iter(futs)
-        .buffer_unordered(concurrency)
+        .buffered(concurrency)
         .collect()
         .await;
 
@@ -1049,7 +1193,7 @@ pub async fn resolve_missing_parents(
     show_spec: bool,
 ) -> Vec<ScanWarning> {
     resolve_missing_parents_opts(
-        index, start_uid, client, namespace, kind_map, gk_map, show_spec, None,
+        index, start_uid, client, namespace, kind_map, gk_map, show_spec, None, None,
     )
     .await
 }
@@ -1064,6 +1208,7 @@ pub async fn resolve_missing_parents_opts(
     gk_map: &GroupKindMap,
     show_spec: bool,
     ledger: Option<SharedLedger>,
+    planner: Option<SharedPlanner>,
 ) -> Vec<ScanWarning> {
     let mut warnings = Vec::new();
     let mut current = start_uid.to_string();
@@ -1134,7 +1279,7 @@ pub async fn resolve_missing_parents_opts(
         } else {
             None
         };
-        match get_with_retry_ledger(
+        match get_with_retry_planner(
             &api,
             &owner.name,
             &kind_info.group,
@@ -1143,6 +1288,8 @@ pub async fn resolve_missing_parents_opts(
             ledger.as_ref(),
             ns_for_ledger,
             QueryRequirement::Required,
+            planner.as_ref(),
+            client,
         )
         .await
         {
@@ -1986,7 +2133,8 @@ mod tests {
                 false,
                 Some(sem1),
                 &[],
-                None
+                None,
+                None,
             ),
             scan_namespace_with_semaphore(
                 &c2,
@@ -1997,7 +2145,8 @@ mod tests {
                 false,
                 Some(sem2),
                 &[],
-                None
+                None,
+                None,
             ),
         );
 
@@ -2334,6 +2483,7 @@ mod tests {
             None,
             &[],
             Some(ledger.clone()),
+            None,
         )
         .await;
 
@@ -2393,6 +2543,7 @@ mod tests {
             None,
             &[],
             Some(ledger.clone()),
+            None,
         )
         .await;
 
@@ -2472,6 +2623,7 @@ mod tests {
             None,
             &[],
             Some(ledger.clone()),
+            None,
         )
         .await;
 
@@ -2747,6 +2899,7 @@ mod tests {
             None,
             &[],
             Some(ledger.clone()),
+            None,
         )
         .await;
         spawned.await.unwrap();
@@ -2806,6 +2959,7 @@ mod tests {
             &kind_map,
             None,
             None,
+            None,
         )
         .await;
         spawned.abort();
@@ -2825,5 +2979,116 @@ mod tests {
                 uri
             );
         }
+    }
+
+    /// Same Kind name from kind_map + extra_apis (same UID, different groups).
+    /// Response delay reversed between runs — group selection must be identical.
+    #[tokio::test]
+    async fn scan_api_alias_deterministic_regardless_of_response_order() {
+        let shared_uid = "uid-shared-12345";
+
+        // kind_map has Widget in alpha group
+        let mut kind_map = KindMap::new();
+        kind_map.insert(
+            "Widget".to_string(),
+            KindInfo {
+                group: "alpha.example.com".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        // extra_apis adds same Widget in beta group (simulates API alias)
+        let extra = vec![(
+            "Widget".to_string(),
+            KindInfo {
+                group: "beta.example.com".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        )];
+
+        fn make_list_with_uid(group: &str, uid: &str) -> serde_json::Value {
+            serde_json::json!({
+                "apiVersion": format!("{}/v1", group),
+                "kind": "WidgetList",
+                "metadata": {"resourceVersion": "1"},
+                "items": [{
+                    "apiVersion": format!("{}/v1", group),
+                    "kind": "Widget",
+                    "metadata": {
+                        "name": "shared-widget",
+                        "namespace": "test-ns",
+                        "uid": uid,
+                        "labels": {},
+                        "annotations": {}
+                    }
+                }]
+            })
+        }
+
+        let run = |alpha_delay_ms: u64, beta_delay_ms: u64| {
+            let km = kind_map.clone();
+            let ex = extra.clone();
+            async move {
+                let uid = shared_uid.to_string();
+                let (mock_service, handle) =
+                    tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+                let client = Client::new(mock_service, "test-ns");
+
+                let uid_for_task = uid.clone();
+                let spawned = tokio::spawn(async move {
+                    let mut handle = std::pin::pin!(handle);
+                    // Two LIST requests: one per group
+                    for _ in 0..2 {
+                        let (req, send) = handle.next_request().await.expect("req");
+                        let uri = req.uri().to_string();
+                        // Distinguish by group in the URL path
+                        let is_alpha = uri.contains("alpha.example.com");
+                        let delay = if is_alpha {
+                            alpha_delay_ms
+                        } else {
+                            beta_delay_ms
+                        };
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        let group = if is_alpha {
+                            "alpha.example.com"
+                        } else {
+                            "beta.example.com"
+                        };
+                        send.send_response(json_response(make_list_with_uid(group, &uid_for_task)));
+                    }
+                });
+
+                let (index, _warnings) = scan_namespace_with_semaphore(
+                    &client, "test-ns", &km, false, false, false, None, &ex, None, None,
+                )
+                .await
+                .unwrap();
+
+                spawned.await.unwrap();
+
+                let info = index.by_uid.get(&uid).unwrap();
+                (info.group.clone(), info.kind.clone())
+            }
+        };
+
+        // Run twice with reversed delays
+        let (group1, kind1) = run(1, 50).await;
+        let (group2, kind2) = run(50, 1).await;
+
+        assert_eq!(
+            group1, group2,
+            "same UID/Kind must resolve to same group regardless of response order: \
+             run1={}/{} run2={}/{}",
+            group1, kind1, group2, kind2
+        );
+        // Both runs select the same Kind name
+        assert_eq!(kind1, "Widget");
+        assert_eq!(kind2, "Widget");
     }
 }

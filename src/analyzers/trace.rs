@@ -178,6 +178,7 @@ pub async fn trace_resource(
                     gvr_map,
                     gk_map,
                     ledger.clone(),
+                    None,
                 )
                 .await;
                 scan_failures.extend(cr_report.unavailable_crds);

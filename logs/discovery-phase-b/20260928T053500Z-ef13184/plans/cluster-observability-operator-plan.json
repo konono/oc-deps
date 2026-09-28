@@ -1,0 +1,283 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-28T06:28:05.017593207+00:00",
+  "targets": [
+    {
+      "package_name": "cluster-observability-operator",
+      "install_namespace": "openshift-cluster-observability-operator",
+      "csv_name_pattern": "cluster-observability-operator.v1.5.2"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-cluster-observability-operator",
+          "name": "cluster-observability-operator",
+          "uid": "cd5a35ef-a644-434a-b199-8620e6e7e8e3",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-cluster-observability-operator",
+          "name": "cluster-observability-operator.v1.5.2",
+          "uid": "498d703e-443e-47bc-8a09-3ad974dc878c",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "perses.dev",
+          "kind": "PersesDashboard",
+          "namespace": "redhat-ods-monitoring",
+          "name": "dashboard-2-llm-d-traffic-admin",
+          "uid": "4b6f89a9-7dc5-40c2-a868-d6bcfecf88fa",
+          "action": "DELETE"
+        },
+        {
+          "group": "perses.dev",
+          "kind": "PersesDashboard",
+          "namespace": "redhat-ods-monitoring",
+          "name": "dashboard-3-llm-d-utilization-admin",
+          "uid": "36bd70cb-8880-4efa-bd44-87b2d0ba6ebd",
+          "action": "DELETE"
+        },
+        {
+          "group": "perses.dev",
+          "kind": "PersesDashboard",
+          "namespace": "redhat-ods-monitoring",
+          "name": "dashboard-3-maas-usage-admin",
+          "uid": "121dbbba-dde5-4cb2-b791-bb0c0e2c09dd",
+          "action": "DELETE"
+        },
+        {
+          "group": "perses.dev",
+          "kind": "PersesDashboard",
+          "namespace": "redhat-ods-monitoring",
+          "name": "dashboard-4-llm-d-performance-admin",
+          "uid": "9308270c-656f-440f-b958-7f2d25a96227",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-cluster-observability-operator",
+          "name": "cluster-observability-operator.v1.5.2",
+          "uid": "498d703e-443e-47bc-8a09-3ad974dc878c",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-cluster-observability-operator",
+          "name": "cluster-observability-operator",
+          "uid": "978e5d13-3a54-47c4-a3e7-af3005e115bf",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "alertmanagerconfigs.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "alertmanagers.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "monitoringstacks.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "observabilityinstallers.observability.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "perses.perses.dev",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "persesdashboards.perses.dev",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "persesdatasources.perses.dev",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "persesglobaldatasources.perses.dev",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "podmonitors.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "probes.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "prometheusagents.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "prometheuses.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "prometheusrules.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "scrapeconfigs.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "servicemonitors.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "thanosqueriers.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "thanosrulers.monitoring.rhobs",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "uiplugins.observability.openshift.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-cluster-observability-operator",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

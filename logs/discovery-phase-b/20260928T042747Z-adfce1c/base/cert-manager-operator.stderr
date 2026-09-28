@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   Discovery: 35.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 4 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-jobset] elapsed 0s
+✅ Scanned 271 resource types in 11.4s
+   openshift-jobset — 61 resources
+[namespace 2/2: cert-manager-operator] elapsed 11s
+✅ Scanned 271 resource types in 11.4s
+   cert-manager-operator — 40 resources
+   Scanned 2 namespace(s), 101 total resources
+
+Coverage: 578 queries, 578 success, 0 incomplete, 0 absent, 0 missing (182.0s)

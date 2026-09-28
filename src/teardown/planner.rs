@@ -623,6 +623,7 @@ async fn discover_one_crd(
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> CrdDiscoveryResult {
     let (plural, group) = match crd_name.split_once('.') {
         Some((p, g)) => (p, g),
@@ -668,6 +669,8 @@ async fn discover_one_crd(
         ledger.as_ref(),
         None,
         None,
+        planner.as_ref(),
+        Some(client),
     )
     .await
     {
@@ -738,21 +741,24 @@ pub struct CrDiscoveryReport {
     pub unavailable_crds: Vec<ScanWarning>,
 }
 
+#[allow(dead_code)]
 pub async fn discover_cr_instances(
     client: &Client,
     target_crds: &[String],
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
 ) -> CrDiscoveryReport {
-    discover_cr_instances_opts(client, target_crds, gvr_map, gk_map, None).await
+    discover_cr_instances_opts(client, target_crds, gvr_map, gk_map, None, None).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn discover_cr_instances_opts(
     client: &Client,
     target_crds: &[String],
     gvr_map: &GvrMap,
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> CrDiscoveryReport {
     let unique_crds: Vec<&String> = {
         let mut seen = HashSet::new();
@@ -775,8 +781,10 @@ pub async fn discover_cr_instances_opts(
         let gk_map = gk_map.clone();
         let discovered = discovered.clone();
         let ledger = ledger.clone();
+        let planner = planner.clone();
         async move {
-            let result = discover_one_crd(&client, &crd_name, &gvr_map, &gk_map, ledger).await;
+            let result =
+                discover_one_crd(&client, &crd_name, &gvr_map, &gk_map, ledger, planner).await;
             if is_tty {
                 let count = discovered.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 eprint!("\r\x1b[2K   CRD {}/{}: {}", count, total_crds, crd_name);
@@ -815,6 +823,14 @@ pub async fn discover_cr_instances_opts(
         }
     });
 
+    instances.sort_by(|a, b| {
+        a.id.group
+            .cmp(&b.id.group)
+            .then(a.id.kind.cmp(&b.id.kind))
+            .then(a.id.namespace.cmp(&b.id.namespace))
+            .then(a.id.name.cmp(&b.id.name))
+    });
+
     CrDiscoveryReport {
         instances,
         total_observations,
@@ -825,6 +841,7 @@ pub async fn discover_cr_instances_opts(
 async fn discover_api_service_instances(
     client: &Client,
     kind_infos: &[(&OwnedApiServiceDef, KindInfo)],
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> CrDiscoveryReport {
     let mut instances = Vec::new();
     let mut unavailable_crds = Vec::new();
@@ -835,17 +852,23 @@ async fn discover_api_service_instances(
         let def_group = def.group.clone();
         let def_version = def.version.clone();
         let kind = def.kind.clone();
+        let planner = planner.cloned();
         async move {
             let gvk = GroupVersion::gv(&kind_info.group, &kind_info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &kind_info.plural);
-            let api: Api<DynamicObject> = Api::all_with(client, &ar);
+            let api: Api<DynamicObject> = Api::all_with(client.clone(), &ar);
 
             let owner_key = format!("{}/{}/{}", def_group, def_version, kind);
-            match list_paginated_with_retry(
+            match list_paginated_with_retry_opts(
                 &api,
                 &kind_info.group,
                 &kind_info.version,
                 &kind_info.plural,
+                None,
+                None,
+                None,
+                planner.as_ref(),
+                Some(&client),
             )
             .await
             {
@@ -926,6 +949,14 @@ async fn discover_api_service_instances(
         } else {
             true
         }
+    });
+
+    instances.sort_by(|a, b| {
+        a.id.group
+            .cmp(&b.id.group)
+            .then(a.id.kind.cmp(&b.id.kind))
+            .then(a.id.namespace.cmp(&b.id.namespace))
+            .then(a.id.name.cmp(&b.id.name))
     });
 
     CrDiscoveryReport {
@@ -1121,13 +1152,14 @@ pub fn topo_sort_operators(
 const DISCOVERY_MAX_RETRIES: usize = 2;
 const DISCOVERY_REQUEST_TIMEOUT_SECS: u64 = 30;
 
+#[allow(dead_code)]
 pub(crate) async fn list_paginated_with_retry(
     api: &Api<DynamicObject>,
     group: &str,
     version: &str,
     plural: &str,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
-    list_paginated_with_retry_opts(api, group, version, plural, None, None, None).await
+    list_paginated_with_retry_opts(api, group, version, plural, None, None, None, None, None).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1139,8 +1171,26 @@ pub(crate) async fn list_paginated_with_retry_opts(
     ledger: Option<&SharedLedger>,
     requirement: Option<QueryRequirement>,
     query_namespace: Option<&str>,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
+    client: Option<&Client>,
 ) -> std::result::Result<Vec<DynamicObject>, ScanWarning> {
     let requirement = requirement.unwrap_or(QueryRequirement::Required);
+
+    // When planner is available, delegate to it for dedup/caching
+    if let (Some(p), Some(c)) = (planner, client) {
+        return crate::kube::scanner::list_all_with_retry_planner(
+            api,
+            group,
+            version,
+            plural,
+            ledger,
+            query_namespace,
+            requirement,
+            Some(p),
+            c,
+        )
+        .await;
+    }
     let gvr = if group.is_empty() {
         format!("{}/{}", version, plural)
     } else {
@@ -1360,6 +1410,7 @@ pub(crate) fn health_preflight_checks(
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_preflight(
     client: &Client,
     target_operators: &[&OperatorInstance],
@@ -1368,6 +1419,7 @@ async fn run_preflight(
     unique_count: usize,
     review_provenance_count: usize,
     unavailable_crds: &[ScanWarning],
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> Preflight {
     let mut checks = Vec::new();
 
@@ -1388,9 +1440,10 @@ async fn run_preflight(
         let client = client.clone();
         let km = kind_map_arc.clone();
         let op = (*op).clone();
+        let planner = planner.cloned();
         async move {
-            let csv = check_csv_health(&client, &op, &km).await;
-            let ctrl = check_controller_health(&client, &op, &km).await;
+            let csv = check_csv_health(&client, &op, &km, planner.as_ref()).await;
+            let ctrl = check_controller_health(&client, &op, &km, planner.as_ref()).await;
             (op.csv.name.clone(), csv, ctrl)
         }
     });
@@ -1447,30 +1500,59 @@ async fn check_csv_health(
     client: &Client,
     op: &OperatorInstance,
     kind_map: &KindMap,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> (bool, String) {
     let csv_info = match kind_map.get("ClusterServiceVersion") {
         Some(i) => i,
         None => return (false, "ClusterServiceVersion kind not found".to_string()),
     };
 
-    let gvk =
-        GroupVersion::gv(&csv_info.group, &csv_info.version).with_kind("ClusterServiceVersion");
-    let ar = ApiResource::from_gvk_with_plural(&gvk, &csv_info.plural);
     let ns = op.csv.namespace.as_deref().unwrap_or(&op.install_namespace);
-    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &ar);
 
-    match api.get(&op.csv.name).await {
-        Ok(obj) => {
-            let phase = obj
-                .data
-                .get("status")
-                .and_then(|s| s.get("phase"))
-                .and_then(|p| p.as_str())
-                .unwrap_or("Unknown");
-            let passed = phase == "Succeeded";
-            (passed, format!("phase={}", phase))
+    if let Some(p) = planner {
+        match p
+            .get(
+                client,
+                &csv_info.group,
+                &csv_info.version,
+                &csv_info.plural,
+                Some(ns),
+                &op.csv.name,
+                crate::kube::resource::QueryRequirement::Optional,
+            )
+            .await
+        {
+            Ok(obj) => {
+                let phase = obj
+                    .data
+                    .get("status")
+                    .and_then(|s| s.get("phase"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("Unknown");
+                let passed = phase == "Succeeded";
+                (passed, format!("phase={}", phase))
+            }
+            Err(e) => (false, format!("GET failed: {}", e)),
         }
-        Err(e) => (false, format!("GET failed: {}", e)),
+    } else {
+        let gvk =
+            GroupVersion::gv(&csv_info.group, &csv_info.version).with_kind("ClusterServiceVersion");
+        let ar = ApiResource::from_gvk_with_plural(&gvk, &csv_info.plural);
+        let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &ar);
+
+        match api.get(&op.csv.name).await {
+            Ok(obj) => {
+                let phase = obj
+                    .data
+                    .get("status")
+                    .and_then(|s| s.get("phase"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("Unknown");
+                let passed = phase == "Succeeded";
+                (passed, format!("phase={}", phase))
+            }
+            Err(e) => (false, format!("GET failed: {}", e)),
+        }
     }
 }
 
@@ -1478,6 +1560,7 @@ async fn check_controller_health(
     client: &Client,
     op: &OperatorInstance,
     kind_map: &KindMap,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> (bool, String) {
     let deploy_info = match kind_map.get("Deployment") {
         Some(i) => i,
@@ -1488,13 +1571,34 @@ async fn check_controller_health(
     let mut details = Vec::new();
 
     for deploy_name in &op.deployments {
-        let gvk =
-            GroupVersion::gv(&deploy_info.group, &deploy_info.version).with_kind("Deployment");
-        let ar = ApiResource::from_gvk_with_plural(&gvk, &deploy_info.plural);
-        let api: Api<DynamicObject> =
-            Api::namespaced_with(client.clone(), &op.install_namespace, &ar);
+        let get_result = if let Some(p) = planner {
+            p.get(
+                client,
+                &deploy_info.group,
+                &deploy_info.version,
+                &deploy_info.plural,
+                Some(&op.install_namespace),
+                deploy_name,
+                crate::kube::resource::QueryRequirement::Optional,
+            )
+            .await
+        } else {
+            let gvk =
+                GroupVersion::gv(&deploy_info.group, &deploy_info.version).with_kind("Deployment");
+            let ar = ApiResource::from_gvk_with_plural(&gvk, &deploy_info.plural);
+            let api: Api<DynamicObject> =
+                Api::namespaced_with(client.clone(), &op.install_namespace, &ar);
+            api.get(deploy_name).await.map_err(|e| {
+                ScanWarning::from_kube_error(
+                    &e,
+                    &deploy_info.group,
+                    &deploy_info.version,
+                    &deploy_info.plural,
+                )
+            })
+        };
 
-        match api.get(deploy_name).await {
+        match get_result {
             Ok(obj) => {
                 let available = obj
                     .data
@@ -1535,7 +1639,7 @@ pub async fn compute_part_of_seeds(
     kind_map: &KindMap,
     client: &Client,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
-    compute_part_of_seeds_opts(target_crds, kind_map, client, None, None).await
+    compute_part_of_seeds_opts(target_crds, kind_map, client, None, None, None).await
 }
 
 /// Fetch a metadata-only CRD catalog. Returns `CrdCatalog::Available` on
@@ -1726,12 +1830,14 @@ async fn list_metadata_paginated_with_retry(
     Ok(all_items)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn compute_part_of_seeds_opts(
     target_crds: &[String],
     kind_map: &KindMap,
     client: &Client,
     ledger: Option<SharedLedger>,
     cached_catalog: Option<&CrdCatalog>,
+    _planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> (HashSet<(String, String)>, Vec<ScanWarning>) {
     if target_crds.is_empty() {
         return (HashSet::new(), vec![]);
@@ -1815,6 +1921,7 @@ pub async fn discover_related_crd_instances(
         gk_map,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1829,6 +1936,7 @@ pub async fn discover_related_crd_instances_opts(
     gk_map: &GroupKindMap,
     ledger: Option<SharedLedger>,
     cached_catalog: Option<&CrdCatalog>,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> RelatedCrdReport {
     let mut actions = Vec::new();
 
@@ -1906,7 +2014,8 @@ pub async fn discover_related_crd_instances_opts(
 
     let related_crd_names: Vec<String> = related_crd_pairs.keys().cloned().collect();
     let related_report =
-        discover_cr_instances_opts(client, &related_crd_names, gvr_map, gk_map, ledger).await;
+        discover_cr_instances_opts(client, &related_crd_names, gvr_map, gk_map, ledger, planner)
+            .await;
 
     let crd_count = related_crd_names.len();
     let instance_count = related_report.instances.len();
@@ -1952,6 +2061,7 @@ async fn discover_namespace_resources(
     target_operators: &[&OperatorInstance],
     all_operators: &[OperatorInstance],
     kind_map: &KindMap,
+    planner: Option<&crate::kube::scanner::SharedPlanner>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
 
@@ -1978,17 +2088,35 @@ async fn discover_namespace_resources(
 
     for ns in &target_namespaces {
         // 1. OperatorGroup cleanup
-        let og_gvk = GroupVersion::gv("operators.coreos.com", "v1").with_kind("OperatorGroup");
-        let og_ar = ApiResource::from_gvk_with_plural(&og_gvk, "operatorgroups");
-        let og_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &og_ar);
+        let og_items = if let Some(p) = planner {
+            p.list_all(
+                client,
+                "operators.coreos.com",
+                "v1",
+                "operatorgroups",
+                Some(ns),
+                crate::kube::resource::QueryRequirement::Optional,
+            )
+            .await
+            .ok()
+        } else {
+            let og_gvk = GroupVersion::gv("operators.coreos.com", "v1").with_kind("OperatorGroup");
+            let og_ar = ApiResource::from_gvk_with_plural(&og_gvk, "operatorgroups");
+            let og_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &og_ar);
+            og_api
+                .list(&ListParams::default())
+                .await
+                .ok()
+                .map(|l| Arc::new(l.items))
+        };
 
-        if let Ok(og_list) = og_api.list(&ListParams::default()).await {
+        if let Some(og_list) = og_items {
             // Check if any non-target CSVs remain in this namespace
             let other_csvs_exist = all_operators.iter().any(|op| {
                 op.install_namespace == *ns && !target_csv_names.contains(op.csv.name.as_str())
             });
 
-            for og in og_list.items {
+            for og in og_list.iter() {
                 let og_name = og.metadata.name.clone().unwrap_or_default();
                 let og_id = ResourceId {
                     group: "operators.coreos.com".to_string(),
@@ -2016,12 +2144,30 @@ async fn discover_namespace_resources(
         }
 
         // 2. Leader election Lease cleanup
-        let lease_gvk = GroupVersion::gv("coordination.k8s.io", "v1").with_kind("Lease");
-        let lease_ar = ApiResource::from_gvk_with_plural(&lease_gvk, "leases");
-        let lease_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &lease_ar);
+        let lease_items = if let Some(p) = planner {
+            p.list_all(
+                client,
+                "coordination.k8s.io",
+                "v1",
+                "leases",
+                Some(ns),
+                crate::kube::resource::QueryRequirement::Optional,
+            )
+            .await
+            .ok()
+        } else {
+            let lease_gvk = GroupVersion::gv("coordination.k8s.io", "v1").with_kind("Lease");
+            let lease_ar = ApiResource::from_gvk_with_plural(&lease_gvk, "leases");
+            let lease_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &lease_ar);
+            lease_api
+                .list(&ListParams::default())
+                .await
+                .ok()
+                .map(|l| Arc::new(l.items))
+        };
 
-        if let Ok(lease_list) = lease_api.list(&ListParams::default()).await {
-            for lease in lease_list.items {
+        if let Some(lease_list) = lease_items {
+            for lease in lease_list.iter() {
                 let lease_name = lease.metadata.name.clone().unwrap_or_default();
 
                 let holder = lease
@@ -2061,12 +2207,31 @@ async fn discover_namespace_resources(
 
         // 3. Operator ConfigMaps as REVIEW
         if let Some(cm_info) = kind_map.get("ConfigMap") {
-            let cm_gvk = GroupVersion::gv(&cm_info.group, &cm_info.version).with_kind("ConfigMap");
-            let cm_ar = ApiResource::from_gvk_with_plural(&cm_gvk, &cm_info.plural);
-            let cm_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &cm_ar);
+            let cm_items = if let Some(p) = planner {
+                p.list_all(
+                    client,
+                    &cm_info.group,
+                    &cm_info.version,
+                    &cm_info.plural,
+                    Some(ns),
+                    crate::kube::resource::QueryRequirement::Optional,
+                )
+                .await
+                .ok()
+            } else {
+                let cm_gvk =
+                    GroupVersion::gv(&cm_info.group, &cm_info.version).with_kind("ConfigMap");
+                let cm_ar = ApiResource::from_gvk_with_plural(&cm_gvk, &cm_info.plural);
+                let cm_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), ns, &cm_ar);
+                cm_api
+                    .list(&ListParams::default())
+                    .await
+                    .ok()
+                    .map(|l| Arc::new(l.items))
+            };
 
-            if let Ok(cm_list) = cm_api.list(&ListParams::default()).await {
-                for cm in cm_list.items {
+            if let Some(cm_list) = cm_items {
+                for cm in cm_list.iter() {
                     let cm_name = cm.metadata.name.clone().unwrap_or_default();
 
                     if STANDARD_CONFIGMAPS.contains(&cm_name.as_str()) {
@@ -2279,6 +2444,7 @@ pub async fn generate_teardown_plan(
     gvk_map: &GvkMap,
     prune_crds: bool,
     policy: &DecisionPolicy,
+    planner: Option<crate::kube::scanner::SharedPlanner>,
 ) -> Result<TeardownPlan> {
     let target_ids: HashSet<OperatorId> = target_operators
         .iter()
@@ -2346,8 +2512,11 @@ pub async fn generate_teardown_plan(
     }
 
     eprint!("🔍 Discovering CR instances...");
-    let cr_report = discover_cr_instances(client, &target_crds, gvr_map, gk_map).await;
-    let api_svc_report = discover_api_service_instances(client, &api_service_kind_infos).await;
+    let cr_report =
+        discover_cr_instances_opts(client, &target_crds, gvr_map, gk_map, None, planner.clone())
+            .await;
+    let api_svc_report =
+        discover_api_service_instances(client, &api_service_kind_infos, planner.as_ref()).await;
     let mut cr_instances = cr_report.instances;
     cr_instances.extend(api_svc_report.instances);
     let mut all_unavailable = cr_report.unavailable_crds;
@@ -2363,9 +2532,15 @@ pub async fn generate_teardown_plan(
     } else {
         None
     };
-    let (target_label_pairs, seed_unavailable) =
-        compute_part_of_seeds_opts(&target_crds, kind_map, client, None, crd_catalog.as_ref())
-            .await;
+    let (target_label_pairs, seed_unavailable) = compute_part_of_seeds_opts(
+        &target_crds,
+        kind_map,
+        client,
+        None,
+        crd_catalog.as_ref(),
+        planner.clone(),
+    )
+    .await;
     all_unavailable.extend(seed_unavailable);
 
     let related_report = discover_related_crd_instances_opts(
@@ -2377,6 +2552,7 @@ pub async fn generate_teardown_plan(
         gk_map,
         None,
         crd_catalog.as_ref(),
+        planner.clone(),
     )
     .await;
     eprintln!(
@@ -2529,6 +2705,7 @@ pub async fn generate_teardown_plan(
         unique_count,
         review_provenance_count,
         &all_unavailable,
+        planner.as_ref(),
     )
     .await;
     for api_svc in &unresolved_api_services {
@@ -2773,8 +2950,14 @@ pub async fn generate_teardown_plan(
 
     // ── Namespace cleanup discovery (needed for ancillary candidate registration) ──
     eprint!("🔍 Discovering namespace resources...");
-    let ns_cleanup_actions =
-        discover_namespace_resources(client, target_operators, all_operators, kind_map).await;
+    let ns_cleanup_actions = discover_namespace_resources(
+        client,
+        target_operators,
+        all_operators,
+        kind_map,
+        planner.as_ref(),
+    )
+    .await;
     eprintln!(" done");
 
     // Register ancillary REVIEW actions as candidates (ConfigMap REVIEWs etc.)
