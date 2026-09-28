@@ -1757,12 +1757,19 @@ pub async fn discover_operator_backup(
         inspection.incomplete_count = incomplete;
         inspection.coverage_ledger = snapshot;
     }
-    if inspection.should_exit_strict() {
+    // Fail closed only on required coverage failures (incomplete_count > 0 or
+    // ledger has_incomplete). Scan warnings (scan_warning_count) are informational
+    // and may include optional API absence — they don't block backup.
+    let has_required_failures = inspection.incomplete_count > 0
+        || inspection
+            .coverage_ledger
+            .as_ref()
+            .is_some_and(|l| l.has_incomplete());
+    if has_required_failures {
         bail!(
-            "Operator {} discovery is incomplete ({} warnings, {} incomplete) — \
+            "Operator {} discovery has required coverage failures ({} incomplete) — \
              backup cannot proceed",
             operator.csv.name,
-            inspection.scan_warning_count,
             inspection.incomplete_count,
         );
     }
