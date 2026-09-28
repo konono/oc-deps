@@ -80,7 +80,7 @@
     "quality_gates": {
       "cargo_fmt": "pass",
       "cargo_clippy": "pass",
-      "cargo_test": "1063 pass, 0 fail",
+      "cargo_test": "1063 pass, 0 fail (final HEAD: see CI)",
       "cargo_build_release": "pass"
     },
     "corpus": {

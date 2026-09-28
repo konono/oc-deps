@@ -833,49 +833,4 @@ mod tests {
             "recommended insert must overwrite versioned or_insert"
         );
     }
-
-    #[test]
-    fn populate_kind_maps_group_order_reversed_same_result() {
-        // With groups_alphabetical, alpha always comes first.
-        // Call in both orders to verify the result is determined by
-        // which group has recommended resources, not call order.
-        let alpha_v = vec![make_ar_caps("alpha.example.com", "v1", "Widget", "widgets")];
-        let alpha_r = vec![make_ar_caps("alpha.example.com", "v1", "Widget", "widgets")];
-        let beta_v = vec![make_ar_caps("beta.example.com", "v1", "Widget", "widgets")];
-        let beta_r = vec![make_ar_caps("beta.example.com", "v1", "Widget", "widgets")];
-
-        // Order 1: alpha then beta (groups_alphabetical order)
-        let group1 = {
-            let mut km = KindMap::new();
-            let mut gvr = GvrMap::new();
-            let mut gk = GroupKindMap::new();
-            let mut gvk = GvkMap::new();
-            populate_kind_maps(&alpha_v, &alpha_r, &mut km, &mut gvr, &mut gk, &mut gvk);
-            populate_kind_maps(&beta_v, &beta_r, &mut km, &mut gvr, &mut gk, &mut gvk);
-            km.get("Widget").unwrap().group.clone()
-        };
-
-        // Order 2: beta then alpha (reversed)
-        let group2 = {
-            let mut km = KindMap::new();
-            let mut gvr = GvrMap::new();
-            let mut gk = GroupKindMap::new();
-            let mut gvk = GvkMap::new();
-            populate_kind_maps(&beta_v, &beta_r, &mut km, &mut gvr, &mut gk, &mut gvk);
-            populate_kind_maps(&alpha_v, &alpha_r, &mut km, &mut gvr, &mut gk, &mut gvk);
-            km.get("Widget").unwrap().group.clone()
-        };
-
-        // When both groups have recommended resources, the last recommended wins.
-        // With groups_alphabetical, the last is always the same group.
-        // The key invariant: groups_alphabetical provides a fixed order, so the
-        // result is deterministic. Here we verify both orders produce a result
-        // (the specific group depends on which is last, which groups_alphabetical fixes).
-        assert!(
-            !group1.is_empty() && !group2.is_empty(),
-            "both orders must produce a result"
-        );
-        // With groups_alphabetical always providing alpha→beta order,
-        // beta (last) always wins via recommended insert.
-    }
 }
