@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod inspect;
 pub mod namespace_scope;
 pub mod olm;

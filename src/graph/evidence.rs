@@ -6,7 +6,7 @@ use crate::analyzers::olm::OperatorInstance;
 use crate::kube::resource::{ClusterSnapshot, ResourceId};
 
 /// Evidence graph schema version. Bumped when Edge/Evidence serialization format changes.
-pub const EVIDENCE_GRAPH_SCHEMA_VERSION: u32 = 2;
+pub const EVIDENCE_GRAPH_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvidenceGraph {
@@ -66,6 +66,9 @@ pub enum Relation {
     UsesServiceAccount,
     /// Managed-by correlation (label/annotation), not ownership
     ManagedBy,
+    /// Finalizer or uninstall code explicitly deletes the object by deterministic name.
+    /// Does NOT grant delete authority by itself — requires version-bound cleanup contract.
+    CleansUp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -102,6 +105,12 @@ pub enum Evidence {
     StorageBinding,
     WebhookService,
     ApiServiceBackend,
+    CleanupContract {
+        adapter_id: String,
+        source_revision: String,
+        cleanup_function: String,
+        matched_version: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1171,7 +1180,7 @@ mod tests {
         assert_eq!(graph.schema_version, EVIDENCE_GRAPH_SCHEMA_VERSION);
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
-        assert_eq!(json["schema_version"], 2);
+        assert_eq!(json["schema_version"], 3);
     }
 
     #[test]

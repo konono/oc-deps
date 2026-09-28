@@ -24,7 +24,7 @@ use crate::teardown::planner::{
     discover_related_crd_instances_opts, fetch_crd_catalog,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Relationship {
     #[serde(rename = "ownerRef")]
     OwnerRef,
@@ -42,6 +42,8 @@ pub enum Relationship {
     SameOperatorCrd,
     #[serde(rename = "label-match")]
     LabelMatch,
+    #[serde(rename = "cleans-up")]
+    CleansUp,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -475,6 +477,34 @@ pub async fn inspect_operator_with_options_ledger(
         }
     }
 
+    // Run targeted adapters
+    let mut adapter_resources = Vec::new();
+    {
+        eprint!("🔍 Running targeted adapters...");
+        let adapter_reports =
+            crate::analyzers::adapters::run_adapters(client, operator, planner.as_ref()).await;
+        for report in &adapter_reports {
+            if report.skipped {
+                continue;
+            }
+            for r in &report.results {
+                adapter_resources.push(r.resource.clone());
+            }
+            if report.incomplete {
+                scan_warning_count += 1;
+                all_warnings.push(format!(
+                    "adapter {}: incomplete (some queries failed)",
+                    report.adapter_id
+                ));
+            }
+            for d in &report.diagnostics {
+                all_warnings.push(format!("adapter {}: {}", report.adapter_id, d));
+                scan_warning_count += 1;
+            }
+        }
+        eprintln!(" found {} resources", adapter_resources.len());
+    }
+
     // Build categories after cross-ns scan has enriched cr_resources
     let mut categories = Vec::new();
     if !olm_resources.is_empty() {
@@ -499,6 +529,12 @@ pub async fn inspect_operator_with_options_ledger(
         categories.push(InspectionCategory {
             label: "Related CR Instances (label, correlation only)".to_string(),
             resources: related_resources,
+        });
+    }
+    if !adapter_resources.is_empty() {
+        categories.push(InspectionCategory {
+            label: "Targeted Adapter (cleanup contract)".to_string(),
+            resources: adapter_resources,
         });
     }
 
@@ -834,6 +870,7 @@ pub fn relationship_display(r: &Relationship) -> &'static str {
         Relationship::SelectorMatch => "selector-match",
         Relationship::SameOperatorCrd => "same-operator-crd",
         Relationship::LabelMatch => "label-match",
+        Relationship::CleansUp => "cleans-up",
     }
 }
 
