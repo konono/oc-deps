@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   Discovery: 38.1s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 10 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-servicemesh] elapsed 0s
+✅ Scanned 270 resource types in 20.7s
+   openshift-servicemesh — 38 resources
+[namespace 2/2: openshift-ingress] elapsed 20s
+✅ Scanned 270 resource types in 13.3s
+   openshift-ingress — 137 resources
+   Scanned 2 namespace(s), 175 total resources
+
+Coverage: 625 queries, 625 success, 0 incomplete, 0 absent, 0 missing (226.3s)

@@ -1,0 +1,19 @@
+🔍 Discovering API resources...
+   Discovery: 37.9s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-leaderworkerset] elapsed 0s
+✅ Scanned 269 resource types in 27.5s
+   openshift-leaderworkerset — 36 resources
+   Scanned 1 namespace(s), 36 total resources
+
+Coverage: 278 queries, 278 success, 0 incomplete, 0 absent, 0 missing (130.0s)
+Query planner: 283 demands, 277 unique, 277 network, 6 cache hits (129.3s)

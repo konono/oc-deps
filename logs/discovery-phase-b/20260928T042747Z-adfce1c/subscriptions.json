@@ -1,0 +1,2730 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:42:08Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/openshift-cert-manager-operator.cert-manager-operator": ""
+                },
+                "name": "openshift-cert-manager-operator",
+                "namespace": "cert-manager-operator",
+                "resourceVersion": "12465832",
+                "uid": "b2e34be3-2a21-437e-8b89-ea6c495f7922"
+            },
+            "spec": {
+                "channel": "stable-v1",
+                "installPlanApproval": "Automatic",
+                "name": "openshift-cert-manager-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:42:09Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:42:09Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:42:09Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:42:10Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "cert-manager-operator.v1.20.0",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-gglfz",
+                    "namespace": "cert-manager-operator",
+                    "resourceVersion": "12464928",
+                    "uid": "c5655e65-0f8f-4ace-889c-25e8260fa50c"
+                },
+                "installedCSV": "cert-manager-operator.v1.20.0",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-gglfz",
+                    "uuid": "c5655e65-0f8f-4ace-889c-25e8260fa50c"
+                },
+                "lastUpdated": "2026-09-27T06:42:20Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-18T19:07:07Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/group-sync-operator.group-sync-operator": ""
+                },
+                "name": "group-sync-operator",
+                "namespace": "group-sync-operator",
+                "resourceVersion": "1796452",
+                "uid": "2313f534-0b48-4186-a70c-438f5af6a108"
+            },
+            "spec": {
+                "channel": "alpha",
+                "installPlanApproval": "Automatic",
+                "name": "group-sync-operator",
+                "source": "community-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "14838",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-18T19:07:10Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "14580",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-18T19:07:10Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "14578",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-18T19:07:10Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-18T19:07:11Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "group-sync-operator.v0.0.36",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-v44kn",
+                    "namespace": "group-sync-operator",
+                    "resourceVersion": "49736",
+                    "uid": "d65df445-eee3-4d64-a520-f8b62d4cba31"
+                },
+                "installedCSV": "group-sync-operator.v0.0.36",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-v44kn",
+                    "uuid": "d65df445-eee3-4d64-a520-f8b62d4cba31"
+                },
+                "lastUpdated": "2026-09-20T00:39:49Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:48:26Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/rhbk-operator.keycloak": ""
+                },
+                "name": "rhbk-operator",
+                "namespace": "keycloak",
+                "resourceVersion": "12480286",
+                "uid": "356699fc-4aa7-4cce-b856-0f6eed5fba50"
+            },
+            "spec": {
+                "channel": "stable-v26",
+                "installPlanApproval": "Automatic",
+                "name": "rhbk-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:48:56Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12472160",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:48:56Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:48:56Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:48:56Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "rhbk-operator.v26.6.7-opr.1",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-tth2r",
+                    "namespace": "keycloak",
+                    "resourceVersion": "12479806",
+                    "uid": "358901ea-faea-43ff-a926-c64f575a91c7"
+                },
+                "installedCSV": "rhbk-operator.v26.6.7-opr.1",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-tth2r",
+                    "uuid": "358901ea-faea-43ff-a926-c64f575a91c7"
+                },
+                "lastUpdated": "2026-09-27T06:48:56Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:44:00Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/gpu-operator-certified.nvidia-gpu-operator": ""
+                },
+                "name": "gpu-operator-certified",
+                "namespace": "nvidia-gpu-operator",
+                "resourceVersion": "12469403",
+                "uid": "a133f34c-0f19-4547-9ed8-9d6436176164"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "gpu-operator-certified",
+                "source": "certified-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:04Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:04Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:04Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:44:05Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "gpu-operator-certified.v26.7.1",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-c28gw",
+                    "namespace": "nvidia-gpu-operator",
+                    "resourceVersion": "12469031",
+                    "uid": "ea44d5a6-8056-47bd-8c70-e282e415ffcb"
+                },
+                "installedCSV": "gpu-operator-certified.v26.7.1",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-c28gw",
+                    "uuid": "ea44d5a6-8056-47bd-8c70-e282e415ffcb"
+                },
+                "lastUpdated": "2026-09-27T06:44:10Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T07:02:39Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/cluster-observability-operator.openshift-cluster-observability": ""
+                },
+                "name": "cluster-observability-operator",
+                "namespace": "openshift-cluster-observability-operator",
+                "resourceVersion": "12500273",
+                "uid": "cd5a35ef-a644-434a-b199-8620e6e7e8e3"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "cluster-observability-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12494038",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T07:02:42Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12493651",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T07:02:42Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12494039",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T07:02:42Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T07:02:43Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "cluster-observability-operator.v1.5.2",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-66ntm",
+                    "namespace": "openshift-cluster-observability-operator",
+                    "resourceVersion": "12497209",
+                    "uid": "7f5c492d-a146-4aad-8972-9c0d6c035a9c"
+                },
+                "installedCSV": "cluster-observability-operator.v1.5.2",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-66ntm",
+                    "uuid": "7f5c492d-a146-4aad-8972-9c0d6c035a9c"
+                },
+                "lastUpdated": "2026-09-27T07:03:27Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:45:38Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/job-set.openshift-jobset": ""
+                },
+                "name": "job-set",
+                "namespace": "openshift-jobset",
+                "resourceVersion": "12477103",
+                "uid": "f8e7dd2b-f9e3-46ae-9a51-fef21dacd3d8"
+            },
+            "spec": {
+                "channel": "stable-v1.0",
+                "installPlanApproval": "Automatic",
+                "name": "job-set",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:45:46Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12472160",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:45:46Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:45:46Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:45:46Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "jobset-operator.v1.0.1",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-4fg78",
+                    "namespace": "openshift-jobset",
+                    "resourceVersion": "12475610",
+                    "uid": "cf30d13e-c07c-4473-bb87-86ab5c3b2242"
+                },
+                "installedCSV": "jobset-operator.v1.0.1",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-4fg78",
+                    "uuid": "cf30d13e-c07c-4473-bb87-86ab5c3b2242"
+                },
+                "lastUpdated": "2026-09-27T06:46:35Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:45:12Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/kueue-operator.openshift-kueue": ""
+                },
+                "name": "kueue-operator",
+                "namespace": "openshift-kueue",
+                "resourceVersion": "12475573",
+                "uid": "383cb3cc-35ad-49af-b9b5-0f09b278333f"
+            },
+            "spec": {
+                "channel": "stable-v1.4",
+                "installPlanApproval": "Automatic",
+                "name": "kueue-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:45:24Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12472160",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:45:24Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:45:24Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:45:24Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "kueue-operator.v1.4.2",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-86fq9",
+                    "namespace": "openshift-kueue",
+                    "resourceVersion": "12474228",
+                    "uid": "154e715a-8381-4283-98fc-627460e6317f"
+                },
+                "installedCSV": "kueue-operator.v1.4.2",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-86fq9",
+                    "uuid": "154e715a-8381-4283-98fc-627460e6317f"
+                },
+                "lastUpdated": "2026-09-27T06:45:39Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:46:23Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/leader-worker-set.openshift-leaderworkerset": ""
+                },
+                "name": "leader-worker-set",
+                "namespace": "openshift-leaderworkerset",
+                "resourceVersion": "12477270",
+                "uid": "cf543de3-bf99-46ce-96f7-236573d63229"
+            },
+            "spec": {
+                "channel": "stable-v1.0",
+                "installPlanApproval": "Automatic",
+                "name": "leader-worker-set",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:46:32Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12472160",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:46:32Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:46:32Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:46:35Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "leader-worker-set.v1.0.1",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-98zq8",
+                    "namespace": "openshift-leaderworkerset",
+                    "resourceVersion": "12476847",
+                    "uid": "afc7bfe6-2cfc-437e-8f2e-280a61f0ae74"
+                },
+                "installedCSV": "leader-worker-set.v1.0.1",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-98zq8",
+                    "uuid": "afc7bfe6-2cfc-437e-8f2e-280a61f0ae74"
+                },
+                "lastUpdated": "2026-09-27T06:46:43Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:43:16Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/nfd.openshift-nfd": ""
+                },
+                "name": "nfd",
+                "namespace": "openshift-nfd",
+                "resourceVersion": "12468470",
+                "uid": "4fec4813-b76b-418d-95f5-7ee42b87df89"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "nfd",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:43:18Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:43:18Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:43:18Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:43:19Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "nfd.4.22.0-202609151747",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-6jbp6",
+                    "namespace": "openshift-nfd",
+                    "resourceVersion": "12468012",
+                    "uid": "23cf589b-84dd-4f26-bf15-b5d0f4c8a5a0"
+                },
+                "installedCSV": "nfd.4.22.0-202609151747",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-6jbp6",
+                    "uuid": "23cf589b-84dd-4f26-bf15-b5d0f4c8a5a0"
+                },
+                "lastUpdated": "2026-09-27T06:43:33Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T07:03:22Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/opentelemetry-product.openshift-opentelemetry-operator": ""
+                },
+                "name": "opentelemetry-product",
+                "namespace": "openshift-opentelemetry-operator",
+                "resourceVersion": "12502575",
+                "uid": "311f19ab-9094-4a1b-9ad2-79e0ba9f34ba"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "opentelemetry-product",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12499669",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T07:03:24Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12493651",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T07:03:24Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12499572",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T07:03:24Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T07:03:24Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "opentelemetry-operator.v0.158.0-2",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-4vr59",
+                    "namespace": "openshift-opentelemetry-operator",
+                    "resourceVersion": "12500485",
+                    "uid": "5428d9da-e192-4632-a5d3-d34f70f4a2b0"
+                },
+                "installedCSV": "opentelemetry-operator.v0.158.0-2",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-4vr59",
+                    "uuid": "5428d9da-e192-4632-a5d3-d34f70f4a2b0"
+                },
+                "lastUpdated": "2026-09-27T07:03:56Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-5mpgs"
+                },
+                "creationTimestamp": "2026-09-27T06:44:29Z",
+                "generation": 1,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/authorino-operator.openshift-rhcl": ""
+                },
+                "name": "authorino-operator-stable-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-rhcl",
+                "resourceVersion": "12480086",
+                "uid": "c80310b2-9b4f-4377-aad3-9bdd6db59887"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "authorino-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "authorino-operator.v1.4.3"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:44Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:44Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:44Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:44:45Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "authorino-operator.v1.4.3",
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "namespace": "openshift-rhcl",
+                    "resourceVersion": "12469724",
+                    "uid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "installedCSV": "authorino-operator.v1.4.3",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "uuid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "lastUpdated": "2026-09-27T06:48:47Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-5mpgs"
+                },
+                "creationTimestamp": "2026-09-27T06:44:29Z",
+                "generation": 1,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/dns-operator.openshift-rhcl": ""
+                },
+                "name": "dns-operator-stable-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-rhcl",
+                "resourceVersion": "12479720",
+                "uid": "33df8084-5acd-4f8b-aee4-3d35ee5bc9b2"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "dns-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "dns-operator.v1.4.2"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:34Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:34Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:34Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:44:36Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "dns-operator.v1.4.2",
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "namespace": "openshift-rhcl",
+                    "resourceVersion": "12470721",
+                    "uid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "installedCSV": "dns-operator.v1.4.2",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "uuid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "lastUpdated": "2026-09-27T06:48:32Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-5mpgs"
+                },
+                "creationTimestamp": "2026-09-27T06:44:29Z",
+                "generation": 1,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/limitador-operator.openshift-rhcl": ""
+                },
+                "name": "limitador-operator-stable-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-rhcl",
+                "resourceVersion": "12479675",
+                "uid": "c75597a5-3cd2-4ee4-9dca-b82c9cb56c74"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "limitador-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "limitador-operator.v1.4.2"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:36Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:36Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:36Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:44:38Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "limitador-operator.v1.4.2",
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "namespace": "openshift-rhcl",
+                    "resourceVersion": "12471559",
+                    "uid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "installedCSV": "limitador-operator.v1.4.2",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "uuid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "lastUpdated": "2026-09-27T06:48:29Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:44:27Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/rhcl-operator.openshift-rhcl": ""
+                },
+                "name": "rhcl-operator",
+                "namespace": "openshift-rhcl",
+                "resourceVersion": "12473744",
+                "uid": "307e9a18-fa86-46c7-bac2-73bab156b9c3"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "rhcl-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:32Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:32Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:44:32Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:44:34Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "rhcl-operator.v1.4.3",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "namespace": "openshift-rhcl",
+                    "resourceVersion": "12469722",
+                    "uid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "installedCSV": "rhcl-operator.v1.4.3",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-5mpgs",
+                    "uuid": "fb667b98-497c-4e0a-9e00-8eb8db9ba5d8"
+                },
+                "lastUpdated": "2026-09-27T06:45:13Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:42:34Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/servicemeshoperator3.openshift-servicemesh": ""
+                },
+                "name": "servicemeshoperator3",
+                "namespace": "openshift-servicemesh",
+                "resourceVersion": "12467411",
+                "uid": "8ee2ac13-af72-4f86-a8b9-bb82967eaf45"
+            },
+            "spec": {
+                "channel": "stable",
+                "installPlanApproval": "Automatic",
+                "name": "servicemeshoperator3",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:42:35Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:42:35Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:42:35Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:42:36Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "servicemeshoperator3.v3.4.2",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-gndkq",
+                    "namespace": "openshift-servicemesh",
+                    "resourceVersion": "12466201",
+                    "uid": "f7890e69-42fd-4ca1-859c-c3e7db6157da"
+                },
+                "installedCSV": "servicemeshoperator3.v3.4.2",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-gndkq",
+                    "uuid": "f7890e69-42fd-4ca1-859c-c3e7db6157da"
+                },
+                "lastUpdated": "2026-09-27T06:42:57Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/cephcsi-operator.openshift-storage": ""
+                },
+                "name": "cephcsi-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1918317",
+                "uid": "0d345296-fa04-44eb-a4f0-dbefa2d3a8a9"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {
+                    "tolerations": [
+                        {
+                            "effect": "NoSchedule",
+                            "key": "node.ocs.openshift.io/storage",
+                            "operator": "Equal",
+                            "value": "true"
+                        }
+                    ]
+                },
+                "installPlanApproval": "Automatic",
+                "name": "cephcsi-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "cephcsi-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:06Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:06Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:06Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:34:08Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "cephcsi-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "cephcsi-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:43:35Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/mcg-operator.openshift-storage": ""
+                },
+                "name": "mcg-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1915653",
+                "uid": "95ea1f75-f5a5-4255-b021-63f9485e9ef6"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "mcg-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "mcg-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:00Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:00Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:00Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:34:00Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "mcg-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "mcg-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:42:47Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/ocs-client-operator.openshift-storage": ""
+                },
+                "name": "ocs-client-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1915232",
+                "uid": "687abfa6-609d-4bd9-8586-9d84eddd389b"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "ocs-client-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "ocs-client-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:57Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:57Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:57Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:33:57Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "ocs-client-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "ocs-client-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:42:35Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/ocs-operator.openshift-storage": ""
+                },
+                "name": "ocs-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1918403",
+                "uid": "2256c587-2b4e-42d1-8c2f-325a4a3ef2da"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "ocs-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "ocs-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:59Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:59Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:59Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:33:59Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "ocs-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "ocs-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:43:37Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/ocs-tls-profiles.openshift-storage": ""
+                },
+                "name": "ocs-tls-profiles-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1918661",
+                "uid": "59bc723e-0fe5-47c4-b335-5a1f1e3c0e22"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "ocs-tls-profiles",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "ocs-tls-profiles.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:03Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:03Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:03Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:34:04Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "ocs-tls-profiles.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "ocs-tls-profiles.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:43:48Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/odf-csi-addons-operator.openshift-storage": ""
+                },
+                "name": "odf-csi-addons-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1918219",
+                "uid": "d04a21f6-4060-4d47-80ac-b0d48d646500"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {
+                    "tolerations": [
+                        {
+                            "effect": "NoSchedule",
+                            "key": "node.ocs.openshift.io/storage",
+                            "operator": "Equal",
+                            "value": "true"
+                        }
+                    ]
+                },
+                "installPlanApproval": "Automatic",
+                "name": "odf-csi-addons-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "odf-csi-addons-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:55Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:55Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:55Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:33:55Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "odf-csi-addons-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "odf-csi-addons-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:43:33Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-20T02:33:14Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/odf-dependencies.openshift-storage": ""
+                },
+                "name": "odf-dependencies",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1904838",
+                "uid": "050c3778-446e-4949-a76c-fcc13068b2db"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "name": "odf-dependencies",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "odf-dependencies.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:34Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:34Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:34Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:33:34Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "odf-dependencies.v4.22.4-rhodf",
+                "installPlanGeneration": 2,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-bczzv",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893628",
+                    "uid": "a052dafb-230a-460b-8e9c-3b96c5c6370d"
+                },
+                "installedCSV": "odf-dependencies.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-bczzv",
+                    "uuid": "a052dafb-230a-460b-8e9c-3b96c5c6370d"
+                },
+                "lastUpdated": "2026-09-20T02:37:42Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/odf-external-snapshotter-operator.openshift-storage": ""
+                },
+                "name": "odf-external-snapshotter-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1918349",
+                "uid": "e33c1c3f-92bb-4872-a3bf-0d1fed036b4c"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "odf-external-snapshotter-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "odf-external-snapshotter-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:38Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:38Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:38Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:33:39Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "odf-external-snapshotter-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "odf-external-snapshotter-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:43:36Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-20T02:32:52Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/odf-operator.openshift-storage": ""
+                },
+                "name": "odf-operator",
+                "namespace": "openshift-storage",
+                "resourceVersion": "1897287",
+                "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "installPlanApproval": "Automatic",
+                "name": "odf-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:32:54Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:32:54Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:32:54Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:32:55Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "odf-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-lcrvx",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893022",
+                    "uid": "c0226538-517b-44b9-af5b-996f08f6df6c"
+                },
+                "installedCSV": "odf-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-lcrvx",
+                    "uuid": "c0226538-517b-44b9-af5b-996f08f6df6c"
+                },
+                "lastUpdated": "2026-09-20T02:35:25Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/odf-prometheus-operator.openshift-storage": ""
+                },
+                "name": "odf-prometheus-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1916307",
+                "uid": "9a126796-b00f-4b20-aaf6-ee96659a6524"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "odf-prometheus-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "odf-prometheus-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:02Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:02Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:02Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:34:03Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "odf-prometheus-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "odf-prometheus-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:43:02Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/recipe.openshift-storage": ""
+                },
+                "name": "recipe-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1915352",
+                "uid": "975e0de6-8f61-4619-93fd-0194b13a6ba0"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "recipe",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "recipe.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:01Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:01Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:34:01Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:34:01Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "recipe.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "recipe.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:42:38Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "annotations": {
+                    "olm.generated-by": "install-bczzv"
+                },
+                "creationTimestamp": "2026-09-20T02:33:17Z",
+                "generation": 2,
+                "labels": {
+                    "olm.managed": "true",
+                    "operators.coreos.com/rook-ceph-operator.openshift-storage": ""
+                },
+                "name": "rook-ceph-operator-stable-4.22-redhat-operators-openshift-marketplace",
+                "namespace": "openshift-storage",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Subscription",
+                        "name": "odf-operator",
+                        "uid": "52017b72-ab64-4233-811f-30ad9e74002d"
+                    }
+                ],
+                "resourceVersion": "1915626",
+                "uid": "264d3ccf-c116-4335-89e1-127784fece93"
+            },
+            "spec": {
+                "channel": "stable-4.22",
+                "config": {},
+                "installPlanApproval": "Automatic",
+                "name": "rook-ceph-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace",
+                "startingCSV": "rook-ceph-operator.v4.22.4-rhodf"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886209",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:58Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1885994",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:58Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "1886281",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-20T02:33:58Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-20T02:33:58Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "rook-ceph-operator.v4.22.4-rhodf",
+                "installPlanGeneration": 3,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "namespace": "openshift-storage",
+                    "resourceVersion": "1893716",
+                    "uid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "installedCSV": "rook-ceph-operator.v4.22.4-rhodf",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-9q89p",
+                    "uuid": "6cf45303-0141-48e5-a60b-5df7d94b34bb"
+                },
+                "lastUpdated": "2026-09-20T02:42:46Z",
+                "state": "AtLatestKnown"
+            }
+        },
+        {
+            "apiVersion": "operators.coreos.com/v1alpha1",
+            "kind": "Subscription",
+            "metadata": {
+                "creationTimestamp": "2026-09-27T06:36:34Z",
+                "generation": 1,
+                "labels": {
+                    "operators.coreos.com/rhods-operator.redhat-ods-operator": ""
+                },
+                "name": "rhods-operator",
+                "namespace": "redhat-ods-operator",
+                "resourceVersion": "12457324",
+                "uid": "b588ecc1-a000-4113-be6d-830c93b98441"
+            },
+            "spec": {
+                "channel": "stable-3.5",
+                "installPlanApproval": "Automatic",
+                "name": "rhods-operator",
+                "source": "redhat-operators",
+                "sourceNamespace": "openshift-marketplace"
+            },
+            "status": {
+                "catalogHealth": [
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "certified-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455673",
+                            "uid": "e274731e-2395-4ba8-91f5-af5757b6d747"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:36:36Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "community-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12454913",
+                            "uid": "993a9876-dd8a-4d70-a39f-56fa4b83ead7"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:36:36Z"
+                    },
+                    {
+                        "catalogSourceRef": {
+                            "apiVersion": "operators.coreos.com/v1alpha1",
+                            "kind": "CatalogSource",
+                            "name": "redhat-operators",
+                            "namespace": "openshift-marketplace",
+                            "resourceVersion": "12455682",
+                            "uid": "8e422713-269e-47ae-a7a5-091f4bbee147"
+                        },
+                        "healthy": true,
+                        "lastUpdated": "2026-09-27T06:36:36Z"
+                    }
+                ],
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-27T06:36:37Z",
+                        "message": "all available catalogsources are healthy",
+                        "reason": "AllCatalogSourcesHealthy",
+                        "status": "False",
+                        "type": "CatalogSourcesUnhealthy"
+                    }
+                ],
+                "currentCSV": "rhods-operator.3.5.1",
+                "installPlanGeneration": 1,
+                "installPlanRef": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-c4j8l",
+                    "namespace": "redhat-ods-operator",
+                    "resourceVersion": "12456399",
+                    "uid": "8b5bf665-e88e-4c18-ad7b-ea6db18bbc49"
+                },
+                "installedCSV": "rhods-operator.3.5.1",
+                "installplan": {
+                    "apiVersion": "operators.coreos.com/v1alpha1",
+                    "kind": "InstallPlan",
+                    "name": "install-c4j8l",
+                    "uuid": "8b5bf665-e88e-4c18-ad7b-ea6db18bbc49"
+                },
+                "lastUpdated": "2026-09-27T06:36:51Z",
+                "state": "AtLatestKnown"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

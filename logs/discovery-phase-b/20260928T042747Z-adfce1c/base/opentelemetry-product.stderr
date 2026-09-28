@@ -1,0 +1,16 @@
+🔍 Discovering API resources...
+   Discovery: 38.7s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-opentelemetry-operator] elapsed 0s
+✅ Scanned 270 resource types in 20.3s
+   openshift-opentelemetry-operator — 56 resources
+   Scanned 1 namespace(s), 56 total resources
+
+Coverage: 291 queries, 291 success, 0 incomplete, 0 absent, 0 missing (135.1s)

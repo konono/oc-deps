@@ -1,0 +1,139 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-28T05:21:06.662311571+00:00",
+  "targets": [
+    {
+      "package_name": "limitador-operator",
+      "install_namespace": "openshift-rhcl",
+      "csv_name_pattern": "limitador-operator.v1.4.2"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-rhcl",
+          "name": "limitador-operator-stable-redhat-operators-openshift-marketplace",
+          "uid": "c75597a5-3cd2-4ee4-9dca-b82c9cb56c74",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "limitador-operator.v1.4.2",
+          "uid": "44663af0-4460-41b7-b156-314a2583303f",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "limitador.kuadrant.io",
+          "kind": "Limitador",
+          "namespace": "openshift-rhcl",
+          "name": "limitador",
+          "uid": "59284593-44c2-4b2a-ac01-38ddb6ca090a",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "limitador-operator.v1.4.2",
+          "uid": "44663af0-4460-41b7-b156-314a2583303f",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator",
+          "uid": "7a5c7504-29ec-48be-8931-9400c53567a2",
+          "action": "KEEP"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-rhcl",
+          "name": "3745a16e.kuadrant.io",
+          "uid": "66914f7d-fedd-4567-b234-56fa416fe607",
+          "action": "REVIEW"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-rhcl",
+          "name": "limitador-operator-manager-config",
+          "uid": "4c2afe53-067f-48a3-bb9e-271a360078a2",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "limitadors.limitador.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-rhcl",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

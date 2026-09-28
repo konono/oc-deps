@@ -1,0 +1,4174 @@
+{
+  "operator_name": "authorino-operator",
+  "csv_name": "authorino-operator.v1.4.3",
+  "install_namespace": "openshift-rhcl",
+  "subscription_name": "authorino-operator-stable-redhat-operators-openshift-marketplace",
+  "owned_crds": [
+    "authconfigs.authorino.kuadrant.io",
+    "authorinos.operator.authorino.kuadrant.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator.v1.4.3",
+            "uid": "adc1a992-8a28-47f0-9fe1-d40a8b865ff9"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator-stable-redhat-operators-openshift-marketplace",
+            "uid": "c80310b2-9b4f-4377-aad3-9bdd6db59887"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator-68fdfdc8cc-f6hkx",
+            "uid": "8ef89c27-0a5f-4408-9848-a3f8fab67b02"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-5cf7d5549c-7ql84",
+            "uid": "1c1d0f18-8453-47f9-a5fd-b404bba81c0c"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-5cf7d5549c",
+            "uid": "30fdd767-bafb-480a-8068-14962aa0e061"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ReplicaSet/authorino-5cf7d5549c",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-dockercfg-zlds4",
+            "uid": "812c9be1-da40-4ff6-ab60-b286c5f7c10d"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino",
+            "uid": "9ecd0a23-f5fd-40dd-a59b-efb1c559c494"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of ServiceAccount/authorino-authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-server-cert",
+            "uid": "fa9cf8b4-585d-4fde-83bf-384a96dcd0c7"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization",
+            "uid": "393eaa83-9260-4a91-b3a0-1fdcb7e1cfa4"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-authorino-authorization",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization",
+            "uid": "393eaa83-9260-4a91-b3a0-1fdcb7e1cfa4"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-oidc",
+            "uid": "0e16d2ff-5046-4fe8-8327-ba7660fcbd0f"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-controller-metrics",
+            "uid": "56e93c73-d4c2-4e94-aa97-928886f48730"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino",
+            "uid": "9ecd0a23-f5fd-40dd-a59b-efb1c559c494"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "58224d71-2fb7-4679-9141-657918c4b69d"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-56c6c9ddd5",
+            "uid": "9cd5aab4-0757-4a96-aa93-2c915fc17de3"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "58224d71-2fb7-4679-9141-657918c4b69d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-57f7f8659f",
+            "uid": "389d13ca-9f1c-46e4-8dd8-9edba53b0db5"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "58224d71-2fb7-4679-9141-657918c4b69d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-5cf7d5549c",
+            "uid": "30fdd767-bafb-480a-8068-14962aa0e061"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "58224d71-2fb7-4679-9141-657918c4b69d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ReplicaSet",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-6dd76875b5",
+            "uid": "2d0d4438-4b73-4d95-9b7d-d148bb2905fd"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "58224d71-2fb7-4679-9141-657918c4b69d"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Deployment/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "002268263f8bb03204567714a8f374dbaf67e0353162e6d450af43df8900c427",
+            "uid": "20f2ba8e-e67f-41d8-8981-1c8dc53de71c"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "32c5926417ce74d07104e03d2afed39d36dfb3e0cd65e94a5f8f1e7b85163a98",
+            "uid": "571d5ecf-344d-46f1-9b61-e288d7515712"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "77d78fccf2af9dd49c04b2afd9490521a51584cb63af0ecef56e9bae12d430c1",
+            "uid": "6c35028e-a03f-4b86-a4fb-4500aaa52a41"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorino.kuadrant.io",
+            "version": "v1beta3",
+            "kind": "AuthConfig",
+            "namespace": "openshift-rhcl",
+            "name": "9a9b0d8c5f8335cb2f5af8be2bef8c1a7ef8846ba736ea4a7135bd4b966f4f63",
+            "uid": "7c81da36-9940-47bf-8ef7-6724c2a06539"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "authorization.openshift.io",
+            "version": "v1",
+            "kind": "Role",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-leader-election-role",
+            "uid": "30015981-862f-4653-a35d-0ff4e55657fd"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "authorization.openshift.io",
+            "version": "v1",
+            "kind": "RoleBinding",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-leader-election",
+            "uid": "1053aa74-d986-414d-bcfd-1d9391d33b28"
+          },
+          "source_id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Authorino/authorino",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization-sg2jx",
+            "uid": "9a623315-cd74-4561-b7d1-2270abed0a39"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-authorization",
+            "uid": "393eaa83-9260-4a91-b3a0-1fdcb7e1cfa4"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-authorino-authorization",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-oidc-2wg5v",
+            "uid": "c873d887-4e62-4e12-80da-b352ff79ef79"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-authorino-oidc",
+            "uid": "0e16d2ff-5046-4fe8-8327-ba7660fcbd0f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-authorino-oidc",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-controller-metrics-47ftw",
+            "uid": "84213855-108c-42b4-aa6b-c29beef51bb9"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "openshift-rhcl",
+            "name": "authorino-controller-metrics",
+            "uid": "56e93c73-d4c2-4e94-aa97-928886f48730"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/authorino-controller-metrics",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operator.authorino.kuadrant.io",
+            "version": "v1beta1",
+            "kind": "Authorino",
+            "namespace": "openshift-rhcl",
+            "name": "authorino",
+            "uid": "f8dc5d45-e5a1-4db4-a8cb-b5139d6e5a03"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-rhcl",
+      "evidence": [
+        "InstallNamespace",
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "AuthConfig"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "Authorino"
+          }
+        }
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0,
+  "coverage": {
+    "total_queries": 277,
+    "success": 277,
+    "incomplete": 0,
+    "api_absent": 0,
+    "target_missing": 0,
+    "total_elapsed_ms": 128642
+  },
+  "incomplete_count": 0,
+  "coverage_ledger": {
+    "schema_version": 1,
+    "records": [
+      {
+        "gvr": "acme.cert-manager.io/v1/challenges",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 779,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "acme.cert-manager.io/v1/orders",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 791,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apiextensions.k8s.io/v1/customresourcedefinitions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 395,
+          "pages": 1
+        },
+        "elapsed_ms": 1613,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "app.k8s.io/v1beta1/applications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 597,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps.openshift.io/v1/deploymentconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 894,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/controllerrevisions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 791,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/daemonsets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1427,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 7,
+          "pages": 1
+        },
+        "elapsed_ms": 1798,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "Get",
+        "target_name": "authorino-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/replicasets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 11,
+          "pages": 1
+        },
+        "elapsed_ms": 1052,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/statefulsets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 879,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/cronworkflows",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 889,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowartifactgctasks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 692,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workfloweventbindings",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 892,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflows",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 596,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtaskresults",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1032,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtasksets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1032,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtemplates",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1032,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorino.kuadrant.io/v1beta3/authconfigs",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorino.kuadrant.io/v1beta3/authconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 1424,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindingrestrictions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1063,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindings",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 13,
+          "pages": 1
+        },
+        "elapsed_ms": 1427,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/roles",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 1268,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling.openshift.io/v1beta1/machineautoscalers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 699,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling/v2/horizontalpodautoscalers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1080,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/cronjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1083,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/jobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1090,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/buildconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 686,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/builds",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1408,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpoolradosnamespaces",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1227,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpools",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1223,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbucketnotifications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1222,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbuckettopics",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1215,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclients",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1222,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclusters",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1229,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephcosidrivers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1227,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemmirrors",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1232,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystems",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1248,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemsubvolumegroups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnfses",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1275,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnvmeofgateways",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1286,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectrealms",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1398,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreaccounts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1234,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstores",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 645,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreusers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 645,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzonegroups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 655,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzones",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephrbdmirrors",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificaterequests",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificates",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 395,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/issuers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 415,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cloudcredential.openshift.io/v1/credentialsrequests",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 510,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "config.openshift.io/v1/imagepolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 509,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "console.openshift.io/v1/odhquickstarts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 509,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 536,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "coordination.k8s.io/v1/leases",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 568,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/cephconnections",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 567,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofilemappings",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofiles",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 273,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/drivers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 273,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/operatorconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 273,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/csiaddonsnodes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationcronjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 273,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacecronjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacejobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhapplications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhdocuments",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "datasciencepipelinesapplications.opendatahub.io/v1/datasciencepipelinesapplications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyapprovals",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyrequests",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 270,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeys",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apiproducts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "discovery.k8s.io/v1/endpointslices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 12,
+          "pages": 1
+        },
+        "elapsed_ms": 456,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/trafficextensions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 270,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/wasmplugins",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 272,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/oidcpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 468,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/planpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 270,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/telemetrypolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "feast.dev/v1/featurestores",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/backendtlspolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 270,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/gateways",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 269,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/grpcroutes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/httproutes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 270,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1beta1/referencegrants",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 270,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "groupsnapshot.storage.openshift.io/v1beta1/volumegroupsnapshots",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 464,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "helm.openshift.io/v1beta1/projecthelmchartrepositories",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 464,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreams",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreamtags",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagetags",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.networking.x-k8s.io/v1alpha2/inferencepools",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.opendatahub.io/v1alpha1/externalmodels",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.opendatahub.io/v1alpha1/externalproviders",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediations",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediationtemplates",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 470,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.opendatahub.io/v1/hardwareprofiles",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 458,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ingress.operator.openshift.io/v1/dnsrecords",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 455,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddressclaims",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 468,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddresses",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 468,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "jobset.x-k8s.io/v1alpha2/jobsets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1/network-attachment-definitions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 463,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1alpha1/ipamclaims",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 468,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloakrealmimports",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 469,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloaks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 467,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressfirewalls",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 467,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressqoses",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 467,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressservices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 453,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/userdefinednetworks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 452,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/authpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 363,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/dnspolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 370,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/ratelimitpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 369,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/tlspolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 375,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/dnshealthcheckprobes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 375,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/tokenratelimitpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 373,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1beta1/kuadrants",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 382,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/jaxjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 380,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/mpijobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 372,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/notebooks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 372,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/paddlejobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/pytorchjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 382,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/tfjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 382,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/xgboostjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 382,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/scheduledworkflows",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 381,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/viewers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 217,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "limitador.kuadrant.io/v1alpha1/limitadors",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 212,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferencemodelrewrites",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferenceobjectives",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/aitenants",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasauthpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasmodelrefs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maassubscriptions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maastenantconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/tenants",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1/controlplanemachinesets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinehealthchecks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machines",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinesets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/baremetalhosts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/bmceventsubscriptions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/dataimages",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/firmwareschemas",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hardwaredata",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwarecomponents",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwaresettings",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 365,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostupdatepolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/preprovisioningimages",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metrics.k8s.io/v1beta1/pods",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 7,
+          "pages": 1
+        },
+        "elapsed_ms": 340,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "mlflow.kubeflow.org/v1/mlflowconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 366,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "modelregistry.opendatahub.io/v1beta1/modelregistries",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 352,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/alertmanagers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 352,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/podmonitors",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 348,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/probes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 352,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheuses",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 348,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheusrules",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 351,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/servicemonitors",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 351,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/thanosrulers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 356,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertingrules",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 363,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertrelabelconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 360,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/alertmanagerconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/monitoringstacks",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/prometheusagents",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/scrapeconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/thanosqueriers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/egressrouters",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/operatorpkis",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/destinationrules",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/serviceentries",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/sidecars",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/virtualservices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadentries",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadgroups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1alpha3/envoyfilters",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1beta1/proxyconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 203,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/networkpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturegroups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturerules",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeatures",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.openshift.io/v1/nodefeaturediscoveries",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nim.opendatahub.io/v1/accounts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/backingstores",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/bucketclasses",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/namespacestores",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaaaccounts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaas",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "objectbucket.io/v1alpha1/objectbucketclaims",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "observability.openshift.io/v1alpha1/observabilityinstallers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/ocsinitializations",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageautoscalers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusterpeers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusters",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/tlsprofiles",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1alpha1/storageconsumers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ogx.io/v1beta1/ogxservers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 325,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opendatahub.io/v1alpha/odhdashboardconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/instrumentations",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/opampbridges",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/targetallocators",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1beta1/opentelemetrycollectors",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.authorino.kuadrant.io/v1beta1/authorinos",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.authorino.kuadrant.io/v1beta1/authorinos",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/ingresscontrollers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 274,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/catalogsources",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "scope": "cluster",
+        "operation": "List",
+        "label_selector": "!olm.copiedFrom",
+        "outcome": {
+          "outcome": "Success",
+          "count": 29,
+          "pages": 1
+        },
+        "elapsed_ms": 1808,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 1213,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/installplans",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 736,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/subscriptions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 28,
+          "pages": 1
+        },
+        "elapsed_ms": 1221,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v2/operatorconditions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "packages.operators.coreos.com/v1/packagemanifests",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 617,
+          "pages": 1
+        },
+        "elapsed_ms": 8913,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/perses",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdashboards",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdatasources",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelines",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelineversions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "policy/v1/poddisruptionbudgets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/backups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/clusters",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/databases",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/failoverquorums",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/imagecatalogs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/poolers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/publications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/scheduledbackups",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/subscriptions",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "quota.openshift.io/v1/appliedclusterresourcequotas",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ramendr.openshift.io/v1alpha1/recipes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayclusters",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/raycronjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayservices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "redhatcop.redhat.io/v1alpha1/groupsyncs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumegroupreplications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumereplications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaims",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaimtemplates",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 183,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "route.openshift.io/v1/routes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/authorizationpolicies",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/peerauthentications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/requestauthentications",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/inferencegraphs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/servingruntimes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/trainedmodels",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceserviceconfigs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceservices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1beta1/inferenceservices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 282,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "snapshot.storage.k8s.io/v1/volumesnapshots",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 281,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "storage.k8s.io/v1/csistoragecapacities",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 281,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "telemetry.istio.io/v1/telemetries",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 281,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templateinstances",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 280,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templates",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 280,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainingruntimes",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 280,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainjobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 280,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/evalhubs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 280,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/trustyaiservices",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 314,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/guardrailsorchestrators",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 313,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/lmevaljobs",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 311,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/nemoguardrails",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/profiles",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/tuneds",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/configmaps",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 9,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/endpoints",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 12,
+          "pages": 1
+        },
+        "elapsed_ms": 387,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/limitranges",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 380,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/persistentvolumeclaims",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 570,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 7,
+          "pages": 1
+        },
+        "elapsed_ms": 1038,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "label_selector": "control-plane=authorino-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 241,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/podtemplates",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 577,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/replicationcontrollers",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 598,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/resourcequotas",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 696,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/secrets",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 12,
+          "pages": 1
+        },
+        "elapsed_ms": 768,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/serviceaccounts",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 1043,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/services",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 12,
+          "pages": 1
+        },
+        "elapsed_ms": 891,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/ippools",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/nodeslicepools",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/overlappingrangeipreservations",
+        "namespace": "openshift-rhcl",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      }
+    ]
+  },
+  "query_planner": {
+    "total_demands": 281,
+    "unique_queries": 276,
+    "network_queries": 276,
+    "cache_hits": 5,
+    "completed": 276,
+    "incomplete": 0,
+    "retry_count": 0,
+    "total_elapsed_ms": 127029
+  }
+}

@@ -1,0 +1,355 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-28T05:21:51.976118884+00:00",
+  "targets": [
+    {
+      "package_name": "servicemeshoperator3",
+      "install_namespace": "openshift-servicemesh",
+      "csv_name_pattern": "servicemeshoperator3.v3.4.2"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-servicemesh",
+          "name": "servicemeshoperator3",
+          "uid": "8ee2ac13-af72-4f86-a8b9-bb82967eaf45",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-servicemesh",
+          "name": "servicemeshoperator3.v3.4.2",
+          "uid": "995abc36-c72c-4787-9b22-9a7d9c94968e",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "networking.istio.io",
+          "kind": "DestinationRule",
+          "namespace": "openshift-ingress",
+          "name": "data-science-tls-rule",
+          "uid": "54742c79-cd68-44fe-a5ae-2e2498804ecf",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "DestinationRule",
+          "namespace": "openshift-ingress",
+          "name": "maas-api-backend-tls",
+          "uid": "f7075354-103f-444e-8359-963414583638",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "DestinationRule",
+          "namespace": "openshift-ingress",
+          "name": "payload-pre-processing",
+          "uid": "2527caa3-d002-4e8e-bb72-0460820ef25e",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "DestinationRule",
+          "namespace": "openshift-ingress",
+          "name": "payload-processing",
+          "uid": "6e25a069-8daa-4e9e-bd84-28cf514f69e6",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "EnvoyFilter",
+          "namespace": "openshift-ingress",
+          "name": "data-science-authn-filter",
+          "uid": "95c7773c-e32d-40bb-a651-6117fcd27340",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "EnvoyFilter",
+          "namespace": "openshift-ingress",
+          "name": "kuadrant-auth-maas-default-gateway",
+          "uid": "8d950dd1-5257-4724-b02b-b85060632049",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "EnvoyFilter",
+          "namespace": "openshift-ingress",
+          "name": "kuadrant-maas-default-gateway",
+          "uid": "504d7d69-dc3a-4bfe-b6b1-d456e8e06b7d",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "EnvoyFilter",
+          "namespace": "openshift-ingress",
+          "name": "kuadrant-ratelimiting-maas-default-gateway",
+          "uid": "7fd75d75-4c81-4ddd-8054-996d9102908d",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "EnvoyFilter",
+          "namespace": "openshift-ingress",
+          "name": "maas-default-gateway-authn-ssl",
+          "uid": "37fa2df4-d5a8-4d54-970a-7c6967bcb535",
+          "action": "DELETE"
+        },
+        {
+          "group": "networking.istio.io",
+          "kind": "EnvoyFilter",
+          "namespace": "openshift-ingress",
+          "name": "payload-processing",
+          "uid": "1a475581-f3be-4e78-b19f-9fdd00427ca4",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-servicemesh",
+          "name": "servicemeshoperator3.v3.4.2",
+          "uid": "995abc36-c72c-4787-9b22-9a7d9c94968e",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-servicemesh",
+          "name": "servicemeshoperator3",
+          "uid": "121afccd-f020-4f17-b81c-1192491581ee",
+          "action": "DELETE"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-servicemesh",
+          "name": "sail-operator-lock",
+          "uid": "8a707756-b517-430c-8f5a-05cd9c53effc",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "trafficextensions.extensions.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "wasmplugins.extensions.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "destinationrules.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "envoyfilters.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "gateways.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "proxyconfigs.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "serviceentries.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "sidecars.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "virtualservices.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "workloadentries.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "workloadgroups.networking.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "ztunnels.sailoperator.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "authorizationpolicies.security.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "peerauthentications.security.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "requestauthentications.security.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "telemetries.telemetry.istio.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "istiocnis.sailoperator.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "istiorevisions.sailoperator.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "istiorevisiontags.sailoperator.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "istios.sailoperator.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-servicemesh",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

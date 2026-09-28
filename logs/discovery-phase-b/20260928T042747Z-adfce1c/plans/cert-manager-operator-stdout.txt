@@ -1,0 +1,78 @@
+Targets
+  cert-manager-operator.v1.20.0 (ns: cert-manager-operator) (Subscription/openshift-cert-manager-operator@cert-manager-operator)
+
+Preflight
+  ✓ Subscription resolved (cert-manager-operator.v1.20.0) — Subscription/openshift-cert-manager-operator found — will be deleted in Phase 0
+  ✓ CSV health (cert-manager-operator.v1.20.0) — phase=Succeeded
+  ✓ Controller available (cert-manager-operator.v1.20.0) — cert-manager-operator-controller-manager: Available (1)
+  ! Provenance — 4 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/openshift-cert-manager-operator  (ns: cert-manager-operator)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/cert-manager-operator.v1.20.0  (ns: cert-manager-operator)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE Certificate/jobset-metrics-cert  (ns: openshift-jobset)
+         independent CR approved via --approve-scope independent
+  DELETE Certificate/jobset-serving-cert  (ns: openshift-jobset)
+         independent CR approved via --approve-scope independent
+  DELETE Issuer/jobset-selfsigned-issuer  (ns: openshift-jobset)
+         independent CR approved via --approve-scope independent
+  DELETE CertManager/cluster  (cluster-scoped)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/cert-manager-operator.v1.20.0  (ns: cert-manager-operator)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/openshift-cert-manager-operator  (ns: cert-manager-operator)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/cert-manager-operator-lock  (ns: cert-manager-operator)
+         leader election lease (holder references operator deployment)
+  REVIEW ConfigMap/cert-manager-operator-trusted-ca-bundle  (ns: cert-manager-operator)
+         operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/bundles.trust.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/certificaterequests.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/certificates.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/certmanagers.operator.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/challenges.acme.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/clusterissuers.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/issuers.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiocsrs.operator.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/orders.acme.cert-manager.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/trustmanagers.operator.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/cert-manager-operator  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  4 CRs have uncertain provenance (owned API, but origin unknown)
+  10 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 7 DELETE, 0 EXPECT-GONE, 12 KEEP, 2 REVIEW
+  0 blockers, 2 warnings

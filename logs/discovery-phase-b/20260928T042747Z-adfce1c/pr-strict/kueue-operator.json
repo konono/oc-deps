@@ -1,0 +1,3696 @@
+{
+  "operator_name": "kueue-operator",
+  "csv_name": "kueue-operator.v1.4.2",
+  "install_namespace": "openshift-kueue",
+  "subscription_name": "kueue-operator",
+  "owned_crds": [
+    "kueues.kueue.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-kueue",
+            "name": "kueue-operator.v1.4.2",
+            "uid": "b78200cb-5fd0-425d-a538-394153eee420"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-kueue",
+            "name": "kueue-operator",
+            "uid": "383cb3cc-35ad-49af-b9b5-0f09b278333f"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator-7c654676dc-c4p68",
+            "uid": "0bdfdc99-a0cf-4d6b-a161-9da71e208129"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator-7c654676dc-vbmns",
+            "uid": "65a84482-07d0-4ec2-98fd-4dc6ba7a7a41"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-kueue",
+            "name": "openshift-kueue-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-kueue",
+      "evidence": [
+        "InstallNamespace"
+      ]
+    }
+  ],
+  "scope_warnings": [
+    "AllNamespaces operator: showing namespaces discovered from owned CRD instances, spec namespace references, and label evidence. Resources in undiscovered namespaces may not be included."
+  ],
+  "scan_warning_count": 0,
+  "coverage": {
+    "total_queries": 274,
+    "success": 274,
+    "incomplete": 0,
+    "api_absent": 0,
+    "target_missing": 0,
+    "total_elapsed_ms": 138400
+  },
+  "incomplete_count": 0,
+  "coverage_ledger": {
+    "schema_version": 1,
+    "records": [
+      {
+        "gvr": "acme.cert-manager.io/v1/challenges",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 649,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "acme.cert-manager.io/v1/orders",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 834,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apiextensions.k8s.io/v1/customresourcedefinitions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 395,
+          "pages": 1
+        },
+        "elapsed_ms": 865,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "app.k8s.io/v1beta1/applications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 833,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps.openshift.io/v1/deploymentconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 636,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/controllerrevisions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 833,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/daemonsets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 839,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 1216,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "Get",
+        "target_name": "openshift-kueue-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/replicasets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 1219,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/statefulsets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 839,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/cronworkflows",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 844,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowartifactgctasks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 645,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workfloweventbindings",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 843,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflows",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 997,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtaskresults",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 997,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtasksets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1008,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtemplates",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1015,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorino.kuadrant.io/v1beta3/authconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1019,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindingrestrictions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 645,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindings",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 5,
+          "pages": 1
+        },
+        "elapsed_ms": 1025,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/roles",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 1025,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling.openshift.io/v1beta1/machineautoscalers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1030,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling/v2/horizontalpodautoscalers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1030,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/cronjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 644,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/jobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 645,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/buildconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 634,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpoolradosnamespaces",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1214,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpools",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbucketnotifications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 644,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbuckettopics",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1037,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclients",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1037,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclusters",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephcosidrivers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemmirrors",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystems",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemsubvolumegroups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnfses",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 647,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnvmeofgateways",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectrealms",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreaccounts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1213,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstores",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1049,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreusers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1048,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzonegroups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 577,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzones",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 567,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephrbdmirrors",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 539,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificaterequests",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 539,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificates",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 539,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/issuers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 553,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cloudcredential.openshift.io/v1/credentialsrequests",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 392,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "config.openshift.io/v1/imagepolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 392,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "console.openshift.io/v1/odhquickstarts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 395,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 395,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "coordination.k8s.io/v1/leases",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 401,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/cephconnections",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 398,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofilemappings",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 493,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofiles",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 493,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/drivers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 279,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/operatorconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 271,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/csiaddonsnodes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 267,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationcronjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 266,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 266,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacecronjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 266,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacejobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 320,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhapplications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 320,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhdocuments",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 320,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "datasciencepipelinesapplications.opendatahub.io/v1/datasciencepipelinesapplications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 339,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyapprovals",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 338,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyrequests",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 334,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeys",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 338,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apiproducts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 338,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "discovery.k8s.io/v1/endpointslices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 351,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/trafficextensions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 350,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/wasmplugins",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 358,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/oidcpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 354,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/planpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 353,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/telemetrypolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 467,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "feast.dev/v1/featurestores",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 444,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/backendtlspolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 445,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/gateways",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 456,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/grpcroutes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/httproutes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1beta1/referencegrants",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 463,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "groupsnapshot.storage.openshift.io/v1beta1/volumegroupsnapshots",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 454,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "helm.openshift.io/v1beta1/projecthelmchartrepositories",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 456,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreams",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 462,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreamtags",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 460,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagetags",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 456,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.networking.x-k8s.io/v1alpha2/inferencepools",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 462,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.opendatahub.io/v1alpha1/externalproviders",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 459,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediations",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 468,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediationtemplates",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 494,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.opendatahub.io/v1/hardwareprofiles",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 489,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ingress.operator.openshift.io/v1/dnsrecords",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 488,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddressclaims",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 505,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddresses",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 388,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "jobset.x-k8s.io/v1alpha2/jobsets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 388,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1/network-attachment-definitions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1alpha1/ipamclaims",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 374,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloakrealmimports",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 377,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloaks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 376,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressfirewalls",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 375,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressqoses",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 374,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressservices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 389,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/userdefinednetworks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 457,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/authpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 367,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/dnspolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 362,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/ratelimitpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 363,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/tlspolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 368,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/dnshealthcheckprobes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 369,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/tokenratelimitpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 367,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1beta1/kuadrants",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 367,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/jaxjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 377,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/mpijobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 329,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/notebooks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 329,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/paddlejobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 329,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/pytorchjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 316,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/tfjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 310,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/xgboostjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 310,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/scheduledworkflows",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 310,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/viewers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 323,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kueue.openshift.io/v1/kueues",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 180,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "limitador.kuadrant.io/v1alpha1/limitadors",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 312,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferencemodelrewrites",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 312,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferenceobjectives",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 304,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/aitenants",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 296,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/externalmodels",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 304,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasauthpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasmodelrefs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maassubscriptions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maastenantconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/tenants",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1/controlplanemachinesets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinehealthchecks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machines",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinesets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/baremetalhosts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/bmceventsubscriptions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/dataimages",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/firmwareschemas",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hardwaredata",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwarecomponents",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwaresettings",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 289,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostupdatepolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 309,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/preprovisioningimages",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 313,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metrics.k8s.io/v1beta1/pods",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 296,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "mlflow.kubeflow.org/v1/mlflowconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 294,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/alertmanagers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 293,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/podmonitors",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 295,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/probes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 295,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheuses",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 284,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheusrules",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 300,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/servicemonitors",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 295,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/thanosrulers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 297,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertingrules",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 278,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertrelabelconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/alertmanagerconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/monitoringstacks",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/prometheusagents",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/scrapeconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/thanosqueriers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 221,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/egressrouters",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 218,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/operatorpkis",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 218,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/destinationrules",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/serviceentries",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 208,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/sidecars",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 222,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/virtualservices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadentries",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadgroups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1alpha3/envoyfilters",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1beta1/proxyconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/networkpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturegroups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturerules",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeatures",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.openshift.io/v1/nodefeaturediscoveries",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nim.opendatahub.io/v1/accounts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/backingstores",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/bucketclasses",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 214,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/namespacestores",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 311,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaaaccounts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 302,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaas",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 298,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "objectbucket.io/v1alpha1/objectbucketclaims",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 301,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "observability.openshift.io/v1alpha1/observabilityinstallers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/ocsinitializations",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageautoscalers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusterpeers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusters",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/tlsprofiles",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1alpha1/storageconsumers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ogx.io/v1beta1/ogxservers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opendatahub.io/v1alpha/odhdashboardconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/instrumentations",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/opampbridges",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/targetallocators",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1beta1/opentelemetrycollectors",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.authorino.kuadrant.io/v1beta1/authorinos",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/ingresscontrollers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/catalogsources",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "scope": "cluster",
+        "operation": "List",
+        "label_selector": "!olm.copiedFrom",
+        "outcome": {
+          "outcome": "Success",
+          "count": 29,
+          "pages": 1
+        },
+        "elapsed_ms": 2586,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 10,
+          "pages": 1
+        },
+        "elapsed_ms": 2115,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/installplans",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/subscriptions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 28,
+          "pages": 1
+        },
+        "elapsed_ms": 1424,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v2/operatorconditions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "packages.operators.coreos.com/v1/packagemanifests",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 617,
+          "pages": 1
+        },
+        "elapsed_ms": 23643,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/perses",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdashboards",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdatasources",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelines",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelineversions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "policy/v1/poddisruptionbudgets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/backups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/clusters",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/databases",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/failoverquorums",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/imagecatalogs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/poolers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/publications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/scheduledbackups",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/subscriptions",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "quota.openshift.io/v1/appliedclusterresourcequotas",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ramendr.openshift.io/v1alpha1/recipes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayclusters",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/raycronjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayservices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "redhatcop.redhat.io/v1alpha1/groupsyncs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumegroupreplications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumereplications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaims",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaimtemplates",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "route.openshift.io/v1/routes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/authorizationpolicies",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/peerauthentications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/requestauthentications",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/inferencegraphs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/servingruntimes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/trainedmodels",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceserviceconfigs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceservices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 179,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1beta1/inferenceservices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "snapshot.storage.k8s.io/v1/volumesnapshots",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 180,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "storage.k8s.io/v1/csistoragecapacities",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "telemetry.istio.io/v1/telemetries",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templateinstances",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templates",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainingruntimes",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 183,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainjobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/evalhubs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/trustyaiservices",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/guardrailsorchestrators",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/lmevaljobs",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/nemoguardrails",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/profiles",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/tuneds",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/configmaps",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/endpoints",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/limitranges",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 453,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/persistentvolumeclaims",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 453,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 829,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "label_selector": "name=openshift-kueue-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 184,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/podtemplates",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 639,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/replicationcontrollers",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 635,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/resourcequotas",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 816,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/secrets",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 1003,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/serviceaccounts",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 818,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/services",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 824,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/ippools",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/nodeslicepools",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/overlappingrangeipreservations",
+        "namespace": "openshift-kueue",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      }
+    ]
+  },
+  "query_planner": {
+    "total_demands": 276,
+    "unique_queries": 273,
+    "network_queries": 273,
+    "cache_hits": 3,
+    "completed": 273,
+    "incomplete": 0,
+    "retry_count": 0,
+    "total_elapsed_ms": 137535
+  }
+}

@@ -1,0 +1,3793 @@
+{
+  "operator_name": "leader-worker-set",
+  "csv_name": "leader-worker-set.v1.0.1",
+  "install_namespace": "openshift-leaderworkerset",
+  "subscription_name": "leader-worker-set",
+  "owned_crds": [
+    "leaderworkersetoperators.operator.openshift.io"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "openshift-leaderworkerset",
+            "name": "leader-worker-set",
+            "uid": "cf543de3-bf99-46ce-96f7-236573d63229"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "openshift-leaderworkerset",
+            "name": "leader-worker-set.v1.0.1",
+            "uid": "a3f949d7-2529-4ce0-a6d8-d6d32a538d78"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "openshift-leaderworkerset",
+            "name": "openshift-lws-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "openshift-leaderworkerset",
+            "name": "openshift-lws-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "openshift-leaderworkerset",
+            "name": "openshift-lws-operator-8669c49545-zr562",
+            "uid": "2f146004-887c-425f-8381-b417b67ded69"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "openshift-leaderworkerset",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus"
+      ]
+    }
+  ],
+  "scan_warning_count": 0,
+  "coverage": {
+    "total_queries": 284,
+    "success": 284,
+    "incomplete": 0,
+    "api_absent": 0,
+    "target_missing": 0,
+    "total_elapsed_ms": 140537
+  },
+  "incomplete_count": 0,
+  "coverage_ledger": {
+    "schema_version": 1,
+    "records": [
+      {
+        "gvr": "acme.cert-manager.io/v1/challenges",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 413,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "acme.cert-manager.io/v1/orders",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 277,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apiextensions.k8s.io/v1/customresourcedefinitions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 395,
+          "pages": 1
+        },
+        "elapsed_ms": 1062,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "app.k8s.io/v1beta1/applications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 263,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps.openshift.io/v1/deploymentconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 274,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/controllerrevisions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 656,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/daemonsets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1046,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 1055,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "Get",
+        "target_name": "openshift-lws-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/replicasets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/statefulsets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 179,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/cronworkflows",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 217,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowartifactgctasks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workfloweventbindings",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflows",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtaskresults",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 282,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtasksets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtemplates",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 564,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorino.kuadrant.io/v1beta3/authconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindingrestrictions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1048,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling.openshift.io/v1beta1/machineautoscalers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 403,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling/v2/horizontalpodautoscalers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 263,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/cronjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 226,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/jobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 637,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/buildconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/builds",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 252,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpoolradosnamespaces",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpools",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 377,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbucketnotifications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbuckettopics",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 598,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclients",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 251,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclusters",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephcosidrivers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemmirrors",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystems",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemsubvolumegroups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnfses",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnvmeofgateways",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectrealms",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 847,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreaccounts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 619,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstores",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 267,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreusers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 514,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzonegroups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzones",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 329,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephrbdmirrors",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 639,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificaterequests",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 599,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificates",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 398,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/issuers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cloudcredential.openshift.io/v1/credentialsrequests",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "config.openshift.io/v1/imagepolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 246,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "console.openshift.io/v1/odhquickstarts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 347,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "coordination.k8s.io/v1/leases",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/cephconnections",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 282,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofilemappings",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofiles",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/drivers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/operatorconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 251,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/csiaddonsnodes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 179,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationcronjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 598,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacecronjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacejobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhapplications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhdocuments",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "datasciencepipelinesapplications.opendatahub.io/v1/datasciencepipelinesapplications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyapprovals",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 267,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyrequests",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 392,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeys",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 240,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apiproducts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1013,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "discovery.k8s.io/v1/endpointslices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/trafficextensions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 530,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/wasmplugins",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/oidcpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 403,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/planpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 332,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/telemetrypolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 651,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "feast.dev/v1/featurestores",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 639,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/backendtlspolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 215,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/grpcroutes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1052,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/httproutes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 219,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1beta1/referencegrants",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 412,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "groupsnapshot.storage.openshift.io/v1beta1/volumegroupsnapshots",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "helm.openshift.io/v1beta1/projecthelmchartrepositories",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 611,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreams",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreamtags",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1052,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagetags",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.networking.k8s.io/v1/inferencepools",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 544,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.opendatahub.io/v1alpha1/externalproviders",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediations",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediationtemplates",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.opendatahub.io/v1/hardwareprofiles",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ingress.operator.openshift.io/v1/dnsrecords",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddressclaims",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "jobset.x-k8s.io/v1alpha2/jobsets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 251,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1/network-attachment-definitions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1alpha1/ipamclaims",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 632,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloakrealmimports",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloaks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 401,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressfirewalls",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 581,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressqoses",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressservices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/userdefinednetworks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 206,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/authpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 356,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/dnspolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/ratelimitpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1046,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/tlspolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 180,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/dnshealthcheckprobes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/tokenratelimitpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 222,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1beta1/kuadrants",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/jaxjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 275,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/mpijobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 663,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/notebooks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/paddlejobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/pytorchjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 387,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/tfjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/xgboostjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/scheduledworkflows",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 222,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/viewers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 261,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "limitador.kuadrant.io/v1alpha1/limitadors",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferencemodelrewrites",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 265,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferenceobjectives",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/aitenants",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/externalmodels",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasauthpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 635,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasmodelrefs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 530,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maassubscriptions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 549,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maastenantconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/tenants",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1/controlplanemachinesets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 179,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinehealthchecks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machines",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 238,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinesets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 413,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/baremetalhosts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 659,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/bmceventsubscriptions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/dataimages",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/firmwareschemas",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hardwaredata",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 224,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwarecomponents",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwaresettings",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostupdatepolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/preprovisioningimages",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 291,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metrics.k8s.io/v1beta1/pods",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 326,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "mlflow.kubeflow.org/v1/mlflowconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 404,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/alertmanagers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/podmonitors",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 245,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/probes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheuses",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 252,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/prometheusrules",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/servicemonitors",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1/thanosrulers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertingrules",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 414,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertrelabelconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 564,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/alertmanagerconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 492,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/monitoringstacks",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 282,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/prometheusagents",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 309,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/scrapeconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1046,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/thanosqueriers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 216,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/egressrouters",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/operatorpkis",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 651,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/destinationrules",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 383,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/gateways",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/serviceentries",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/sidecars",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 282,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/virtualservices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 312,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadentries",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadgroups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 179,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1alpha3/envoyfilters",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 582,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1beta1/proxyconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1046,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/ingresses",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 362,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/networkpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturegroups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 180,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturerules",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeatures",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.openshift.io/v1/nodefeaturediscoveries",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 292,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nim.opendatahub.io/v1/accounts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/backingstores",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 185,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/bucketclasses",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 420,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/namespacestores",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 182,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaaaccounts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1048,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaas",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 663,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "objectbucket.io/v1alpha1/objectbucketclaims",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "observability.openshift.io/v1alpha1/observabilityinstallers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/ocsinitializations",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 403,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageautoscalers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusterpeers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1048,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusters",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/tlsprofiles",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1alpha1/storageconsumers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ogx.io/v1beta1/ogxservers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 183,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opendatahub.io/v1alpha/odhdashboardconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/instrumentations",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/opampbridges",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 386,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/targetallocators",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 403,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1beta1/opentelemetrycollectors",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 282,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.authorino.kuadrant.io/v1beta1/authorinos",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/ingresscontrollers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 651,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/leaderworkersetoperators",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 232,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/leaderworkersetoperators",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/leaderworkersetoperators",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 258,
+        "requirement": "Optional"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/trustmanagers",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/trustmanagers",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/catalogsources",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 604,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "scope": "cluster",
+        "operation": "List",
+        "label_selector": "!olm.copiedFrom",
+        "outcome": {
+          "outcome": "Success",
+          "count": 29,
+          "pages": 1
+        },
+        "elapsed_ms": 1714,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 11,
+          "pages": 1
+        },
+        "elapsed_ms": 1327,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/installplans",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 1049,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/subscriptions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 28,
+          "pages": 1
+        },
+        "elapsed_ms": 1305,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v2/operatorconditions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "packages.operators.coreos.com/v1/packagemanifests",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 617,
+          "pages": 1
+        },
+        "elapsed_ms": 27056,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/perses",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdashboards",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdatasources",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 231,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelines",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelineversions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "policy/v1/poddisruptionbudgets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 599,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/backups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 673,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/clusters",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/databases",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/failoverquorums",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 527,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/imagecatalogs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/poolers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 397,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/publications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 321,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/scheduledbackups",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 245,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/subscriptions",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 413,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "quota.openshift.io/v1/appliedclusterresourcequotas",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ramendr.openshift.io/v1alpha1/recipes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 248,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayclusters",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 217,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/raycronjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1012,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayservices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "rbac.authorization.k8s.io/v1/rolebindings",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 5,
+          "pages": 1
+        },
+        "elapsed_ms": 745,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "rbac.authorization.k8s.io/v1/roles",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 769,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "redhatcop.redhat.io/v1alpha1/groupsyncs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 276,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumegroupreplications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 251,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumereplications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaims",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaimtemplates",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 248,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 219,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "route.openshift.io/v1/routes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1052,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/authorizationpolicies",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/peerauthentications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/requestauthentications",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/inferencegraphs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 252,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/servingruntimes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/trainedmodels",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceserviceconfigs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1048,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceservices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 362,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1beta1/inferenceservices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "snapshot.storage.k8s.io/v1/volumesnapshots",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "storage.k8s.io/v1/csistoragecapacities",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "telemetry.istio.io/v1/telemetries",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 745,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templateinstances",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templates",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 588,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainingruntimes",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 628,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainjobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 255,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trust.cert-manager.io/v1alpha1/bundles",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trust.cert-manager.io/v1alpha1/bundles",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/evalhubs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 631,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/trustyaiservices",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 356,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/guardrailsorchestrators",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 306,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/lmevaljobs",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 413,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/nemoguardrails",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/profiles",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/tuneds",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 850,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/configmaps",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 600,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/endpoints",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/limitranges",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 253,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/persistentvolumeclaims",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 639,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "label_selector": "name=openshift-lws-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/podtemplates",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 598,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/replicationcontrollers",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/resourcequotas",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1046,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/secrets",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 613,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/serviceaccounts",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 218,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/services",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 318,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/ippools",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 749,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/nodeslicepools",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/overlappingrangeipreservations",
+        "namespace": "openshift-leaderworkerset",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 302,
+        "requirement": "Required"
+      }
+    ]
+  }
+}
