@@ -3609,14 +3609,8 @@ async fn main() -> Result<()> {
                     // verify the backup file is intact before resuming mutations
                     if let Some(ref receipt) = j.backup_receipt {
                         eprintln!("📦 Validating backup receipt...");
-                        let bound_sha =
-                            crate::teardown::backup::bound_plan_sha256(&j.plan_snapshot)?;
-                        crate::teardown::backup::validate_receipt(
-                            receipt,
-                            &cluster_id,
-                            &bound_sha,
-                        )?;
-                        eprintln!("  ✅ Backup file intact: {}", receipt.path);
+                        crate::teardown::backup::validate_receipt(receipt, &cluster_id)?;
+                        eprintln!("  ✅ Backup intact: {}", receipt.root);
                     }
 
                     eprintln!(
@@ -5068,15 +5062,9 @@ async fn main() -> Result<()> {
                                 cmd.arg("--non-interactive");
                             }
 
-                            // Pass backup file path for this operator
+                            // Pass backup dir to child apply process
                             if let Some(ref bdir) = backup_dir {
-                                let bp = crate::teardown::backup::batch_backup_path(
-                                    std::path::Path::new(bdir),
-                                    i,
-                                    op_name,
-                                );
-                                cmd.arg("--backup-file")
-                                    .arg(bp.to_string_lossy().to_string());
+                                cmd.arg("--backup-dir").arg(bdir);
                             }
 
                             cmd.stdin(std::process::Stdio::piped());
@@ -6560,20 +6548,287 @@ async fn main() -> Result<()> {
             use crate::cli::BackupAction;
             match action {
                 BackupAction::Operator {
-                    operator: _operator_query,
-                    dir: _output_dir,
-                    refresh_discovery: _refresh,
+                    operator: operator_query,
+                    dir: output_dir,
+                    refresh_discovery,
                 } => {
-                    // TODO: implement operator backup with directory layout
-                    bail!("operator backup not yet implemented");
+                    let t0 = Instant::now();
+                    eprintln!("🔍 Discovering API resources...");
+                    let (kind_map, gvr_map, gk_map, gvk_map) =
+                        build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
+                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                    let cmd_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+                    ));
+                    let cmd_planner = crate::kube::planner::QueryPlanner::new(Some(cmd_semaphore));
+
+                    eprint!("🔍 Discovering operators...");
+                    let all_operators = discover_operators_full(
+                        &client,
+                        &kind_map,
+                        None,
+                        Some(cmd_planner.clone()),
+                    )
+                    .await?;
+                    eprintln!(" found {} operators", all_operators.len());
+
+                    let target_indices = resolve_operator_targets(
+                        std::slice::from_ref(&operator_query),
+                        &all_operators,
+                    )?;
+                    let target_op = &all_operators[target_indices[0]];
+                    let op_name = target_op
+                        .package_name
+                        .as_deref()
+                        .unwrap_or(&target_op.csv.name);
+
+                    eprintln!(
+                        "📦 Inspecting operator: {} ({})",
+                        target_op.csv.name, target_op.install_namespace
+                    );
+
+                    let inspection = inspect_operator_with_options_ledger(
+                        &client,
+                        target_op,
+                        &kind_map,
+                        &gvr_map,
+                        &gk_map,
+                        true,
+                        None,
+                        Some(cmd_planner.clone()),
+                    )
+                    .await?;
+
+                    // Collect all discovered resources by UID
+                    let mut candidates: Vec<crate::teardown::backup::BackupCandidate> = Vec::new();
+                    for category in &inspection.categories {
+                        for res in &category.resources {
+                            let uid = match &res.id.uid {
+                                Some(u) if !u.is_empty() => u.clone(),
+                                _ => continue,
+                            };
+                            let identity =
+                                crate::teardown::backup::BackupResourceIdentity::from_resource_id(
+                                    &res.id, &uid,
+                                );
+                            let source = crate::teardown::backup::BackupSource::operator_discovery(
+                                &target_op.csv.name,
+                                &category.label,
+                                &format!("{:?}", res.relationship),
+                            );
+                            if let Some(existing) =
+                                candidates.iter_mut().find(|c| c.identity.uid == uid)
+                            {
+                                if existing.identity != identity {
+                                    bail!(
+                                        "UID {} has conflicting identity: {}/{} vs {}/{}",
+                                        uid,
+                                        existing.identity.kind,
+                                        existing.identity.name,
+                                        identity.kind,
+                                        identity.name
+                                    );
+                                }
+                                if !existing.sources.contains(&source) {
+                                    existing.sources.push(source);
+                                }
+                            } else {
+                                candidates.push(crate::teardown::backup::BackupCandidate {
+                                    identity,
+                                    sources: vec![source],
+                                });
+                            }
+                        }
+                    }
+
+                    // Include adapter cleanup targets
+                    let mut observations = Vec::new();
+                    crate::teardown::backup::add_adapter_candidates(
+                        &mut candidates,
+                        &inspection.adapter_reports,
+                        &mut observations,
+                    )?;
+
+                    eprintln!("  {} unique resource(s)", candidates.len());
+
+                    // Fetch raw content
+                    let (fetched, _) = crate::teardown::backup::fetch_backup_resources(
+                        &client,
+                        &candidates,
+                        &gvk_map,
+                    )
+                    .await?;
+
+                    let captured = fetched
+                        .iter()
+                        .filter(|r| {
+                            r.state == crate::teardown::backup::BackupResourceState::Captured
+                        })
+                        .count();
+                    let absent = fetched
+                        .iter()
+                        .filter(|r| {
+                            r.state == crate::teardown::backup::BackupResourceState::AlreadyAbsent
+                        })
+                        .count();
+                    eprintln!("  {} captured, {} already absent", captured, absent);
+
+                    let cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                    let selection = crate::teardown::backup::BackupSelection::operator(vec![
+                        crate::teardown::backup::ResolvedOperatorIdentity {
+                            package_name: target_op.package_name.clone().unwrap_or_default(),
+                            csv_name: target_op.csv.name.clone(),
+                            install_namespace: target_op.install_namespace.clone(),
+                        },
+                    ]);
+
+                    let target = crate::teardown::backup::operator_target_dir(
+                        std::path::Path::new(&output_dir),
+                        op_name,
+                    );
+                    let run_name = crate::teardown::backup::generate_run_name();
+
+                    let receipt = crate::teardown::backup::write_backup_directory(
+                        &fetched,
+                        &cluster_identity,
+                        selection,
+                        observations,
+                        &target,
+                        &run_name,
+                    )?;
+
+                    eprintln!(
+                        "✅ Operator backup: {} ({} resources, tree: {})",
+                        receipt.root,
+                        receipt.resource_count,
+                        &receipt.tree_sha256[..12],
+                    );
+                    return Ok(());
                 }
                 BackupAction::Namespace {
-                    namespace: _namespace,
-                    dir: _output_dir,
-                    refresh_discovery: _refresh,
+                    namespace,
+                    dir: output_dir,
+                    refresh_discovery,
                 } => {
-                    // TODO: implement namespace backup with directory layout
-                    bail!("namespace backup not yet implemented");
+                    let t0 = Instant::now();
+                    eprintln!("🔍 Discovering API resources...");
+                    let (_kind_map, _gvr_map, _gk_map, gvk_map) =
+                        build_kind_lookup_cached(&client, &config, refresh_discovery).await?;
+                    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+                    // Validate namespace exists
+                    {
+                        use k8s_openapi::api::core::v1::Namespace;
+                        let ns_api: ::kube::api::Api<Namespace> =
+                            ::kube::api::Api::all(client.clone());
+                        ns_api
+                            .get(&namespace)
+                            .await
+                            .with_context(|| format!("Namespace '{}' does not exist", namespace))?;
+                    }
+
+                    eprintln!("📦 Scanning namespace: {}", namespace);
+
+                    let mut candidates: Vec<crate::teardown::backup::BackupCandidate> = Vec::new();
+
+                    for ((_group, _version, kind), info) in &gvk_map {
+                        if !info.namespaced || !info.listable {
+                            continue;
+                        }
+
+                        let gvk = ::kube::api::GroupVersionKind {
+                            group: info.group.clone(),
+                            version: info.version.clone(),
+                            kind: kind.clone(),
+                        };
+                        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+                        let api: ::kube::api::Api<::kube::api::DynamicObject> =
+                            ::kube::api::Api::namespaced_with(client.clone(), &namespace, &ar);
+
+                        match api.list(&::kube::api::ListParams::default()).await {
+                            Ok(list) => {
+                                for obj in list {
+                                    let uid = match obj.metadata.uid.as_deref() {
+                                        Some(u) if !u.is_empty() => u.to_string(),
+                                        _ => continue,
+                                    };
+                                    let rid = crate::kube::resource::ResourceId {
+                                        group: info.group.clone(),
+                                        version: info.version.clone(),
+                                        kind: kind.clone(),
+                                        namespace: Some(namespace.clone()),
+                                        name: obj.metadata.name.clone().unwrap_or_default(),
+                                        uid: Some(uid.clone()),
+                                    };
+                                    let identity = crate::teardown::backup::BackupResourceIdentity::from_resource_id(&rid, &uid);
+                                    let source =
+                                        crate::teardown::backup::BackupSource::namespace_scan(
+                                            &namespace,
+                                        );
+                                    if let Some(existing) =
+                                        candidates.iter_mut().find(|c| c.identity.uid == uid)
+                                    {
+                                        if !existing.sources.contains(&source) {
+                                            existing.sources.push(source);
+                                        }
+                                    } else {
+                                        candidates.push(crate::teardown::backup::BackupCandidate {
+                                            identity,
+                                            sources: vec![source],
+                                        });
+                                    }
+                                }
+                            }
+                            Err(::kube::Error::Api(ref e)) if e.code == 403 || e.code == 404 => {}
+                            Err(e) => {
+                                bail!(
+                                    "Failed to LIST {}/{} in namespace {}: {} — backup cannot proceed",
+                                    info.group,
+                                    kind,
+                                    namespace,
+                                    e
+                                );
+                            }
+                        }
+                    }
+
+                    eprintln!("  {} unique resource(s)", candidates.len());
+
+                    let (fetched, _) = crate::teardown::backup::fetch_backup_resources(
+                        &client,
+                        &candidates,
+                        &gvk_map,
+                    )
+                    .await?;
+
+                    let cluster_identity = journal::fetch_cluster_identity(&client).await?;
+                    let selection = crate::teardown::backup::BackupSelection::namespace(vec![
+                        namespace.clone(),
+                    ]);
+
+                    let target = crate::teardown::backup::namespace_target_dir(
+                        std::path::Path::new(&output_dir),
+                        &namespace,
+                    );
+                    let run_name = crate::teardown::backup::generate_run_name();
+
+                    let receipt = crate::teardown::backup::write_backup_directory(
+                        &fetched,
+                        &cluster_identity,
+                        selection,
+                        vec![],
+                        &target,
+                        &run_name,
+                    )?;
+
+                    eprintln!(
+                        "✅ Namespace backup: {} ({} resources, tree: {})",
+                        receipt.root,
+                        receipt.resource_count,
+                        &receipt.tree_sha256[..12],
+                    );
+                    return Ok(());
                 }
             }
         }
