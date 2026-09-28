@@ -1361,7 +1361,7 @@ async fn main() -> Result<()> {
             let no_cache = refresh_discovery;
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
-            let (kind_map, _, _gk_map, gvk_map) =
+            let (_kind_map, _, _gk_map, gvk_map) =
                 build_kind_lookup_cached(&client, &config, no_cache).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -1525,9 +1525,15 @@ async fn main() -> Result<()> {
                     );
                 }
 
+                if cancel_token.is_cancelled() {
+                    let _ = std::fs::remove_file(&tmp_path_cleanup);
+                    eprintln!("\n⚠ Snapshot cancelled.");
+                    std::process::exit(130);
+                }
+
                 // Cluster-scoped scan (CRDs, APIServices, PVs, etc.) — once for the whole command
                 {
-                    let cluster_result = crate::kube::snapshot::build_snapshot_all_gvrs(
+                    let cluster_fut = crate::kube::snapshot::build_snapshot_all_gvrs(
                         &client,
                         &config,
                         "",
@@ -1535,11 +1541,22 @@ async fn main() -> Result<()> {
                         include_events,
                         crate::kube::snapshot::ScanScope::ClusterScopedOnly,
                         None,
-                    )
-                    .await;
+                    );
+                    let cluster_result = tokio::select! {
+                        result = cluster_fut => Some(result),
+                        _ = cancel_token.cancelled() => None,
+                    };
+                    let cluster_result = match cluster_result {
+                        Some(r) => r,
+                        None => {
+                            let _ = std::fs::remove_file(&tmp_path_cleanup);
+                            eprintln!("\n⚠ Snapshot cancelled.");
+                            std::process::exit(130);
+                        }
+                    };
                     match cluster_result {
                         Ok(cs) => {
-                            // Only take cluster-scoped resources (namespace=None)
+                            all_warnings.extend(cs.scan_warnings);
                             for (uid, entry) in cs.resources {
                                 if entry.id.namespace.is_none() {
                                     all_resources.entry(uid).or_insert(entry);
@@ -1553,6 +1570,10 @@ async fn main() -> Result<()> {
                         }
                         Err(e) => {
                             eprintln!("  ⚠ Cluster-scoped scan error: {}", e);
+                            all_warnings.push(crate::kube::resource::ScanWarning::Other {
+                                gvr: "(cluster-scoped)".into(),
+                                message: e.to_string(),
+                            });
                         }
                     }
                 }
@@ -1635,8 +1656,16 @@ async fn main() -> Result<()> {
             } else {
                 // ── Single-namespace snapshot ──
                 let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
-                let snapshot =
-                    build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
+                let snapshot = crate::kube::snapshot::build_snapshot_all_gvrs(
+                    &client,
+                    &config,
+                    &namespace,
+                    &gvk_map,
+                    include_events,
+                    crate::kube::snapshot::ScanScope::NamespacedOnly,
+                    None,
+                )
+                .await?;
 
                 let resource_count = snapshot.resources.len();
                 format_scan_warnings(&snapshot.scan_warnings, snapshot_verbose);

@@ -254,10 +254,16 @@ fn corpus_replay_exact_counts() {
             let target_kind = spec_ref["kind"].as_str().unwrap_or("");
             let target_name = spec_ref["name"].as_str().unwrap_or("");
             let field_path = spec_ref["fieldPath"].as_str().unwrap_or("");
-            let ser_source = if source == "typed" {
-                "Typed"
+            let is_core = matches!(
+                target_kind,
+                "Secret" | "ConfigMap" | "ServiceAccount" | "PersistentVolumeClaim"
+            );
+            let (ser_source, target_group) = if source == "typed" && is_core {
+                ("Typed", serde_json::json!(""))
+            } else if source == "typed" {
+                ("Typed", serde_json::Value::Null)
             } else {
-                "Heuristic"
+                ("Heuristic", serde_json::Value::Null)
             };
             uid_refs
                 .entry(uid.to_string())
@@ -266,7 +272,7 @@ fn corpus_replay_exact_counts() {
                     "target_kind": target_kind,
                     "target_name": target_name,
                     "field_path": field_path,
-                    "target_group": "",
+                    "target_group": target_group,
                     "source": ser_source,
                 }));
             *total += 1;
@@ -480,9 +486,9 @@ fn corpus_replay_exact_counts() {
             target
         );
     }
-    assert!(
-        dangling_count >= 12,
-        "at least 12 dangling edges (Phase 0 fixture)"
+    assert_eq!(
+        dangling_count, 12,
+        "exact 12 dangling edges (Phase 0 fixture)"
     );
 
     // Verify determinism: run again

@@ -40,9 +40,11 @@ pub fn print_audit_tree(report: &AuditReport) {
         report.layers.physical_uids.multi_observed,
     );
     println!(
-        "UID-null: {} → {} (fp collisions: {}/{})",
+        "UID-null: {} → {} ({} removed, {} added, fp collisions: {}/{})",
         report.layers.uid_null.pre,
         report.layers.uid_null.post,
+        report.layers.uid_null.removed_fingerprints,
+        report.layers.uid_null.added_fingerprints,
         report.layers.uid_null.pre_fingerprint_collision_groups,
         report.layers.uid_null.post_fingerprint_collision_groups,
     );
@@ -152,7 +154,18 @@ pub fn print_audit_table(report: &AuditReport) {
     println!("{table}");
 
     println!(
-        "\nSummary: {} removed, {} recreated, {} orphan refs, {} dangling refs",
+        "\nLayers: raw {}/{}, logical {}/{}, physical {}/{}, uid-null {}/{}",
+        report.layers.raw_observations.pre,
+        report.layers.raw_observations.post,
+        report.layers.logical.pre,
+        report.layers.logical.post,
+        report.layers.physical_uids.pre,
+        report.layers.physical_uids.post,
+        report.layers.uid_null.pre,
+        report.layers.uid_null.post,
+    );
+    println!(
+        "Summary: {} removed, {} recreated, {} orphan refs, {} dangling refs",
         report.layers.physical_uids.removed,
         report.recreated.len(),
         report.orphan_owner_refs.len(),

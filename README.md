@@ -598,6 +598,22 @@ oc-deps snapshot diff before.json after.json -o json    # JSON output
 
 Resources are matched by logical identity (group/kind/namespace/name). UID changes are detected as Recreated. Volatile annotations (`last-applied-configuration`, etc.) are excluded from change detection.
 
+### Snapshot audit
+
+Classify pre/post snapshot changes against teardown execution plans (offline, no cluster connection):
+
+```bash
+oc-deps snapshot audit before.json after.json --plan plan1.json --plan plan2.json -o json
+oc-deps snapshot audit before.json after.json -o tree  # no plans = all UnexplainedChange
+oc-deps snapshot audit before.json after.json --plan plan.json --gvr-catalog gvrs.json --provider-operands provider.json
+```
+
+Classifications: PlannedDirectDelete, ExpectedControllerCleanup, OwnerRefGcDescendant, DerivedSideEffect, Recreated, OrphanOwnerRef, DanglingSpecReference, NewlyTerminating, UnexplainedChange.
+
+3-layer identity model: raw observations → API-logical identities → physical UIDs. UID-null observations tracked via stable fingerprints. Typed/heuristic spec-ref sources preserved. Provider and lifecycle evidence separated. Incomplete after snapshot → fail-closed (all absence-dependent classifications suppressed).
+
+Schema v4 adds `deletion_timestamp`, `finalizers`, `observed_apis`, spec-ref `source`/`target_group`/`target_namespace`, and `observations` (all raw GVR observations including UID-null). v3 snapshots accepted with capability warnings.
+
 ### Safety tiers
 
 `apply` enforces a multi-layer safety model before any deletion:

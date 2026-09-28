@@ -1329,6 +1329,17 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
                         || spec_ref.target_group.as_deref() == Some(&e.identity.group))
             });
             if !found {
+                // Only flag as dangling if the target existed in pre (proving removal)
+                let was_in_pre = pre_ents.values().any(|e| {
+                    e.identity.kind == spec_ref.target_kind
+                        && e.identity.name == spec_ref.target_name
+                        && e.identity.namespace.as_deref() == target_ns
+                        && (spec_ref.target_group.is_none()
+                            || spec_ref.target_group.as_deref() == Some(&e.identity.group))
+                });
+                if !was_in_pre {
+                    continue;
+                }
                 dangling_spec_refs.push(DanglingSpecRefEntry {
                     source_uid: uid.clone(),
                     source_identity: ent.identity.clone(),
@@ -2452,8 +2463,11 @@ mod tests {
             source: SpecRefSourceLabel::Heuristic,
         });
 
+        // Targets must exist in pre to be flagged as dangling (proving removal)
+        let pre_secret = make_obs("", "Secret", Some("ns"), "missing-secret", Some("uid-s"));
+        let pre_cm = make_obs("", "ConfigMap", Some("ns"), "missing-cm", Some("uid-cm"));
+        let before = make_obs_set(vec![pre_secret, pre_cm]);
         let after = make_obs_set(vec![entry]);
-        let before = make_obs_set(vec![]);
         let report = audit(before, after, vec![]);
         assert_eq!(report.dangling_spec_refs.len(), 2);
         let typed = report
@@ -2489,8 +2503,10 @@ mod tests {
             Some("uid-cs"),
         );
 
+        // Target existed as core Secret in pre (now only custom.io/Secret exists in post)
+        let pre_core_secret = make_obs("", "Secret", Some("ns"), "my-secret", Some("uid-core"));
+        let before = make_obs_set(vec![pre_core_secret]);
         let after = make_obs_set(vec![dep, custom_secret]);
-        let before = make_obs_set(vec![]);
         let report = audit(before, after, vec![]);
         assert_eq!(
             report.dangling_spec_refs.len(),

@@ -445,7 +445,7 @@ async fn build_snapshot_from_targets(
     let scan_start = Instant::now();
     let concurrency = if api_semaphore.is_some() { total } else { 50 };
     let results: Vec<_> = futures::stream::iter(futs)
-        .buffer_unordered(concurrency)
+        .buffered(concurrency)
         .collect()
         .await;
 
@@ -471,6 +471,56 @@ async fn build_snapshot_from_targets(
             resources.insert(uid, entry);
         }
         all_observations.extend(obs);
+    }
+
+    // Heuristic spec-ref extraction: match spec string values against namespace resource names
+    let resource_names: HashSet<String> = resources.values().map(|e| e.id.name.clone()).collect();
+    for entry in resources.values_mut() {
+        if let Some(ref spec) = entry.raw_spec {
+            let mut path = vec!["spec".to_string()];
+            let mut strings = Vec::new();
+            crate::analyzers::spec_ref::collect_string_values(spec, &mut path, &mut strings);
+            for (field_path, value) in strings {
+                if resource_names.contains(&value) && value != entry.id.name {
+                    let already_typed = entry
+                        .spec_refs
+                        .iter()
+                        .any(|r| r.target_name == value && r.field_path == field_path);
+                    if !already_typed {
+                        entry.spec_refs.push(SpecRefEntry {
+                            target_kind: String::new(),
+                            target_name: value,
+                            field_path,
+                            target_group: None,
+                            target_namespace: None,
+                            source: Some(SpecRefSourceSer::Heuristic),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Add heuristic refs to observations too
+    for obs in &mut all_observations {
+        if let Some(uid) = &obs.uid
+            && let Some(entry) = resources.get(uid)
+        {
+            let heuristic_refs: Vec<_> = entry
+                .spec_refs
+                .iter()
+                .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+                .cloned()
+                .collect();
+            for hr in heuristic_refs {
+                if !obs
+                    .spec_refs
+                    .iter()
+                    .any(|r| r.target_name == hr.target_name && r.field_path == hr.field_path)
+                {
+                    obs.spec_refs.push(hr);
+                }
+            }
+        }
     }
 
     let warnings = match Arc::try_unwrap(scan_errors) {

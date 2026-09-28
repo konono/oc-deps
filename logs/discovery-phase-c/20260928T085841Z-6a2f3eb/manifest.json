@@ -1,0 +1,13 @@
+{
+  "phase": "C", "workstream": 4, "timestamp": "20260928T085841Z",
+  "commit": "6a2f3eb9d8ac3a26b7f184f35d58025ec7aa0e46",
+  "base_commit": "9293f41",
+  "quality_gates": "fmt/clippy/test(1100+4)/release PASS",
+  "acceptance": {
+    "raw": "17786/14761", "logical": "17668/14719", "physical": "11716/9165",
+    "uid_null": "820/731", "direct_delete": 91, "expect": 72, "descendants": 1282,
+    "closure": 1460, "derived": 2, "removed": 2784, "newly_terminating": 0,
+    "provider_operands": 25, "spec_refs_total": 2587, "spec_refs_typed": 2155,
+    "spec_refs_heuristic": 432, "dangling_edges": 12, "dangling_targets": 2
+  }
+}
