@@ -1874,4 +1874,84 @@ mod tests {
         // elapsed_ms may be 0 in fast mock but must not be hardcoded to 0
         // The important thing is the field comes from CompletedQuery, not 0
     }
+
+    // P0-1 regression: flush_to_ledger produces correct coverage for strict
+    #[tokio::test]
+    async fn flush_coverage_includes_planner_queries_for_strict() {
+        use std::pin::pin;
+
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let client = Client::new(mock_service, "test-ns");
+        let planner = QueryPlanner::new(None);
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            // Success GET
+            let (_req, send) = handle.next_request().await.expect("req 1");
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            send.send_response(json_response(deploy_get_response("myapp")));
+            // 403 GET
+            let (_req, send) = handle.next_request().await.expect("req 2");
+            send.send_response(status_response(403, "Forbidden"));
+        });
+
+        // Required success
+        let r1 = planner
+            .get(
+                &client,
+                "apps",
+                "v1",
+                "deployments",
+                Some("test-ns"),
+                "myapp",
+                QueryRequirement::Required,
+            )
+            .await;
+        assert!(r1.is_ok());
+
+        // Required failure
+        let r2 = planner
+            .get(
+                &client,
+                "",
+                "v1",
+                "secrets",
+                Some("test-ns"),
+                "forbidden-secret",
+                QueryRequirement::Required,
+            )
+            .await;
+        assert!(r2.is_err());
+
+        spawned.await.unwrap();
+
+        let ledger: SharedLedger = Arc::new(std::sync::Mutex::new(
+            crate::kube::resource::CoverageLedger::new(),
+        ));
+        planner.flush_to_ledger(&ledger).await;
+
+        let l = ledger.lock().unwrap();
+        assert_eq!(
+            l.records.len(),
+            2,
+            "ledger should have 2 records after flush"
+        );
+        assert_eq!(
+            l.incomplete_count(),
+            1,
+            "one Required failure = 1 incomplete"
+        );
+        assert!(l.has_incomplete(), "strict should detect incomplete");
+
+        // elapsed_ms should be > 0 for at least the delayed response
+        let total_elapsed: u64 = l.records.iter().map(|r| r.elapsed_ms).sum();
+        assert!(
+            total_elapsed > 0,
+            "total elapsed should be > 0, got {}",
+            total_elapsed
+        );
+    }
 }

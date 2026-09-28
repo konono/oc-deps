@@ -102,6 +102,36 @@ impl OperatorInspection {
                 .as_ref()
                 .is_some_and(|l| l.has_incomplete())
     }
+
+    /// Sort all parallel-collected arrays for deterministic output.
+    pub fn sort_for_output(&mut self) {
+        fn resource_sort_key(r: &InspectedResource) -> impl Ord + '_ {
+            (
+                &r.id.group,
+                &r.id.version,
+                &r.id.kind,
+                &r.id.namespace,
+                &r.id.name,
+                &r.id.uid,
+                &r.evidence,
+            )
+        }
+        for cat in &mut self.categories {
+            cat.resources
+                .sort_by(|a, b| resource_sort_key(a).cmp(&resource_sort_key(b)));
+        }
+        if let Some(ref mut ns_scope) = self.namespace_scope {
+            for cand in ns_scope.iter_mut() {
+                cand.evidence
+                    .sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+            }
+            ns_scope.sort_by(|a, b| a.namespace.cmp(&b.namespace));
+        }
+        self.warnings.sort();
+        self.scope_warnings.sort();
+        self.rejected_namespace_candidates
+            .sort_by(|a, b| a.value.cmp(&b.value));
+    }
 }
 
 #[allow(dead_code)]

@@ -5078,10 +5078,18 @@ async fn main() -> Result<()> {
             )
             .await?;
 
-            // Flush planner records to ledger and attach metrics
+            // Flush planner records to ledger, then re-snapshot into inspection
             cmd_planner.flush_to_ledger(&cmd_ledger).await;
             let mut inspection = inspection;
+            {
+                let mut ledger = cmd_ledger.lock().unwrap();
+                let (cov, inc, snap) = ledger.snapshot();
+                inspection.coverage = cov;
+                inspection.incomplete_count = inc;
+                inspection.coverage_ledger = snap;
+            }
             inspection.query_planner = Some(cmd_planner.metrics().await);
+            inspection.sort_for_output();
 
             print_inspection_top(&inspection, &output, verbose);
             if let Some(ref ledger) = inspection.coverage_ledger {
