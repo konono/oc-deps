@@ -24,7 +24,6 @@ pub enum AdapterResolution {
     Resolved,
     TargetMissing,
     Unknown,
-    UnsupportedVersion,
 }
 
 impl std::fmt::Display for AdapterResolution {
@@ -33,7 +32,23 @@ impl std::fmt::Display for AdapterResolution {
             AdapterResolution::Resolved => write!(f, "Resolved"),
             AdapterResolution::TargetMissing => write!(f, "TargetMissing"),
             AdapterResolution::Unknown => write!(f, "Unknown"),
-            AdapterResolution::UnsupportedVersion => write!(f, "UnsupportedVersion"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AdapterReportStatus {
+    Applied,
+    NotApplicable,
+    Unknown,
+}
+
+impl std::fmt::Display for AdapterReportStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AdapterReportStatus::Applied => write!(f, "Applied"),
+            AdapterReportStatus::NotApplicable => write!(f, "NotApplicable"),
+            AdapterReportStatus::Unknown => write!(f, "Unknown"),
         }
     }
 }
@@ -48,9 +63,12 @@ pub struct AdapterResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdapterReport {
     pub adapter_id: String,
+    pub status: AdapterReportStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<AdapterEvidence>,
     pub results: Vec<AdapterResult>,
-    pub skipped: bool,
-    pub skip_reason: Option<String>,
     pub diagnostics: Vec<String>,
     pub incomplete: bool,
 }
@@ -70,9 +88,10 @@ pub async fn run_adapters(
         } else {
             reports.push(AdapterReport {
                 adapter_id: authorino::ADAPTER_ID.to_string(),
+                status: AdapterReportStatus::Unknown,
+                status_reason: Some("no query planner available".to_string()),
+                evidence: None,
                 results: vec![],
-                skipped: true,
-                skip_reason: Some("no query planner available".to_string()),
                 diagnostics: vec![],
                 incomplete: false,
             });
@@ -94,7 +113,7 @@ pub fn merge_adapter_reports(reports: &[AdapterReport]) -> MergeResult {
     let mut incomplete_count = 0usize;
 
     for report in reports {
-        if report.skipped {
+        if report.status == AdapterReportStatus::NotApplicable {
             continue;
         }
         for r in &report.results {

@@ -815,16 +815,12 @@ fn print_inspection_tree(inspection: &OperatorInspection, verbose: bool) {
     if !inspection.adapter_reports.is_empty() {
         println!("── Targeted Adapters ──");
         for report in &inspection.adapter_reports {
-            let status = if report.skipped {
-                "skipped"
-            } else if report.incomplete {
-                "incomplete"
-            } else {
-                "ok"
-            };
-            println!("  {} ({})", report.adapter_id, status);
-            if let Some(reason) = &report.skip_reason {
+            println!("  {} [{}]", report.adapter_id, report.status);
+            if let Some(reason) = &report.status_reason {
                 println!("    reason: {}", reason);
+            }
+            if let Some(ev) = &report.evidence {
+                println!("    source: {} ({})", ev.source_url, ev.matched_csv_version);
             }
             for r in &report.results {
                 let uid_str = r.resource.id.uid.as_deref().unwrap_or("none");
@@ -835,12 +831,9 @@ fn print_inspection_tree(inspection: &OperatorInspection, verbose: bool) {
                     .map(|s| format!("{}/{}", s.kind, s.name))
                     .unwrap_or_default();
                 println!(
-                    "    {}/{} [{}] uid={} source={}",
+                    "    {}/{} [{}] uid={} root={}",
                     r.resource.id.kind, r.resource.id.name, r.resolution, uid_str, src_str
                 );
-            }
-            if let Some(ev) = report.results.first().map(|r| &r.adapter_evidence) {
-                println!("    source: {} ({})", ev.source_url, ev.matched_csv_version);
             }
             for d in &report.diagnostics {
                 println!("    \x1b[33mdiag: {}\x1b[0m", d);
@@ -949,6 +942,55 @@ fn print_inspection_table(inspection: &OperatorInspection) {
     }
 
     println!("{}", table);
+
+    if !inspection.adapter_reports.is_empty() {
+        println!();
+        let mut adapter_table = Table::new();
+        adapter_table.set_header(vec![
+            "Adapter",
+            "Status",
+            "Target",
+            "Resolution",
+            "Source",
+            "Root",
+        ]);
+        for report in &inspection.adapter_reports {
+            if report.results.is_empty() {
+                let source = report
+                    .evidence
+                    .as_ref()
+                    .map(|e| e.matched_csv_version.as_str())
+                    .unwrap_or("");
+                let reason = report.status_reason.as_deref().unwrap_or("");
+                adapter_table.add_row(vec![
+                    &report.adapter_id,
+                    &report.status.to_string(),
+                    "",
+                    reason,
+                    source,
+                    "",
+                ]);
+            }
+            for r in &report.results {
+                let target = format!("{}/{}", r.resource.id.kind, r.resource.id.name);
+                let root = r
+                    .resource
+                    .source_id
+                    .as_ref()
+                    .map(|s| format!("{}/{}", s.kind, s.name))
+                    .unwrap_or_default();
+                adapter_table.add_row(vec![
+                    &report.adapter_id,
+                    &report.status.to_string(),
+                    &target,
+                    &r.resolution.to_string(),
+                    &r.adapter_evidence.matched_csv_version,
+                    &root,
+                ]);
+            }
+        }
+        println!("{}", adapter_table);
+    }
 }
 
 fn print_inspection_json(inspection: &OperatorInspection) {
