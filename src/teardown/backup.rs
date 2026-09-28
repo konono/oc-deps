@@ -1757,20 +1757,30 @@ pub async fn discover_operator_backup(
         inspection.incomplete_count = incomplete;
         inspection.coverage_ledger = snapshot;
     }
-    // Fail closed only on required coverage failures (incomplete_count > 0 or
-    // ledger has_incomplete). Scan warnings (scan_warning_count) are informational
-    // and may include optional API absence — they don't block backup.
-    let has_required_failures = inspection.incomplete_count > 0
-        || inspection
-            .coverage_ledger
-            .as_ref()
-            .is_some_and(|l| l.has_incomplete());
-    if has_required_failures {
+    // Fail closed on true required failures (Forbidden/Timeout/ServerError/Unknown).
+    // ApiAbsent (404 for entire API type) is advisory — the API may have been
+    // removed by a previous operator in the batch sequence.
+    let hard_failures = inspection
+        .coverage_ledger
+        .as_ref()
+        .map(|l| {
+            l.records
+                .iter()
+                .filter(|r| {
+                    r.requirement == crate::kube::resource::QueryRequirement::Required
+                        && r.outcome.is_incomplete(&r.requirement)
+                        && !r.outcome.is_absent()
+                        && !r.outcome.is_target_missing()
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    if hard_failures > 0 {
         bail!(
-            "Operator {} discovery has required coverage failures ({} incomplete) — \
+            "Operator {} discovery has {} required coverage failure(s) — \
              backup cannot proceed",
             operator.csv.name,
-            inspection.incomplete_count,
+            hard_failures,
         );
     }
 
