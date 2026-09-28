@@ -564,6 +564,7 @@ pub struct OwnerRefEntry {
     pub kind: String,
     pub name: String,
     pub uid: String,
+    #[serde(default)]
     pub controller: bool,
     #[serde(default)]
     pub block_owner_deletion: bool,
@@ -574,9 +575,28 @@ pub struct SpecRefEntry {
     pub target_kind: String,
     pub target_name: String,
     pub field_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_namespace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SpecRefSourceSer>,
 }
 
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpecRefSourceSer {
+    Typed,
+    Heuristic,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ObservedApi {
+    pub group: String,
+    pub version: String,
+    pub resource: String,
+}
+
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResourceEntry {
@@ -592,6 +612,12 @@ pub struct ResourceEntry {
     pub data_hash: Option<String>,
     #[serde(default)]
     pub secret_value_hashes: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalizers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_apis: Option<Vec<ObservedApi>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -194,10 +194,23 @@ async fn build_snapshot_inner(
                                 let wk_refs = extract_well_known_refs(&data);
                                 let spec_refs: Vec<SpecRefEntry> = wk_refs
                                     .into_iter()
-                                    .map(|r| SpecRefEntry {
-                                        target_kind: r.target_kind,
-                                        target_name: r.target_name,
-                                        field_path: r.field_path,
+                                    .map(|r| {
+                                        let source = match r.source {
+                                            crate::kube::resource::SpecRefSource::Typed => {
+                                                Some(SpecRefSourceSer::Typed)
+                                            }
+                                            crate::kube::resource::SpecRefSource::Heuristic => {
+                                                Some(SpecRefSourceSer::Heuristic)
+                                            }
+                                        };
+                                        SpecRefEntry {
+                                            target_kind: r.target_kind,
+                                            target_name: r.target_name,
+                                            field_path: r.field_path,
+                                            target_group: None,
+                                            target_namespace: None,
+                                            source,
+                                        }
                                     })
                                     .collect();
 
@@ -218,6 +231,11 @@ async fn build_snapshot_inner(
                                 let (data_keys, data_hash, secret_value_hashes) =
                                     extract_data_fields(&kind, &data);
 
+                                let deletion_timestamp = metadata
+                                    .deletion_timestamp
+                                    .map(|ts| ts.0.to_string());
+                                let finalizers = metadata.finalizers.filter(|f| !f.is_empty());
+
                                 let entry = ResourceEntry {
                                     id: ResourceId {
                                         group: info.group.clone(),
@@ -235,6 +253,13 @@ async fn build_snapshot_inner(
                                     data_keys,
                                     data_hash,
                                     secret_value_hashes,
+                                    deletion_timestamp,
+                                    finalizers,
+                                    observed_apis: Some(vec![ObservedApi {
+                                        group: info.group.clone(),
+                                        version: info.version.clone(),
+                                        resource: info.plural.clone(),
+                                    }]),
                                 };
 
                                 Some((uid, entry))
@@ -1040,6 +1065,9 @@ mod tests {
                 data_keys: None,
                 data_hash: None,
                 secret_value_hashes: None,
+                deletion_timestamp: None,
+                finalizers: None,
+                observed_apis: None,
             },
         )
     }

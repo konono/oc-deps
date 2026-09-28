@@ -555,6 +555,33 @@ pub enum SnapshotAction {
         strict: bool,
     },
 
+    /// Audit pre/post snapshot changes against teardown plans (offline)
+    Audit {
+        /// Path to the "before" snapshot JSON
+        #[arg(value_name = "BEFORE")]
+        before: String,
+
+        /// Path to the "after" snapshot JSON
+        #[arg(value_name = "AFTER")]
+        after: String,
+
+        /// Path to execution plan JSON (repeatable for multi-operator)
+        #[arg(long = "plan", value_name = "PATH")]
+        plans: Vec<String>,
+
+        /// Path to GVR catalog JSON (for APIService derived classification)
+        #[arg(long = "gvr-catalog", value_name = "PATH")]
+        gvr_catalog: Option<String>,
+
+        /// Path to provider API operands JSON
+        #[arg(long = "provider-operands", value_name = "PATH")]
+        provider_operands: Option<String>,
+
+        /// Output format: tree (default), json, table
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
+    },
+
     /// Compare two snapshot files (offline, no cluster connection required)
     Diff {
         /// Path to the "before" snapshot JSON
@@ -1025,6 +1052,65 @@ mod tests {
             }
             _ => panic!("Expected Command::Snapshot Diff"),
         }
+    }
+
+    #[test]
+    fn test_snapshot_audit_parses() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "snapshot",
+            "audit",
+            "before.json",
+            "after.json",
+            "--plan",
+            "p1.json",
+            "--plan",
+            "p2.json",
+            "-o",
+            "json",
+        ]);
+        match args.command {
+            Command::Snapshot {
+                action:
+                    SnapshotAction::Audit {
+                        before,
+                        after,
+                        plans,
+                        output,
+                        ..
+                    },
+            } => {
+                assert_eq!(before, "before.json");
+                assert_eq!(after, "after.json");
+                assert_eq!(plans, vec!["p1.json", "p2.json"]);
+                assert!(matches!(output, OutputFormat::Json));
+            }
+            _ => panic!("Expected Command::Snapshot Audit"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_audit_no_plan_parses() {
+        let args = Args::parse_from(["oc-deps", "snapshot", "audit", "before.json", "after.json"]);
+        match args.command {
+            Command::Snapshot {
+                action: SnapshotAction::Audit { plans, .. },
+            } => {
+                assert!(plans.is_empty());
+            }
+            _ => panic!("Expected Command::Snapshot Audit"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_audit_no_kubeconfig_needed() {
+        let args = Args::parse_from(["oc-deps", "snapshot", "audit", "before.json", "after.json"]);
+        assert!(matches!(
+            args.command,
+            Command::Snapshot {
+                action: SnapshotAction::Audit { .. }
+            }
+        ));
     }
 
     // ── graph subcommand tests ──

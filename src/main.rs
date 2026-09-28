@@ -25,6 +25,7 @@ macro_rules! eprintln {
 }
 
 mod analyzers;
+mod audit;
 mod cli;
 mod graph;
 mod kube;
@@ -1165,6 +1166,66 @@ async fn main() -> Result<()> {
             "oc-deps",
             &mut std::io::stdout(),
         );
+        return Ok(());
+    }
+
+    if let Command::Snapshot {
+        action:
+            SnapshotAction::Audit {
+                ref before,
+                ref after,
+                ref plans,
+                ref gvr_catalog,
+                ref provider_operands,
+                ref output,
+            },
+    } = args.command
+    {
+        let before_snap = load_snapshot(before)?;
+        let after_snap = load_snapshot(after)?;
+
+        let mut loaded_plans = Vec::new();
+        for plan_path in plans {
+            let plan = crate::teardown::plan::load_execution_plan(plan_path)?;
+            let filename = std::path::Path::new(plan_path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| plan_path.clone());
+            loaded_plans.push((filename, plan));
+        }
+
+        let catalog = match gvr_catalog {
+            Some(path) => Some(crate::audit::load_gvr_catalog(path)?),
+            None => None,
+        };
+
+        let provider = match provider_operands {
+            Some(path) => {
+                let data = std::fs::read_to_string(path)?;
+                Some(serde_json::from_str(&data)?)
+            }
+            None => None,
+        };
+
+        let audit_input = crate::audit::AuditInput::from_snapshots(
+            &before_snap,
+            &after_snap,
+            loaded_plans,
+            catalog,
+            provider,
+        );
+        let report = crate::audit::run_audit(&audit_input)?;
+
+        match output {
+            OutputFormat::Tree => crate::audit::print_audit_tree(&report),
+            OutputFormat::Table => crate::audit::print_audit_table(&report),
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                );
+            }
+        }
         return Ok(());
     }
 
@@ -5536,6 +5597,9 @@ async fn main() -> Result<()> {
         }
         Command::Snapshot {
             action: SnapshotAction::Diff { .. },
+        } => unreachable!("handled before client init"),
+        Command::Snapshot {
+            action: SnapshotAction::Audit { .. },
         } => unreachable!("handled before client init"),
 
         // ── Tree subcommand ──
