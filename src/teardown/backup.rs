@@ -2945,4 +2945,306 @@ mod tests {
         assert!(result.is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ── resolve_live_uid tower tests ──
+
+    fn make_inspected_resource(
+        group: &str,
+        version: &str,
+        kind: &str,
+        ns: Option<&str>,
+        name: &str,
+    ) -> crate::analyzers::inspect::InspectedResource {
+        crate::analyzers::inspect::InspectedResource {
+            id: ResourceId {
+                group: group.to_string(),
+                version: version.to_string(),
+                kind: kind.to_string(),
+                namespace: ns.map(|s| s.to_string()),
+                name: name.to_string(),
+                uid: None,
+            },
+            source_id: None,
+            relationship: crate::analyzers::inspect::Relationship::InstallStrategy,
+            evidence: "test".to_string(),
+            confidence: crate::analyzers::inspect::Confidence::Managed,
+        }
+    }
+
+    fn test_gvk_and_gk_maps() -> (
+        crate::kube::discovery::GvkMap,
+        crate::kube::discovery::GroupKindMap,
+    ) {
+        let mut gvk = std::collections::HashMap::new();
+        let mut gk = std::collections::HashMap::new();
+        let deploy_info = crate::kube::discovery::KindInfo {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            plural: "deployments".to_string(),
+            namespaced: true,
+            listable: true,
+        };
+        gvk.insert(
+            (
+                "apps".to_string(),
+                "v1".to_string(),
+                "Deployment".to_string(),
+            ),
+            deploy_info.clone(),
+        );
+        gk.insert(("apps".to_string(), "Deployment".to_string()), deploy_info);
+        let sa_info = crate::kube::discovery::KindInfo {
+            group: "".to_string(),
+            version: "v1".to_string(),
+            plural: "serviceaccounts".to_string(),
+            namespaced: true,
+            listable: true,
+        };
+        gvk.insert(
+            (
+                "".to_string(),
+                "v1".to_string(),
+                "ServiceAccount".to_string(),
+            ),
+            sa_info.clone(),
+        );
+        gk.insert(("".to_string(), "ServiceAccount".to_string()), sa_info);
+        (gvk, gk)
+    }
+
+    #[tokio::test]
+    async fn resolve_live_uid_exact_identity_records_required_get() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let count = request_count.clone();
+
+        let (svc, handle) = tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                // Verify exact request URI
+                let uri = req.uri().to_string();
+                assert!(
+                    uri.contains("/namespaces/test-ns/deployments/my-deploy"),
+                    "exact URI expected, got: {}",
+                    uri
+                );
+                assert_eq!(req.method(), "GET");
+                send.send_response(mock_json_response(serde_json::json!({
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": {
+                        "name": "my-deploy",
+                        "namespace": "test-ns",
+                        "uid": "uid-deploy-abc",
+                        "resourceVersion": "1",
+                        "creationTimestamp": "2026-01-01T00:00:00Z",
+                    },
+                    "spec": {}
+                })));
+            }
+        });
+
+        let client = ::kube::Client::new(svc, "default");
+        let (gvk_map, gk_map) = test_gvk_and_gk_maps();
+        let ledger: crate::kube::scanner::SharedLedger = Arc::new(std::sync::Mutex::new(
+            crate::kube::resource::CoverageLedger::new(),
+        ));
+        let planner = crate::kube::planner::QueryPlanner::new(None);
+
+        let res = make_inspected_resource("apps", "v1", "Deployment", Some("test-ns"), "my-deploy");
+        let uid = resolve_live_uid(&client, &res, &gvk_map, &gk_map, &ledger, &planner)
+            .await
+            .unwrap();
+
+        assert_eq!(uid, "uid-deploy-abc");
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+        // Flush planner to ledger and verify Required GET record
+        planner.flush_to_ledger(&ledger).await;
+        let records = ledger.lock().unwrap().records.clone();
+        let get_records: Vec<_> = records
+            .iter()
+            .filter(|r| {
+                r.operation == crate::kube::resource::QueryOperation::Get
+                    && r.target_name.as_deref() == Some("my-deploy")
+            })
+            .collect();
+        assert!(
+            !get_records.is_empty(),
+            "planner must record Required GET for my-deploy"
+        );
+        assert_eq!(
+            get_records[0].requirement,
+            crate::kube::resource::QueryRequirement::Required,
+        );
+
+        // Call again — planner cache should serve without network request
+        let uid2 = resolve_live_uid(&client, &res, &gvk_map, &gk_map, &ledger, &planner)
+            .await
+            .unwrap();
+        assert_eq!(uid2, "uid-deploy-abc");
+
+        let metrics = planner.metrics().await;
+        assert!(
+            metrics.cache_hits >= 1,
+            "second call must hit planner cache, got {} cache_hits",
+            metrics.cache_hits
+        );
+
+        // Network request count should still be 1
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "cache hit must not add network requests"
+        );
+
+        drop(client);
+        spawned.abort();
+    }
+
+    #[tokio::test]
+    async fn resolve_live_uid_identity_mismatch_table() {
+        // Table of wrong responses
+        let cases = vec![
+            (
+                "wrong_version",
+                serde_json::json!({
+                    "apiVersion": "apps/v1beta1",
+                    "kind": "Deployment",
+                    "metadata": { "name": "d1", "namespace": "ns", "uid": "u1",
+                        "resourceVersion": "1", "creationTimestamp": "2026-01-01T00:00:00Z" },
+                }),
+                "Version mismatch",
+            ),
+            (
+                "wrong_namespace",
+                serde_json::json!({
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": { "name": "d1", "namespace": "wrong-ns", "uid": "u1",
+                        "resourceVersion": "1", "creationTimestamp": "2026-01-01T00:00:00Z" },
+                }),
+                "Namespace mismatch",
+            ),
+            (
+                "missing_type_meta",
+                serde_json::json!({
+                    "metadata": { "name": "d1", "namespace": "ns", "uid": "u1",
+                        "resourceVersion": "1", "creationTimestamp": "2026-01-01T00:00:00Z" },
+                }),
+                "TypeMeta",
+            ),
+            (
+                "missing_uid",
+                serde_json::json!({
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": { "name": "d1", "namespace": "ns",
+                        "resourceVersion": "1", "creationTimestamp": "2026-01-01T00:00:00Z" },
+                }),
+                "no UID",
+            ),
+            (
+                "empty_uid",
+                serde_json::json!({
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": { "name": "d1", "namespace": "ns", "uid": "",
+                        "resourceVersion": "1", "creationTimestamp": "2026-01-01T00:00:00Z" },
+                }),
+                "no UID",
+            ),
+        ];
+
+        for (label, response, expected_err) in cases {
+            let (svc, handle) =
+                tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+            let spawned = tokio::spawn(async move {
+                let mut handle = pin!(handle);
+                while let Some((_req, send)) = handle.next_request().await {
+                    send.send_response(mock_json_response(response.clone()));
+                }
+            });
+
+            let client = ::kube::Client::new(svc, "default");
+            let (gvk_map, gk_map) = test_gvk_and_gk_maps();
+            let ledger: crate::kube::scanner::SharedLedger = Arc::new(std::sync::Mutex::new(
+                crate::kube::resource::CoverageLedger::new(),
+            ));
+            let planner = crate::kube::planner::QueryPlanner::new(None);
+
+            let res = make_inspected_resource("apps", "v1", "Deployment", Some("ns"), "d1");
+            let result =
+                resolve_live_uid(&client, &res, &gvk_map, &gk_map, &ledger, &planner).await;
+
+            drop(client);
+            spawned.abort();
+
+            assert!(
+                result.is_err(),
+                "[{}] expected error but got Ok({:?})",
+                label,
+                result.ok()
+            );
+            let err = format!("{:#}", result.unwrap_err());
+            assert!(
+                err.contains(expected_err),
+                "[{}] error {:?} must contain {:?}",
+                label,
+                err,
+                expected_err
+            );
+        }
+    }
+
+    // ── Failure cleanup test ──
+
+    #[test]
+    fn write_existing_run_preserves_content_no_residuals() {
+        let dir = std::env::temp_dir().join(format!("backup-exist-ck-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Pre-create the run directory with a marker file
+        let run_dir = dir.join("existing-run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let marker = run_dir.join("marker.txt");
+        std::fs::write(&marker, "original content").unwrap();
+
+        // Attempt backup with the same run_name
+        let result = write_backup_directory(
+            &[],
+            &test_cluster(),
+            BackupSelection::namespace(vec!["ns".to_string()]),
+            vec![],
+            &dir,
+            "existing-run",
+        );
+
+        assert!(result.is_err(), "must fail on existing run dir");
+
+        // Marker file must be unchanged
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "original content",
+            "existing content must be preserved"
+        );
+
+        // No staging or lock residuals
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with(".staging-") || n.starts_with(".lock-")
+            })
+            .collect();
+        assert_eq!(
+            entries.len(),
+            0,
+            "no staging or lock residuals after failure"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
