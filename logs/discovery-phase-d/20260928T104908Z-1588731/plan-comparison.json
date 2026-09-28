@@ -1,0 +1,126 @@
+{
+  "all_match": true,
+  "operator_count": 15,
+  "all_base_non_empty": true,
+  "all_pr_non_empty": true,
+  "plan_tuples_base_sha256": "d4e93882c14deaf8096a7d876a08e1c27bc43342de00debbcfb8fc72fd4369df",
+  "plan_tuples_pr_sha256": "d4e93882c14deaf8096a7d876a08e1c27bc43342de00debbcfb8fc72fd4369df",
+  "tuple_schema": [
+    "phase_number",
+    "phase_name",
+    "action",
+    "group",
+    "kind",
+    "namespace",
+    "name",
+    "uid"
+  ],
+  "comparison_command": "python3: extract sorted tuples from .phases[].resources[], set diff per operator",
+  "operators": {
+    "authorino-operator": {
+      "base_count": 13,
+      "pr_count": 13,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "cert-manager-operator": {
+      "base_count": 21,
+      "pr_count": 21,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "cluster-observability-operator": {
+      "base_count": 27,
+      "pr_count": 27,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "dns-operator": {
+      "base_count": 9,
+      "pr_count": 9,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "gpu-operator-certified": {
+      "base_count": 12,
+      "pr_count": 12,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "job-set": {
+      "base_count": 8,
+      "pr_count": 8,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "kueue-operator": {
+      "base_count": 7,
+      "pr_count": 7,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "leader-worker-set": {
+      "base_count": 7,
+      "pr_count": 7,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "limitador-operator": {
+      "base_count": 9,
+      "pr_count": 9,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "nfd": {
+      "base_count": 16,
+      "pr_count": 16,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "opentelemetry-product": {
+      "base_count": 10,
+      "pr_count": 10,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "rhbk-operator": {
+      "base_count": 9,
+      "pr_count": 9,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "rhcl-operator": {
+      "base_count": 22,
+      "pr_count": 22,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "rhods-operator": {
+      "base_count": 127,
+      "pr_count": 127,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    },
+    "servicemeshoperator3": {
+      "base_count": 36,
+      "pr_count": 36,
+      "added": 0,
+      "removed": 0,
+      "match": true
+    }
+  }
+}

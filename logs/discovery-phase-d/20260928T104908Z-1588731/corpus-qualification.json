@@ -1,0 +1,79 @@
+{
+  "pre": [
+    {
+      "name": "authorino-authorino",
+      "uid": "790fa654-7c73-4df3-93b5-37224c499016",
+      "group": "rbac.authorization.k8s.io"
+    },
+    {
+      "name": "authorino-authorino-k8s-auth",
+      "uid": "73d33b64-68a7-4998-ae7a-91e0170dfcc0",
+      "group": "rbac.authorization.k8s.io"
+    }
+  ],
+  "post": [],
+  "qualification": "PASS",
+  "plans": {
+    "0-rhods-operator.json": {
+      "resource_count": 130,
+      "has_target_crbs": false
+    },
+    "1-rhbk-operator.json": {
+      "resource_count": 9,
+      "has_target_crbs": false
+    },
+    "10-authorino-operator.json": {
+      "resource_count": 8,
+      "has_target_crbs": false
+    },
+    "11-dns-operator.json": {
+      "resource_count": 9,
+      "has_target_crbs": false
+    },
+    "12-limitador-operator.json": {
+      "resource_count": 8,
+      "has_target_crbs": false
+    },
+    "13-cluster-observability-operator.json": {
+      "resource_count": 23,
+      "has_target_crbs": false
+    },
+    "14-opentelemetry-product.json": {
+      "resource_count": 10,
+      "has_target_crbs": false
+    },
+    "2-leader-worker-set.json": {
+      "resource_count": 7,
+      "has_target_crbs": false
+    },
+    "3-job-set.json": {
+      "resource_count": 8,
+      "has_target_crbs": false
+    },
+    "4-kueue-operator.json": {
+      "resource_count": 7,
+      "has_target_crbs": false
+    },
+    "5-servicemeshoperator3.json": {
+      "resource_count": 26,
+      "has_target_crbs": false
+    },
+    "6-nfd.json": {
+      "resource_count": 16,
+      "has_target_crbs": false
+    },
+    "7-gpu-operator-certified.json": {
+      "resource_count": 12,
+      "has_target_crbs": false
+    },
+    "8-openshift-cert-manager-operator.json": {
+      "resource_count": 18,
+      "has_target_crbs": false
+    },
+    "9-rhcl-operator.json": {
+      "resource_count": 25,
+      "has_target_crbs": false
+    }
+  },
+  "all_non_empty": true
+}

@@ -1,0 +1,10 @@
+{
+  "tested_code_commit": "158873139ac251b957884cdc69c23892fd0ee2ce",
+  "binary_sha256": "becc6eb311d2e93ea9b1c6e46e5b8511368512b3288e20ab474c23e9d66a8adc",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "timestamp": "2026-09-28T10:50:13Z",
+  "phase": "D",
+  "workstream": 5,
+  "adapter": "authorino-finalizer-cleanup",
+  "evidence_revision": "Kuadrant/authorino-operator@e8623b50995c0ff54042e63d83c56d207b324d96"
+}

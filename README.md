@@ -433,6 +433,28 @@ Resources are grouped into categories with **Relationship**, **Evidence**, and *
 
 Each resource may have a **`source_id`** indicating the relationship edge source. For ownerRef edges, this is the parent resource; for label-match edges, this is the attributed Operator CSV. In tree output this appears as `← group/Kind/name ns:xxx`. In JSON, `source_id` is a full ResourceId with `group/kind/namespace/name/uid`; when absent the field is omitted (not null). AllNamespaces scope messages appear in `scope_warnings` (not `warnings`).
 
+#### Targeted Adapters
+
+When generic discovery (ownerRef, CSV, spec-ref, labels) cannot express a relationship, version-bound **targeted adapters** fill the gap. Adapters produce resources with relationship `cleans-up` — a finalizer cleanup contract where the controller explicitly deletes targets by deterministic name.
+
+Adapter results appear in JSON under `adapter_reports[]`. Each report contains:
+
+| Field | Description |
+|-------|-------------|
+| `adapter_id` | Adapter identifier (e.g. `authorino-finalizer-cleanup`) |
+| `status` | `Applied` (queries ran), `NotApplicable` (no matching roots), `Unknown` (unsupported version) |
+| `status_reason` | Human-readable reason when status is not Applied (e.g. `UnsupportedVersion: 2.0.0`) |
+| `evidence` | Source contract reference: `source_url`, `source_commit`, `cleanup_function`, `naming_function`, `matched_csv_version`, `binding_note` |
+| `results[]` | Per-target: `resource` (full ResourceId with UID), `resolution` (`Resolved`/`TargetMissing`/`Unknown`), `adapter_evidence` |
+| `diagnostics[]` | Per-target failure messages |
+| `incomplete` | `true` if any query failed with 403/timeout/5xx (strict-relevant) |
+
+Only `Resolved` targets with verified identity (apiVersion, kind, name, non-empty UID) enter the `Targeted Adapter` category. `TargetMissing` (404) targets are recorded in diagnostics but do not contribute to resource counts or strict failure. `Unknown` (403/timeout/identity mismatch) marks the report incomplete.
+
+**Authorino adapter** (`authorino-finalizer-cleanup`): Discovers ClusterRoleBindings created by the Authorino CR finalizer. CRB names are derived from each live Authorino CR root: `{root.name}-authorino` and `{root.name}-authorino-k8s-auth`. Bound to exact `package=authorino-operator` + `CSV=authorino-operator.v1.4.3`. Source: `Kuadrant/authorino-operator@e8623b50` (`cleanupClusterScopedPermissions` / `authorinoClusterRoleBindingName`).
+
+Tree and table outputs include an adapter section showing status, resolution, source contract, and root identity per target.
+
 **`--scope related`** discovers candidate namespaces from:
 1. Install namespace (always included)
 2. OperatorGroup `status.namespaces` / `spec.targetNamespaces`
