@@ -1648,6 +1648,20 @@ async fn resolve_live_uid(
     Ok(uid)
 }
 
+/// Determines whether a coverage record blocks backup publication.
+/// ApiAbsent and TargetMissing are already-gone observations (API removed by
+/// prior batch cascade, or resource deleted) — not inaccessible queries.
+/// Every other incomplete outcome (Forbidden, Timeout, RateLimited, ServerError,
+/// Unknown, Required+ListUnsupported) blocks backup regardless of requirement.
+pub fn blocks_backup(record: &crate::kube::resource::QueryRecord) -> bool {
+    record.outcome.is_incomplete(&record.requirement)
+        && !matches!(
+            record.outcome,
+            crate::kube::resource::QueryOutcome::ApiAbsent
+                | crate::kube::resource::QueryOutcome::TargetMissing
+        )
+}
+
 /// Shared operator backup discovery: uses the same inspection as
 /// `operator resources --scope related`, producing the exact same identity set.
 /// Resolves UIDs for installStrategy resources (Deployments, ServiceAccounts)
@@ -1757,27 +1771,17 @@ pub async fn discover_operator_backup(
         inspection.incomplete_count = incomplete;
         inspection.coverage_ledger = snapshot;
     }
-    // Fail closed on true required failures (Forbidden/Timeout/ServerError/Unknown).
-    // ApiAbsent (404 for entire API type) is advisory — the API may have been
-    // removed by a previous operator in the batch sequence.
+    // Fail closed on inaccessible queries. ApiAbsent and TargetMissing are
+    // already-gone observations (API removed by prior batch cascade or resource
+    // deleted), not inaccessible queries — they don't block backup.
     let hard_failures = inspection
         .coverage_ledger
         .as_ref()
-        .map(|l| {
-            l.records
-                .iter()
-                .filter(|r| {
-                    r.requirement == crate::kube::resource::QueryRequirement::Required
-                        && r.outcome.is_incomplete(&r.requirement)
-                        && !r.outcome.is_absent()
-                        && !r.outcome.is_target_missing()
-                })
-                .count()
-        })
+        .map(|l| l.records.iter().filter(|r| blocks_backup(r)).count())
         .unwrap_or(0);
     if hard_failures > 0 {
         bail!(
-            "Operator {} discovery has {} required coverage failure(s) — \
+            "Operator {} discovery has {} inaccessible query failure(s) — \
              backup cannot proceed",
             operator.csv.name,
             hard_failures,
@@ -3263,5 +3267,145 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── blocks_backup truth table ──
+
+    #[test]
+    fn blocks_backup_truth_table() {
+        use crate::kube::resource::{QueryOperation, QueryOutcome, QueryRecord, QueryRequirement};
+
+        fn record(outcome: QueryOutcome, requirement: QueryRequirement) -> QueryRecord {
+            QueryRecord {
+                gvr: "test/v1/things".to_string(),
+                namespace: Some("ns".to_string()),
+                scope: "Namespaced".to_string(),
+                operation: QueryOperation::Get,
+                target_name: Some("t".to_string()),
+                label_selector: None,
+                field_selector: None,
+                outcome,
+                elapsed_ms: 0,
+                requirement,
+            }
+        }
+
+        let cases = vec![
+            // (outcome, requirement, expected_blocks)
+            // Success: never blocks
+            (
+                QueryOutcome::Success { count: 1, pages: 1 },
+                QueryRequirement::Required,
+                false,
+            ),
+            (
+                QueryOutcome::Success { count: 0, pages: 1 },
+                QueryRequirement::Optional,
+                false,
+            ),
+            // ApiAbsent: already-gone, never blocks backup
+            (QueryOutcome::ApiAbsent, QueryRequirement::Required, false),
+            (QueryOutcome::ApiAbsent, QueryRequirement::Optional, false),
+            // TargetMissing: already-gone, never blocks backup
+            (
+                QueryOutcome::TargetMissing,
+                QueryRequirement::Required,
+                false,
+            ),
+            (
+                QueryOutcome::TargetMissing,
+                QueryRequirement::Optional,
+                false,
+            ),
+            // ListUnsupported: Optional=allow, Required=block
+            (
+                QueryOutcome::ListUnsupported,
+                QueryRequirement::Optional,
+                false,
+            ),
+            (
+                QueryOutcome::ListUnsupported,
+                QueryRequirement::Required,
+                true,
+            ),
+            // Forbidden: blocks for both requirements
+            (
+                QueryOutcome::Forbidden { status: 403 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Forbidden { status: 403 },
+                QueryRequirement::Optional,
+                true,
+            ),
+            // Timeout: blocks for both
+            (
+                QueryOutcome::Timeout { retries: 3 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Timeout { retries: 3 },
+                QueryRequirement::Optional,
+                true,
+            ),
+            // RateLimited: blocks for both
+            (
+                QueryOutcome::RateLimited { retries: 3 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::RateLimited { retries: 3 },
+                QueryRequirement::Optional,
+                true,
+            ),
+            // ServerError: blocks for both
+            (
+                QueryOutcome::ServerError {
+                    status: 500,
+                    retries: 3,
+                },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::ServerError {
+                    status: 500,
+                    retries: 3,
+                },
+                QueryRequirement::Optional,
+                true,
+            ),
+            // Unknown: blocks for both
+            (
+                QueryOutcome::Unknown {
+                    message: "err".to_string(),
+                },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Unknown {
+                    message: "err".to_string(),
+                },
+                QueryRequirement::Optional,
+                true,
+            ),
+        ];
+
+        for (outcome, requirement, expected) in cases {
+            let label = format!("{:?}/{:?}", outcome, requirement);
+            let r = record(outcome, requirement);
+            assert_eq!(
+                blocks_backup(&r),
+                expected,
+                "blocks_backup({}) = {} but expected {}",
+                label,
+                blocks_backup(&r),
+                expected,
+            );
+        }
     }
 }
