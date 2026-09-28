@@ -589,7 +589,10 @@ pub struct LogicalLayer {
 pub struct UidNullLayer {
     pub pre: usize,
     pub post: usize,
-    pub fingerprint_collision_groups: usize,
+    pub removed_fingerprints: usize,
+    pub added_fingerprints: usize,
+    pub pre_fingerprint_collision_groups: usize,
+    pub post_fingerprint_collision_groups: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1019,7 +1022,13 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
         .filter(|o| !o.uid.as_ref().is_some_and(|u| !u.is_empty()))
         .collect();
     let pre_null_fps = null_fingerprint_groups(&pre_null);
-    let fp_collision_groups = pre_null_fps.values().filter(|rs| rs.len() > 1).count();
+    let post_null_fps = null_fingerprint_groups(&post_null);
+    let pre_fp_keys: HashSet<_> = pre_null_fps.keys().cloned().collect();
+    let post_fp_keys: HashSet<_> = post_null_fps.keys().cloned().collect();
+    let removed_fps = pre_fp_keys.difference(&post_fp_keys).count();
+    let added_fps = post_fp_keys.difference(&pre_fp_keys).count();
+    let pre_fp_collisions = pre_null_fps.values().filter(|rs| rs.len() > 1).count();
+    let post_fp_collisions = post_null_fps.values().filter(|rs| rs.len() > 1).count();
 
     // Plan action index with full identity verification [P0-2, P0-5]
     let (uid_actions, collision_warnings, conflicted_uids) = build_plan_action_index(&input.plans);
@@ -1209,18 +1218,23 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
 
     // Recreated: same logical identity, different UID [using multi-UID index]
     let mut recreated: Vec<RecreatedEntry> = Vec::new();
-    for (key, pre_pids) in &pre_logical {
-        if let Some(post_pids) = post_logical.get(key)
-            && pre_pids.len() == 1
-            && post_pids.len() == 1
-            && pre_pids[0] != post_pids[0]
-        {
-            recreated.push(RecreatedEntry {
-                identity: key.clone(),
-                pre_uid: pre_pids[0].clone(),
-                post_uid: post_pids[0].clone(),
-            });
+    if after_can_prove_absent {
+        for (key, pre_pids) in &pre_logical {
+            if let Some(post_pids) = post_logical.get(key)
+                && pre_pids.len() == 1
+                && post_pids.len() == 1
+                && pre_pids[0] != post_pids[0]
+            {
+                recreated.push(RecreatedEntry {
+                    identity: key.clone(),
+                    pre_uid: pre_pids[0].clone(),
+                    post_uid: post_pids[0].clone(),
+                });
+            }
         }
+    } else {
+        capability_warnings
+            .push("after snapshot coverage incomplete; recreated detection suppressed".into());
     }
 
     // Terminating
@@ -1250,9 +1264,17 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
         }
     }
 
-    // Orphan ownerRefs
+    // Orphan ownerRefs — suppress when after incomplete
     let mut orphan_owner_refs: Vec<OrphanOwnerRefEntry> = Vec::new();
+    if !after_can_prove_absent {
+        capability_warnings.push(
+            "after snapshot coverage incomplete; orphan ownerRef detection suppressed".into(),
+        );
+    }
     for (uid, ent) in &post_ents {
+        if !after_can_prove_absent {
+            break;
+        }
         if ent.deletion_timestamp.is_some() {
             continue;
         }
@@ -1321,24 +1343,21 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
         }
     }
 
-    // Provider operands [P1-1: include evidence fields]
+    // Provider operands — use classification from main removals (no double-compute)
+    let classification_by_uid: HashMap<&str, &AuditClassification> = removals
+        .iter()
+        .map(|r| (r.uid.as_str(), &r.classification))
+        .collect();
+
     let mut provider_operand_results: Vec<ProviderOperandResult> = Vec::new();
     if let Some(provider) = &input.provider_operands {
         for case in &provider.cases {
             let pre_uid = case.uid.as_deref().unwrap_or("");
-            let classification = if conflicted_uids.contains(pre_uid) {
-                AuditClassification::UnexplainedChange
-            } else if del_uids.contains(pre_uid) {
-                AuditClassification::PlannedDirectDelete
-            } else if exp_uids.contains(pre_uid) {
-                AuditClassification::ExpectedControllerCleanup
-            } else if descendants.contains(pre_uid) {
-                AuditClassification::OwnerRefGcDescendant
-            } else if derived.contains_key(pre_uid) {
-                AuditClassification::DerivedSideEffect
-            } else {
-                AuditClassification::UnexplainedChange
-            };
+            let classification = classification_by_uid
+                .get(pre_uid)
+                .cloned()
+                .cloned()
+                .unwrap_or(AuditClassification::UnexplainedChange);
 
             provider_operand_results.push(ProviderOperandResult {
                 identity: LogicalIdentity {
@@ -1456,7 +1475,10 @@ pub fn run_audit(input: &AuditInput) -> anyhow::Result<AuditReport> {
             uid_null: UidNullLayer {
                 pre: pre_null.len(),
                 post: post_null.len(),
-                fingerprint_collision_groups: fp_collision_groups,
+                removed_fingerprints: removed_fps,
+                added_fingerprints: added_fps,
+                pre_fingerprint_collision_groups: pre_fp_collisions,
+                post_fingerprint_collision_groups: post_fp_collisions,
             },
         },
         classification_summary,
@@ -2499,7 +2521,10 @@ mod tests {
                 uid_null: UidNullLayer {
                     pre: 0,
                     post: 0,
-                    fingerprint_collision_groups: 0,
+                    removed_fingerprints: 0,
+                    added_fingerprints: 0,
+                    pre_fingerprint_collision_groups: 0,
+                    post_fingerprint_collision_groups: 0,
                 },
             },
             classification_summary: BTreeMap::new(),
@@ -2732,6 +2757,59 @@ mod tests {
             "incomplete after must not strongly classify even with plan DELETE"
         );
         assert!(r.evidence.as_ref().unwrap().contains("absence not proven"),);
+
+        // Provider operand also downgraded
+        let provider = ProviderApiOperands {
+            schema_version: Some(2),
+            count: 1,
+            cases: vec![ProviderCase {
+                group: "".into(),
+                kind: "Pod".into(),
+                namespace: Some("ns".into()),
+                name: "p1".into(),
+                uid: Some("uid-1".into()),
+                api_provider_operator: "test-op".into(),
+                lifecycle_owner_evidence: None,
+                provider_api_evidence: None,
+                observed_versions: None,
+            }],
+        };
+        let entry2 = make_obs("", "Pod", Some("ns"), "p1", Some("uid-1"));
+        let before2 = make_obs_set(vec![entry2]);
+        let mut after2 = make_obs_set(vec![]);
+        after2.absence_coverage = AbsenceCoverage::Incomplete {
+            incomplete_namespaces: vec!["ns".into()],
+            scan_warning_count: 1,
+        };
+        let plan2 = make_plan(vec![(
+            "",
+            "Pod",
+            Some("ns"),
+            "p1",
+            "uid-1",
+            ExecutionAction::Delete,
+        )]);
+        let report2 = run_audit(&AuditInput {
+            before: before2,
+            after: after2,
+            plans: vec![("plan.json".into(), plan2)],
+            gvr_catalog: None,
+            provider_operands: Some(provider),
+        })
+        .unwrap();
+        assert_eq!(
+            report2.provider_operand_results[0].physical_classification,
+            AuditClassification::UnexplainedChange,
+            "incomplete after → provider also UnexplainedChange"
+        );
+        assert!(
+            report2.orphan_owner_refs.is_empty(),
+            "incomplete after → orphan suppressed"
+        );
+        assert!(
+            report2.recreated.is_empty(),
+            "incomplete after → recreated suppressed"
+        );
     }
 
     #[test]

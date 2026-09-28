@@ -15,7 +15,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::analyzers::spec_ref::extract_well_known_refs;
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{KindInfo, KindMap};
 use crate::kube::resource::*;
 
 const MAX_RETRIES: usize = 2;
@@ -89,6 +89,7 @@ pub async fn build_snapshot(
     build_snapshot_inner(client, config, namespace, kind_map, include_events, None).await
 }
 
+#[allow(dead_code)]
 pub async fn build_snapshot_with_semaphore(
     client: &Client,
     config: &Config,
@@ -106,6 +107,57 @@ pub async fn build_snapshot_with_semaphore(
         Some(api_semaphore),
     )
     .await
+}
+
+/// Scan a namespace using all served GVRs from GvkMap (not just preferred).
+/// Includes cluster-scoped resources when `cluster_scoped` is true.
+#[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)]
+pub enum ScanScope {
+    NamespacedOnly,
+    ClusterScopedOnly,
+    All,
+}
+
+pub async fn build_snapshot_all_gvrs(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    gvk_map: &crate::kube::discovery::GvkMap,
+    include_events: bool,
+    scope: ScanScope,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+) -> Result<ClusterSnapshot> {
+    let skip_kinds: HashSet<&str> = if include_events {
+        HashSet::new()
+    } else {
+        HashSet::from(["Event"])
+    };
+
+    let mut scan_targets: Vec<(String, KindInfo)> = Vec::new();
+    let mut seen_gvrs: HashSet<(String, String, String)> = HashSet::new();
+    for ((group, version, kind), info) in gvk_map {
+        if !info.listable || skip_kinds.contains(kind.as_str()) {
+            continue;
+        }
+        let include = match scope {
+            ScanScope::NamespacedOnly => info.namespaced,
+            ScanScope::ClusterScopedOnly => !info.namespaced,
+            ScanScope::All => true,
+        };
+        if !include {
+            continue;
+        }
+        let gvr_key = (group.clone(), version.clone(), info.plural.clone());
+        if seen_gvrs.insert(gvr_key) {
+            scan_targets.push((kind.clone(), info.clone()));
+        }
+    }
+    scan_targets.sort_by(|a, b| {
+        (&a.1.group, &a.1.version, &a.1.plural).cmp(&(&b.1.group, &b.1.version, &b.1.plural))
+    });
+
+    build_snapshot_from_targets(client, config, namespace, scan_targets, api_semaphore).await
 }
 
 async fn build_snapshot_inner(
@@ -128,6 +180,16 @@ async fn build_snapshot_inner(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
+    build_snapshot_from_targets(client, config, namespace, scan_targets, api_semaphore).await
+}
+
+async fn build_snapshot_from_targets(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    scan_targets: Vec<(String, KindInfo)>,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+) -> Result<ClusterSnapshot> {
     let total = scan_targets.len();
     let scanned = Arc::new(AtomicUsize::new(0));
     let scan_errors: Arc<std::sync::Mutex<Vec<ScanWarning>>> =
@@ -145,7 +207,11 @@ async fn build_snapshot_inner(
         async move {
             let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-            let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
+            let api: Api<DynamicObject> = if info.namespaced {
+                Api::namespaced_with(client, &ns, &ar)
+            } else {
+                Api::all_with(client, &ar)
+            };
 
             let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
             let mut last_warning = None;

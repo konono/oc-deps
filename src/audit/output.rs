@@ -28,12 +28,23 @@ pub fn print_audit_tree(report: &AuditReport) {
         report.layers.raw_observations.pre, report.layers.raw_observations.post,
     );
     println!(
+        "API-logical: {} → {}",
+        report.layers.logical.pre, report.layers.logical.post,
+    );
+    println!(
         "Physical UIDs: {} → {} ({} removed, {} added, {} multi-observed)",
         report.layers.physical_uids.pre,
         report.layers.physical_uids.post,
         report.layers.physical_uids.removed,
         report.layers.physical_uids.added,
         report.layers.physical_uids.multi_observed,
+    );
+    println!(
+        "UID-null: {} → {} (fp collisions: {}/{})",
+        report.layers.uid_null.pre,
+        report.layers.uid_null.post,
+        report.layers.uid_null.pre_fingerprint_collision_groups,
+        report.layers.uid_null.post_fingerprint_collision_groups,
     );
     println!();
 

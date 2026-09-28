@@ -1361,7 +1361,7 @@ async fn main() -> Result<()> {
             let no_cache = refresh_discovery;
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
-            let (kind_map, _, _gk_map, _) =
+            let (kind_map, _, _gk_map, gvk_map) =
                 build_kind_lookup_cached(&client, &config, no_cache).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -1422,20 +1422,21 @@ async fn main() -> Result<()> {
                 let futs = target_namespaces.iter().map(|ns| {
                     let client = client.clone();
                     let config_clone = config.clone();
-                    let kind_map = kind_map.clone();
+                    let gvk_map = gvk_map.clone();
                     let scanned = scanned_count.clone();
                     let ns = ns.clone();
                     let sem = api_semaphore.clone();
 
                     async move {
                         let ns_start = Instant::now();
-                        let result = crate::kube::snapshot::build_snapshot_with_semaphore(
+                        let result = crate::kube::snapshot::build_snapshot_all_gvrs(
                             &client,
                             &config_clone,
                             &ns,
-                            &kind_map,
+                            &gvk_map,
                             include_events,
-                            sem,
+                            crate::kube::snapshot::ScanScope::NamespacedOnly,
+                            Some(sem),
                         )
                         .await;
                         let count = scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -1522,6 +1523,38 @@ async fn main() -> Result<()> {
                         total_ns,
                         t0.elapsed().as_secs_f64()
                     );
+                }
+
+                // Cluster-scoped scan (CRDs, APIServices, PVs, etc.) — once for the whole command
+                {
+                    let cluster_result = crate::kube::snapshot::build_snapshot_all_gvrs(
+                        &client,
+                        &config,
+                        "",
+                        &gvk_map,
+                        include_events,
+                        crate::kube::snapshot::ScanScope::ClusterScopedOnly,
+                        None,
+                    )
+                    .await;
+                    match cluster_result {
+                        Ok(cs) => {
+                            // Only take cluster-scoped resources (namespace=None)
+                            for (uid, entry) in cs.resources {
+                                if entry.id.namespace.is_none() {
+                                    all_resources.entry(uid).or_insert(entry);
+                                }
+                            }
+                            for obs in cs.observations {
+                                if obs.namespace.is_none() && !obs.kind.is_empty() {
+                                    all_observations.push(obs);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  ⚠ Cluster-scoped scan error: {}", e);
+                        }
+                    }
                 }
 
                 let scope_mode = if namespace_selector.is_empty()
