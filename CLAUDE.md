@@ -55,6 +55,16 @@ All logic lives in a single file: `src/main.rs`.
 - `build_namespace_map()` — builds all root-to-leaf trees for --map mode
 - `find_parents_only()` — fast up-only mode (targeted gets, no scan)
 
+**Targeted adapters** (`src/analyzers/adapters/`):
+- Version-bound, operator-specific discovery for resources that generic methods cannot find
+- Each adapter produces `AdapterReport` with `AdapterReportStatus` (Applied/NotApplicable/Unknown)
+- Results include `AdapterResolution` (Resolved/TargetMissing/Unknown) per target
+- `Relationship::CleansUp` — finalizer cleanup contract, not lifecycle ownership
+- Adapter results are merged into `OperatorInspection.adapter_reports` (full structured JSON)
+- Only Resolved targets with verified identity (apiVersion/kind/name/UID) enter categories
+- GET uses `QueryRequirement::Optional` — 404 is normal absence, not strict failure
+- Currently: `authorino-finalizer-cleanup` adapter for Authorino CRBs
+
 **Output formats:** Tree (default, `kind/name` for easy `oc get/edit` copy-paste), Table, JSON
 
 ## Kubernetes Configuration
