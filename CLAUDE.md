@@ -83,7 +83,7 @@ aw コンテナでは stdout/stderr が non-blocking のため、Python ラッ�
 `capture_output=True` は**使わない**こと（リアルタイムログが見えなくなる）。
 
 ```bash
-cd ansible
+cd ansible/rhoai-3.5-ansible
 python3 -c "
 import fcntl, os, sys
 for fd in [sys.stdout, sys.stderr, sys.stdin]:
@@ -100,7 +100,7 @@ sys.exit(subprocess.run([
 ### Verify
 
 ```bash
-cd ansible
+cd ansible/rhoai-3.5-ansible
 # 同じ Python ラッパーで実行
 uv run ansible-playbook playbooks/verify.yml -i inventory/aws-sno-disconnected
 ```
@@ -127,7 +127,7 @@ echo "y" | ./target/release/oc-deps teardown apply /tmp/rhoai-plan.json
 #   - 7/7 phases completed, 0 failed
 
 # 3. Ansible 復旧（MLflow + OGX は別タグ）
-cd ansible
+cd ansible/rhoai-3.5-ansible
 # platform + workload + integration（llm は chat_template.jinja 未配置のためスキップ）
 ansible-playbook site.yml -i inventory/aws-sno-disconnected --tags platform,workload,integration --skip-tags llm -v
 # MLflow 単体
@@ -182,7 +182,7 @@ oc get subscriptions.operators.coreos.com -A --no-headers  # group-sync-operator
 oc get pods -A --no-headers | grep -v "^openshift-\|^kube-\|Completed\|^default " | grep Running
 
 # Step 5: Ansible で全体復旧
-cd ansible
+cd ansible/rhoai-3.5-ansible
 ansible-playbook site.yml -i inventory/aws-sno-disconnected --skip-tags llm -v
 ansible-playbook site.yml -i inventory/aws-sno-disconnected --tags mlflow -v
 
