@@ -2981,71 +2981,45 @@ mod tests {
         }
     }
 
+    /// Same Kind name from kind_map + extra_apis (same UID, different groups).
+    /// Response delay reversed between runs — group selection must be identical.
     #[tokio::test]
     async fn scan_api_alias_deterministic_regardless_of_response_order() {
-        // Two groups serve the same Kind with the same UID.
-        // Regardless of which API responds first, the chosen group must be stable.
         let shared_uid = "uid-shared-12345";
 
-        // group-a sorts before group-b
-        let mut kind_map_fast_a = KindMap::new();
-        kind_map_fast_a.insert(
-            "Widget".to_string(),
-            KindInfo {
-                group: "alpha.example.com".to_string(),
-                version: "v1".to_string(),
-                plural: "widgets".to_string(),
-                namespaced: true,
-                listable: true,
-            },
-        );
-        kind_map_fast_a.insert(
-            "Widget".to_string(),
-            KindInfo {
-                group: "alpha.example.com".to_string(),
-                version: "v1".to_string(),
-                plural: "widgets".to_string(),
-                namespaced: true,
-                listable: true,
-            },
-        );
-        // We can't insert two entries with the same kind name in a HashMap.
-        // Instead, test via extra_apis parameter which adds the second group.
+        // kind_map has Widget in alpha group
         let mut kind_map = KindMap::new();
         kind_map.insert(
-            "WidgetA".to_string(),
+            "Widget".to_string(),
             KindInfo {
                 group: "alpha.example.com".to_string(),
                 version: "v1".to_string(),
-                plural: "widgetsa".to_string(),
+                plural: "widgets".to_string(),
                 namespaced: true,
                 listable: true,
             },
         );
-        kind_map.insert(
-            "WidgetB".to_string(),
+
+        // extra_apis adds same Widget in beta group (simulates API alias)
+        let extra = vec![(
+            "Widget".to_string(),
             KindInfo {
                 group: "beta.example.com".to_string(),
                 version: "v1".to_string(),
-                plural: "widgetsb".to_string(),
+                plural: "widgets".to_string(),
                 namespaced: true,
                 listable: true,
             },
-        );
+        )];
 
-        fn make_list_with_uid(
-            group: &str,
-            kind: &str,
-            _plural: &str,
-            uid: &str,
-        ) -> serde_json::Value {
+        fn make_list_with_uid(group: &str, uid: &str) -> serde_json::Value {
             serde_json::json!({
                 "apiVersion": format!("{}/v1", group),
-                "kind": format!("{}List", kind),
+                "kind": "WidgetList",
                 "metadata": {"resourceVersion": "1"},
                 "items": [{
                     "apiVersion": format!("{}/v1", group),
-                    "kind": kind,
+                    "kind": "Widget",
                     "metadata": {
                         "name": "shared-widget",
                         "namespace": "test-ns",
@@ -3057,9 +3031,9 @@ mod tests {
             })
         }
 
-        // Run 1: alpha responds fast, beta responds slow
         let run = |alpha_delay_ms: u64, beta_delay_ms: u64| {
             let km = kind_map.clone();
+            let ex = extra.clone();
             async move {
                 let uid = shared_uid.to_string();
                 let (mock_service, handle) =
@@ -3069,60 +3043,52 @@ mod tests {
                 let uid_for_task = uid.clone();
                 let spawned = tokio::spawn(async move {
                     let mut handle = std::pin::pin!(handle);
+                    // Two LIST requests: one per group
                     for _ in 0..2 {
                         let (req, send) = handle.next_request().await.expect("req");
                         let uri = req.uri().to_string();
-                        if uri.contains("widgetsa") {
-                            tokio::time::sleep(std::time::Duration::from_millis(alpha_delay_ms))
-                                .await;
-                            send.send_response(json_response(make_list_with_uid(
-                                "alpha.example.com",
-                                "WidgetA",
-                                "widgetsa",
-                                &uid_for_task,
-                            )));
+                        // Distinguish by group in the URL path
+                        let is_alpha = uri.contains("alpha.example.com");
+                        let delay = if is_alpha {
+                            alpha_delay_ms
                         } else {
-                            tokio::time::sleep(std::time::Duration::from_millis(beta_delay_ms))
-                                .await;
-                            send.send_response(json_response(make_list_with_uid(
-                                "beta.example.com",
-                                "WidgetB",
-                                "widgetsb",
-                                &uid_for_task,
-                            )));
-                        }
+                            beta_delay_ms
+                        };
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        let group = if is_alpha {
+                            "alpha.example.com"
+                        } else {
+                            "beta.example.com"
+                        };
+                        send.send_response(json_response(make_list_with_uid(group, &uid_for_task)));
                     }
                 });
 
                 let (index, _warnings) = scan_namespace_with_semaphore(
-                    &client,
-                    "test-ns",
-                    &km,
-                    false,
-                    false,
-                    false,
-                    None,
-                    &[],
-                    None,
-                    None,
+                    &client, "test-ns", &km, false, false, false, None, &ex, None, None,
                 )
                 .await
                 .unwrap();
 
                 spawned.await.unwrap();
 
-                let info = index.by_uid.get(&uid.to_string()).unwrap();
+                let info = index.by_uid.get(&uid).unwrap();
                 (info.group.clone(), info.kind.clone())
             }
         };
 
-        let (group1, kind1) = run(1, 50).await; // alpha fast
-        let (group2, kind2) = run(50, 1).await; // beta fast
+        // Run twice with reversed delays
+        let (group1, kind1) = run(1, 50).await;
+        let (group2, kind2) = run(50, 1).await;
 
         assert_eq!(
             group1, group2,
-            "same UID must resolve to same group regardless of response order: run1={}/{} run2={}/{}",
+            "same UID/Kind must resolve to same group regardless of response order: \
+             run1={}/{} run2={}/{}",
             group1, kind1, group2, kind2
         );
+        // Both runs select the same Kind name
+        assert_eq!(kind1, "Widget");
+        assert_eq!(kind2, "Widget");
     }
 }

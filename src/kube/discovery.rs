@@ -37,7 +37,7 @@ pub async fn build_kind_lookup(client: &Client) -> Result<(KindMap, GvrMap, Grou
     let mut gk_map = GroupKindMap::new();
     let mut gvk_map = GvkMap::new();
 
-    for group in discovery.groups() {
+    for group in discovery.groups_alphabetical() {
         for version in group.versions() {
             for (ar, caps) in group.versioned_resources(version) {
                 let kind = ar.kind.clone();
@@ -740,5 +740,37 @@ mod tests {
             "v1".to_string(),
             "Widget".to_string()
         )));
+    }
+
+    #[test]
+    fn kind_map_first_group_wins_via_or_insert() {
+        // build_kind_lookup uses groups_alphabetical() which sorts groups.
+        // or_insert_with keeps the first insertion. Verify that alpha wins when
+        // enumerated first (as groups_alphabetical guarantees), and the same Kind
+        // from beta is ignored.
+        let mut km = KindMap::new();
+
+        // Alphabetically first group inserted first (as groups_alphabetical would)
+        km.entry("Widget".to_string()).or_insert_with(|| KindInfo {
+            group: "alpha.example.com".to_string(),
+            version: "v1".to_string(),
+            plural: "widgets".to_string(),
+            namespaced: true,
+            listable: true,
+        });
+        // Second group for same Kind — should be ignored by or_insert
+        km.entry("Widget".to_string()).or_insert_with(|| KindInfo {
+            group: "beta.example.com".to_string(),
+            version: "v1".to_string(),
+            plural: "widgets".to_string(),
+            namespaced: true,
+            listable: true,
+        });
+
+        assert_eq!(
+            km.get("Widget").unwrap().group,
+            "alpha.example.com",
+            "or_insert must keep the first group (alpha) and ignore later groups (beta)"
+        );
     }
 }
