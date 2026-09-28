@@ -252,6 +252,12 @@ pub enum Command {
         strict: bool,
     },
 
+    /// Backup operator or namespace resources (read-only, no plan required)
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
+
     /// Teardown planning for OLM operators
     Teardown {
         #[command(subcommand)]
@@ -274,6 +280,39 @@ pub enum Command {
         /// Scope: namespace (default) or related (cross-namespace via OperatorGroup, owned CRD instances, label evidence)
         #[arg(long, value_enum, default_value = "namespace")]
         scope: Scope,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BackupAction {
+    /// Backup operator-discovered resources (same identity set as `operator resources --scope related`)
+    Operator {
+        /// Operator name (subscription or CSV name, must resolve unambiguously)
+        #[arg(required = true)]
+        operator: String,
+
+        /// Output directory root
+        #[arg(long, required = true, value_name = "DIR", value_parser = non_empty_path)]
+        dir: String,
+
+        /// Refresh API discovery cache
+        #[arg(long)]
+        refresh_discovery: bool,
+    },
+
+    /// Backup all namespace-scoped resources in a namespace
+    Namespace {
+        /// Namespace name
+        #[arg(required = true)]
+        namespace: String,
+
+        /// Output directory root
+        #[arg(long, required = true, value_name = "DIR", value_parser = non_empty_path)]
+        dir: String,
+
+        /// Refresh API discovery cache
+        #[arg(long)]
+        refresh_discovery: bool,
     },
 }
 
@@ -368,9 +407,9 @@ pub enum TeardownAction {
         #[arg(long)]
         tui: bool,
 
-        /// Save pre-delete backup bundle to this path before executing
-        #[arg(long, value_name = "PATH", value_parser = non_empty_path)]
-        backup_file: Option<String>,
+        /// Save pre-delete backup to this directory root before executing
+        #[arg(long, value_name = "DIR", value_parser = non_empty_path)]
+        backup_dir: Option<String>,
     },
 
     /// Show plan coverage: COVERED BY PLAN / INTENTIONALLY PRESERVED / NOT COVERED
@@ -1544,26 +1583,26 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_backup_file_parse() {
+    fn test_apply_backup_dir_parse() {
         let args = Args::parse_from([
             "oc-deps",
             "teardown",
             "apply",
             "plan.json",
-            "--backup-file",
-            "/tmp/backup.json",
+            "--backup-dir",
+            "/tmp/backups",
             "--dry-run",
         ]);
         match args.command {
             Command::Teardown {
                 action:
                     TeardownAction::Apply {
-                        backup_file,
+                        backup_dir,
                         dry_run,
                         ..
                     },
             } => {
-                assert_eq!(backup_file, Some("/tmp/backup.json".to_string()));
+                assert_eq!(backup_dir, Some("/tmp/backups".to_string()));
                 assert!(dry_run);
             }
             _ => panic!("Expected teardown apply"),
@@ -1571,16 +1610,70 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_empty_backup_file_rejected() {
+    fn test_apply_empty_backup_dir_rejected() {
         let result = Args::try_parse_from([
             "oc-deps",
             "teardown",
             "apply",
             "plan.json",
-            "--backup-file",
+            "--backup-dir",
             "",
         ]);
-        assert!(result.is_err(), "empty backup-file path must be rejected");
+        assert!(result.is_err(), "empty backup-dir path must be rejected");
+    }
+
+    #[test]
+    fn test_backup_operator_parse() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "backup",
+            "operator",
+            "nfd",
+            "--dir",
+            "/tmp/backups",
+        ]);
+        match args.command {
+            Command::Backup {
+                action: BackupAction::Operator { operator, dir, .. },
+            } => {
+                assert_eq!(operator, "nfd");
+                assert_eq!(dir, "/tmp/backups");
+            }
+            _ => panic!("Expected backup operator"),
+        }
+    }
+
+    #[test]
+    fn test_backup_namespace_parse() {
+        let args = Args::parse_from([
+            "oc-deps",
+            "backup",
+            "namespace",
+            "demo",
+            "--dir",
+            "/tmp/backups",
+        ]);
+        match args.command {
+            Command::Backup {
+                action: BackupAction::Namespace { namespace, dir, .. },
+            } => {
+                assert_eq!(namespace, "demo");
+                assert_eq!(dir, "/tmp/backups");
+            }
+            _ => panic!("Expected backup namespace"),
+        }
+    }
+
+    #[test]
+    fn test_backup_missing_dir_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "backup", "operator", "nfd"]);
+        assert!(result.is_err(), "missing --dir must be rejected");
+    }
+
+    #[test]
+    fn test_backup_empty_dir_rejected() {
+        let result = Args::try_parse_from(["oc-deps", "backup", "operator", "nfd", "--dir", ""]);
+        assert!(result.is_err(), "empty --dir must be rejected");
     }
 
     #[test]
@@ -1621,9 +1714,9 @@ mod tests {
         let args = Args::parse_from(["oc-deps", "teardown", "apply", "plan.json"]);
         match args.command {
             Command::Teardown {
-                action: TeardownAction::Apply { backup_file, .. },
+                action: TeardownAction::Apply { backup_dir, .. },
             } => {
-                assert!(backup_file.is_none());
+                assert!(backup_dir.is_none());
             }
             _ => panic!("Expected teardown apply"),
         }

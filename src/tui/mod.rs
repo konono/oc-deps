@@ -39,7 +39,7 @@ pub async fn run_tui(
     journal_store: &Arc<JournalStore>,
     gate: &Arc<MutationGate>,
     force: bool,
-    backup_file: Option<&str>,
+    backup_dir: Option<&str>,
     cluster_identity: &crate::teardown::plan::ClusterIdentity,
     plan_path: &str,
 ) -> Result<()> {
@@ -61,7 +61,7 @@ pub async fn run_tui(
         journal_store,
         gate,
         force,
-        backup_file,
+        backup_dir,
         cluster_identity,
         plan_path,
     )
@@ -88,7 +88,7 @@ async fn run_tui_inner(
     journal_store: &Arc<JournalStore>,
     gate: &Arc<MutationGate>,
     force: bool,
-    backup_file: Option<&str>,
+    backup_dir: Option<&str>,
     cluster_identity: &crate::teardown::plan::ClusterIdentity,
     plan_path: &str,
 ) -> Result<()> {
@@ -394,7 +394,7 @@ async fn run_tui_inner(
     }
 
     // Backup gate: after overrides applied, before any mutation
-    let tui_backup_receipt = if let Some(bp) = backup_file {
+    let tui_backup_receipt = if let Some(bp) = backup_dir {
         let ctx = crate::teardown::backup::BackupGateContext {
             client,
             final_plan: plan,

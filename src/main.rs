@@ -1871,7 +1871,7 @@ async fn main() -> Result<()> {
                     yes,
                     script,
                     tui: use_tui,
-                    backup_file,
+                    backup_dir,
                 } => {
                     let force = false; // advisory warnings always shown
                     let approve_finalizer_recovery = true; // always enabled
@@ -2177,7 +2177,7 @@ async fn main() -> Result<()> {
                             &journal_store,
                             &gate,
                             force,
-                            backup_file.as_deref(),
+                            backup_dir.as_deref(),
                             &current_cluster_identity,
                             &plan_file,
                         )
@@ -2422,7 +2422,7 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Backup gate: after overrides, before journal+execution
-                                let script_backup_receipt = if let Some(ref bp) = backup_file {
+                                let script_backup_receipt = if let Some(ref bp) = backup_dir {
                                     let ctx = crate::teardown::backup::BackupGateContext {
                                         client: &client,
                                         final_plan: &plan,
@@ -2805,7 +2805,7 @@ async fn main() -> Result<()> {
                     let effective_finalizer_recovery = approve_finalizer_recovery;
 
                     // Backup gate: final plan is ready (no overrides in normal path)
-                    let normal_backup_receipt = if let Some(ref bp) = backup_file {
+                    let normal_backup_receipt = if let Some(ref bp) = backup_dir {
                         let ctx = crate::teardown::backup::BackupGateContext {
                             client: &client,
                             final_plan: &plan,
@@ -6554,6 +6554,28 @@ async fn main() -> Result<()> {
                 std::process::exit(2);
             }
             return Ok(());
+        }
+
+        Command::Backup { action } => {
+            use crate::cli::BackupAction;
+            match action {
+                BackupAction::Operator {
+                    operator: _operator_query,
+                    dir: _output_dir,
+                    refresh_discovery: _refresh,
+                } => {
+                    // TODO: implement operator backup with directory layout
+                    bail!("operator backup not yet implemented");
+                }
+                BackupAction::Namespace {
+                    namespace: _namespace,
+                    dir: _output_dir,
+                    refresh_discovery: _refresh,
+                } => {
+                    // TODO: implement namespace backup with directory layout
+                    bail!("namespace backup not yet implemented");
+                }
+            }
         }
     }
 }
