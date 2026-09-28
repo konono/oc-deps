@@ -3,6 +3,19 @@
   "operator_count": 15,
   "all_base_non_empty": true,
   "all_pr_non_empty": true,
+  "plan_tuples_base_sha256": "d4e93882c14deaf8096a7d876a08e1c27bc43342de00debbcfb8fc72fd4369df",
+  "plan_tuples_pr_sha256": "d4e93882c14deaf8096a7d876a08e1c27bc43342de00debbcfb8fc72fd4369df",
+  "tuple_schema": [
+    "phase_number",
+    "phase_name",
+    "action",
+    "group",
+    "kind",
+    "namespace",
+    "name",
+    "uid"
+  ],
+  "comparison_command": "python3: extract sorted tuples from .phases[].resources[], set diff per operator",
   "operators": {
     "authorino-operator": {
       "base_count": 13,
