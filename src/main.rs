@@ -6633,7 +6633,7 @@ async fn main() -> Result<()> {
                     let target = crate::teardown::backup::operator_target_dir(
                         std::path::Path::new(&output_dir),
                         op_name,
-                    );
+                    )?;
                     let run_name = crate::teardown::backup::generate_run_name();
 
                     let receipt = crate::teardown::backup::write_backup_directory(
@@ -6700,7 +6700,7 @@ async fn main() -> Result<()> {
                     let target = crate::teardown::backup::namespace_target_dir(
                         std::path::Path::new(&output_dir),
                         &namespace,
-                    );
+                    )?;
                     let run_name = crate::teardown::backup::generate_run_name();
 
                     let receipt = crate::teardown::backup::write_backup_directory(

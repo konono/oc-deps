@@ -253,6 +253,7 @@ pub struct ResourceIndexEntry {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LifecycleEntry {
     pub identity: BackupResourceIdentity,
+    pub state: BackupResourceState,
     pub sources: Vec<BackupSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deferred_lifecycle: Option<DeferredLifecycle>,
@@ -866,6 +867,38 @@ fn set_dir_mode(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn create_dir_private(path: &Path) -> Result<()> {
+    // Find the deepest existing ancestor
+    let mut existing_ancestor = path.to_path_buf();
+    while !existing_ancestor.exists() {
+        if let Some(parent) = existing_ancestor.parent() {
+            existing_ancestor = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    // Create the full path
+    if !path.exists() {
+        std::fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create dir: {}", path.display()))?;
+    }
+
+    // Set 0700 only on directories we created (below the pre-existing ancestor)
+    let mut current = existing_ancestor.clone();
+    for component in path
+        .strip_prefix(&existing_ancestor)
+        .unwrap_or(Path::new(""))
+        .components()
+    {
+        current.push(component);
+        if current.is_dir() {
+            set_dir_mode(&current)?;
+        }
+    }
+    Ok(())
+}
+
 fn write_file_0600(path: &Path, content: &[u8]) -> Result<()> {
     use std::io::Write;
     #[cfg(unix)]
@@ -907,11 +940,7 @@ pub fn write_backup_directory(
     run_name: &str,
 ) -> Result<BackupReceipt> {
     // Ensure target_dir exists
-    if !target_dir.exists() {
-        std::fs::create_dir_all(target_dir)
-            .with_context(|| format!("Failed to create {}", target_dir.display()))?;
-        set_dir_mode(target_dir)?;
-    }
+    create_dir_private(target_dir)?;
 
     // Create staging directory (sibling of final)
     let staging_name = format!(".staging-{}-{}", run_name, std::process::id());
@@ -919,8 +948,7 @@ pub fn write_backup_directory(
     if staging_dir.exists() {
         bail!("Staging directory {} already exists", staging_dir.display());
     }
-    std::fs::create_dir_all(&staging_dir)?;
-    set_dir_mode(&staging_dir)?;
+    create_dir_private(&staging_dir)?;
 
     let mut guard = StagingGuard {
         path: staging_dir.clone(),
@@ -935,8 +963,7 @@ pub fn write_backup_directory(
     for res in fetched {
         let rel_path = resource_dir_path(&res.identity)?;
         let res_dir = staging_dir.join(&rel_path);
-        std::fs::create_dir_all(&res_dir)?;
-        set_dir_mode(&res_dir)?;
+        create_dir_private(&res_dir)?;
 
         let mut raw_sha: Option<String> = None;
         let mut recreate_sha: Option<String> = None;
@@ -968,6 +995,7 @@ pub fn write_backup_directory(
         // lifecycle.yaml
         let lifecycle = LifecycleEntry {
             identity: res.identity.clone(),
+            state: res.state.clone(),
             sources: res.sources.clone(),
             deferred_lifecycle: res.deferred.clone(),
             omitted_fields: res.omitted.clone(),
@@ -1183,6 +1211,78 @@ pub fn validate_receipt(receipt: &BackupReceipt, current_cluster: &ClusterIdenti
         }
     }
 
+    // Detect extra/unexpected files
+    let mut expected_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    expected_files.insert(root.join("manifest.yaml"));
+    for entry in &manifest.resources {
+        let res_dir = root.join(&entry.relative_path);
+        if entry.lifecycle_sha256.is_some() {
+            expected_files.insert(res_dir.join("lifecycle.yaml"));
+        }
+        if entry.raw_sha256.is_some() {
+            expected_files.insert(res_dir.join("raw.yaml"));
+        }
+        if entry.recreate_sha256.is_some() {
+            expected_files.insert(res_dir.join("recreate.yaml"));
+        }
+    }
+
+    fn walk_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let ft = entry.file_type()?;
+            if ft.is_symlink() {
+                bail!("Symlink detected in backup: {}", path.display());
+            }
+            if ft.is_dir() {
+                walk_files(&path, files)?;
+            } else if ft.is_file() {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    let mut actual_files = Vec::new();
+    walk_files(root, &mut actual_files)?;
+    for f in &actual_files {
+        if !expected_files.contains(f) {
+            bail!("Extra file in backup directory: {}", f.display());
+        }
+    }
+
+    // Parse lifecycle.yaml and cross-check identity with manifest
+    for entry in &manifest.resources {
+        if entry.lifecycle_sha256.is_some() {
+            let lpath = root.join(&entry.relative_path).join("lifecycle.yaml");
+            let ldata = std::fs::read_to_string(&lpath)?;
+            let lentry: LifecycleEntry = serde_yaml::from_str(&ldata)
+                .with_context(|| format!("Failed to parse {}", lpath.display()))?;
+            if lentry.identity != entry.identity {
+                bail!(
+                    "Lifecycle identity mismatch at {}: manifest {}/{} vs lifecycle {}/{}",
+                    entry.relative_path,
+                    entry.identity.kind,
+                    entry.identity.name,
+                    lentry.identity.kind,
+                    lentry.identity.name,
+                );
+            }
+            if lentry.state != entry.state {
+                bail!(
+                    "Lifecycle state mismatch at {}: manifest {:?} vs lifecycle {:?}",
+                    entry.relative_path,
+                    entry.state,
+                    lentry.state,
+                );
+            }
+        }
+    }
+
     // Verify tree hash
     let tree_hash = {
         let mut entries: Vec<(&str, &str)> = actual_hashes
@@ -1238,12 +1338,14 @@ pub fn generate_run_name() -> String {
 //  Operator backup target path
 // ──────────────────────────────────────────────────────────────
 
-pub fn operator_target_dir(root: &Path, operator_name: &str) -> PathBuf {
-    root.join("operator").join(operator_name)
+pub fn operator_target_dir(root: &Path, operator_name: &str) -> Result<PathBuf> {
+    let safe = sanitize_path_component(operator_name)?;
+    Ok(root.join("operator").join(safe))
 }
 
-pub fn namespace_target_dir(root: &Path, namespace: &str) -> PathBuf {
-    root.join("namespace").join(namespace)
+pub fn namespace_target_dir(root: &Path, namespace: &str) -> Result<PathBuf> {
+    let safe = sanitize_path_component(namespace)?;
+    Ok(root.join("namespace").join(safe))
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1469,7 +1571,7 @@ pub async fn prepare_backup_gate(
 
         let selection = BackupSelection::operator(vec![resolved]);
         let op_name = op.package_name.as_deref().unwrap_or(&op.csv.name);
-        let target = operator_target_dir(backup_root, op_name);
+        let target = operator_target_dir(backup_root, op_name)?;
         let run_name = generate_run_name();
 
         let receipt = write_backup_directory(
@@ -1493,11 +1595,7 @@ pub async fn prepare_backup_gate(
 
 /// Setup backup root directory with 0700 permissions.
 pub fn setup_backup_dir(dir: &Path) -> Result<()> {
-    if !dir.exists() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("Failed to create backup dir: {}", dir.display()))?;
-    }
-    set_dir_mode(dir)
+    create_dir_private(dir)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -2266,5 +2364,102 @@ mod tests {
         s.abort();
         assert!(result.is_err());
         assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    // ── AlreadyAbsent roundtrip ──
+
+    #[test]
+    fn already_absent_directory_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("backup-absent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let fetched = vec![FetchedResource {
+            identity: BackupResourceIdentity {
+                group: "".to_string(),
+                version: "v1".to_string(),
+                kind: "ConfigMap".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "gone-cm".to_string(),
+                uid: "uid-absent-12345".to_string(),
+            },
+            sources: vec![BackupSource::operator_discovery("test", "OLM", "owned")],
+            state: BackupResourceState::AlreadyAbsent,
+            raw: None,
+            recreate: None,
+            deferred: None,
+            omitted: None,
+        }];
+
+        let receipt = write_backup_directory(
+            &fetched,
+            &test_cluster(),
+            BackupSelection::operator(vec![ResolvedOperatorIdentity {
+                package_name: "test".to_string(),
+                csv_name: "test.v1".to_string(),
+                install_namespace: "ns".to_string(),
+            }]),
+            vec![],
+            &dir,
+            "absent-run",
+        )
+        .unwrap();
+
+        assert_eq!(receipt.resource_count, 1);
+
+        // lifecycle.yaml must exist for AlreadyAbsent
+        let run = dir.join("absent-run");
+        let lifecycle_path =
+            run.join("resources/core/v1/ConfigMap/ns/gone-cm--uid-absent-12345/lifecycle.yaml");
+        assert!(
+            lifecycle_path.exists(),
+            "lifecycle.yaml must exist for AlreadyAbsent"
+        );
+
+        // raw.yaml and recreate.yaml must NOT exist
+        let raw_path =
+            run.join("resources/core/v1/ConfigMap/ns/gone-cm--uid-absent-12345/raw.yaml");
+        assert!(
+            !raw_path.exists(),
+            "raw.yaml must not exist for AlreadyAbsent"
+        );
+
+        // validate_receipt must succeed
+        assert!(
+            validate_receipt(&receipt, &test_cluster()).is_ok(),
+            "AlreadyAbsent backup must validate"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Extra file detection ──
+
+    #[test]
+    fn validate_rejects_extra_files() {
+        let dir = std::env::temp_dir().join(format!("backup-extra-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let receipt = write_backup_directory(
+            &[],
+            &test_cluster(),
+            BackupSelection::namespace(vec!["ns".to_string()]),
+            vec![],
+            &dir,
+            "extra-run",
+        )
+        .unwrap();
+
+        // Add an extra file
+        let extra = std::path::Path::new(&receipt.root).join("extra.txt");
+        std::fs::write(&extra, "malicious").unwrap();
+
+        let result = validate_receipt(&receipt, &test_cluster());
+        assert!(result.is_err(), "extra file must fail validation");
+        assert!(
+            result.unwrap_err().to_string().contains("Extra file"),
+            "error must mention extra file"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
