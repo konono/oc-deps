@@ -1,0 +1,47 @@
+{
+  "phase": "B",
+  "workstream": 3,
+  "run_id": "20260928T010117Z-f5b6920",
+  "base_commit": "bc3076e",
+  "pr_commit": "f5b6920",
+  "pr_binary_sha256": "e2f20c41fdc2a2287900710b29edf8484b97a796ca7456574ed6f444153623d0",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "results": {
+    "operator_resources": {
+      "total": 15,
+      "success": 15,
+      "strict_pass": 15,
+      "json_valid": 15,
+      "resource_identical_vs_phase_a": 13,
+      "resource_diff_explanation": "job-set: -1 ServiceMonitor (cluster state change); rhods-operator: +96 (new CRD instances deployed between Phase A/B runs)"
+    },
+    "trace": {
+      "success": true,
+      "exit_code": 0
+    },
+    "teardown_plan": {
+      "rhoai_exit": 0
+    },
+    "query_planner": {
+      "note": "2 demands per operator (CSV LIST + Subscription LIST) through planner; inspect path uses legacy helpers",
+      "dedup_confirmed_in_mock_tests": true
+    },
+    "corpus": {
+      "sha256_verified": true,
+      "byte_identical": true,
+      "provider_operands": "25/25"
+    },
+    "quality_gates": {
+      "cargo_fmt": "pass",
+      "cargo_clippy": "pass",
+      "cargo_test": "1056 pass, 0 fail",
+      "cargo_build_release": "pass"
+    }
+  },
+  "known_differences": [
+    "job-set: -1 ServiceMonitor/openshift-jobset/jobset-controller-manager-metrics-monitor (cluster state, not code change)",
+    "rhods-operator: +96 resources (new RHOAI CRD instances deployed between Phase A Sept 27 and Phase B Sept 28)",
+    "rhods CSV version changed from 3.5.0 to 3.5.1 between Phase A and Phase B",
+    "Phase A had 1-3 incomplete/warnings per operator; Phase B has 0 (cluster state improved)"
+  ]
+}
