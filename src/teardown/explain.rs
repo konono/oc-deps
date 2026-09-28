@@ -569,6 +569,9 @@ mod tests {
             data_keys: None,
             data_hash: None,
             secret_value_hashes: None,
+            deletion_timestamp: None,
+            finalizers: None,
+            observed_apis: None,
         }
     }
 
@@ -586,6 +589,7 @@ mod tests {
             taken_at: String::new(),
             namespaces: vec![],
             scope: None,
+            observations: vec![],
         }
     }
 

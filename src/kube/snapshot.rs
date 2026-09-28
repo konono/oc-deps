@@ -15,7 +15,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::analyzers::spec_ref::extract_well_known_refs;
-use crate::kube::discovery::KindMap;
+use crate::kube::discovery::{KindInfo, KindMap};
 use crate::kube::resource::*;
 
 const MAX_RETRIES: usize = 2;
@@ -89,6 +89,7 @@ pub async fn build_snapshot(
     build_snapshot_inner(client, config, namespace, kind_map, include_events, None).await
 }
 
+#[allow(dead_code)]
 pub async fn build_snapshot_with_semaphore(
     client: &Client,
     config: &Config,
@@ -106,6 +107,57 @@ pub async fn build_snapshot_with_semaphore(
         Some(api_semaphore),
     )
     .await
+}
+
+/// Scan a namespace using all served GVRs from GvkMap (not just preferred).
+/// Includes cluster-scoped resources when `cluster_scoped` is true.
+#[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)]
+pub enum ScanScope {
+    NamespacedOnly,
+    ClusterScopedOnly,
+    All,
+}
+
+pub async fn build_snapshot_all_gvrs(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    gvk_map: &crate::kube::discovery::GvkMap,
+    include_events: bool,
+    scope: ScanScope,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+) -> Result<ClusterSnapshot> {
+    let skip_kinds: HashSet<&str> = if include_events {
+        HashSet::new()
+    } else {
+        HashSet::from(["Event"])
+    };
+
+    let mut scan_targets: Vec<(String, KindInfo)> = Vec::new();
+    let mut seen_gvrs: HashSet<(String, String, String)> = HashSet::new();
+    for ((group, version, kind), info) in gvk_map {
+        if !info.listable || skip_kinds.contains(kind.as_str()) {
+            continue;
+        }
+        let include = match scope {
+            ScanScope::NamespacedOnly => info.namespaced,
+            ScanScope::ClusterScopedOnly => !info.namespaced,
+            ScanScope::All => true,
+        };
+        if !include {
+            continue;
+        }
+        let gvr_key = (group.clone(), version.clone(), info.plural.clone());
+        if seen_gvrs.insert(gvr_key) {
+            scan_targets.push((kind.clone(), info.clone()));
+        }
+    }
+    scan_targets.sort_by(|a, b| {
+        (&a.1.group, &a.1.version, &a.1.plural).cmp(&(&b.1.group, &b.1.version, &b.1.plural))
+    });
+
+    build_snapshot_from_targets(client, config, namespace, scan_targets, api_semaphore).await
 }
 
 async fn build_snapshot_inner(
@@ -128,6 +180,67 @@ async fn build_snapshot_inner(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
+    build_snapshot_from_targets(client, config, namespace, scan_targets, api_semaphore).await
+}
+
+pub fn enrich_heuristic_spec_refs(resources: &mut HashMap<String, ResourceEntry>) {
+    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in resources.values() {
+        by_name
+            .entry(entry.id.name.clone())
+            .or_default()
+            .push(entry.id.kind.clone());
+    }
+    for kinds in by_name.values_mut() {
+        kinds.sort();
+        kinds.dedup();
+    }
+
+    for entry in resources.values_mut() {
+        if let Some(ref spec) = entry.raw_spec {
+            let mut path = vec!["spec".to_string()];
+            let mut strings = Vec::new();
+            crate::analyzers::spec_ref::collect_string_values(spec, &mut path, &mut strings);
+
+            let mut seen: HashSet<(String, String)> = entry
+                .spec_refs
+                .iter()
+                .map(|r| (r.target_kind.clone(), r.target_name.clone()))
+                .collect();
+
+            for (_field_path, value) in strings {
+                if value == entry.id.name {
+                    continue;
+                }
+                if let Some(kinds) = by_name.get(&value) {
+                    for kind in kinds {
+                        let key = (kind.clone(), value.clone());
+                        if seen.contains(&key) {
+                            continue;
+                        }
+                        seen.insert(key);
+                        entry.spec_refs.push(SpecRefEntry {
+                            target_kind: kind.clone(),
+                            target_name: value.clone(),
+                            field_path: _field_path.clone(),
+                            target_group: None,
+                            target_namespace: None,
+                            source: Some(SpecRefSourceSer::Heuristic),
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn build_snapshot_from_targets(
+    client: &Client,
+    config: &Config,
+    namespace: &str,
+    scan_targets: Vec<(String, KindInfo)>,
+    api_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+) -> Result<ClusterSnapshot> {
     let total = scan_targets.len();
     let scanned = Arc::new(AtomicUsize::new(0));
     let scan_errors: Arc<std::sync::Mutex<Vec<ScanWarning>>> =
@@ -145,7 +258,11 @@ async fn build_snapshot_inner(
         async move {
             let gvk = GroupVersion::gv(&info.group, &info.version).with_kind(&kind);
             let ar = ApiResource::from_gvk_with_plural(&gvk, &info.plural);
-            let api: Api<DynamicObject> = Api::namespaced_with(client, &ns, &ar);
+            let api: Api<DynamicObject> = if info.namespaced {
+                Api::namespaced_with(client, &ns, &ar)
+            } else {
+                Api::all_with(client, &ar)
+            };
 
             let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
             let mut last_warning = None;
@@ -167,42 +284,84 @@ async fn build_snapshot_inner(
 
                 match result {
                     Ok(Ok(list)) => {
-                        let entries: Vec<(String, ResourceEntry)> = list
-                            .items
-                            .into_iter()
-                            .filter_map(|obj| {
-                                let data = obj.data;
-                                let metadata = obj.metadata;
-                                let uid = metadata.uid.clone()?;
-                                let name = metadata.name?;
-                                let ns = metadata.namespace;
+                        let mut entries: Vec<(String, ResourceEntry)> = Vec::new();
+                        let mut obs: Vec<SnapshotObservation> = Vec::new();
+                        for obj in list.items {
+                            let data = obj.data;
+                            let metadata = obj.metadata;
+                            let name = match metadata.name {
+                                Some(n) => n,
+                                None => continue,
+                            };
+                            let ns = metadata.namespace;
+                            let uid = metadata.uid.clone();
 
-                                let owner_refs: Vec<OwnerRefEntry> = metadata
-                                    .owner_references
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .map(|r| OwnerRefEntry {
-                                        api_version: r.api_version,
-                                        kind: r.kind,
-                                        name: r.name,
-                                        uid: r.uid,
-                                        controller: r.controller.unwrap_or(false),
-                                        block_owner_deletion: r.block_owner_deletion.unwrap_or(false),
-                                    })
-                                    .collect();
+                            let owner_refs: Vec<OwnerRefEntry> = metadata
+                                .owner_references
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|r| OwnerRefEntry {
+                                    api_version: r.api_version,
+                                    kind: r.kind,
+                                    name: r.name,
+                                    uid: r.uid,
+                                    controller: r.controller.unwrap_or(false),
+                                    block_owner_deletion: r.block_owner_deletion.unwrap_or(false),
+                                })
+                                .collect();
 
-                                let wk_refs = extract_well_known_refs(&data);
-                                let spec_refs: Vec<SpecRefEntry> = wk_refs
-                                    .into_iter()
-                                    .map(|r| SpecRefEntry {
+                            let wk_refs = extract_well_known_refs(&data);
+                            let spec_refs: Vec<SpecRefEntry> = wk_refs
+                                .into_iter()
+                                .map(|r| {
+                                    let source = match r.source {
+                                        crate::kube::resource::SpecRefSource::Typed => {
+                                            Some(SpecRefSourceSer::Typed)
+                                        }
+                                        crate::kube::resource::SpecRefSource::Heuristic => {
+                                            Some(SpecRefSourceSer::Heuristic)
+                                        }
+                                    };
+                                    let tg = match r.target_kind.as_str() {
+                                        "Secret" | "ConfigMap" | "ServiceAccount"
+                                        | "PersistentVolumeClaim" => Some(String::new()),
+                                        _ => None,
+                                    };
+                                    SpecRefEntry {
                                         target_kind: r.target_kind,
                                         target_name: r.target_name,
                                         field_path: r.field_path,
-                                    })
-                                    .collect();
+                                        target_group: tg,
+                                        target_namespace: None,
+                                        source,
+                                    }
+                                })
+                                .collect();
 
-                                let labels =
-                                    metadata.labels.unwrap_or_default().into_iter().collect();
+                            let labels: HashMap<String, String> =
+                                metadata.labels.unwrap_or_default().into_iter().collect();
+
+                            let deletion_timestamp = metadata
+                                .deletion_timestamp
+                                .map(|ts| ts.0.to_string());
+                            let finalizers = metadata.finalizers.filter(|f| !f.is_empty());
+
+                            obs.push(SnapshotObservation {
+                                group: info.group.clone(),
+                                version: info.version.clone(),
+                                resource: info.plural.clone(),
+                                kind: kind.clone(),
+                                namespace: ns.clone(),
+                                name: name.clone(),
+                                uid: uid.clone(),
+                                owner_refs: owner_refs.clone(),
+                                spec_refs: spec_refs.clone(),
+                                deletion_timestamp: deletion_timestamp.clone(),
+                                finalizers: finalizers.clone(),
+                                labels: labels.clone(),
+                            });
+
+                            if let Some(ref uid_val) = uid {
                                 let annotations: HashMap<String, String> = metadata
                                     .annotations
                                     .unwrap_or_default()
@@ -214,7 +373,6 @@ async fn build_snapshot_inner(
                                     .collect();
 
                                 let raw_spec = data.get("spec").cloned();
-
                                 let (data_keys, data_hash, secret_value_hashes) =
                                     extract_data_fields(&kind, &data);
 
@@ -225,7 +383,7 @@ async fn build_snapshot_inner(
                                         kind: kind.clone(),
                                         namespace: ns,
                                         name,
-                                        uid: Some(uid.clone()),
+                                        uid: Some(uid_val.clone()),
                                     },
                                     owner_refs,
                                     spec_refs,
@@ -235,12 +393,18 @@ async fn build_snapshot_inner(
                                     data_keys,
                                     data_hash,
                                     secret_value_hashes,
+                                    deletion_timestamp,
+                                    finalizers,
+                                    observed_apis: Some(vec![ObservedApi {
+                                        group: info.group.clone(),
+                                        version: info.version.clone(),
+                                        resource: info.plural.clone(),
+                                    }]),
                                 };
-
-                                Some((uid, entry))
-                            })
-                            .collect();
-                        return Some(entries);
+                                entries.push((uid_val.clone(), entry));
+                            }
+                        }
+                        return Some((entries, obs));
                     }
                     Ok(Err(e)) => {
                         let mut warning = ScanWarning::from_kube_error(
@@ -332,7 +496,7 @@ async fn build_snapshot_inner(
     let scan_start = Instant::now();
     let concurrency = if api_semaphore.is_some() { total } else { 50 };
     let results: Vec<_> = futures::stream::iter(futs)
-        .buffer_unordered(concurrency)
+        .buffered(concurrency)
         .collect()
         .await;
 
@@ -351,10 +515,49 @@ async fn build_snapshot_inner(
         );
     }
 
-    let mut resources = HashMap::new();
-    for entries in results.into_iter().flatten() {
+    let mut resources: HashMap<String, ResourceEntry> = HashMap::new();
+    let mut all_observations = Vec::new();
+    for (entries, obs) in results.into_iter().flatten() {
         for (uid, entry) in entries {
-            resources.insert(uid, entry);
+            if let Some(existing) = resources.get_mut(&uid) {
+                if let (Some(existing_apis), Some(new_apis)) =
+                    (&mut existing.observed_apis, &entry.observed_apis)
+                {
+                    for api in new_apis {
+                        if !existing_apis.contains(api) {
+                            existing_apis.push(api.clone());
+                        }
+                    }
+                }
+            } else {
+                resources.insert(uid, entry);
+            }
+        }
+        all_observations.extend(obs);
+    }
+
+    enrich_heuristic_spec_refs(&mut resources);
+
+    // Propagate heuristic refs to observations
+    for obs in &mut all_observations {
+        if let Some(uid) = &obs.uid
+            && let Some(entry) = resources.get(uid)
+        {
+            let heuristic_refs: Vec<_> = entry
+                .spec_refs
+                .iter()
+                .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+                .cloned()
+                .collect();
+            for hr in heuristic_refs {
+                if !obs
+                    .spec_refs
+                    .iter()
+                    .any(|r| r.target_name == hr.target_name && r.target_kind == hr.target_kind)
+                {
+                    obs.spec_refs.push(hr);
+                }
+            }
         }
     }
 
@@ -376,6 +579,27 @@ async fn build_snapshot_inner(
         )
     };
 
+    all_observations.sort_by(|a, b| {
+        (
+            &a.group,
+            &a.version,
+            &a.resource,
+            &a.kind,
+            &a.namespace,
+            &a.name,
+            &a.uid,
+        )
+            .cmp(&(
+                &b.group,
+                &b.version,
+                &b.resource,
+                &b.kind,
+                &b.namespace,
+                &b.name,
+                &b.uid,
+            ))
+    });
+
     let snapshot = ClusterSnapshot {
         schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
         resources,
@@ -390,6 +614,7 @@ async fn build_snapshot_inner(
             incomplete_namespaces: incomplete,
             ..Default::default()
         }),
+        observations: all_observations,
     };
 
     Ok(snapshot)
@@ -1040,6 +1265,9 @@ mod tests {
                 data_keys: None,
                 data_hash: None,
                 secret_value_hashes: None,
+                deletion_timestamp: None,
+                finalizers: None,
+                observed_apis: None,
             },
         )
     }
@@ -1053,6 +1281,7 @@ mod tests {
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![],
             scope: None,
+            observations: vec![],
         }
     }
 
@@ -1065,6 +1294,7 @@ mod tests {
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec![ns.into()],
             scope: None,
+            observations: vec![],
         }
     }
 
@@ -2172,5 +2402,264 @@ mod tests {
             "should achieve parallelism (>= 2), got {}",
             observed
         );
+    }
+
+    // ── enrich_heuristic_spec_refs production helper tests ──
+
+    fn make_resource(
+        kind: &str,
+        name: &str,
+        uid: &str,
+        spec: Option<serde_json::Value>,
+    ) -> (String, ResourceEntry) {
+        let id = ResourceId {
+            group: "".into(),
+            version: "v1".into(),
+            kind: kind.into(),
+            namespace: Some("ns".into()),
+            name: name.into(),
+            uid: Some(uid.into()),
+        };
+        (
+            uid.into(),
+            ResourceEntry {
+                id,
+                owner_refs: vec![],
+                spec_refs: vec![],
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                raw_spec: spec,
+                data_keys: None,
+                data_hash: None,
+                secret_value_hashes: None,
+                deletion_timestamp: None,
+                finalizers: None,
+                observed_apis: None,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn all_served_gvrs_two_apis_same_uid_and_uid_null() {
+        use crate::kube::discovery::GvkMap;
+
+        // Register 2 served GVRs for "Widget" kind in different groups
+        let mut gvk_map = GvkMap::new();
+        gvk_map.insert(
+            (
+                "group-a".to_string(),
+                "v1".to_string(),
+                "Widget".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "group-a".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gvk_map.insert(
+            (
+                "group-b".to_string(),
+                "v1".to_string(),
+                "Widget".to_string(),
+            ),
+            crate::kube::discovery::KindInfo {
+                group: "group-b".to_string(),
+                version: "v1".to_string(),
+                plural: "widgets".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = Client::new(mock_service, "test-ns");
+        let config = make_test_config();
+        let request_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let mut paths = Vec::new();
+            for i in 0..2 {
+                let (req, send) = handle.next_request().await.expect("expected request");
+                paths.push(req.uri().path().to_string());
+                rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if i == 0 {
+                    send.send_response(mock_json_response(serde_json::json!({
+                        "apiVersion": "group-a/v1", "kind": "WidgetList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [
+                            {"apiVersion": "group-a/v1", "kind": "Widget",
+                             "metadata": {"name": "w1", "namespace": "test-ns", "uid": "uid-shared"}},
+                            {"apiVersion": "group-a/v1", "kind": "Widget",
+                             "metadata": {"name": "pm1", "namespace": "test-ns"}}
+                        ]
+                    })));
+                } else {
+                    send.send_response(mock_json_response(serde_json::json!({
+                        "apiVersion": "group-b/v1", "kind": "WidgetList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": [
+                            {"apiVersion": "group-b/v1", "kind": "Widget",
+                             "metadata": {"name": "w1", "namespace": "test-ns", "uid": "uid-shared"}}
+                        ]
+                    })));
+                }
+            }
+            paths
+        });
+
+        let result = build_snapshot_all_gvrs(
+            &client,
+            &config,
+            "test-ns",
+            &gvk_map,
+            false,
+            ScanScope::NamespacedOnly,
+            None,
+        )
+        .await;
+        let paths = spawned.await.unwrap();
+
+        assert!(result.is_ok());
+        let snap = result.unwrap();
+
+        assert_eq!(
+            request_count.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "2 served GVRs = 2 requests"
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "/apis/group-a/v1/namespaces/test-ns/widgets",
+                "/apis/group-b/v1/namespaces/test-ns/widgets",
+            ],
+            "each served GVR gets a distinct request path"
+        );
+        assert_eq!(
+            snap.observations.len(),
+            3,
+            "3 raw observations (2 with UID + 1 null)"
+        );
+        assert_eq!(snap.resources.len(), 1, "1 physical resource (same UID)");
+
+        let entry = snap.resources.get("uid-shared").unwrap();
+        let apis = entry.observed_apis.as_ref().unwrap();
+        assert_eq!(apis.len(), 2, "2 observed APIs for same UID");
+
+        let uid_null_obs: Vec<_> = snap
+            .observations
+            .iter()
+            .filter(|o| o.uid.is_none())
+            .collect();
+        assert_eq!(uid_null_obs.len(), 1, "UID-null observation preserved");
+        assert_eq!(uid_null_obs[0].name, "pm1");
+    }
+
+    #[test]
+    fn heuristic_sets_correct_target_kind() {
+        let (u1, cm) = make_resource("ConfigMap", "shared-name", "uid-cm", None);
+        let (u2, dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"containers": [{"image": "shared-name"}]})),
+        );
+        let mut resources: HashMap<String, ResourceEntry> =
+            [(u1, cm), (u2.clone(), dep)].into_iter().collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u2).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(heuristic.len(), 1);
+        assert_eq!(heuristic[0].target_kind, "ConfigMap");
+        assert_eq!(heuristic[0].target_name, "shared-name");
+    }
+
+    #[test]
+    fn heuristic_same_name_two_kinds() {
+        let (u1, cm) = make_resource("ConfigMap", "shared", "uid-cm", None);
+        let (u2, secret) = make_resource("Secret", "shared", "uid-sec", None);
+        let (u3, dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"env": "shared"})),
+        );
+        let mut resources: HashMap<String, ResourceEntry> =
+            [(u1, cm), (u2, secret), (u3.clone(), dep)]
+                .into_iter()
+                .collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u3).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(heuristic.len(), 2, "ConfigMap+Secret → 2 edges");
+        let kinds: HashSet<_> = heuristic.iter().map(|r| r.target_kind.as_str()).collect();
+        assert!(kinds.contains("ConfigMap"));
+        assert!(kinds.contains("Secret"));
+    }
+
+    #[test]
+    fn heuristic_dedup_same_name_multiple_fields() {
+        let (u1, cm) = make_resource("ConfigMap", "cfg", "uid-cm", None);
+        let (u2, dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"field1": "cfg", "field2": "cfg"})),
+        );
+        let mut resources = [(u1, cm), (u2.clone(), dep)].into_iter().collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u2).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(
+            heuristic.len(),
+            1,
+            "same (kind,name) from 2 fields → 1 edge"
+        );
+    }
+
+    #[test]
+    fn heuristic_skip_when_typed_exists() {
+        let (u1, cm) = make_resource("ConfigMap", "my-cm", "uid-cm", None);
+        let (u2, mut dep) = make_resource(
+            "Deployment",
+            "dep1",
+            "uid-dep",
+            Some(serde_json::json!({"configMap": {"name": "my-cm"}, "ref": "my-cm"})),
+        );
+        dep.spec_refs.push(SpecRefEntry {
+            target_kind: "ConfigMap".into(),
+            target_name: "my-cm".into(),
+            field_path: "spec.configMap.name".into(),
+            target_group: Some("".into()),
+            target_namespace: None,
+            source: Some(SpecRefSourceSer::Typed),
+        });
+        let mut resources = [(u1, cm), (u2.clone(), dep)].into_iter().collect();
+        enrich_heuristic_spec_refs(&mut resources);
+        let dep_entry = resources.get(&u2).unwrap();
+        let heuristic: Vec<_> = dep_entry
+            .spec_refs
+            .iter()
+            .filter(|r| r.source == Some(SpecRefSourceSer::Heuristic))
+            .collect();
+        assert_eq!(heuristic.len(), 0, "typed exists → no heuristic duplicate");
     }
 }

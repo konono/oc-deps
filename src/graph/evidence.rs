@@ -615,6 +615,9 @@ mod tests {
             data_keys: None,
             data_hash: None,
             secret_value_hashes: None,
+            deletion_timestamp: None,
+            finalizers: None,
+            observed_apis: None,
         }
     }
 
@@ -632,6 +635,7 @@ mod tests {
             taken_at: String::new(),
             namespaces: vec![],
             scope: None,
+            observations: vec![],
         }
     }
 
@@ -897,6 +901,9 @@ mod tests {
             target_kind: "Widget".to_string(),
             target_name: "w1".to_string(),
             field_path: "spec.widgetRef".to_string(),
+            target_group: None,
+            target_namespace: None,
+            source: None,
         });
         let snapshot = make_snapshot(vec![cm1, cm2, referrer]);
         let graph = build_evidence_graph(&snapshot, &[]);
@@ -929,6 +936,9 @@ mod tests {
             target_kind: "ConfigMap".to_string(),
             target_name: "cfg".to_string(),
             field_path: "spec.configMapRef".to_string(),
+            target_group: None,
+            target_namespace: None,
+            source: None,
         });
 
         let snapshot = make_snapshot(vec![parent, child]);
@@ -1067,6 +1077,9 @@ mod tests {
             target_kind: "Secret".to_string(),
             target_name: "my-secret".to_string(),
             field_path: "spec.secretRef".to_string(),
+            target_group: None,
+            target_namespace: None,
+            source: None,
         });
         let snapshot = make_snapshot(vec![core_secret, custom_secret, referrer]);
         let graph = build_evidence_graph(&snapshot, &[]);

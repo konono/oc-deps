@@ -564,6 +564,7 @@ pub struct OwnerRefEntry {
     pub kind: String,
     pub name: String,
     pub uid: String,
+    #[serde(default)]
     pub controller: bool,
     #[serde(default)]
     pub block_owner_deletion: bool,
@@ -574,9 +575,28 @@ pub struct SpecRefEntry {
     pub target_kind: String,
     pub target_name: String,
     pub field_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_namespace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SpecRefSourceSer>,
 }
 
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpecRefSourceSer {
+    Typed,
+    Heuristic,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedApi {
+    pub group: String,
+    pub version: String,
+    pub resource: String,
+}
+
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResourceEntry {
@@ -592,6 +612,12 @@ pub struct ResourceEntry {
     pub data_hash: Option<String>,
     #[serde(default)]
     pub secret_value_hashes: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalizers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_apis: Option<Vec<ObservedApi>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -621,6 +647,27 @@ pub struct IncompleteNamespace {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnapshotObservation {
+    pub group: String,
+    pub version: String,
+    pub resource: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub uid: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owner_refs: Vec<OwnerRefEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spec_refs: Vec<SpecRefEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalizers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub labels: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterSnapshot {
     #[serde(default)]
     pub schema_version: Option<u32>,
@@ -636,6 +683,8 @@ pub struct ClusterSnapshot {
     pub namespaces: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<SnapshotScope>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observations: Vec<SnapshotObservation>,
 }
 
 fn deserialize_scan_warnings<'de, D>(deserializer: D) -> Result<Vec<ScanWarning>, D::Error>
@@ -1393,6 +1442,7 @@ mod tests {
             taken_at: "2026-01-01T00:00:00Z".into(),
             namespaces: vec!["default".into()],
             scope: None,
+            observations: vec![],
         };
         let json = serde_json::to_string(&snap).unwrap();
         let snap2: ClusterSnapshot = serde_json::from_str(&json).unwrap();
@@ -2389,6 +2439,7 @@ mod tests {
                     error: None,
                 }],
             }),
+            observations: vec![],
         };
         let json = serde_json::to_string_pretty(&snap).unwrap();
         let snap2: ClusterSnapshot = serde_json::from_str(&json).unwrap();

@@ -1,0 +1,61 @@
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+📦 Scanning 18 namespaces...
+✅ Scanned 337 resource types in 26.2s
+  [1/18] cert-manager — 52 resources, 26.2s
+✅ Scanned 337 resource types in 30.9s
+  [2/18] cert-manager-operator — 41 resources, 30.9s
+✅ Scanned 337 resource types in 31.0s
+  [3/18] ai-tenants — 26 resources, 31.0s
+✅ Scanned 337 resource types in 31.5s
+  [4/18] keycloak — 66 resources, 31.5s
+✅ Scanned 337 resource types in 32.7s
+  [5/18] group-sync-operator — 47 resources, 32.7s
+✅ Scanned 337 resource types in 21.0s
+  [6/18] models-as-a-service — 32 resources, 21.0s
+✅ Scanned 337 resource types in 20.7s
+  [7/18] oc-deps-enhancement-test — 24 resources, 20.7s
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+✅ Scanned 337 resource types in 23.4s
+  [8/18] openshift — 137 resources, 23.4s
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+✅ Scanned 337 resource types in 57.7s
+  [9/18] llm-serving — 31 resources, 57.7s
+✅ Scanned 337 resource types in 54.3s
+  [10/18] mlflow-workspace — 30 resources, 54.3s
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 2/3 failed; retrying
+✅ Scanned 337 resource types in 52.9s
+  [11/18] opendatahub-ogx-system — 23 resources, 52.9s
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+✅ Scanned 337 resource types in 25.9s
+  [12/18] redhat-ods-applications — 665 resources, 25.9s
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+✅ Scanned 337 resource types in 19.1s
+  [13/18] redhat-ods-operator — 47 resources, 19.1s
+✅ Scanned 337 resource types in 95.4s
+  [14/18] nvidia-gpu-operator — 132 resources, 95.5s
+✅ Scanned 337 resource types in 51.8s
+  [15/18] redhat-ai-gateway-infra — 54 resources, 51.8s
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 2/3 failed; retrying
+   ⚠ packages.operators.coreos.com/v1/packagemanifests — LIST timeout (30s), attempt 1/3 failed; retrying
+✅ Scanned 337 resource types in 78.5s
+  [16/18] redhat-ods-monitoring — 30 resources, 78.5s
+✅ Scanned 337 resource types in 54.0s
+  [17/18] rhoai-model-registries — 54 resources, 54.0s
+✅ Scanned 337 resource types in 48.4s
+  [18/18] rhods-notebooks — 25 resources, 48.4s
+✅ Scanned 18 namespaces in 173.8s
+   ⚠ apiextensions.k8s.io/v1/customresourcedefinitions — LIST timeout (30s), attempt 1/3 failed; retrying
+   ⚠ apiextensions.k8s.io/v1/customresourcedefinitions — LIST timeout (30s), attempt 2/3 failed; retrying
+✅ Scanned 199 resource types in 98.0s
+
+⚠ 3 API types skipped during scan:
+  - packages.operators.coreos.com/v1/packagemanifests (timeout, retried 2x)
+  - apiextensions.k8s.io/v1/customresourcedefinitions (timeout, retried 2x)
+  - project.openshift.io/v1/projectrequests (Error deserializing response: missing field `items` at line 1 column 68)
+  Results may be incomplete.
+✅ Snapshot saved to /tmp/tmp.188XjPPcdI/live-snapshot.json (4594 resources, 18 requested, 17 complete, 1 incomplete)

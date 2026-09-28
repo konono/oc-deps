@@ -25,6 +25,7 @@ macro_rules! eprintln {
 }
 
 mod analyzers;
+mod audit;
 mod cli;
 mod graph;
 mod kube;
@@ -1170,6 +1171,66 @@ async fn main() -> Result<()> {
 
     if let Command::Snapshot {
         action:
+            SnapshotAction::Audit {
+                ref before,
+                ref after,
+                ref plans,
+                ref gvr_catalog,
+                ref provider_operands,
+                ref output,
+            },
+    } = args.command
+    {
+        let before_snap = load_snapshot(before)?;
+        let after_snap = load_snapshot(after)?;
+
+        let mut loaded_plans = Vec::new();
+        for plan_path in plans {
+            let plan = crate::teardown::plan::load_execution_plan(plan_path)?;
+            let filename = std::path::Path::new(plan_path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| plan_path.clone());
+            loaded_plans.push((filename, plan));
+        }
+
+        let catalog = match gvr_catalog {
+            Some(path) => Some(crate::audit::load_gvr_catalog(path)?),
+            None => None,
+        };
+
+        let provider = match provider_operands {
+            Some(path) => {
+                let data = std::fs::read_to_string(path)?;
+                Some(serde_json::from_str(&data)?)
+            }
+            None => None,
+        };
+
+        let audit_input = crate::audit::AuditInput::from_snapshots(
+            &before_snap,
+            &after_snap,
+            loaded_plans,
+            catalog,
+            provider,
+        );
+        let report = crate::audit::run_audit(&audit_input)?;
+
+        match output {
+            OutputFormat::Tree => crate::audit::print_audit_tree(&report),
+            OutputFormat::Table => crate::audit::print_audit_table(&report),
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    if let Command::Snapshot {
+        action:
             SnapshotAction::Diff {
                 ref before,
                 ref after,
@@ -1300,7 +1361,7 @@ async fn main() -> Result<()> {
             let no_cache = refresh_discovery;
             let t0 = Instant::now();
             eprintln!("🔍 Discovering API resources...");
-            let (kind_map, _, _gk_map, _) =
+            let (_kind_map, _, _gk_map, gvk_map) =
                 build_kind_lookup_cached(&client, &config, no_cache).await?;
             eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
@@ -1348,6 +1409,7 @@ async fn main() -> Result<()> {
                 let mut all_resources =
                     std::collections::HashMap::<String, crate::kube::resource::ResourceEntry>::new(
                     );
+                let mut all_observations = Vec::new();
                 let mut all_warnings = Vec::new();
                 let mut complete_namespaces = Vec::new();
                 let mut incomplete_namespaces = Vec::new();
@@ -1360,20 +1422,21 @@ async fn main() -> Result<()> {
                 let futs = target_namespaces.iter().map(|ns| {
                     let client = client.clone();
                     let config_clone = config.clone();
-                    let kind_map = kind_map.clone();
+                    let gvk_map = gvk_map.clone();
                     let scanned = scanned_count.clone();
                     let ns = ns.clone();
                     let sem = api_semaphore.clone();
 
                     async move {
                         let ns_start = Instant::now();
-                        let result = crate::kube::snapshot::build_snapshot_with_semaphore(
+                        let result = crate::kube::snapshot::build_snapshot_all_gvrs(
                             &client,
                             &config_clone,
                             &ns,
-                            &kind_map,
+                            &gvk_map,
                             include_events,
-                            sem,
+                            crate::kube::snapshot::ScanScope::NamespacedOnly,
+                            Some(sem),
                         )
                         .await;
                         let count = scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -1419,6 +1482,7 @@ async fn main() -> Result<()> {
                             }
 
                             all_resources.extend(ns_snapshot.resources);
+                            all_observations.extend(ns_snapshot.observations);
                         }
                         Err(e) => {
                             let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -1461,6 +1525,59 @@ async fn main() -> Result<()> {
                     );
                 }
 
+                if cancel_token.is_cancelled() {
+                    let _ = std::fs::remove_file(&tmp_path_cleanup);
+                    eprintln!("\n⚠ Snapshot cancelled.");
+                    std::process::exit(130);
+                }
+
+                // Cluster-scoped scan (CRDs, APIServices, PVs, etc.) — once for the whole command
+                {
+                    let cluster_fut = crate::kube::snapshot::build_snapshot_all_gvrs(
+                        &client,
+                        &config,
+                        "",
+                        &gvk_map,
+                        include_events,
+                        crate::kube::snapshot::ScanScope::ClusterScopedOnly,
+                        None,
+                    );
+                    let cluster_result = tokio::select! {
+                        result = cluster_fut => Some(result),
+                        _ = cancel_token.cancelled() => None,
+                    };
+                    let cluster_result = match cluster_result {
+                        Some(r) => r,
+                        None => {
+                            let _ = std::fs::remove_file(&tmp_path_cleanup);
+                            eprintln!("\n⚠ Snapshot cancelled.");
+                            std::process::exit(130);
+                        }
+                    };
+                    match cluster_result {
+                        Ok(cs) => {
+                            all_warnings.extend(cs.scan_warnings);
+                            for (uid, entry) in cs.resources {
+                                if entry.id.namespace.is_none() {
+                                    all_resources.entry(uid).or_insert(entry);
+                                }
+                            }
+                            for obs in cs.observations {
+                                if obs.namespace.is_none() && !obs.kind.is_empty() {
+                                    all_observations.push(obs);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  ⚠ Cluster-scoped scan error: {}", e);
+                            all_warnings.push(crate::kube::resource::ScanWarning::Other {
+                                gvr: "(cluster-scoped)".into(),
+                                message: e.to_string(),
+                            });
+                        }
+                    }
+                }
+
                 let scope_mode = if namespace_selector.is_empty()
                     && exclude_namespace.is_empty()
                     && !exclude_system_namespaces
@@ -1492,6 +1609,29 @@ async fn main() -> Result<()> {
                         complete_namespaces,
                         incomplete_namespaces,
                     }),
+                    observations: {
+                        all_observations.sort_by(|a, b| {
+                            (
+                                &a.group,
+                                &a.version,
+                                &a.resource,
+                                &a.kind,
+                                &a.namespace,
+                                &a.name,
+                                &a.uid,
+                            )
+                                .cmp(&(
+                                    &b.group,
+                                    &b.version,
+                                    &b.resource,
+                                    &b.kind,
+                                    &b.namespace,
+                                    &b.name,
+                                    &b.uid,
+                                ))
+                        });
+                        all_observations
+                    },
                 };
 
                 let resource_count = snapshot.resources.len();
@@ -1516,8 +1656,16 @@ async fn main() -> Result<()> {
             } else {
                 // ── Single-namespace snapshot ──
                 let namespace = namespace.unwrap_or_else(|| config.default_namespace.clone());
-                let snapshot =
-                    build_snapshot(&client, &config, &namespace, &kind_map, include_events).await?;
+                let snapshot = crate::kube::snapshot::build_snapshot_all_gvrs(
+                    &client,
+                    &config,
+                    &namespace,
+                    &gvk_map,
+                    include_events,
+                    crate::kube::snapshot::ScanScope::NamespacedOnly,
+                    None,
+                )
+                .await?;
 
                 let resource_count = snapshot.resources.len();
                 format_scan_warnings(&snapshot.scan_warnings, snapshot_verbose);
@@ -5536,6 +5684,9 @@ async fn main() -> Result<()> {
         }
         Command::Snapshot {
             action: SnapshotAction::Diff { .. },
+        } => unreachable!("handled before client init"),
+        Command::Snapshot {
+            action: SnapshotAction::Audit { .. },
         } => unreachable!("handled before client init"),
 
         // ── Tree subcommand ──
