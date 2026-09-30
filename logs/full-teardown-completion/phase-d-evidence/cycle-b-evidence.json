@@ -1,7 +1,6 @@
 {
   "cycle": "B",
   "description": "Full 15-operator teardown with explicit cleanup lifecycle fix",
-  "tested_code_commit": "c75e22e31eead25f7639e536e6e1fb69b730b9be",
   "binary_sha256": "8b5f6a35e52dbb983eded28e2348484770e1de4c30ecf9dba37cc090d688f04d",
   "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
   "execution_date": "2026-09-30",
@@ -56,5 +55,16 @@
     "stderr_sha256": "6834c62207fcc22d85b0302d46caa5dc2ca5c02ac590c703f209cf0eb69250a0"
   },
   "pre_journal_sha256": "fb8a6fc6fbda15257703b751a7e2274cc437ad88c734195a91b6e5150e35432b",
-  "pre_journal_state": "Failed"
+  "pre_journal_state": "Failed",
+  "destructive_e2e_tested_commit_pre_history_rewrite": "c75e22e31eead25f7639e536e6e1fb69b730b9be",
+  "final_quality_gate_commit": "d5a6ef6e5f99b98c062376da6cbdf43c7fc713aa",
+  "evidence_commit": "containing git commit",
+  "provenance_note": "Branch history was squashed to remove a plaintext cluster credential from a checked-in evidence script. Product paths (src, tests, configs, Cargo.toml, Cargo.lock, README.md) are byte-identical between the destructive E2E source revision and final_quality_gate_commit.",
+  "final_quality_gates": {
+    "cargo_fmt": "pass",
+    "cargo_clippy_all_targets_deny_warnings": "pass",
+    "cargo_test": "1363 unit + 5 CLI UX + 1 corpus replay passed",
+    "cargo_build_release": "pass",
+    "final_review_binary_sha256_macos": "c293ff6d699b200bc34ecafe42b43f9fb219796054ad6fedb07395c39da69820"
+  }
 }
