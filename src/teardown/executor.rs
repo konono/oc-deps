@@ -2961,6 +2961,7 @@ async fn count_live_api_service_instances(
     LiveCount::Zero
 }
 
+#[cfg(test)]
 pub fn create_runtime_store() -> (Arc<RuntimeStateStore>, Arc<EventNotifier>) {
     let notifier = Arc::new(EventNotifier::new());
     let store = Arc::new(RuntimeStateStore::new(
@@ -3619,6 +3620,7 @@ impl std::fmt::Display for GateClosedError {
 
 impl std::error::Error for GateClosedError {}
 
+#[cfg(test)]
 pub fn is_gate_closed_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<GateClosedError>().is_some()
 }
@@ -3879,7 +3881,7 @@ pub struct ResidualCleanupResult {
     pub post_audit: Option<crate::teardown::audit::ResidualAudit>,
 }
 
-/// Progress update from residual cleanup — for TUI rendering.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum CleanupProgress {
     Validating {

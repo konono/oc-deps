@@ -48,6 +48,7 @@ impl std::fmt::Display for ResourceRuntimeState {
 //  Runtime entry — per-resource tracking
 // ──────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct RuntimeEntry {
     pub resource: ResourceId,

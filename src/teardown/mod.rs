@@ -1,10 +1,8 @@
-pub mod app;
 pub mod audit;
 pub mod backup;
 pub mod events;
 pub mod executor;
 pub mod explain;
-pub mod harness;
 pub mod journal;
 pub mod permit;
 pub mod plan;

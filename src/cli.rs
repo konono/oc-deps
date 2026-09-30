@@ -391,21 +391,9 @@ pub enum TeardownAction {
         #[arg(long)]
         dry_run: bool,
 
-        /// Non-interactive mode
-        #[arg(long)]
-        non_interactive: bool,
-
         /// Skip confirmation prompt (auto-approve execution)
         #[arg(short = 'y', long = "yes")]
         yes: bool,
-
-        /// Headless script mode
-        #[arg(long, value_name = "PATH")]
-        script: Option<String>,
-
-        /// Enable TUI mode
-        #[arg(long)]
-        tui: bool,
 
         /// Save pre-delete backup to this directory root before executing
         #[arg(long, value_name = "DIR", value_parser = non_empty_path)]
@@ -1744,19 +1732,16 @@ mod tests {
     // and verify that the options that will survive continue to parse correctly.
 
     #[test]
-    fn phase1_apply_accepts_tui_flag() {
+    fn phase2_apply_rejects_tui_flag() {
         let args = Args::try_parse_from(["oc-deps", "teardown", "apply", "plan.json", "--tui"]);
-        assert!(args.is_ok(), "--tui must be accepted pre-Phase-2");
-        match args.unwrap().command {
-            Command::Teardown {
-                action: TeardownAction::Apply { tui, .. },
-            } => assert!(tui),
-            _ => panic!("Expected teardown apply"),
-        }
+        assert!(
+            args.is_err(),
+            "--tui must be rejected after Phase 2 removal"
+        );
     }
 
     #[test]
-    fn phase1_apply_accepts_script_flag() {
+    fn phase2_apply_rejects_script_flag() {
         let args = Args::try_parse_from([
             "oc-deps",
             "teardown",
@@ -1765,17 +1750,14 @@ mod tests {
             "--script",
             "/tmp/cmds.json",
         ]);
-        assert!(args.is_ok(), "--script must be accepted pre-Phase-2");
-        match args.unwrap().command {
-            Command::Teardown {
-                action: TeardownAction::Apply { script, .. },
-            } => assert_eq!(script.as_deref(), Some("/tmp/cmds.json")),
-            _ => panic!("Expected teardown apply"),
-        }
+        assert!(
+            args.is_err(),
+            "--script must be rejected after Phase 2 removal"
+        );
     }
 
     #[test]
-    fn phase1_apply_accepts_non_interactive_flag() {
+    fn phase2_apply_rejects_non_interactive_flag() {
         let args = Args::try_parse_from([
             "oc-deps",
             "teardown",
@@ -1784,18 +1766,9 @@ mod tests {
             "--non-interactive",
         ]);
         assert!(
-            args.is_ok(),
-            "--non-interactive must be accepted pre-Phase-2"
+            args.is_err(),
+            "--non-interactive must be rejected after Phase 2 removal"
         );
-        match args.unwrap().command {
-            Command::Teardown {
-                action:
-                    TeardownAction::Apply {
-                        non_interactive, ..
-                    },
-            } => assert!(non_interactive),
-            _ => panic!("Expected teardown apply"),
-        }
     }
 
     #[test]
