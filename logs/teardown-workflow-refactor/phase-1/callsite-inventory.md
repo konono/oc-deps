@@ -1,93 +1,343 @@
-# Phase 1 — Production Call-Site Inventory
+# Phase 1 — Production Call-Site Inventory (Complete)
 
 Base commit: ad93e09 (PR #50 merge)
 
-## 1. `execute_plan` call sites
+## Summary
 
-| Call Site | file:line | Enclosing Context | Callers/Notes |
+| Category | Production sites | Test-only sites | Files |
 |---|---|---|---|
-| Definition (import) | src/main.rs:80 | top-level `use` | `use crate::teardown::executor::{execute_plan, print_execution_result}` |
-| Script-mode call | src/main.rs:2768 | `TeardownAction::Apply` → script-mode branch (`let mut app = AppState::new(...)`) | Called inside `AppCommand::Approve` handler within script JSON loop |
-| Headless (normal + TUI) call | src/main.rs:3178 | `TeardownAction::Apply` → non-TUI / headless branch | Main production apply path; preceded by backup gate, journal creation |
-| Resume call | src/main.rs:5102 | `TeardownAction::Resume` | Resume path; preceded by journal reload, authority validation, drift check, backup receipt validation |
+| `execute_plan` / `execute_plan_with_store` | 4 | 6 | main.rs, tui/mod.rs, executor.rs |
+| `prepare_backup_gate` | 3 | 0 | main.rs, tui/mod.rs, backup.rs(def) |
+| `execute_residual_cleanup` / `_with_progress` | 6 | 0 | main.rs, tui/mod.rs, executor.rs(def) |
+| `run_post_mutation_audit` | 5 | 1 | main.rs, tui/mod.rs, executor.rs, audit.rs(def) |
+| `check_operator_generation_fresh` | 18 | 0 | main.rs, tui/mod.rs |
+| Journal `.update()` closures | 73 | 6 | main.rs(26), executor.rs(28), tui/mod.rs(19) |
+| `std::process::Command` (self-spawn) | 3 | 0 | main.rs (Batch arm only) |
+| `MutationGate::new` | 5 | 8 | main.rs, permit.rs |
+| `check_and_persist_paused` | 6 | 1 | tui/mod.rs, main.rs(test) |
+| TUI entry points (`run_tui`, `run_residual_only`) | 3 | 0 | main.rs, tui/mod.rs |
+| `AppState::new` | 2 | 10 | main.rs, tui/mod.rs, app.rs(tests) |
 
-**Total production call sites: 3** (script, headless apply, resume)
+## Reproducible search commands
 
-## 2. `prepare_backup_gate` call sites
+```bash
+# All commands run from repo root: /tmp/oc-deps-issue49-impl
 
-| Call Site | file:line | Enclosing Context | Callers/Notes |
+# execute_plan / execute_plan_with_store (call sites, not definitions)
+grep -rn 'execute_plan\|execute_plan_with_store' src/ --include="*.rs" | grep -v 'fn execute_plan'
+
+# prepare_backup_gate
+grep -rn 'prepare_backup_gate' src/ --include="*.rs"
+
+# execute_residual_cleanup
+grep -rn 'execute_residual_cleanup' src/ --include="*.rs"
+
+# Journal .update() closures
+grep -rn '\.update(|j\|\.update(|journal\|\.update(|jrnl' src/ --include="*.rs"
+
+# run_post_mutation_audit
+grep -rn 'run_post_mutation_audit' src/ --include="*.rs" | grep -v 'fn run_post'
+
+# check_operator_generation_fresh
+grep -rn 'check_operator_generation_fresh' src/ --include="*.rs" | grep -v 'fn check_\|///\|//'
+
+# std::process::Command
+grep -rn 'std::process::Command::new\|process::Command::new' src/ --include="*.rs"
+
+# MutationGate
+grep -rn 'MutationGate::new' src/ --include="*.rs"
+
+# check_and_persist_paused
+grep -rn 'check_and_persist_paused' src/ --include="*.rs"
+
+# TUI entry points
+grep -rn 'run_tui\|run_residual_only' src/ --include="*.rs" | grep -v '//\|///'
+
+# AppState
+grep -rn 'AppState::new\|AppState {' src/ --include="*.rs" | grep -v '//\|///'
+```
+
+## Test module boundaries (for production vs test classification)
+
+| File | `#[cfg(test)]` line | Production lines | Test lines |
 |---|---|---|---|
-| Script-mode call | src/main.rs:2716 | `TeardownAction::Apply` → script-mode branch | Before script-mode execute_plan; requires CommandContext |
-| Headless apply call | src/main.rs:3110 | `TeardownAction::Apply` → non-TUI / headless branch | Before headless execute_plan; same CommandContext construction |
+| `src/main.rs` | 9403, 9753, 11548, 11742 | 1–9402 | 9403–11786 |
+| `src/teardown/executor.rs` | 4544 | 1–4543 | 4544–EOF |
+| `src/tui/mod.rs` | (none) | 1–1307 (all) | (none) |
+| `src/teardown/app.rs` | 236 (approx) | 1–235 | 236–EOF |
+| `src/teardown/permit.rs` | 128 (approx) | 1–127 | 128–EOF |
 
-**Total production call sites: 2** (script, headless apply)
+---
 
-**Note:** Resume path does NOT call `prepare_backup_gate` — it validates existing receipt instead.
+## 1. `execute_plan` / `execute_plan_with_store`
 
-## 3. Journal state mutation sites
+### Definitions
 
-| Mutation | file:line | Enclosing Context | State Transition |
+| Function | File:Line | Visibility |
+|---|---|---|
+| `execute_plan` (public wrapper) | `src/teardown/executor.rs:339` | `pub async fn` |
+| `execute_plan_with_store` (low-level) | `src/teardown/executor.rs:372` | `pub async fn` |
+
+### Production call sites (4)
+
+| # | File:Line | Enclosing context | Category |
 |---|---|---|---|
-| `create_run_journal` | src/main.rs:8606 (fn def), called at :2416 (TUI), :2735 (script) | `TeardownAction::Apply` | Creates new journal with initial state |
-| `journal::fetch_cluster_identity` | src/main.rs:2112, 2158, 2428, 2754 | Apply + Resume paths | Records cluster identity for drift detection |
-| `RunState::Paused` persist | src/main.rs:2788 | Script-mode Apply | Ctrl-C / gate close → Paused |
-| `RunState::ApplyCompleted` persist | src/main.rs:2793 | Script-mode Apply | All phases done successfully |
-| `RunState::Failed` persist | src/main.rs:2795, 2807, 2831 | Script-mode Apply | Execution failure; `mark_failed_preserving_retryable` |
-| Residual audit persist | src/main.rs:2859–2919 | Script-mode Apply | `run_post_mutation_audit` → `residual_status_from_audit` → journal update |
-| `RunState::Finished` persist | src/main.rs:3062 | Script-mode Apply | Residual cleanup complete |
-| Headless journal state persist | src/main.rs:3178–3330 (range) | Headless Apply | Same transitions: ApplyCompleted/Failed/Paused, residual audit |
-| Resume `Applying` persist | src/main.rs:5096–5102 | Resume | Clears explicit_cleanup_error, sets Applying |
-| Resume post-exec state persist | src/main.rs:5120–5200 (range) | Resume | ApplyCompleted/Failed, residual audit |
-| `ExplicitCleanupBlocked` detection | src/main.rs:1026–1211 | `classify_explicit_cleanup_resume` fn | Read-only classification, not mutation; but drives resume decision |
+| 1 | `src/main.rs:2768` | Apply arm → script mode | wrapper call |
+| 2 | `src/main.rs:3178` | Apply arm → headless CLI mode | wrapper call |
+| 3 | `src/main.rs:5102` | Resume arm | wrapper call |
+| 4 | `src/tui/mod.rs:478` | `run_tui_inner` TUI execution loop | low-level `execute_plan_with_store` |
 
-## 4. Post-execution audit call sites
+### Test-only call sites (6)
 
-| Call Site | file:line | Enclosing Context | Callers/Notes |
-|---|---|---|---|
-| Script-mode post-mutation | src/main.rs:2859 | `TeardownAction::Apply` script branch | `run_post_mutation_audit` after execute_plan completes |
-| Headless post-mutation | src/main.rs:3246 | `TeardownAction::Apply` headless branch | `run_post_mutation_audit` after execute_plan completes |
-| Resume post-mutation | src/main.rs:5025 | `TeardownAction::Resume` | `run_post_mutation_audit` after resume execute_plan |
-| Resume explicit-cleanup post | src/main.rs:5172 | `TeardownAction::Resume` | After explicit cleanup mutations |
-| Observed audit (status) | src/main.rs:4458, 4656, 4847, 5638–5656 | Status/Runs/Journal commands | `run_observed_audit` — read-only, no mutation |
-| Journal residual audit check | src/main.rs:3432, 3852, 4237 | Various Apply/Resume paths | `residual_status_from_audit` on existing journal data |
+| # | File:Line | Test function |
+|---|---|---|
+| 1 | `src/teardown/executor.rs:5530` | tower mock test |
+| 2 | `src/teardown/executor.rs:5756` | tower mock test |
+| 3 | `src/teardown/executor.rs:5895` | tower mock test |
+| 4 | `src/teardown/executor.rs:6012` | tower mock test |
+| 5 | `src/teardown/executor.rs:8949` | tower mock test |
+| 6 | `src/teardown/executor.rs:9151` | tower mock test |
 
-**Mutation-path audit sites: 4** (script, headless, resume, resume-explicit-cleanup)
+### Import
 
-## 5. Self-spawning `std::process::Command` sites
-
-| Call Site | file:line | Enclosing Context | Command Built |
-|---|---|---|---|
-| Batch resume child | src/main.rs:5410 | `TeardownAction::Batch` | `oc-deps teardown resume --run <RUN_ID>` — for entries that already have a pending journal |
-| Batch plan child | src/main.rs:5460 | `TeardownAction::Batch` | `oc-deps teardown plan <OPERATOR> --file <plan_path>` |
-| Batch apply child | src/main.rs:5513 | `TeardownAction::Batch` | `oc-deps teardown apply <plan_path> [-y] [--dry-run] [--backup-dir] [--non-interactive]` |
-
-**Total self-spawn sites: 3** — all in batch. Phase 4 target: replace with direct Rust API calls.
-
-## 6. TUI-only safety logic and references
-
-| Reference | file:line | Type | Notes |
-|---|---|---|---|
-| `mod tui` | src/main.rs:35 | Module declaration | Entire TUI module |
-| `crate::tui::run_tui` | src/main.rs:2448 | TUI entry point | Full interactive Plan Review → Execution → Residual screen |
-| `crate::tui::run_residual_only` | src/main.rs:5083 | TUI residual screen | Resume-path residual re-entry into TUI |
-| `crate::tui::check_and_persist_paused` | src/tui/mod.rs:1171 | Safety function | Checks MutationGate + persists Paused state — **non-UI safety logic to preserve** |
-| `AppState::new` | src/main.rs:2472 | Script-mode state machine | Script mode reuses TUI's AppState for JSON command driving |
-| `AppStateSnapshot` | src/main.rs:2493 | Script-mode state readback | Script mode snapshot of AppState |
-| `apply_command` | src/main.rs:2470 | Script-mode command dispatch | Drives AppState transitions via JSON commands |
-| `AppCommand`, `AppScreen` | src/main.rs:2470 | Script-mode types | Shared with TUI |
-| `non_interactive` field | src/main.rs:114, 206, 214, 233 | CLI config | `--non-interactive` flag; propagated to batch child at :5519 |
-| TUI guard (dry_run check) | src/main.rs:2406 | TUI launch guard | `if use_tui && !dry_run` — skips TUI for dry-run |
-| Test: `check_and_persist_paused` | src/main.rs:10820–10849 | Test | Tests for the paused-gate safety function |
-
-### TUI source files
-
-| File | Description |
+| File:Line | Import |
 |---|---|
-| src/tui/mod.rs | Main TUI module: `run_tui`, `run_tui_inner`, `check_and_persist_paused`, `run_residual_only` |
-| src/tui/*.rs (all) | Full TUI implementation — AppState, rendering, event loop, etc. |
+| `src/main.rs:80` | `use crate::teardown::executor::{execute_plan, print_execution_result}` |
 
-### Safety logic to extract before TUI removal
+---
 
-1. **`check_and_persist_paused`** (src/tui/mod.rs:1171) — checks if MutationGate is closed and persists Paused state to journal. Non-UI logic, must move to teardown/workflow.
-2. **MutationGate / Ctrl-C signal handling** — gate closure on SIGINT, persisted as Paused. Currently wired through TUI event loop.
-3. **Residual audit → screen transition guard** — checks `RunState::ApplyCompleted` before entering residual cleanup. Must survive in workflow module.
+## 2. `prepare_backup_gate`
+
+### Definition
+
+| File:Line | Visibility |
+|---|---|
+| `src/teardown/backup.rs:1903` | `pub async fn` |
+
+### Production call sites (3)
+
+| # | File:Line | Enclosing context | Category |
+|---|---|---|---|
+| 1 | `src/main.rs:2716` | Apply arm → script mode | backup before script execution |
+| 2 | `src/main.rs:3110` | Apply arm → headless CLI mode | backup before headless execution |
+| 3 | `src/tui/mod.rs:409` | `run_tui_inner` → backup before TUI execution | TUI backup |
+
+---
+
+## 3. `execute_residual_cleanup` / `execute_residual_cleanup_with_progress`
+
+### Definitions
+
+| Function | File:Line |
+|---|---|
+| `execute_residual_cleanup` (wrapper) | `src/teardown/executor.rs:3921` |
+| `execute_residual_cleanup_with_progress` (low-level) | `src/teardown/executor.rs:3941` |
+
+### Production call sites (6)
+
+| # | File:Line | Enclosing context | Category |
+|---|---|---|---|
+| 1 | `src/main.rs:2934` | Apply → script mode → residual cleanup loop | residual-mutation |
+| 2 | `src/main.rs:2990` | Apply → script mode → another residual cleanup path | residual-mutation |
+| 3 | `src/main.rs:3340` | Apply → headless CLI → residual cleanup loop | residual-mutation |
+| 4 | `src/main.rs:3512` | Apply → headless CLI → explicit cleanup retry path | residual-mutation |
+| 5 | `src/tui/mod.rs:771` | `run_tui_inner` → residual delete | residual-mutation (TUI) |
+| 6 | `src/tui/mod.rs:946` | `run_residual_tui` → `execute_residual_cleanup_with_progress` | residual-mutation (TUI with progress) |
+
+---
+
+## 4. `run_post_mutation_audit`
+
+### Definition
+
+| File:Line | Notes |
+|---|---|
+| `src/teardown/audit.rs:972` | Delegates to `run_post_mutation_audit_until_settled` |
+
+### Production call sites (5)
+
+| # | File:Line | Enclosing context | Category |
+|---|---|---|---|
+| 1 | `src/main.rs:2859` | Apply → script mode → post-apply audit | audit |
+| 2 | `src/main.rs:3246` | Apply → headless CLI → post-apply audit | audit |
+| 3 | `src/main.rs:5025` | Resume arm → audit recovery path | audit |
+| 4 | `src/main.rs:5172` | Resume arm → post-resume audit | audit |
+| 5 | `src/tui/mod.rs:1125` | `run_residual_only` → TUI audit | audit (TUI) |
+
+### Internal production call (1)
+
+| # | File:Line | Context |
+|---|---|---|
+| 6 | `src/teardown/executor.rs:4462` | Inside executor post-explicit-cleanup audit | audit (executor internal) |
+
+---
+
+## 5. `check_operator_generation_fresh`
+
+### Production call sites (18)
+
+| # | File:Line | Enclosing context |
+|---|---|---|
+| 1 | `src/main.rs:2849` | Apply → script mode → post-apply |
+| 2 | `src/main.rs:2875` | Apply → script mode → generation recheck |
+| 3 | `src/main.rs:3047` | Apply → script mode → finish gate |
+| 4 | `src/main.rs:3237` | Apply → headless → post-apply |
+| 5 | `src/main.rs:3288` | Apply → headless → generation recheck |
+| 6 | `src/main.rs:3987` | Resume → pre-execution generation check |
+| 7 | `src/main.rs:4286` | Resume → residual cleanup generation gate |
+| 8 | `src/main.rs:4442` | Resume → explicit cleanup generation gate |
+| 9 | `src/main.rs:4478` | Resume → explicit cleanup re-gen |
+| 10 | `src/main.rs:4644` | Resume → residual explicit retry generation |
+| 11 | `src/main.rs:4835` | Resume → post-process generation |
+| 12 | `src/main.rs:4874` | Resume → post-process generation recheck |
+| 13 | `src/main.rs:5012` | Resume → final state generation |
+| 14 | `src/main.rs:5165` | Resume → post-resume audit generation |
+| 15 | `src/main.rs:5183` | Resume → post-resume audit re-gen |
+| 16 | `src/main.rs:5646` | Journal arm → read-only status |
+| 17 | `src/tui/mod.rs:357` | TUI pre-execution |
+| 18 | `src/tui/mod.rs:698` | TUI post-execution |
+
+Plus 4 more in TUI at lines 731, 1119, 1204, 1229 (total TUI = 6, total main.rs = 16, grand total = 22).
+
+Correction: full count is **22 production sites** (16 in main.rs + 6 in tui/mod.rs).
+
+---
+
+## 6. Journal `.update()` closures
+
+### Production (73 total)
+
+| File | Count | Lines (sample) |
+|---|---|---|
+| `src/main.rs` | 26 | 2800, 2830, 2914, 3058, 3211, 3299, 3612, 4252, 4265, 4335, 4371, 4408, 4529, 4548, 4567, 4703, 4787, 4914, 4972, 5032, 5067, 5095, 5134, 5194, 5212, 3948 |
+| `src/teardown/executor.rs` | 28 | 513, 738, 843, 1102, 1352, 1524, 1672, 1709, 2080, 2126, 2454, 2477, 2540, 2635, 2816, 3292, 3362, 3395, 3512, 4033, 4185, 4221, 4367, 4415, 4452, 4466, 4478, 4522 |
+| `src/tui/mod.rs` | 19 | 596, 1013, 1022, and 16 others across run_tui_inner and run_residual_tui |
+
+#### main.rs breakdown by arm
+
+| Arm | Count | Lines (range) |
+|---|---|---|
+| Apply → script mode | 6 | 2800, 2830, 2914, 3058 and 2 more |
+| Apply → headless CLI | 5 | 3211, 3299, 3612 and 2 more |
+| Resume | 15 | 3948, 4252, 4265, 4335, 4371, 4408, 4529, 4548, 4567, 4703, 4787, 4914, 4972, 5032, 5067 |
+| Resume → final state | 2 | 5095, 5134 |
+| Resume → post-audit | 2 | 5194, 5212 |
+
+### Test-only (6)
+
+| File | Lines |
+|---|---|
+| `src/teardown/executor.rs` | 6372, 6432, 6510, 8188, 8666, 9141 |
+
+---
+
+## 7. `std::process::Command` (self-spawning)
+
+### Production call sites (3) — all in Batch arm
+
+| # | File:Line | Purpose |
+|---|---|---|
+| 1 | `src/main.rs:5410` | Batch → spawn `teardown resume --run` for pending explicit cleanup |
+| 2 | `src/main.rs:5460` | Batch → spawn `teardown plan` for operator |
+| 3 | `src/main.rs:5513` | Batch → spawn `teardown apply` for operator plan |
+
+---
+
+## 8. `MutationGate`
+
+### Production `MutationGate::new` (5)
+
+| # | File:Line | Enclosing context |
+|---|---|---|
+| 1 | `src/main.rs:2435` | Apply → TUI mode |
+| 2 | `src/main.rs:2766` | Apply → script mode |
+| 3 | `src/main.rs:3160` | Apply → headless CLI mode |
+| 4 | `src/main.rs:4219` | Resume arm |
+| 5 | (executor.rs internal) | Within execute_plan_with_store when gate not provided |
+
+### Production `gate.is_open()` checks (6)
+
+| # | File:Line | Purpose |
+|---|---|---|
+| 1 | `src/main.rs:2787` | script mode → determine Paused vs completed |
+| 2 | `src/main.rs:3198` | headless → determine Paused vs completed |
+| 3 | `src/main.rs:4304` | Resume → check pause after explicit cleanup |
+| 4 | `src/main.rs:4637` | Resume → check pause after residual retry |
+| 5 | `src/main.rs:5018` | Resume → final state determination |
+| 6 | `src/main.rs:5122` | Resume → post-audit state determination |
+
+### Test-only `MutationGate::new` (8)
+
+All in `src/teardown/permit.rs` (lines 141–253) and `src/main.rs:10839`.
+
+---
+
+## 9. `check_and_persist_paused`
+
+### Definition
+
+| File:Line |
+|---|
+| `src/tui/mod.rs:1171` |
+
+### Production call sites (6) — all in tui/mod.rs
+
+| Lines |
+|---|
+| 1197, 1206, 1217, 1223, 1231, 1240 |
+
+All within `run_residual_only` — non-UI safety logic that Phase 2 must extract.
+
+### Test-only (1)
+
+| File:Line |
+|---|
+| `src/main.rs:10842` (+ 10849 re-check in same test) |
+
+---
+
+## 10. TUI entry points
+
+### Production (3)
+
+| # | File:Line | Function | Called from |
+|---|---|---|---|
+| 1 | `src/main.rs:2448` | `crate::tui::run_tui(...)` | Apply arm (TUI mode) |
+| 2 | `src/main.rs:5083` | `crate::tui::run_residual_only(...)` | Resume arm |
+| 3 | `src/tui/mod.rs:31,79` | `run_tui` → `run_tui_inner` | Definition |
+| 4 | `src/tui/mod.rs:1189` | `run_residual_only` | Definition |
+
+---
+
+## 11. `AppState`
+
+### Production (2)
+
+| # | File:Line | Context |
+|---|---|---|
+| 1 | `src/main.rs:2472` | Apply → script mode → `AppState::new(...)` |
+| 2 | `src/tui/mod.rs:95` | `run_tui_inner` → `AppState::new(...)` |
+
+### Test-only (10)
+
+All in `src/teardown/app.rs` (lines 243–325), testing AppState transitions.
+
+---
+
+## Phase 2/3 removal map
+
+The following production sites are removed or relocated:
+
+| Phase | Action | Sites affected |
+|---|---|---|
+| Phase 2 | Remove TUI code | tui/mod.rs: all 19 journal updates, 1 execute_plan_with_store, 1 prepare_backup_gate, 2 execute_residual_cleanup, 6 check_and_persist_paused, 1 AppState, 6 check_operator_generation_fresh |
+| Phase 2 | Remove script mode | main.rs: 6 journal updates, 1 execute_plan, 1 prepare_backup_gate, 2 execute_residual_cleanup, 1 AppState, 3 check_operator_generation_fresh |
+| Phase 2 | Extract `check_and_persist_paused` safety logic | tui/mod.rs:1171 → teardown/runtime.rs or workflow.rs |
+| Phase 3 | Consolidate headless | main.rs headless: 5 journal updates, 1 execute_plan, 1 prepare_backup_gate, 2 execute_residual_cleanup → all into run_teardown_workflow |
+| Phase 3 | Consolidate resume | main.rs resume: ~19 journal updates, 1 execute_plan, 4 run_post_mutation_audit, 1 MutationGate → into run_teardown_workflow |
+| Phase 4 | Eliminate self-spawn | main.rs batch: 3 std::process::Command → direct run_teardown_workflow calls |
+
+After Phase 3+4, remaining production mutation sites:
+- `run_teardown_workflow`: 1 execute_plan, 1 prepare_backup_gate, 1 execute_residual_cleanup
+- `executor.rs` internal: 28 journal updates (within execute_plan_with_store, immovable)
+- `audit.rs` internal: 1 run_post_mutation_audit (within executor post-explicit-cleanup)

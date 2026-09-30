@@ -59,9 +59,12 @@ AuditingResiduals → Finished                (no residuals / audit complete)
 InteractiveCleanup → InteractiveCleanup     (cleanup decisions in progress)
 InteractiveCleanup → Finished               (all residuals resolved)
 InteractiveCleanup → Paused                 (user pause)
-ExplicitCleanupBlocked → Applying           (resume clears error, retries)
-Failed → Applying                           (resume)
-Paused → InteractiveCleanup                 (resume)
+ExplicitCleanupBlocked → Applying           (resume clears error, retries explicit phase)
+Failed → ExplicitCleanupBlocked             (legacy migration ONLY: structurally eligible v12 journal
+                                              with explicit phases completed, no explicit_cleanup_error,
+                                              operator Absent. Validated after lock + cluster identity +
+                                              receipt checks. Generic Failed is NON-RESUMABLE.)
+Paused → Applying                           (resume continues from phases_completed)
 ```
 
 ### ResidualStatus (journal.rs:265-272)
@@ -230,8 +233,15 @@ enum ExplicitCleanupResumeMode {
 }
 ```
 
-### Resume Eligibility (main.rs:9342)
-States eligible for resume: `ExplicitCleanupBlocked | Failed`
+### Resume Eligibility (main.rs:3846-3878)
+States eligible for resume entry: `Paused | Applying | InteractiveCleanup | ExplicitCleanupBlocked | ApplyCompleted`
+(ApplyCompleted re-enters residual cleanup; Applying may indicate a crashed prior run)
+
+Generic `Failed` is NON-RESUMABLE. Only structurally eligible legacy Failed journals
+(explicit cleanup boundary, see Legacy Migration below) may migrate to
+ExplicitCleanupBlocked and then resume via the ExplicitCleanup path.
+
+Explicit cleanup resume mode (main.rs:9342): `ExplicitCleanupBlocked | Failed` (with structural validation)
 
 Additional checks (main.rs:1048-1064):
 - Schema version must match current

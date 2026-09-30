@@ -4,13 +4,30 @@ Base commit: ad93e09 (Merge pull request #50)
 
 ## Summary
 
-| Location | Test Count |
+Counts from `cargo test` at base commit ad93e09 (before Phase 1 contract tests):
+
+| Suite | `cargo test` count |
 |---|---|
-| `src/main.rs` | 121 |
+| Binary tests (`--bin oc-deps`) | 1,363 |
 | `tests/cli_ux.rs` | 5 |
 | `tests/corpus_replay.rs` | 1 |
-| Other `src/` modules | 1,234 |
-| **Total** | **1,361** |
+| **Base total** | **1,369** |
+
+Phase 1 adds 6 CLI contract tests in `src/cli.rs` → **branch total: 1,375**
+
+Note: `grep -c #[test]` finds 1,355 annotations in src/ at base; the 8-test gap
+is from macro-generated tests. The `cargo test` count is authoritative.
+
+### Test annotations by location (grep -c, includes 6 new Phase 1 tests)
+
+| Location | #[test] annotations |
+|---|---|
+| `src/main.rs` | 121 |
+| `src/cli.rs` | 71 (65 base + 6 new) |
+| Other `src/` modules | 1,169 |
+| `tests/cli_ux.rs` | 5 |
+| `tests/corpus_replay.rs` | 1 |
+| **Grep total** | **1,367** (+ ~8 macro-generated = 1,375 cargo) |
 
 ## Tests outside main.rs by module (top 15)
 
