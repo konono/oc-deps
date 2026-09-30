@@ -966,27 +966,7 @@ pub(crate) async fn resolve_explicit_delete_targets(
     Ok(targets)
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum BatchOutcome {
-    Succeeded,
-    Skipped,
-    Failed(i32),
-    NotRun,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PendingResumeAction {
-    ReportOnly,
-    Execute,
-}
-
-fn pending_resume_action(dry_run: bool) -> PendingResumeAction {
-    if dry_run {
-        PendingResumeAction::ReportOnly
-    } else {
-        PendingResumeAction::Execute
-    }
-}
+use crate::teardown::workflow::BatchOutcome;
 
 fn batch_summary(results: &[(String, BatchOutcome)]) -> (usize, usize, usize) {
     let s = results
@@ -2002,23 +1982,7 @@ async fn main() -> Result<()> {
                         .iter()
                         .map(|s| DeleteResourceSpec::parse_cli_arg(s))
                         .collect::<Result<Vec<_>>>()?;
-                    for spec in &explicit_specs {
-                        spec.validate()?;
-                    }
-                    {
-                        let mut seen = HashSet::new();
-                        for spec in &explicit_specs {
-                            let key = (
-                                spec.group.clone(),
-                                spec.kind.clone(),
-                                spec.namespace.clone(),
-                                spec.name.clone(),
-                            );
-                            if !seen.insert(key) {
-                                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
-                            }
-                        }
-                    }
+                    crate::teardown::workflow::validate_delete_resource_specs(&explicit_specs)?;
 
                     let no_cache =
                         should_refresh_discovery(refresh_discovery, explicit_specs.len());
@@ -2547,178 +2511,78 @@ async fn main() -> Result<()> {
                         });
                     }
 
-                    let mut results: Vec<(String, BatchOutcome)> = Vec::new();
-
+                    // Classify entries and run production batch loop
                     let entry_count = entries.len();
-                    for (i, entry) in entries.iter().enumerate() {
-                        // Check gate before each entry — Ctrl-C stops batch
-                        if !batch_gate.is_open() {
-                            eprintln!("\n⏸ Batch paused — remaining entries not started");
-                            for entry in entries.iter().skip(i) {
-                                results.push((entry.name.clone(), BatchOutcome::NotRun));
-                            }
-                            break;
-                        }
-                        if skip_indices.contains(&i) {
-                            eprintln!(
-                                "\n  ⏭ [{}/{}] SKIP {} (not found)",
-                                i + 1,
-                                entry_count,
-                                entry.name
-                            );
-                            results.push((entry.name.clone(), BatchOutcome::Skipped));
-                            continue;
-                        }
-                        // Pending explicit cleanup resume: delegate to `teardown resume`
-                        if let Some(run_id) = pending_resume_map.get(&i) {
-                            if pending_resume_action(dry_run) == PendingResumeAction::ReportOnly {
+                    let entry_names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+                    let classified = crate::teardown::workflow::classify_batch_entries(
+                        &entry_names,
+                        &skip_indices,
+                        &pending_resume_map,
+                        dry_run,
+                    );
+
+                    let effective_defaults = &defaults;
+                    let results = crate::teardown::workflow::run_batch_entries(
+                        &classified,
+                        &batch_gate,
+                        |op_name| {
+                            let op_name = op_name.to_string();
+                            let client = &client;
+                            let config = &config;
+                            let entries = &entries;
+                            let defaults = effective_defaults;
+                            let backup_dir_ref = backup_dir.as_deref();
+                            let batch_gate = &batch_gate;
+                            let entry_names_ref = &entry_names;
+                            async move {
+                                let entry_idx = entry_names_ref.iter().position(|n| n == &op_name)
+                                    .ok_or_else(|| anyhow::anyhow!("Entry not found: {}", op_name))?;
+                                let entry = &entries[entry_idx];
+                                let options = entry.effective_options(defaults);
                                 eprintln!(
-                                    "\n  🧪 [{}/{}] DRY-RUN {} would resume pending explicit cleanup ({})",
-                                    i + 1,
-                                    entry_count,
-                                    entry.name,
-                                    run_id
+                                    "\n{}\n  {} {}\n{}",
+                                    "=".repeat(60),
+                                    if dry_run { "DRY-RUN" } else { "TEARDOWN" },
+                                    op_name,
+                                    "=".repeat(60),
                                 );
-                                results.push((entry.name.clone(), BatchOutcome::Succeeded));
-                                continue;
+                                let gen_params = crate::teardown::workflow::GeneratePlanParams {
+                                    operator_name: &op_name,
+                                    approve_delete: &options.approve_delete,
+                                    preserve: &options.preserve,
+                                    delete_resources: &options.delete_resources,
+                                    refresh_discovery: apply_set_child_bypasses_cache(no_cache, entry_idx),
+                                };
+                                let exec_plan = crate::teardown::workflow::generate_execution_plan_for_operator(
+                                    client, config, &gen_params,
+                                ).await?;
+                                let apply_params = crate::teardown::workflow::ApplyParams {
+                                    dry_run,
+                                    backup_dir: backup_dir_ref,
+                                    skip_confirm: true,
+                                    refresh_discovery: false,
+                                    gate: batch_gate,
+                                };
+                                crate::teardown::workflow::apply_execution_plan(
+                                    client, config, &exec_plan, &apply_params,
+                                ).await
                             }
-                            eprintln!(
-                                "\n{}\n  [{}/{}] RESUME {} ({})\n{}",
-                                "=".repeat(60),
-                                i + 1,
-                                entry_count,
-                                entry.name,
-                                run_id,
-                                "=".repeat(60),
-                            );
-                            let resume_path = journal::run_path(&cluster_id, run_id)?;
-                            let resume_j = journal::load_journal(&resume_path)?;
-                            match crate::teardown::workflow::resume_from_journal(
-                                &client,
-                                &config,
-                                resume_j,
-                                resume_path,
-                                &batch_gate,
-                                no_cache,
-                            )
-                            .await
-                            .and_then(|o| {
-                                crate::teardown::workflow::require_completed(&o)?;
-                                Ok(o)
-                            }) {
-                                Ok(_outcome) => {
-                                    eprintln!("  ✅ {} resumed and completed", entry.name);
-                                    results.push((entry.name.clone(), BatchOutcome::Succeeded));
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "\n⛔ {} resume failed: {:#}. Stopping batch.",
-                                        entry.name, e
-                                    );
-                                    results.push((entry.name.clone(), BatchOutcome::Failed(1)));
-                                    let remaining = entry_count - i - 1;
-                                    if remaining > 0 {
-                                        eprintln!(
-                                            "  ⏭ {} operator(s) not run (stopped on failure)",
-                                            remaining
-                                        );
-                                    }
-                                    for entry in entries.iter().skip(i + 1) {
-                                        results.push((entry.name.clone(), BatchOutcome::NotRun));
-                                    }
-                                    break;
-                                }
+                        },
+                        |run_id| {
+                            let run_id = run_id.to_string();
+                            let client = &client;
+                            let config = &config;
+                            let batch_gate = &batch_gate;
+                            let cluster_id = &cluster_id;
+                            async move {
+                                let resume_path = journal::run_path(cluster_id, &run_id)?;
+                                let resume_j = journal::load_journal(&resume_path)?;
+                                crate::teardown::workflow::resume_from_journal(
+                                    client, config, resume_j, resume_path, batch_gate, no_cache,
+                                ).await
                             }
-                            continue;
-                        }
-                        let op_name = &entry.name;
-                        let options = entry.effective_options(&defaults);
-                        eprintln!(
-                            "\n{}\n  [{}/{}] {} {}\n{}",
-                            "=".repeat(60),
-                            i + 1,
-                            entry_count,
-                            if dry_run { "DRY-RUN" } else { "TEARDOWN" },
-                            op_name,
-                            "=".repeat(60),
-                        );
-
-                        // In-process: generate plan then apply
-                        let gen_params = crate::teardown::workflow::GeneratePlanParams {
-                            operator_name: op_name,
-                            approve_delete: &options.approve_delete,
-                            preserve: &options.preserve,
-                            delete_resources: &options.delete_resources,
-                            refresh_discovery: apply_set_child_bypasses_cache(no_cache, i),
-                        };
-                        let exec_plan =
-                            match crate::teardown::workflow::generate_execution_plan_for_operator(
-                                &client,
-                                &config,
-                                &gen_params,
-                            )
-                            .await
-                            {
-                                Ok(ep) => ep,
-                                Err(e) => {
-                                    eprintln!(
-                                        "\n⛔ {} plan failed: {:#}. Stopping batch.",
-                                        op_name, e
-                                    );
-                                    results.push((op_name.to_string(), BatchOutcome::Failed(1)));
-                                    let remaining = entry_count - i - 1;
-                                    if remaining > 0 {
-                                        eprintln!(
-                                            "  ⏭ {} operator(s) not run (stopped on failure)",
-                                            remaining
-                                        );
-                                    }
-                                    for entry in entries.iter().skip(i + 1) {
-                                        results.push((entry.name.clone(), BatchOutcome::NotRun));
-                                    }
-                                    break;
-                                }
-                            };
-
-                        let apply_params = crate::teardown::workflow::ApplyParams {
-                            dry_run,
-                            backup_dir: backup_dir.as_deref(),
-                            skip_confirm: true,
-                            refresh_discovery: false,
-                            gate: &batch_gate,
-                        };
-                        match crate::teardown::workflow::apply_execution_plan(
-                            &client,
-                            &config,
-                            &exec_plan,
-                            &apply_params,
-                        )
-                        .await
-                        .and_then(|o| {
-                            crate::teardown::workflow::require_completed(&o)?;
-                            Ok(o)
-                        }) {
-                            Ok(_outcome) => {
-                                results.push((op_name.to_string(), BatchOutcome::Succeeded));
-                                eprintln!("  ✅ {} completed", op_name);
-                            }
-                            Err(e) => {
-                                eprintln!("\n⛔ {} failed: {:#}. Stopping batch.", op_name, e);
-                                results.push((op_name.to_string(), BatchOutcome::Failed(1)));
-                                let remaining = entry_count - i - 1;
-                                if remaining > 0 {
-                                    eprintln!(
-                                        "  ⏭ {} operator(s) not run (stopped on failure)",
-                                        remaining
-                                    );
-                                }
-                                for entry in entries.iter().skip(i + 1) {
-                                    results.push((entry.name.clone(), BatchOutcome::NotRun));
-                                }
-                                break;
-                            }
-                        }
-                    }
+                        },
+                    ).await;
 
                     // Summary
                     let (s, sk, f) = batch_summary(&results);
@@ -7770,9 +7634,22 @@ mod basis_drift_tests {
     }
 
     #[test]
-    fn batch_dry_run_never_executes_pending_resume() {
-        assert_eq!(pending_resume_action(true), PendingResumeAction::ReportOnly);
-        assert_eq!(pending_resume_action(false), PendingResumeAction::Execute);
+    fn batch_dry_run_classifies_pending_as_dry_run_resume() {
+        use crate::teardown::workflow::{BatchEntryKind, classify_batch_entries};
+        let names = vec!["op-a".to_string()];
+        let skip = std::collections::HashSet::new();
+        let mut pending = std::collections::HashMap::new();
+        pending.insert(0, "run-123".to_string());
+        let classified = classify_batch_entries(&names, &skip, &pending, true);
+        assert!(
+            matches!(&classified[0].1, BatchEntryKind::DryRunResume { run_id } if run_id == "run-123"),
+            "dry_run pending resume → DryRunResume"
+        );
+        let classified_live = classify_batch_entries(&names, &skip, &pending, false);
+        assert!(
+            matches!(&classified_live[0].1, BatchEntryKind::PendingResume { run_id } if run_id == "run-123"),
+            "non-dry_run pending resume → PendingResume"
+        );
     }
 
     #[test]

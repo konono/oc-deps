@@ -1143,7 +1143,8 @@ async fn run_resume_cleanup(
 // ──────────────────────────────────────────────────────────────
 
 /// Check that a workflow outcome represents successful completion.
-/// Dry-run always passes (no journal/mutation).
+/// Dry-run and mutating runs use the same completion criteria; dry-run differs
+/// only by performing zero mutation and creating no journal.
 pub fn require_completed(outcome: &WorkflowOutcome) -> anyhow::Result<()> {
     match (&outcome.final_state, &outcome.cleanup_failure) {
         (RunState::ApplyCompleted, None) => Ok(()),
@@ -1443,23 +1444,7 @@ pub async fn generate_execution_plan_for_operator(
     use crate::teardown::planner::DecisionPolicy;
 
     let explicit_specs = params.delete_resources.to_vec();
-    for spec in &explicit_specs {
-        spec.validate()?;
-    }
-    {
-        let mut seen = std::collections::HashSet::new();
-        for spec in &explicit_specs {
-            let key = (
-                spec.group.clone(),
-                spec.kind.clone(),
-                spec.namespace.clone(),
-                spec.name.clone(),
-            );
-            if !seen.insert(key) {
-                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
-            }
-        }
-    }
+    validate_delete_resource_specs(&explicit_specs)?;
 
     let no_cache = crate::should_refresh_discovery(params.refresh_discovery, explicit_specs.len());
     eprintln!("🔍 Discovering API resources...");
@@ -1904,106 +1889,161 @@ pub async fn resume_from_journal(
     .await
 }
 
+/// Shared validation for delete-resource specs: per-spec validation + duplicate rejection.
+/// Used by both CLI plan and batch generate_execution_plan_for_operator.
+pub fn validate_delete_resource_specs(specs: &[crate::DeleteResourceSpec]) -> anyhow::Result<()> {
+    for spec in specs {
+        spec.validate()?;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for spec in specs {
+        let key = (
+            spec.group.clone(),
+            spec.kind.clone(),
+            spec.namespace.clone(),
+            spec.name.clone(),
+        );
+        if !seen.insert(key) {
+            bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
+        }
+    }
+    Ok(())
+}
+
+// ── Production batch types and loop ──
+
+/// Outcome of a single batch entry.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BatchOutcome {
+    Succeeded,
+    Skipped,
+    Failed(i32),
+    NotRun,
+}
+
+/// Classified batch entry kind for the production loop.
+#[derive(Clone, Debug)]
+pub enum BatchEntryKind {
+    PlanAndApply,
+    Skip,
+    PendingResume {
+        run_id: String,
+    },
+    DryRunResume {
+        #[allow(dead_code)]
+        run_id: String,
+    },
+}
+
+/// Classify batch entries from baseline gate results.
+pub fn classify_batch_entries(
+    entry_names: &[String],
+    skip_indices: &std::collections::HashSet<usize>,
+    pending_resume_map: &std::collections::HashMap<usize, String>,
+    dry_run: bool,
+) -> Vec<(String, BatchEntryKind)> {
+    entry_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            if skip_indices.contains(&i) {
+                (name.clone(), BatchEntryKind::Skip)
+            } else if let Some(run_id) = pending_resume_map.get(&i) {
+                if dry_run {
+                    (
+                        name.clone(),
+                        BatchEntryKind::DryRunResume {
+                            run_id: run_id.clone(),
+                        },
+                    )
+                } else {
+                    (
+                        name.clone(),
+                        BatchEntryKind::PendingResume {
+                            run_id: run_id.clone(),
+                        },
+                    )
+                }
+            } else {
+                (name.clone(), BatchEntryKind::PlanAndApply)
+            }
+        })
+        .collect()
+}
+
+/// Production batch entry loop. Both main.rs and tests call this.
+pub async fn run_batch_entries<PlanApplyFn, PlanApplyFut, ResumeFn, ResumeFut>(
+    entries: &[(String, BatchEntryKind)],
+    gate: &Arc<MutationGate>,
+    mut plan_apply_runner: PlanApplyFn,
+    mut resume_runner: ResumeFn,
+) -> Vec<(String, BatchOutcome)>
+where
+    PlanApplyFn: FnMut(&str) -> PlanApplyFut,
+    PlanApplyFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
+    ResumeFn: FnMut(&str) -> ResumeFut,
+    ResumeFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
+{
+    let mut outcomes = Vec::new();
+
+    for (i, (name, kind)) in entries.iter().enumerate() {
+        if !gate.is_open() {
+            for (n, _) in entries.iter().skip(i) {
+                outcomes.push((n.clone(), BatchOutcome::NotRun));
+            }
+            break;
+        }
+
+        match kind {
+            BatchEntryKind::Skip => {
+                outcomes.push((name.clone(), BatchOutcome::Skipped));
+            }
+            BatchEntryKind::DryRunResume { .. } => {
+                outcomes.push((name.clone(), BatchOutcome::Succeeded));
+            }
+            BatchEntryKind::PendingResume { run_id } => {
+                match resume_runner(run_id).await.and_then(|o| {
+                    require_completed(&o)?;
+                    Ok(o)
+                }) {
+                    Ok(_) => {
+                        outcomes.push((name.clone(), BatchOutcome::Succeeded));
+                    }
+                    Err(_) => {
+                        outcomes.push((name.clone(), BatchOutcome::Failed(1)));
+                        for (n, _) in entries.iter().skip(i + 1) {
+                            outcomes.push((n.clone(), BatchOutcome::NotRun));
+                        }
+                        break;
+                    }
+                }
+            }
+            BatchEntryKind::PlanAndApply => {
+                match plan_apply_runner(name).await.and_then(|o| {
+                    require_completed(&o)?;
+                    Ok(o)
+                }) {
+                    Ok(_) => {
+                        outcomes.push((name.clone(), BatchOutcome::Succeeded));
+                    }
+                    Err(_) => {
+                        outcomes.push((name.clone(), BatchOutcome::Failed(1)));
+                        for (n, _) in entries.iter().skip(i + 1) {
+                            outcomes.push((n.clone(), BatchOutcome::NotRun));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    outcomes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    // ── Batch entry processing (test infrastructure) ──
-
-    #[derive(Clone, Debug, PartialEq)]
-    enum BatchEntryKind {
-        PlanAndApply,
-        Skip,
-        PendingResume { run_id: String },
-        #[allow(dead_code)]
-        DryRunResume { run_id: String },
-    }
-
-    #[derive(Clone, Debug, PartialEq)]
-    enum BatchOutcome {
-        Succeeded,
-        Skipped,
-        Failed,
-        NotRun,
-    }
-
-    struct BatchResults {
-        pub outcomes: Vec<(String, BatchOutcome)>,
-    }
-
-    async fn run_batch_entries<PlanApplyFn, PlanApplyFut, ResumeFn, ResumeFut>(
-        entries: &[(String, BatchEntryKind)],
-        gate: &Arc<MutationGate>,
-        mut plan_apply_runner: PlanApplyFn,
-        mut resume_runner: ResumeFn,
-    ) -> BatchResults
-    where
-        PlanApplyFn: FnMut(&str) -> PlanApplyFut,
-        PlanApplyFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
-        ResumeFn: FnMut(&str) -> ResumeFut,
-        ResumeFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
-    {
-        let mut outcomes = Vec::new();
-
-        for (i, (name, kind)) in entries.iter().enumerate() {
-            if !gate.is_open() {
-                for (n, _) in entries.iter().skip(i) {
-                    outcomes.push((n.clone(), BatchOutcome::NotRun));
-                }
-                break;
-            }
-
-            match kind {
-                BatchEntryKind::Skip => {
-                    outcomes.push((name.clone(), BatchOutcome::Skipped));
-                }
-                BatchEntryKind::DryRunResume { .. } => {
-                    outcomes.push((name.clone(), BatchOutcome::Succeeded));
-                }
-                BatchEntryKind::PendingResume { run_id } => match resume_runner(run_id).await {
-                    Ok(o) => {
-                        if require_completed(&o).is_ok() {
-                            outcomes.push((name.clone(), BatchOutcome::Succeeded));
-                        } else {
-                            outcomes.push((name.clone(), BatchOutcome::Failed));
-                            for (n, _) in entries.iter().skip(i + 1) {
-                                outcomes.push((n.clone(), BatchOutcome::NotRun));
-                            }
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        outcomes.push((name.clone(), BatchOutcome::Failed));
-                        for (n, _) in entries.iter().skip(i + 1) {
-                            outcomes.push((n.clone(), BatchOutcome::NotRun));
-                        }
-                        break;
-                    }
-                },
-                BatchEntryKind::PlanAndApply => match plan_apply_runner(name).await {
-                    Ok(o) => {
-                        if require_completed(&o).is_ok() {
-                            outcomes.push((name.clone(), BatchOutcome::Succeeded));
-                        } else {
-                            outcomes.push((name.clone(), BatchOutcome::Failed));
-                            for (n, _) in entries.iter().skip(i + 1) {
-                                outcomes.push((n.clone(), BatchOutcome::NotRun));
-                            }
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        outcomes.push((name.clone(), BatchOutcome::Failed));
-                        for (n, _) in entries.iter().skip(i + 1) {
-                            outcomes.push((n.clone(), BatchOutcome::NotRun));
-                        }
-                        break;
-                    }
-                },
-            }
-        }
-
-        BatchResults { outcomes }
-    }
 
     #[test]
     fn determine_final_state_paused_when_gate_closed() {
@@ -2598,15 +2638,9 @@ mod tests {
             |_| async { Ok(ok_outcome()) },
         )
         .await;
-        assert_eq!(result.outcomes.len(), 2);
-        assert_eq!(
-            result.outcomes[0],
-            ("op-a".to_string(), BatchOutcome::Succeeded)
-        );
-        assert_eq!(
-            result.outcomes[1],
-            ("op-b".to_string(), BatchOutcome::Succeeded)
-        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], ("op-a".to_string(), BatchOutcome::Succeeded));
+        assert_eq!(result[1], ("op-b".to_string(), BatchOutcome::Succeeded));
     }
 
     #[tokio::test]
@@ -2627,9 +2661,9 @@ mod tests {
             |_| async { Ok(ok_outcome()) },
         )
         .await;
-        assert_eq!(result.outcomes.len(), 2);
-        assert_eq!(result.outcomes[0].1, BatchOutcome::Succeeded);
-        assert_eq!(result.outcomes[1].1, BatchOutcome::Skipped);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].1, BatchOutcome::Succeeded);
+        assert_eq!(result[1].1, BatchOutcome::Skipped);
         assert_eq!(runner_count, 1, "runner invoked only for present entry");
     }
 
@@ -2652,7 +2686,7 @@ mod tests {
             |_| async { Ok(ok_outcome()) },
         )
         .await;
-        assert_eq!(result.outcomes.len(), 0, "no entries → no outcomes");
+        assert_eq!(result.len(), 0, "no entries → no outcomes");
         assert_eq!(runner_count, 0, "no runner invocations");
     }
 
@@ -2682,14 +2716,10 @@ mod tests {
             |_| async { Ok(ok_outcome()) },
         )
         .await;
-        assert_eq!(result.outcomes.len(), 3);
-        assert_eq!(
-            result.outcomes[0].1,
-            BatchOutcome::Succeeded,
-            "first retained"
-        );
-        assert_eq!(result.outcomes[1].1, BatchOutcome::Failed, "second failed");
-        assert_eq!(result.outcomes[2].1, BatchOutcome::NotRun, "third not run");
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].1, BatchOutcome::Succeeded, "first retained");
+        assert_eq!(result[1].1, BatchOutcome::Failed(1), "second failed");
+        assert_eq!(result[2].1, BatchOutcome::NotRun, "third not run");
         assert_eq!(call_count, 2, "runner stopped after failure");
     }
 
@@ -2707,16 +2737,8 @@ mod tests {
             |_| async { Ok(ok_outcome()) },
         )
         .await;
-        assert_eq!(
-            result.outcomes[0].1,
-            BatchOutcome::Failed,
-            "Paused → Failed"
-        );
-        assert_eq!(
-            result.outcomes[1].1,
-            BatchOutcome::NotRun,
-            "remaining NotRun"
-        );
+        assert_eq!(result[0].1, BatchOutcome::Failed(1), "Paused → Failed");
+        assert_eq!(result[1].1, BatchOutcome::NotRun, "remaining NotRun");
     }
 
     #[tokio::test]
@@ -2746,7 +2768,7 @@ mod tests {
         .await;
         assert_eq!(apply_count, 0, "apply runner not called for pending resume");
         assert_eq!(resume_count, 1, "resume runner called once");
-        assert_eq!(result.outcomes[0].1, BatchOutcome::Succeeded);
+        assert_eq!(result[0].1, BatchOutcome::Succeeded);
     }
 
     #[tokio::test]
@@ -2773,20 +2795,16 @@ mod tests {
         )
         .await;
         assert_eq!(call_count, 1, "only first entry invoked");
+        assert_eq!(result[0].1, BatchOutcome::Succeeded, "first completed");
         assert_eq!(
-            result.outcomes[0].1,
-            BatchOutcome::Succeeded,
-            "first completed"
-        );
-        assert_eq!(
-            result.outcomes[1].1,
+            result[1].1,
             BatchOutcome::NotRun,
             "second not run (gate closed)"
         );
     }
 
-    #[tokio::test]
-    async fn batch_duplicate_explicit_target_rejected() {
+    #[test]
+    fn batch_duplicate_explicit_target_rejected() {
         let specs = vec![
             crate::DeleteResourceSpec {
                 group: "test.io".to_string(),
@@ -2801,22 +2819,47 @@ mod tests {
                 name: "w1".to_string(),
             },
         ];
-        let mut seen = std::collections::HashSet::new();
-        let mut has_dup = false;
-        for spec in &specs {
-            let key = (
-                spec.group.clone(),
-                spec.kind.clone(),
-                spec.namespace.clone(),
-                spec.name.clone(),
-            );
-            if !seen.insert(key) {
-                has_dup = true;
-            }
-        }
+        let result = validate_delete_resource_specs(&specs);
+        assert!(result.is_err(), "duplicate specs must be rejected");
+        let err = result.unwrap_err().to_string();
         assert!(
-            has_dup,
-            "duplicate specs must be detected before API request"
+            err.contains("Duplicate") && err.contains("Widget"),
+            "error must mention Duplicate and kind, got: {}",
+            err
         );
+    }
+
+    #[test]
+    fn validate_delete_resource_specs_accepts_unique() {
+        let specs = vec![
+            crate::DeleteResourceSpec {
+                group: "test.io".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            crate::DeleteResourceSpec {
+                group: "test.io".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w2".to_string(),
+            },
+        ];
+        assert!(validate_delete_resource_specs(&specs).is_ok());
+    }
+
+    #[test]
+    fn classify_batch_entries_missing_without_skip() {
+        let names = vec!["op-a".to_string(), "op-b".to_string()];
+        let mut skip = std::collections::HashSet::new();
+        // Simulate: without skip_missing, missing operators cause
+        // baseline to bail BEFORE classification. With skip_missing,
+        // they appear in skip_indices.
+        skip.insert(1);
+        let pending = std::collections::HashMap::new();
+        let classified = classify_batch_entries(&names, &skip, &pending, false);
+        assert_eq!(classified.len(), 2);
+        assert!(matches!(classified[0].1, BatchEntryKind::PlanAndApply));
+        assert!(matches!(classified[1].1, BatchEntryKind::Skip));
     }
 }
