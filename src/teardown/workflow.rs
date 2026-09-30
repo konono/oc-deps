@@ -9,10 +9,6 @@ use crate::teardown::journal::{self, CleanupResult, JournalStore, RunState};
 use crate::teardown::permit::MutationGate;
 use crate::teardown::planner::TeardownPlan;
 
-use crate::DeleteResourceSpec;
-use crate::kube::discovery;
-use std::time::Instant;
-
 pub struct WorkflowContext<'a> {
     pub client: &'a kube::Client,
     pub plan: &'a TeardownPlan,
@@ -1143,57 +1139,154 @@ async fn run_resume_cleanup(
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Batch in-process runners
+//  Shared service functions — CLI and batch call these
 // ──────────────────────────────────────────────────────────────
 
-pub struct PlanAndApplyParams<'a> {
-    pub operator_name: &'a str,
-    pub approve_delete: &'a [String],
-    pub preserve: &'a [String],
-    pub delete_resources: &'a [DeleteResourceSpec],
-    pub dry_run: bool,
-    pub backup_dir: Option<&'a str>,
-    pub refresh_discovery: bool,
+/// Check that a workflow outcome represents successful completion.
+/// Dry-run always passes (no journal/mutation).
+pub fn require_completed(outcome: &WorkflowOutcome, dry_run: bool) -> anyhow::Result<()> {
+    if dry_run {
+        return Ok(());
+    }
+    match (&outcome.final_state, &outcome.cleanup_failure) {
+        (RunState::ApplyCompleted, None) => Ok(()),
+        (RunState::Paused, _) => bail!(
+            "Teardown paused at phase {}/{}",
+            outcome.result.phases_completed,
+            outcome.result.phases_total
+        ),
+        (_, Some(reason)) => bail!("cleanup incomplete: {}", reason),
+        (state, _) => bail!("Teardown did not complete (state: {:?})", state),
+    }
 }
 
-/// In-process plan generation + apply for a single operator.
-pub async fn run_plan_and_apply(
-    client: &kube::Client,
-    config: &kube::Config,
-    params: &PlanAndApplyParams<'_>,
-) -> anyhow::Result<WorkflowOutcome> {
-    let no_cache =
-        crate::should_refresh_discovery(params.refresh_discovery, params.delete_resources.len());
+pub struct ApplyParams<'a> {
+    pub dry_run: bool,
+    pub backup_dir: Option<&'a str>,
+    pub skip_confirm: bool,
+    pub gate: &'a std::sync::Arc<MutationGate>,
+}
 
-    let t0 = Instant::now();
+/// Shared apply service: validates an ExecutionPlan against live cluster,
+/// runs backup + journal + workflow. Used by both CLI apply and batch.
+pub async fn apply_execution_plan(
+    client: &::kube::Client,
+    config: &::kube::config::Config,
+    exec_plan: &crate::teardown::plan::ExecutionPlan,
+    params: &ApplyParams<'_>,
+) -> anyhow::Result<WorkflowOutcome> {
+    use crate::teardown::plan::ApprovalScopeValue;
+    use crate::teardown::planner::DecisionPolicy;
+
+    let no_cache = crate::should_refresh_discovery(false, exec_plan.explicit_deletes.len());
+
+    // P0: Validate cluster identity
+    let current_cluster_identity = journal::fetch_cluster_identity(client).await?;
+    if !current_cluster_identity.matches(&exec_plan.cluster_identity) {
+        bail!(
+            "Cluster identity mismatch: plan kube-system UID '{}' != current '{}'",
+            exec_plan.cluster_identity.kube_system_uid,
+            current_cluster_identity.kube_system_uid,
+        );
+    }
+
+    let t0 = std::time::Instant::now();
     eprintln!("🔍 Discovering API resources...");
     let (kind_map, gvr_map, gk_map, gvk_map) =
-        discovery::build_kind_lookup_cached(client, config, no_cache).await?;
+        crate::kube::discovery::build_kind_lookup_cached(client, config, no_cache).await?;
     eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
-    let plan_semaphore = Arc::new(tokio::sync::Semaphore::new(
-        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
-    ));
-    let plan_planner = crate::kube::planner::QueryPlanner::new(Some(plan_semaphore));
-
     eprint!("🔍 Discovering operators...");
-    let all_operators = crate::analyzers::olm::discover_operators_full(
-        client,
-        &kind_map,
-        None,
-        Some(plan_planner.clone()),
-    )
-    .await?;
+    let all_operators = crate::analyzers::olm::discover_operators(client, &kind_map).await?;
     eprintln!(" found {} operators", all_operators.len());
 
-    let target_indices = crate::teardown::planner::resolve_operator_targets(
-        &[params.operator_name.to_string()],
-        &all_operators,
-    )?;
-    let target_operators: Vec<&_> = target_indices.iter().map(|&i| &all_operators[i]).collect();
+    // P1: Resolve targets
+    if exec_plan.targets.is_empty() {
+        bail!("Execution plan has no operator targets");
+    }
+    let operator_queries: Vec<String> = exec_plan
+        .targets
+        .iter()
+        .map(|t| t.package_name.clone())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if operator_queries.is_empty() {
+        bail!("Execution plan has no valid operator targets");
+    }
+    let target_indices =
+        crate::teardown::planner::resolve_operator_targets(&operator_queries, &all_operators)?;
 
-    let policy =
-        crate::teardown::planner::DecisionPolicy::from_args(params.approve_delete, params.preserve);
+    let mut validated_indices = Vec::new();
+    for target in &exec_plan.targets {
+        if target.package_name.is_empty() {
+            continue;
+        }
+        let ns_matched: Vec<usize> = target_indices
+            .iter()
+            .copied()
+            .filter(|&i| all_operators[i].install_namespace == target.install_namespace)
+            .collect();
+        if ns_matched.is_empty() {
+            bail!(
+                "Execution plan target {}/{} not found",
+                target.package_name,
+                target.install_namespace
+            );
+        }
+        let csv_matched: Vec<usize> = ns_matched
+            .iter()
+            .copied()
+            .filter(|&i| {
+                crate::teardown::plan::csv_name_matches(
+                    &target.csv_name_pattern,
+                    &all_operators[i].csv.name,
+                )
+            })
+            .collect();
+        if csv_matched.is_empty() {
+            bail!(
+                "Execution plan target {}/{}: csv_name_pattern '{}' does not match",
+                target.package_name,
+                target.install_namespace,
+                target.csv_name_pattern,
+            );
+        }
+        for idx in csv_matched {
+            if !validated_indices.contains(&idx) {
+                validated_indices.push(idx);
+            }
+        }
+    }
+    if validated_indices.len()
+        != exec_plan
+            .targets
+            .iter()
+            .filter(|t| !t.package_name.is_empty())
+            .count()
+    {
+        bail!(
+            "Target count mismatch: plan {} vs resolved {}",
+            exec_plan.targets.len(),
+            validated_indices.len()
+        );
+    }
+
+    let target_operators: Vec<&_> = validated_indices
+        .iter()
+        .map(|&i| &all_operators[i])
+        .collect();
+
+    // Reconstruct approval policy
+    let mut approve_delete: Vec<String> = exec_plan
+        .approve_scopes
+        .iter()
+        .map(|s| s.cli_arg().to_string())
+        .collect();
+    approve_delete.extend(exec_plan.approve_resources.iter().cloned());
+    let preserve = exec_plan.keep_resources.clone();
+    let prune_crds = exec_plan.prune_crds;
+
+    let policy = DecisionPolicy::from_args(&approve_delete, &preserve);
     let plan = crate::teardown::planner::generate_teardown_plan(
         client,
         &target_operators,
@@ -1202,86 +1295,52 @@ pub async fn run_plan_and_apply(
         &gvr_map,
         &gk_map,
         &gvk_map,
-        false,
+        prune_crds,
         &policy,
-        Some(plan_planner),
+        None,
     )
     .await?;
 
-    let mut plan = plan;
-    let explicit_targets = if !params.delete_resources.is_empty() {
-        let targets =
-            crate::resolve_explicit_delete_targets(client, params.delete_resources, &plan, &gk_map)
-                .await?;
-        crate::inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
-        targets
-    } else {
-        Vec::new()
-    };
-
-    let cluster_identity = journal::fetch_cluster_identity(client).await?;
-    let approve_scopes: Vec<crate::cli::ApprovalScope> = params
-        .approve_delete
-        .iter()
-        .filter_map(|s| match s.as_str() {
-            "root" => Some(crate::cli::ApprovalScope::Root),
-            "independent" => Some(crate::cli::ApprovalScope::Independent),
-            "label-only" => Some(crate::cli::ApprovalScope::LabelOnly),
-            "operator-group" => Some(crate::cli::ApprovalScope::OperatorGroup),
-            _ => None,
-        })
-        .collect();
-    let approve_resources: Vec<String> = params
-        .approve_delete
-        .iter()
-        .filter(|s| {
-            !matches!(
-                s.as_str(),
-                "root" | "independent" | "label-only" | "operator-group"
-            )
-        })
-        .cloned()
-        .collect();
-
-    let mut exec_plan = crate::build_execution_plan_from_teardown(
-        &plan,
-        &target_operators,
-        &cluster_identity,
-        false,
-        &approve_scopes,
-        &approve_resources,
-        params.preserve,
-    )?;
-    exec_plan.explicit_deletes = explicit_targets;
-
-    // Drift detection
+    // Drift detection: compare saved exec_plan vs fresh from live discovery
     {
+        let approve_scope_values: Vec<crate::cli::ApprovalScope> = exec_plan
+            .approve_scopes
+            .iter()
+            .map(|s| match s {
+                ApprovalScopeValue::Root => crate::cli::ApprovalScope::Root,
+                ApprovalScopeValue::Independent => crate::cli::ApprovalScope::Independent,
+                ApprovalScopeValue::LabelOnly => crate::cli::ApprovalScope::LabelOnly,
+                ApprovalScopeValue::OperatorGroup => crate::cli::ApprovalScope::OperatorGroup,
+            })
+            .collect();
         let fresh_exec = crate::build_execution_plan_from_teardown(
             &plan,
             &target_operators,
-            &cluster_identity,
-            false,
-            &approve_scopes,
-            &approve_resources,
-            params.preserve,
+            &current_cluster_identity,
+            prune_crds,
+            &approve_scope_values,
+            &exec_plan.approve_resources,
+            &exec_plan.keep_resources,
         )?;
         if let Err(drift_errors) =
-            crate::teardown::plan::validate_execution_plan_against_fresh(&exec_plan, &fresh_exec)
+            crate::teardown::plan::validate_execution_plan_against_fresh(exec_plan, &fresh_exec)
         {
+            eprintln!("\n⛔ Execution plan drift detected:");
             for err in &drift_errors {
                 eprintln!("  - {}", err);
             }
-            bail!("{} drift error(s) detected.", drift_errors.len());
+            bail!("{} drift error(s) detected", drift_errors.len());
         }
         eprintln!("✅ Execution plan validated — no drift detected");
     }
 
-    // Explicit target authority
+    // Explicit target injection
+    let mut plan = plan;
     if !exec_plan.explicit_deletes.is_empty() {
-        let fresh_specs: Vec<DeleteResourceSpec> = exec_plan
+        let fresh_specs: Vec<crate::DeleteResourceSpec> = exec_plan
             .explicit_deletes
             .iter()
-            .map(|t| DeleteResourceSpec {
+            .map(|t| crate::DeleteResourceSpec {
                 group: t.group.clone(),
                 kind: t.kind.clone(),
                 namespace: t.namespace.clone(),
@@ -1298,17 +1357,18 @@ pub async fn run_plan_and_apply(
             for e in &drift_errors {
                 eprintln!("❌ {}", e);
             }
-            bail!("{} explicit target authority error(s).", drift_errors.len());
+            bail!("{} explicit target authority error(s)", drift_errors.len());
         }
+        crate::inject_explicit_phase_into_teardown_plan(&mut plan, &fresh_targets, &gk_map)?;
     }
 
     // Backup gate
-    let backup_receipts = if let Some(bp) = params.backup_dir {
+    let normal_backup_receipts = if let Some(bp) = params.backup_dir {
         let ctx = crate::teardown::backup::BackupGateContext {
             client,
             final_plan: &plan,
             target_operators: target_operators.clone(),
-            cluster_identity: &cluster_identity,
+            cluster_identity: &current_cluster_identity,
             plan_path: "",
             kind_map: &kind_map,
             gvr_map: &gvr_map,
@@ -1321,7 +1381,7 @@ pub async fn run_plan_and_apply(
     };
 
     // Journal
-    let journal_store: Option<Arc<JournalStore>> = if !params.dry_run {
+    let journal_store: Option<std::sync::Arc<JournalStore>> = if !params.dry_run {
         let audit_ns =
             crate::discover_audit_scope(client, target_operators[0], &kind_map, &gvr_map, &gk_map)
                 .await?;
@@ -1331,7 +1391,7 @@ pub async fn run_plan_and_apply(
             &target_operators,
             &gk_map,
             true,
-            backup_receipts,
+            normal_backup_receipts,
             Some(audit_ns),
         )
         .await?;
@@ -1339,26 +1399,15 @@ pub async fn run_plan_and_apply(
         let current_id = journal::fetch_cluster_identity(client).await?;
         let stored = store.read().await;
         if !current_id.matches(&stored.cluster_identity) {
-            bail!("Cluster identity changed between journal creation and execution.");
+            bail!("Cluster identity changed between journal creation and execution");
         }
-        Some(Arc::new(store))
+        Some(std::sync::Arc::new(store))
     } else {
         None
     };
 
-    // MutationGate
-    let gate = Arc::new(MutationGate::new(16));
-    if !params.dry_run {
-        let gate_for_signal = gate.clone();
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                eprintln!("\n⏸ Pausing... waiting for active mutations to complete...");
-                gate_for_signal.close_and_drain().await;
-            }
-        });
-    }
-
-    let ctx = WorkflowContext {
+    // Workflow
+    let workflow_ctx = WorkflowContext {
         client,
         plan: &plan,
         kind_map: &kind_map,
@@ -1367,49 +1416,172 @@ pub async fn run_plan_and_apply(
         gvr_map: &gvr_map,
     };
     run_teardown_workflow(
-        &ctx,
+        &workflow_ctx,
         journal_store.as_ref(),
-        &gate,
+        params.gate,
         WorkflowStart::Fresh {
             dry_run: params.dry_run,
-            skip_confirm: true,
+            skip_confirm: params.skip_confirm,
         },
     )
     .await
 }
 
-/// In-process resume for pending explicit cleanup journals.
-pub async fn run_in_process_resume(
-    client: &kube::Client,
-    config: &kube::Config,
-    run_id: &str,
+pub struct GeneratePlanParams<'a> {
+    pub operator_name: &'a str,
+    pub approve_delete: &'a [String],
+    pub preserve: &'a [String],
+    pub delete_resources: &'a [crate::DeleteResourceSpec],
+    pub refresh_discovery: bool,
+}
+
+/// Generate an ExecutionPlan for an operator (plan step for batch).
+pub async fn generate_execution_plan_for_operator(
+    client: &::kube::Client,
+    config: &::kube::config::Config,
+    params: &GeneratePlanParams<'_>,
+) -> anyhow::Result<crate::teardown::plan::ExecutionPlan> {
+    use crate::teardown::planner::DecisionPolicy;
+
+    let explicit_specs = params.delete_resources.to_vec();
+    for spec in &explicit_specs {
+        spec.validate()?;
+    }
+
+    let no_cache = crate::should_refresh_discovery(params.refresh_discovery, explicit_specs.len());
+    eprintln!("🔍 Discovering API resources...");
+    let (kind_map, gvr_map, gk_map, gvk_map) =
+        crate::kube::discovery::build_kind_lookup_cached(client, config, no_cache).await?;
+
+    eprint!("🔍 Discovering operators...");
+    let all_operators = crate::analyzers::olm::discover_operators(client, &kind_map).await?;
+    eprintln!(" found {} operators", all_operators.len());
+
+    let target_indices = crate::teardown::planner::resolve_operator_targets(
+        &[params.operator_name.to_string()],
+        &all_operators,
+    )?;
+    let target_operators: Vec<&_> = target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+    let policy = DecisionPolicy::from_args(params.approve_delete, params.preserve);
+    let plan = crate::teardown::planner::generate_teardown_plan(
+        client,
+        &target_operators,
+        &all_operators,
+        &kind_map,
+        &gvr_map,
+        &gk_map,
+        &gvk_map,
+        false,
+        &policy,
+        None,
+    )
+    .await?;
+
+    let mut plan = plan;
+    let explicit_targets = if !explicit_specs.is_empty() {
+        let targets =
+            crate::resolve_explicit_delete_targets(client, &explicit_specs, &plan, &gk_map).await?;
+        crate::inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
+        targets
+    } else {
+        Vec::new()
+    };
+
+    let cluster_identity = journal::fetch_cluster_identity(client).await?;
+    let approve_scope: Vec<crate::cli::ApprovalScope> = params
+        .approve_delete
+        .iter()
+        .filter_map(|s| match s.as_str() {
+            "root" => Some(crate::cli::ApprovalScope::Root),
+            "independent" => Some(crate::cli::ApprovalScope::Independent),
+            "label-only" => Some(crate::cli::ApprovalScope::LabelOnly),
+            "operator-group" => Some(crate::cli::ApprovalScope::OperatorGroup),
+            _ => None,
+        })
+        .collect();
+    let approve_resource: Vec<String> = params
+        .approve_delete
+        .iter()
+        .filter(|s| {
+            !matches!(
+                s.as_str(),
+                "root" | "independent" | "label-only" | "operator-group"
+            )
+        })
+        .cloned()
+        .collect();
+    let mut exec_plan = crate::build_execution_plan_from_teardown(
+        &plan,
+        &target_operators,
+        &cluster_identity,
+        false,
+        &approve_scope,
+        &approve_resource,
+        params.preserve,
+    )?;
+    exec_plan.explicit_deletes = explicit_targets;
+    Ok(exec_plan)
+}
+
+/// Shared resume service: validates journal, acquires lock, runs workflow.
+/// Used by both CLI resume and batch pending-explicit-cleanup.
+pub async fn resume_from_journal(
+    client: &::kube::Client,
+    config: &::kube::config::Config,
+    j: journal::RunJournal,
+    journal_path: std::path::PathBuf,
+    gate: &std::sync::Arc<MutationGate>,
     refresh_discovery: bool,
 ) -> anyhow::Result<WorkflowOutcome> {
+    use crate::teardown::audit::{self as teardown_audit, OperatorGenerationState};
+
     let mut no_cache = refresh_discovery;
     let cluster_id = journal::fetch_cluster_identity(client).await?;
-    let path = journal::run_path(&cluster_id, run_id)?;
-    let j = journal::load_journal(&path)?;
 
     if !j.cluster_identity.matches(&cluster_id) {
-        bail!("Journal cluster identity does not match current cluster");
+        bail!(
+            "Journal cluster identity does not match current cluster \
+             (journal: {}, current: {})",
+            j.cluster_identity.kube_system_uid,
+            cluster_id.kube_system_uid,
+        );
     }
+
     match j.state {
         RunState::Paused
         | RunState::Applying
         | RunState::InteractiveCleanup
         | RunState::ExplicitCleanupBlocked => {}
-        RunState::ApplyCompleted => {}
-        RunState::Finished => bail!("Run already finished"),
+        RunState::ApplyCompleted => {
+            if j.last_residual_audit.is_none() {
+                eprintln!(
+                    "Run {} is ApplyCompleted but has no residual audit — running audit recovery",
+                    j.run_id
+                );
+            } else {
+                eprintln!(
+                    "Run {} is ApplyCompleted — re-entering Residual Cleanup",
+                    j.run_id
+                );
+            }
+        }
+        RunState::Finished => bail!("Run {} already finished", j.run_id),
         RunState::Failed => match crate::explicit_cleanup_resume_mode(&j) {
             Ok(_) => {}
-            Err(reason) => bail!("Run failed: {}", reason),
+            Err(reason) => bail!(
+                "Run {} has failed and is not eligible for retry: {}",
+                j.run_id,
+                reason
+            ),
         },
-        _ => bail!("Run in state {:?} — cannot resume", j.state),
+        _ => bail!("Run {} is in state {:?} — cannot resume", j.run_id, j.state),
     }
 
-    let store = Arc::new(JournalStore::new_with_lock(j.clone(), path)?);
+    let store = std::sync::Arc::new(JournalStore::new_with_lock(j.clone(), journal_path)?);
     let mut j = store.read().await;
 
+    // Re-verify after lock
     match j.state {
         RunState::Paused
         | RunState::Applying
@@ -1421,12 +1593,12 @@ pub async fn run_in_process_resume(
             Ok(_) => {}
             Err(reason) => bail!("Run failed after lock: {}", reason),
         },
-        _ => bail!("Run in state {:?} after lock", j.state),
+        _ => bail!("Run state {:?} after lock", j.state),
     }
 
     if j.schema_version != journal::RUN_JOURNAL_SCHEMA_VERSION {
         bail!(
-            "Journal schema v{} does not match current v{}.",
+            "Journal schema v{} does not match current v{}",
             j.schema_version,
             journal::RUN_JOURNAL_SCHEMA_VERSION
         );
@@ -1434,7 +1606,6 @@ pub async fn run_in_process_resume(
     if !j.cluster_identity.matches(&cluster_id) {
         bail!("Cluster identity mismatch after lock");
     }
-
     if !j.backup_receipts.is_empty() {
         eprintln!(
             "📦 Validating {} backup receipt(s)...",
@@ -1446,6 +1617,7 @@ pub async fn run_in_process_resume(
         }
     }
 
+    // Legacy migration
     let explicit_resume_mode = crate::explicit_cleanup_resume_mode(&j).ok();
     if explicit_resume_mode == Some(crate::ExplicitCleanupResumeMode::LegacyFailed) {
         store
@@ -1459,7 +1631,7 @@ pub async fn run_in_process_resume(
                 });
             })
             .await
-            .context("Failed to persist legacy migration")?;
+            .context("Failed to persist legacy ExplicitCleanupBlocked migration")?;
         j = store.read().await;
         eprintln!("  ✅ Migrated legacy Failed journal to ExplicitCleanupBlocked");
     }
@@ -1470,33 +1642,49 @@ pub async fn run_in_process_resume(
         "Resuming run {} (state: {:?}, operator: {})",
         j.run_id, j.state, j.operator.csv_name
     );
+    eprintln!(
+        "  {}/{} phases completed, {} deleted",
+        j.execution.phases_completed,
+        j.execution.phases_total,
+        j.execution.deleted.len(),
+    );
 
+    let t0 = std::time::Instant::now();
+    eprintln!("🔍 Re-discovering API resources...");
     let (kind_map, _gvr_map, gk_map, gvk_map) =
-        discovery::build_kind_lookup_cached(client, config, no_cache).await?;
+        crate::kube::discovery::build_kind_lookup_cached(client, config, no_cache).await?;
+    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
 
-    let gen_state =
-        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
-            .await;
+    let gen_state = teardown_audit::check_operator_generation_fresh(
+        client,
+        &j.operator,
+        &j.audit_context.csv_baseline,
+    )
+    .await;
+
     if is_explicit_cleanup_resume {
         match gen_state {
             OperatorGenerationState::Absent => {
                 eprintln!("  ✅ Operator absent — explicit cleanup eligible");
             }
             OperatorGenerationState::Reappeared => {
-                bail!("Operator reappeared");
+                bail!("Operator reappeared — cannot resume explicit cleanup");
             }
             _ => {
-                bail!("Operator generation not absent ({:?})", gen_state);
+                bail!(
+                    "Operator generation not absent ({:?}) — explicit cleanup blocked",
+                    gen_state
+                );
             }
         }
     } else {
         match gen_state {
             OperatorGenerationState::SameGeneration => {}
             OperatorGenerationState::Absent => {
-                eprintln!("  Operator generation absent.");
+                eprintln!("  Operator generation absent — teardown may have completed.");
             }
             OperatorGenerationState::Reappeared => {
-                bail!("Operator reinstalled. Cannot resume.");
+                bail!("Operator reinstalled — cannot resume old teardown");
             }
             OperatorGenerationState::Unknown(reason) => {
                 bail!("Cannot verify operator generation: {}", reason);
@@ -1521,7 +1709,11 @@ pub async fn run_in_process_resume(
                     client, resource, &kind_map, &gk_map,
                 ) {
                     Some(r) => r,
-                    None => bail!("Cannot resolve API for {}/{}", resource.kind, resource.name),
+                    None => bail!(
+                        "Cannot resolve API for {}/{} — cannot verify state for resume",
+                        resource.kind,
+                        resource.name,
+                    ),
                 };
                 match api.get(&resource.name).await {
                     Ok(obj) => {
@@ -1531,16 +1723,27 @@ pub async fn run_in_process_resume(
                             _ => bail!(
                                 "Plan resource {}/{} has no UID",
                                 resource.kind,
-                                resource.name
+                                resource.name,
                             ),
                         };
                         if live_uid != plan_uid {
                             bail!(
-                                "Resource {}/{} recreated (plan {} vs live {})",
+                                "Resource {}/{} was recreated (plan UID {} vs live UID {})",
                                 resource.kind,
                                 resource.name,
                                 plan_uid,
-                                live_uid
+                                live_uid,
+                            );
+                        }
+                        if obj.metadata.deletion_timestamp.is_none() {
+                            eprintln!(
+                                "  ⚠ {}/{} still exists — re-executing from phase {}",
+                                resource.kind, resource.name, pi
+                            );
+                        } else {
+                            eprintln!(
+                                "  ⏳ {}/{} still deleting — re-executing from phase {}",
+                                resource.kind, resource.name, pi
                             );
                         }
                         verified_through = pi;
@@ -1572,16 +1775,74 @@ pub async fn run_in_process_resume(
         verified_through
     };
 
-    let gate = Arc::new(MutationGate::new(16));
-    {
-        let gate_for_signal = gate.clone();
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                eprintln!("\n⏸ Pausing...");
-                gate_for_signal.close_and_drain().await;
+    eprintln!(
+        "  Resuming from phase {}/{}",
+        start_phase,
+        j.plan_snapshot.phases.len()
+    );
+
+    // Re-delete reconciliation for ApplyCompleted
+    if j.state == RunState::ApplyCompleted && start_phase == j.plan_snapshot.phases.len() {
+        for record in j
+            .execution
+            .re_delete_records
+            .iter()
+            .filter(|r| matches!(r.result, journal::ReDeleteResult::Accepted))
+        {
+            let (api, _) = crate::kube::resource::resolve_api(
+                client,
+                &record.resource_identity,
+                &kind_map,
+                &gk_map,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot resolve API for re-delete {}/{}",
+                    record.resource_identity.kind,
+                    record.resource_identity.name
+                )
+            })?;
+            match api.get(&record.resource_identity.name).await {
+                Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                    api.list(&::kube::api::ListParams::default().limit(1))
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Cannot verify endpoint for re-delete {}/{}",
+                                record.resource_identity.kind, record.resource_identity.name
+                            )
+                        })?;
+                    let identity = record.resource_identity.clone();
+                    let original_uid = record.original_uid.clone();
+                    let new_uid = record.new_uid.clone();
+                    store
+                        .update(|latest| {
+                            if let Some(entry) =
+                                latest.execution.re_delete_records.iter_mut().find(|r| {
+                                    r.resource_identity == identity
+                                        && r.original_uid == original_uid
+                                        && r.new_uid == new_uid
+                                        && matches!(r.result, journal::ReDeleteResult::Accepted)
+                                })
+                            {
+                                entry.result = journal::ReDeleteResult::Gone;
+                            }
+                        })
+                        .await?;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    bail!(
+                        "Cannot reconcile accepted re-delete {}/{}: {}",
+                        record.resource_identity.kind,
+                        record.resource_identity.name,
+                        e
+                    );
+                }
             }
-        });
+        }
     }
+    let j = store.read().await;
 
     let resume_stage =
         crate::classify_resume_stage(&j).map_err(|e| anyhow::anyhow!("Cannot resume: {}", e))?;
@@ -1589,7 +1850,7 @@ pub async fn run_in_process_resume(
     let paused_from_residual =
         j.state == RunState::Paused && main_complete && j.last_residual_audit.is_some();
 
-    let ctx = WorkflowContext {
+    let workflow_ctx = WorkflowContext {
         client,
         plan: &j.plan_snapshot,
         kind_map: &kind_map,
@@ -1600,9 +1861,9 @@ pub async fn run_in_process_resume(
 
     if resume_stage == crate::ResumeStage::Cleanup {
         return run_teardown_workflow(
-            &ctx,
+            &workflow_ctx,
             Some(&store),
-            &gate,
+            gate,
             WorkflowStart::ResumeCleanup {
                 journal: &j,
                 main_complete,
@@ -1612,18 +1873,19 @@ pub async fn run_in_process_resume(
         .await;
     }
 
+    // Main execution resume
     store
         .update(|journal| {
             journal.state = RunState::Applying;
             journal.execution.explicit_cleanup_error = None;
         })
         .await
-        .context("Failed to persist Applying state")?;
+        .context("Failed to persist Applying state for resume")?;
 
     run_teardown_workflow(
-        &ctx,
+        &workflow_ctx,
         Some(&store),
-        &gate,
+        gate,
         WorkflowStart::ResumeExecution { start_phase },
     )
     .await
