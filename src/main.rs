@@ -3587,7 +3587,9 @@ async fn main() -> Result<()> {
                         } else {
                             eprintln!("Resuming {} pending cleanup decision(s)...", pending.len());
                             for decision in &pending {
-                                if !gate.is_open() {
+                                if crate::teardown::runtime::persist_paused_if_closed(&store, &gate)
+                                    .await?
+                                {
                                     eprintln!("⏸ Gate closed — stopping cleanup resume");
                                     break;
                                 }
@@ -3920,7 +3922,9 @@ async fn main() -> Result<()> {
                                     );
                                 }
 
-                                if !gate.is_open() {
+                                if crate::teardown::runtime::persist_paused_if_closed(&store, &gate)
+                                    .await?
+                                {
                                     eprintln!("⏸ Gate closed — stopping cleanup resume");
                                     break;
                                 }

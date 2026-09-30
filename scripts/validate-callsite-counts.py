@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Scan pinned source to produce observed callsite counts, then validate
-manifest and documented counts against the scan.
+"""Scan pinned source at a git ref to produce observed callsite counts,
+then validate manifest and documented counts against the scan.
 
 Production vs test boundary: first #[cfg(test)] in each file.
+Default ref: ad93e096 (Phase 1 base commit).
 """
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import shutil
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 MANIFEST = os.path.join(REPO, "logs", "teardown-workflow-refactor", "phase-1", "manifest.json")
+
+DEFAULT_REF = "ad93e096"
 
 ALL_FILES = {
     "main": "src/main.rs",
@@ -30,12 +34,23 @@ ALL_FILES = {
 }
 
 
-def load_file(label):
-    path = os.path.join(REPO, ALL_FILES[label])
-    if not os.path.exists(path):
+def git_show(ref, path):
+    """Read file content from a git ref."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", REPO, "show", f"{ref}:{path}"],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout
+    except subprocess.CalledProcessError:
+        return None
+
+
+def load_file(label, source_ref):
+    content = git_show(source_ref, ALL_FILES[label])
+    if content is None:
         return [], 0
-    with open(path) as f:
-        lines = f.readlines()
+    lines = content.splitlines(keepends=True)
     boundary = len(lines)
     for i, line in enumerate(lines):
         if "#[cfg(test)]" in line:
@@ -44,12 +59,11 @@ def load_file(label):
     return lines, boundary
 
 
-def scan_pattern(pattern, file_labels, skip_defs=True):
-    """Scan files for pattern, classify prod/test, return per-file breakdown."""
+def scan_pattern(pattern, file_labels, source_ref, skip_defs=True):
     prod_by_file = {}
     test_by_file = {}
     for label in file_labels:
-        lines, boundary = load_file(label)
+        lines, boundary = load_file(label, source_ref)
         p, t = 0, 0
         for i, line in enumerate(lines):
             if not re.search(pattern, line):
@@ -70,65 +84,48 @@ def scan_pattern(pattern, file_labels, skip_defs=True):
     return prod_by_file, test_by_file
 
 
-def observe():
-    """Scan all source and return observed counts dict."""
+def observe(source_ref):
     obs = {}
 
-    # execute_plan external entry points (not internal delegation)
-    # Boundary: main execute_plan calls (3) + tui execute_plan_with_store (1)
-    # executor.rs:353 is execute_plan→execute_plan_with_store delegation, not external
     ep_prod, ep_test = scan_pattern(
         r'execute_plan(?:_with_store)?\(',
-        ["main", "tui"])
+        ["main", "tui"], source_ref)
     obs["execute_plan_sites"] = sum(ep_prod.values())
     obs["execute_plan_per_file"] = ep_prod
 
-    # prepare_backup_gate (callers, not definition in backup.rs)
     bg_prod, bg_test = scan_pattern(
-        r'prepare_backup_gate\(', ["main", "tui"])
+        r'prepare_backup_gate\(', ["main", "tui"], source_ref)
     obs["prepare_backup_gate_sites"] = sum(bg_prod.values())
-    obs["prepare_backup_gate_per_file"] = bg_prod
 
-    # execute_residual_cleanup (callers, not definitions in executor.rs)
     rc_prod, rc_test = scan_pattern(
         r'execute_residual_cleanup\(|execute_residual_cleanup_with_progress\(',
-        ["main", "tui"])
+        ["main", "tui"], source_ref)
     obs["execute_residual_cleanup_sites"] = sum(rc_prod.values())
-    obs["execute_residual_cleanup_per_file"] = rc_prod
 
-    # check_operator_generation_fresh (callers, definition in audit.rs excluded)
     cg_prod, cg_test = scan_pattern(
-        r'check_operator_generation_fresh\(', ["main", "tui", "executor"])
+        r'check_operator_generation_fresh\(', ["main", "tui", "executor"], source_ref)
     obs["check_operator_generation_fresh_callers"] = sum(cg_prod.values())
-    obs["check_operator_generation_fresh_per_file"] = cg_prod
 
-    # run_post_mutation_audit (callers, definition in audit.rs excluded)
     ra_prod, ra_test = scan_pattern(
-        r'run_post_mutation_audit\(', ["main", "tui", "executor"])
+        r'run_post_mutation_audit\(', ["main", "tui", "executor"], source_ref)
     obs["run_post_mutation_audit_callers"] = sum(ra_prod.values())
-    obs["run_post_mutation_audit_per_file"] = ra_prod
 
-    # MutationGate::new — scan all files, full prod/test breakdown
     gate_prod, gate_test = scan_pattern(
         r'MutationGate::new\(',
         ["main", "permit", "executor", "harness", "watch", "runtime"],
-        skip_defs=False)
+        source_ref, skip_defs=False)
     obs["mutation_gate_new_production"] = sum(gate_prod.values())
     obs["mutation_gate_new_test"] = sum(gate_test.values())
-    obs["mutation_gate_new_prod_per_file"] = gate_prod
     obs["mutation_gate_new_test_per_file"] = gate_test
 
-    # std::process::Command
     cmd_prod, _ = scan_pattern(
-        r'std::process::Command::new\(', ["main"], skip_defs=False)
+        r'std::process::Command::new\(', ["main"], source_ref, skip_defs=False)
     obs["std_process_command_sites"] = sum(cmd_prod.values())
 
-    # journal .update() closures
     ju_prod, ju_test = scan_pattern(
-        r'\.update\(\|', ["main", "executor", "tui"], skip_defs=False)
+        r'\.update\(\|', ["main", "executor", "tui"], source_ref, skip_defs=False)
     obs["journal_update_production_sites"] = sum(ju_prod.values())
     obs["journal_update_test_sites"] = sum(ju_test.values())
-    obs["journal_update_prod_per_file"] = ju_prod
 
     return obs
 
@@ -156,43 +153,51 @@ EXPECTED_GATE_TEST_PER_FILE = {
 
 
 def main():
-    errors = []
-    obs = observe()
+    source_ref = DEFAULT_REF
+    if len(sys.argv) > 1 and sys.argv[1].startswith("--source-ref="):
+        source_ref = sys.argv[1].split("=", 1)[1]
+    elif len(sys.argv) > 2 and sys.argv[1] == "--source-ref":
+        source_ref = sys.argv[2]
 
-    # 1. Compare observed vs expected
+    errors = []
+
+    # Self-check: verify we're reading from the git ref, not the working tree
+    ref_check_content = git_show(source_ref, "src/tui/mod.rs")
+    if ref_check_content is None:
+        errors.append(f"Self-check FAIL: src/tui/mod.rs not found at ref {source_ref}. "
+                       "This file must exist at the Phase 1 base commit.")
+        print("FAIL")
+        for e in errors:
+            print(f"  {e}")
+        sys.exit(1)
+    if "check_and_persist_paused" not in ref_check_content:
+        errors.append(f"Self-check FAIL: check_and_persist_paused not found in "
+                       f"src/tui/mod.rs at ref {source_ref}")
+
+    obs = observe(source_ref)
+
     for key, expected in EXPECTED.items():
         actual = obs.get(key)
         if actual != expected:
             errors.append(f"{key}: observed {actual}, expected {expected}")
 
-    # 2. MutationGate test per-file breakdown
     for label, expected in EXPECTED_GATE_TEST_PER_FILE.items():
         actual = obs.get("mutation_gate_new_test_per_file", {}).get(label, 0)
         if actual != expected:
             errors.append(f"MutationGate::new test {label}: observed {actual}, expected {expected}")
 
-    # 3. Cross-check manifest nonempty_counts against observed
     with open(MANIFEST) as f:
         m = json.load(f)
     counts = m.get("nonempty_counts", {})
-    manifest_vs_observed = [
-        "execute_plan_sites",
-        "prepare_backup_gate_sites",
-        "execute_residual_cleanup_sites",
-        "check_operator_generation_fresh_callers",
-        "run_post_mutation_audit_callers",
-        "mutation_gate_new_production",
-        "std_process_command_sites",
-        "journal_update_production_sites",
-    ]
-    for key in manifest_vs_observed:
+    for key in EXPECTED:
+        if key in ("mutation_gate_new_test", "journal_update_test_sites"):
+            continue
         manifest_val = counts.get(key)
         observed_val = obs.get(key)
         if manifest_val is not None and manifest_val != observed_val:
             errors.append(f"manifest {key}={manifest_val} != observed {observed_val}")
 
-    # 4. Mutation self-check: alter one call token in a temp fixture and verify detection
-    mutation_errors = run_mutation_selfcheck()
+    mutation_errors = run_mutation_selfcheck(source_ref)
     errors.extend(mutation_errors)
 
     if errors:
@@ -202,7 +207,7 @@ def main():
         sys.exit(1)
     else:
         gate_test_detail = obs.get("mutation_gate_new_test_per_file", {})
-        print("PASS")
+        print(f"PASS (source ref: {source_ref})")
         print(f"  execute_plan={obs['execute_plan_sites']}, "
               f"backup_gate={obs['prepare_backup_gate_sites']}, "
               f"residual_cleanup={obs['execute_residual_cleanup_sites']}, "
@@ -219,68 +224,29 @@ def main():
         sys.exit(0)
 
 
-def run_mutation_selfcheck():
-    """Create a temp fixture with a renamed call token, verify scanner detects the change."""
+def run_mutation_selfcheck(source_ref):
     errors = []
     tmpdir = tempfile.mkdtemp(prefix="callsite-selfcheck-")
     try:
-        # Create a minimal fixture file with known call sites
         fixture = os.path.join(tmpdir, "test.rs")
         with open(fixture, "w") as f:
-            f.write("""\
-fn foo() {
-    execute_plan(&client);
-    execute_plan(&client);
-    prepare_backup_gate(&ctx);
-}
-
-#[cfg(test)]
-mod tests {
-    fn bar() {
-        execute_plan(&mock);
-    }
-}
-""")
-        lines, boundary = [], 0
+            f.write("fn foo() {\n    execute_plan(&client);\n    execute_plan(&client);\n}\n"
+                    "#[cfg(test)]\nmod tests {\n    fn bar() { execute_plan(&mock); }\n}\n")
         with open(fixture) as fh:
             lines = fh.readlines()
-        for i, line in enumerate(lines):
-            if "#[cfg(test)]" in line:
-                boundary = i
-                break
-        else:
-            boundary = len(lines)
-
-        # Count execute_plan production calls
+        boundary = next((i for i, l in enumerate(lines) if "#[cfg(test)]" in l), len(lines))
         prod = sum(1 for i, l in enumerate(lines)
-                   if re.search(r'execute_plan\(', l)
-                   and not l.strip().startswith("//")
-                   and i < boundary)
+                   if re.search(r'execute_plan\(', l) and i < boundary)
         if prod != 2:
-            errors.append(f"Mutation self-check: fixture has {prod} prod execute_plan, expected 2")
+            errors.append(f"Mutation self-check: fixture has {prod} prod, expected 2")
 
-        # Now rename one call → scanner should find 1
         with open(fixture, "w") as f:
-            f.write("""\
-fn foo() {
-    execute_plan_RENAMED(&client);
-    execute_plan(&client);
-    prepare_backup_gate(&ctx);
-}
-
-#[cfg(test)]
-mod tests {
-    fn bar() {
-        execute_plan(&mock);
-    }
-}
-""")
+            f.write("fn foo() {\n    execute_plan_RENAMED(&client);\n    execute_plan(&client);\n}\n"
+                    "#[cfg(test)]\nmod tests {\n    fn bar() { execute_plan(&mock); }\n}\n")
         with open(fixture) as fh:
             lines2 = fh.readlines()
         prod2 = sum(1 for i, l in enumerate(lines2)
-                    if re.search(r'execute_plan\(', l)
-                    and not l.strip().startswith("//")
-                    and i < boundary)
+                    if re.search(r'execute_plan\(', l) and i < boundary)
         if prod2 != 1:
             errors.append(f"Mutation self-check: after rename should find 1, found {prod2}")
         if prod2 == prod:
