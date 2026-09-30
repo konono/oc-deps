@@ -47,10 +47,14 @@ EXPECTED = {
 
 
 def is_explicit_match(resource, explicit_deletes):
+    """Full identity match: group + kind + namespace + name + UID (when nonempty)."""
     for ed in explicit_deletes:
-        if (ed["kind"] == resource["kind"]
+        if (ed.get("group", "") == resource.get("group", "")
+                and ed["kind"] == resource["kind"]
                 and ed.get("namespace", "") == resource.get("namespace", "")
-                and ed["name"] == resource["name"]):
+                and ed["name"] == resource["name"]
+                and (not ed.get("uid") or not resource.get("uid")
+                     or ed["uid"] == resource["uid"])):
             return True
     return False
 
@@ -91,9 +95,12 @@ def validate_explicit_matching(resources, explicit_deletes, operator_name):
             r for r in resources
             if (r["action"] == "DELETE"
                 and r["phase_name"] == "Explicit cleanup"
+                and r.get("group", "") == ed.get("group", "")
                 and r["kind"] == ed["kind"]
                 and r["namespace"] == ed.get("namespace", "")
-                and r["name"] == ed["name"])
+                and r["name"] == ed["name"]
+                and (not ed.get("uid") or not r.get("uid")
+                     or ed["uid"] == r["uid"]))
         ]
         if len(matches) != 1:
             errors.append(
@@ -125,6 +132,24 @@ def main():
         errors = validate_explicit_matching(resources, explicits, op_name)
         all_errors.extend(errors)
 
+        # Reverse check: every explicit=true resource maps back to exactly one explicit_delete
+        marked = [r for r in resources if r["explicit"]]
+        for mr in marked:
+            back_matches = [
+                ed for ed in explicits
+                if (ed.get("group", "") == mr.get("group", "")
+                    and ed["kind"] == mr["kind"]
+                    and ed.get("namespace", "") == mr.get("namespace", "")
+                    and ed["name"] == mr["name"]
+                    and (not ed.get("uid") or not mr.get("uid")
+                         or ed["uid"] == mr["uid"]))
+            ]
+            if len(back_matches) != 1:
+                all_errors.append(
+                    f"{op_name}: explicit-marked {mr['kind']}/{mr['name']} "
+                    f"maps to {len(back_matches)} explicit_deletes (expected 1)"
+                )
+
         for r in resources:
             action_totals[r["action"]] = action_totals.get(r["action"], 0) + 1
 
@@ -134,6 +159,17 @@ def main():
         }
         total_resources += len(resources)
         total_explicits += len(explicits)
+
+    # Total marked resources must equal total explicit_deletes
+    total_marked = sum(
+        len([r for r in data["resources"] if r["explicit"]])
+        for data in golden.values()
+    )
+    if total_marked != total_explicits:
+        all_errors.append(
+            f"total explicit-marked resources ({total_marked}) != "
+            f"total explicit_deletes ({total_explicits})"
+        )
 
     if all_errors:
         for e in all_errors:

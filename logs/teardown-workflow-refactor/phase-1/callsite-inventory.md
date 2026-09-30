@@ -4,19 +4,23 @@ Base commit: ad93e09 (PR #50 merge)
 
 ## Summary
 
-| Category | Production sites | Test-only sites | Files |
-|---|---|---|---|
-| `execute_plan` / `execute_plan_with_store` | 4 | 6 | main.rs, tui/mod.rs, executor.rs |
-| `prepare_backup_gate` | 3 | 0 | main.rs, tui/mod.rs, backup.rs(def) |
-| `execute_residual_cleanup` / `_with_progress` | 6 | 0 | main.rs, tui/mod.rs, executor.rs(def) |
-| `run_post_mutation_audit` | 5 | 1 | main.rs, tui/mod.rs, executor.rs, audit.rs(def) |
-| `check_operator_generation_fresh` | 18 | 0 | main.rs, tui/mod.rs |
-| Journal `.update()` closures | 73 | 6 | main.rs(26), executor.rs(28), tui/mod.rs(19) |
-| `std::process::Command` (self-spawn) | 3 | 0 | main.rs (Batch arm only) |
-| `MutationGate::new` | 5 | 8 | main.rs, permit.rs |
-| `check_and_persist_paused` | 6 | 1 | tui/mod.rs, main.rs(test) |
-| TUI entry points (`run_tui`, `run_residual_only`) | 3 | 0 | main.rs, tui/mod.rs |
-| `AppState::new` | 2 | 10 | main.rs, tui/mod.rs, app.rs(tests) |
+| Category | Production callers | Test-only | Files | Verified by |
+|---|---|---|---|---|
+| `execute_plan` / `execute_plan_with_store` | 4 | 6 | main.rs(3), tui/mod.rs(1) | validate-callsite-counts.py |
+| `prepare_backup_gate` | 3 | 0 | main.rs(2), tui/mod.rs(1) | validate-callsite-counts.py |
+| `execute_residual_cleanup` / `_with_progress` | 6 | 0 | main.rs(4), tui/mod.rs(2) | validate-callsite-counts.py |
+| `run_post_mutation_audit` | 6 | 0 | main.rs(4), tui/mod.rs(1), executor.rs(1) | validate-callsite-counts.py |
+| `check_operator_generation_fresh` | 26 | 0 | main.rs(16), tui/mod.rs(7), executor.rs(3) | validate-callsite-counts.py |
+| Journal `.update()` closures | 73 | 6 | main.rs(26), executor.rs(28), tui/mod.rs(19) | rg count |
+| `std::process::Command` (self-spawn) | 3 | 0 | main.rs (Batch arm only) | validate-callsite-counts.py |
+| `MutationGate::new` | 4 | 21 | main.rs(4 prod, 1 test), permit.rs(9), executor.rs(5), harness.rs(4), watch.rs(1), runtime.rs(1) | validate-callsite-counts.py |
+| `check_and_persist_paused` | 6 | 1 | tui/mod.rs(6), main.rs(1 test) | rg count |
+| TUI entry points (`run_tui`, `run_residual_only`) | 3 | 0 | main.rs(2 callers), tui/mod.rs(1 def) | rg count |
+| `AppState::new` | 2 | 10 | main.rs(1), tui/mod.rs(1), app.rs(10 test) | rg count |
+
+Counts are generated/verified by `scripts/validate-callsite-counts.py` which scans
+the pinned source. The `#[cfg(test)]` boundary in each file separates production
+from test-only sites.
 
 ## Reproducible search commands
 
@@ -154,7 +158,7 @@ grep -rn 'AppState::new\|AppState {' src/ --include="*.rs" | grep -v '//\|///'
 |---|---|
 | `src/teardown/audit.rs:972` | Delegates to `run_post_mutation_audit_until_settled` |
 
-### Production call sites (5)
+### Production call sites (6)
 
 | # | File:Line | Enclosing context | Category |
 |---|---|---|---|
@@ -163,18 +167,15 @@ grep -rn 'AppState::new\|AppState {' src/ --include="*.rs" | grep -v '//\|///'
 | 3 | `src/main.rs:5025` | Resume arm → audit recovery path | audit |
 | 4 | `src/main.rs:5172` | Resume arm → post-resume audit | audit |
 | 5 | `src/tui/mod.rs:1125` | `run_residual_only` → TUI audit | audit (TUI) |
+| 6 | `src/teardown/executor.rs:4462` | executor post-explicit-cleanup audit | audit (executor) |
 
-### Internal production call (1)
-
-| # | File:Line | Context |
-|---|---|---|
-| 6 | `src/teardown/executor.rs:4462` | Inside executor post-explicit-cleanup audit | audit (executor internal) |
+Note: `audit.rs:972` is the definition, which delegates to `run_post_mutation_audit_until_settled`.
 
 ---
 
 ## 5. `check_operator_generation_fresh`
 
-### Production call sites (18)
+### Production call sites (26 = main.rs 16 + tui/mod.rs 7 + executor.rs 3)
 
 | # | File:Line | Enclosing context |
 |---|---|---|
@@ -196,10 +197,14 @@ grep -rn 'AppState::new\|AppState {' src/ --include="*.rs" | grep -v '//\|///'
 | 16 | `src/main.rs:5646` | Journal arm → read-only status |
 | 17 | `src/tui/mod.rs:357` | TUI pre-execution |
 | 18 | `src/tui/mod.rs:698` | TUI post-execution |
-
-Plus 4 more in TUI at lines 731, 1119, 1204, 1229 (total TUI = 6, total main.rs = 16, grand total = 22).
-
-Correction: full count is **22 production sites** (16 in main.rs + 6 in tui/mod.rs).
+| 19 | `src/tui/mod.rs:731` | TUI post-execution recheck |
+| 20 | `src/tui/mod.rs:1119` | TUI residual audit |
+| 21 | `src/tui/mod.rs:1130` | TUI residual audit recheck |
+| 22 | `src/tui/mod.rs:1204` | TUI residual cleanup generation gate |
+| 23 | `src/tui/mod.rs:1229` | TUI residual cleanup final gen |
+| 24 | `src/teardown/executor.rs:3990` | executor residual cleanup pre-check |
+| 25 | `src/teardown/executor.rs:4058` | executor residual cleanup post-permit |
+| 26 | `src/teardown/executor.rs:4442` | executor post-explicit-cleanup audit |
 
 ---
 
@@ -245,7 +250,7 @@ Correction: full count is **22 production sites** (16 in main.rs + 6 in tui/mod.
 
 ## 8. `MutationGate`
 
-### Production `MutationGate::new` (5)
+### Production `MutationGate::new` (4) — all in main.rs
 
 | # | File:Line | Enclosing context |
 |---|---|---|
@@ -253,7 +258,6 @@ Correction: full count is **22 production sites** (16 in main.rs + 6 in tui/mod.
 | 2 | `src/main.rs:2766` | Apply → script mode |
 | 3 | `src/main.rs:3160` | Apply → headless CLI mode |
 | 4 | `src/main.rs:4219` | Resume arm |
-| 5 | (executor.rs internal) | Within execute_plan_with_store when gate not provided |
 
 ### Production `gate.is_open()` checks (6)
 
@@ -266,9 +270,16 @@ Correction: full count is **22 production sites** (16 in main.rs + 6 in tui/mod.
 | 5 | `src/main.rs:5018` | Resume → final state determination |
 | 6 | `src/main.rs:5122` | Resume → post-audit state determination |
 
-### Test-only `MutationGate::new` (8)
+### Test-only `MutationGate::new` (21)
 
-All in `src/teardown/permit.rs` (lines 141–253) and `src/main.rs:10839`.
+| File | Count | Lines |
+|---|---|---|
+| `src/teardown/permit.rs` | 9 | 141, 148, 156, 166, 197, 226, 252, 263, 282 |
+| `src/teardown/executor.rs` | 5 | 5316, 6104, 7879, 7974, 8044 |
+| `src/teardown/harness.rs` | 4 | 217, 245, 277, 492 |
+| `src/teardown/watch.rs` | 1 | 677 |
+| `src/teardown/executor.rs` | 1 | 8193 |
+| `src/main.rs` | 1 | 10839 |
 
 ---
 

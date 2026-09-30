@@ -39,8 +39,8 @@
     },
     "callsite_inventory": {
       "file": "callsite-inventory.md",
-      "sha256": "0bf5f79c6a928c1174c88923a2141b24b6daae4c516468c419613a14fb2d5d0f",
-      "description": "Complete production call sites across main.rs, tui/, executor.rs, journal.rs. Distinguishes production vs test-only, with reproducible rg commands."
+      "sha256": "184e2398c0a2b977fc00a6c3cfe33635585e414d6998539777e9403a6c68922a",
+      "description": "Complete production call sites across main.rs, tui/, executor.rs, journal.rs. Counts verified by validate-callsite-counts.py."
     },
     "test_inventory": {
       "file": "test-inventory.md",
@@ -68,7 +68,8 @@
   "validators": {
     "plan_golden": "scripts/validate-plan-golden.py",
     "plan_generator": "scripts/generate-plan-golden.py",
-    "manifest_consistency": "scripts/validate-manifest.py"
+    "manifest_consistency": "scripts/validate-manifest.py",
+    "callsite_counts": "scripts/validate-callsite-counts.py"
   },
   "gates": {
     "fmt": "pass",
@@ -77,8 +78,9 @@
     "release_build": "pass",
     "corpus_replay": "pass",
     "credential_scan": "pass (no secrets in artifacts)",
-    "plan_golden_validator": "pass (343 resources, 10 explicit, action totals match)",
-    "manifest_validator": "pass"
+    "plan_golden_validator": "pass (343 resources, 10 explicit, full-identity 1:1 matching, self-check fixtures)",
+    "manifest_validator": "pass",
+    "callsite_validator": "pass (26+6+4+4+3+6+3 verified)"
   },
   "nonempty_counts": {
     "operators": 15,
@@ -87,6 +89,9 @@
     "execute_plan_sites": 4,
     "prepare_backup_gate_sites": 3,
     "execute_residual_cleanup_sites": 6,
+    "check_operator_generation_fresh_callers": 26,
+    "run_post_mutation_audit_callers": 6,
+    "mutation_gate_new_production": 4,
     "journal_update_production_sites": 73,
     "std_process_command_sites": 3,
     "existing_tests_base": 1369,

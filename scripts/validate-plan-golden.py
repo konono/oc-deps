@@ -61,10 +61,14 @@ EXPECTED_PER_OP = {
 
 
 def is_explicit_match(resource, explicit_deletes):
+    """Full identity match: group + kind + namespace + name + UID (when nonempty)."""
     for ed in explicit_deletes:
-        if (ed["kind"] == resource["kind"]
+        if (ed.get("group", "") == resource.get("group", "")
+                and ed["kind"] == resource["kind"]
                 and ed.get("namespace", "") == resource.get("namespace", "")
-                and ed["name"] == resource["name"]):
+                and ed["name"] == resource["name"]
+                and (not ed.get("uid") or not resource.get("uid")
+                     or ed["uid"] == resource["uid"])):
             return True
     return False
 
@@ -168,22 +172,51 @@ def main():
                 failures.append(f"{op}: version is not null for {r['kind']}/{r['name']}")
                 break
 
-    # 8. Exact 1:1 explicit matching
+    # 8. Exact 1:1 explicit matching (full identity: group+kind+ns+name+uid)
+    total_marked = 0
     for op, data in saved.items():
+        # Forward: each explicit_delete maps to exactly one DELETE in Explicit cleanup
         for ed in data["explicit_deletes"]:
             matches = [
                 r for r in data["resources"]
                 if (r["action"] == "DELETE"
                     and r["phase_name"] == "Explicit cleanup"
+                    and r.get("group", "") == ed.get("group", "")
                     and r["kind"] == ed["kind"]
                     and r["namespace"] == ed.get("namespace", "")
-                    and r["name"] == ed["name"])
+                    and r["name"] == ed["name"]
+                    and (not ed.get("uid") or not r.get("uid")
+                         or ed["uid"] == r["uid"]))
             ]
             if len(matches) != 1:
                 failures.append(
                     f"{op}: explicit {ed['kind']}/{ed['name']} has "
                     f"{len(matches)} matching DELETE (expected 1)"
                 )
+        # Reverse: each explicit=true resource maps to exactly one explicit_delete
+        marked = [r for r in data["resources"] if r["explicit"]]
+        total_marked += len(marked)
+        for mr in marked:
+            back = [
+                ed for ed in data["explicit_deletes"]
+                if (ed.get("group", "") == mr.get("group", "")
+                    and ed["kind"] == mr["kind"]
+                    and ed.get("namespace", "") == mr.get("namespace", "")
+                    and ed["name"] == mr["name"]
+                    and (not ed.get("uid") or not mr.get("uid")
+                         or ed["uid"] == mr["uid"]))
+            ]
+            if len(back) != 1:
+                failures.append(
+                    f"{op}: explicit-marked {mr['kind']}/{mr['name']} "
+                    f"maps to {len(back)} explicit_deletes (expected 1)"
+                )
+    # Total marked must equal total explicit_deletes
+    if total_marked != total_exp:
+        failures.append(
+            f"Total explicit-marked ({total_marked}) != "
+            f"total explicit_deletes ({total_exp})"
+        )
 
     # 9. Per-operator expected counts
     for op, exp in EXPECTED_PER_OP.items():
@@ -196,6 +229,38 @@ def main():
             failures.append(f"{op}: resources {actual_res} != {exp['resources']}")
         if actual_exp != exp["explicit"]:
             failures.append(f"{op}: explicit {actual_exp} != {exp['explicit']}")
+
+    # 10. Self-check: full identity predicate must reject group/UID mismatches
+    # (ensures matching is not trivially passing on kind+name alone)
+    def _match(r, ed):
+        return (r.get("group", "") == ed.get("group", "")
+                and r["kind"] == ed["kind"]
+                and r.get("namespace", "") == ed.get("namespace", "")
+                and r["name"] == ed["name"]
+                and (not ed.get("uid") or not r.get("uid") or ed["uid"] == r["uid"]))
+
+    # Fixture: same kind/ns/name but different group → must NOT match
+    r_wrong_group = {"group": "wrong.api", "kind": "Config", "namespace": "default", "name": "test", "uid": "aaa"}
+    ed_right_group = {"group": "correct.api", "kind": "Config", "namespace": "default", "name": "test", "uid": "aaa"}
+    if _match(r_wrong_group, ed_right_group):
+        failures.append("Self-check FAIL: group mismatch was not rejected")
+
+    # Fixture: same kind/ns/name/group but different UID → must NOT match
+    r_wrong_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": "uid-1"}
+    ed_right_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": "uid-2"}
+    if _match(r_wrong_uid, ed_right_uid):
+        failures.append("Self-check FAIL: UID mismatch was not rejected")
+
+    # Fixture: same everything → must match
+    r_same = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": "uid-1"}
+    ed_same = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": "uid-1"}
+    if not _match(r_same, ed_same):
+        failures.append("Self-check FAIL: identical resource was not matched")
+
+    # Fixture: empty UID on either side → should match (UID not required)
+    r_no_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": ""}
+    if not _match(r_no_uid, ed_same):
+        failures.append("Self-check FAIL: empty UID should be permissive")
 
     if failures:
         print("FAIL")
