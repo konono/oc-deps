@@ -57,7 +57,7 @@
   "pre_journal_sha256": "fb8a6fc6fbda15257703b751a7e2274cc437ad88c734195a91b6e5150e35432b",
   "pre_journal_state": "Failed",
   "destructive_e2e_tested_commit_pre_history_rewrite": "c75e22e31eead25f7639e536e6e1fb69b730b9be",
-  "final_quality_gate_commit": "d5a6ef6e5f99b98c062376da6cbdf43c7fc713aa",
+  "final_quality_gate_commit": "d5a6ef6711c4722838b81998033a931676d65d22",
   "evidence_commit": "containing git commit",
   "provenance_note": "Branch history was squashed to remove a plaintext cluster credential from a checked-in evidence script. Product paths (src, tests, configs, Cargo.toml, Cargo.lock, README.md) are byte-identical between the destructive E2E source revision and final_quality_gate_commit.",
   "final_quality_gates": {
