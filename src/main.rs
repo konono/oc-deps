@@ -61,8 +61,7 @@ use crate::graph::tree::{
     TreeNode, apply_filters, build_child_tree, build_full_tree, build_namespace_map,
 };
 use crate::kube::discovery::{
-    APPLY_SET_REUSE_CACHE_ENV, build_kind_lookup_cached, load_config_and_client,
-    resolve_kind_with_group,
+    build_kind_lookup_cached, load_config_and_client, resolve_kind_with_group,
 };
 use crate::kube::resource::format_scan_warnings;
 use crate::kube::scanner::{
@@ -801,7 +800,7 @@ fn build_deletion_closure_from_teardown_plan(
     closure
 }
 
-async fn resolve_explicit_delete_targets(
+pub(crate) async fn resolve_explicit_delete_targets(
     client: &::kube::Client,
     specs: &[DeleteResourceSpec],
     plan: &crate::teardown::planner::TeardownPlan,
@@ -976,7 +975,7 @@ enum BatchOutcome {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PendingResumeAction {
+pub(crate) enum PendingResumeAction {
     ReportOnly,
     Execute,
 }
@@ -1013,14 +1012,14 @@ fn operator_matches_entry(op: &crate::analyzers::olm::OperatorInstance, entry_na
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExplicitCleanupResumeMode {
+pub(crate) enum ExplicitCleanupResumeMode {
     TypedBlocked,
     LegacyFailed,
 }
 
 type ExplicitCleanupKey = (String, String, Option<String>, String, String);
 
-fn explicit_cleanup_resume_mode(
+pub(crate) fn explicit_cleanup_resume_mode(
     run: &crate::teardown::journal::RunJournal,
 ) -> Result<ExplicitCleanupResumeMode, String> {
     use crate::teardown::journal::{FinalizerRecoveryResult, ReDeleteResult, RunState};
@@ -1267,11 +1266,11 @@ fn select_pending_explicit_cleanup_journal(
     Ok(None)
 }
 
-fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
+pub(crate) fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
     user_requested || explicit_target_count > 0
 }
 
-fn inject_explicit_phase_into_teardown_plan(
+pub(crate) fn inject_explicit_phase_into_teardown_plan(
     plan: &mut crate::teardown::planner::TeardownPlan,
     explicit_deletes: &[crate::teardown::plan::ExplicitDeleteTarget],
     gk_map: &crate::kube::discovery::GroupKindMap,
@@ -1331,7 +1330,7 @@ fn inject_explicit_phase_into_teardown_plan(
     Ok(())
 }
 
-fn build_execution_plan_from_teardown(
+pub(crate) fn build_execution_plan_from_teardown(
     plan: &crate::teardown::planner::TeardownPlan,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
     cluster_identity: &crate::teardown::plan::ClusterIdentity,
@@ -3320,25 +3319,6 @@ async fn main() -> Result<()> {
                         eprintln!("🔄 API discovery: refresh once, then reuse within this batch\n");
                     }
 
-                    let exe = std::env::current_exe()
-                        .context("Cannot determine current executable path")?;
-
-                    // Create temp directory for batch plans (cleaned up on exit)
-                    let batch_dir =
-                        std::env::temp_dir().join(format!("oc-deps-batch-{}", std::process::id()));
-                    std::fs::create_dir_all(&batch_dir).with_context(|| {
-                        format!("Failed to create batch dir: {}", batch_dir.display())
-                    })?;
-
-                    // Drop guard for cleanup
-                    struct BatchDirGuard(std::path::PathBuf);
-                    impl Drop for BatchDirGuard {
-                        fn drop(&mut self) {
-                            let _ = std::fs::remove_dir_all(&self.0);
-                        }
-                    }
-                    let _batch_guard = BatchDirGuard(batch_dir.clone());
-
                     let mut results: Vec<(String, BatchOutcome)> = Vec::new();
 
                     let entry_count = entries.len();
@@ -3375,37 +3355,33 @@ async fn main() -> Result<()> {
                                 run_id,
                                 "=".repeat(60),
                             );
-                            let mut cmd = std::process::Command::new(&exe);
-                            cmd.arg("teardown").arg("resume").arg("--run").arg(run_id);
-                            if let Ok(kc) = std::env::var("KUBECONFIG") {
-                                cmd.env("KUBECONFIG", kc);
-                            }
-                            cmd.stdout(std::process::Stdio::inherit());
-                            cmd.stderr(std::process::Stdio::inherit());
-                            let status = cmd.status().with_context(|| {
-                                format!("Failed to run teardown resume for {}", entry.name)
-                            })?;
-                            if status.success() {
-                                eprintln!("  ✅ {} resumed and completed", entry.name);
-                                results.push((entry.name.clone(), BatchOutcome::Succeeded));
-                            } else {
-                                let exit = status.code().unwrap_or(-1);
-                                eprintln!(
-                                    "\n⛔ {} resume failed (exit {}). Stopping batch.",
-                                    entry.name, exit
-                                );
-                                results.push((entry.name.clone(), BatchOutcome::Failed(exit)));
-                                let remaining = entry_count - i - 1;
-                                if remaining > 0 {
+                            match crate::teardown::workflow::run_in_process_resume(
+                                &client, &config, run_id, no_cache,
+                            )
+                            .await
+                            {
+                                Ok(_outcome) => {
+                                    eprintln!("  ✅ {} resumed and completed", entry.name);
+                                    results.push((entry.name.clone(), BatchOutcome::Succeeded));
+                                }
+                                Err(e) => {
                                     eprintln!(
-                                        "  ⏭ {} operator(s) not run (stopped on failure)",
-                                        remaining
+                                        "\n⛔ {} resume failed: {:#}. Stopping batch.",
+                                        entry.name, e
                                     );
+                                    results.push((entry.name.clone(), BatchOutcome::Failed(1)));
+                                    let remaining = entry_count - i - 1;
+                                    if remaining > 0 {
+                                        eprintln!(
+                                            "  ⏭ {} operator(s) not run (stopped on failure)",
+                                            remaining
+                                        );
+                                    }
+                                    for entry in entries.iter().skip(i + 1) {
+                                        results.push((entry.name.clone(), BatchOutcome::NotRun));
+                                    }
+                                    break;
                                 }
-                                for entry in entries.iter().skip(i + 1) {
-                                    results.push((entry.name.clone(), BatchOutcome::NotRun));
-                                }
-                                break;
                             }
                             continue;
                         }
@@ -3421,111 +3397,30 @@ async fn main() -> Result<()> {
                             "=".repeat(60),
                         );
 
-                        // Step 1: Run `teardown plan` to generate execution plan
-                        let plan_file = batch_dir.join(format!("{}-{}.json", i, op_name));
-                        let plan_path = plan_file.to_string_lossy().to_string();
+                        // In-process plan + apply
+                        let params = crate::teardown::workflow::PlanAndApplyParams {
+                            operator_name: op_name,
+                            approve_delete: &options.approve_delete,
+                            preserve: &options.preserve,
+                            delete_resources: &options.delete_resources,
+                            dry_run,
+                            backup_dir: backup_dir.as_deref(),
+                            refresh_discovery: apply_set_child_bypasses_cache(no_cache, i),
+                        };
+                        match crate::teardown::workflow::run_plan_and_apply(
+                            &client, &config, &params,
+                        )
+                        .await
                         {
-                            let mut cmd = std::process::Command::new(&exe);
-                            cmd.arg("teardown").arg("plan").arg(op_name);
-
-                            // Only refresh discovery for the first entry
-                            if apply_set_child_bypasses_cache(no_cache, i) {
-                                cmd.arg("--refresh-discovery");
+                            Ok(_outcome) => {
+                                results.push((op_name.to_string(), BatchOutcome::Succeeded));
+                                eprintln!("  ✅ {} completed", op_name);
                             }
-                            if no_cache {
-                                cmd.env(APPLY_SET_REUSE_CACHE_ENV, "1");
-                            }
-
-                            for approval in &options.approve_delete {
-                                match approval.as_str() {
-                                    "root" | "independent" | "label-only" | "operator-group" => {
-                                        cmd.arg("--approve-scope").arg(approval);
-                                    }
-                                    _ => {
-                                        cmd.arg("--approve-resource").arg(approval);
-                                    }
-                                }
-                            }
-                            for p in &options.preserve {
-                                cmd.arg("--keep-resource").arg(p);
-                            }
-                            for dr in &options.delete_resources {
-                                cmd.arg("--delete-resource").arg(dr.to_cli_arg());
-                            }
-                            cmd.arg("--file").arg(&plan_path);
-
-                            cmd.stdout(std::process::Stdio::inherit());
-                            cmd.stderr(std::process::Stdio::inherit());
-
-                            if let Ok(kc) = std::env::var("KUBECONFIG") {
-                                cmd.env("KUBECONFIG", kc);
-                            }
-
-                            let status = cmd
-                                .status()
-                                .with_context(|| format!("Failed to spawn plan for {}", op_name))?;
-                            if !status.success() {
-                                let exit_code = status.code().unwrap_or(1);
-                                results
-                                    .push((op_name.to_string(), BatchOutcome::Failed(exit_code)));
-                                eprintln!(
-                                    "\n⛔ {} plan failed (exit {}). Stopping batch.",
-                                    op_name, exit_code
-                                );
+                            Err(e) => {
+                                eprintln!("\n⛔ {} failed: {:#}. Stopping batch.", op_name, e);
+                                results.push((op_name.to_string(), BatchOutcome::Failed(1)));
                                 break;
                             }
-                        }
-
-                        // Step 2: Run `teardown apply` with the plan file
-                        {
-                            let mut cmd = std::process::Command::new(&exe);
-                            cmd.arg("teardown").arg("apply").arg(&plan_path);
-
-                            if dry_run {
-                                cmd.arg("--dry-run");
-                            }
-                            // Pass backup dir to child apply process
-                            if let Some(ref bdir) = backup_dir {
-                                cmd.arg("--backup-dir").arg(bdir);
-                            }
-
-                            cmd.stdin(std::process::Stdio::piped());
-                            cmd.stdout(std::process::Stdio::inherit());
-                            cmd.stderr(std::process::Stdio::inherit());
-
-                            if let Ok(kc) = std::env::var("KUBECONFIG") {
-                                cmd.env("KUBECONFIG", kc);
-                            }
-
-                            let mut child = cmd.spawn().with_context(|| {
-                                format!("Failed to spawn apply for {}", op_name)
-                            })?;
-
-                            if let Some(mut stdin) = child.stdin.take() {
-                                use std::io::Write;
-                                let _ = stdin.write_all(b"y\n");
-                            }
-
-                            let status = child.wait().with_context(|| {
-                                format!("Failed to wait for apply of {}", op_name)
-                            })?;
-
-                            let exit_code = status.code().unwrap_or(1);
-                            let outcome = if exit_code == 0 {
-                                BatchOutcome::Succeeded
-                            } else {
-                                BatchOutcome::Failed(exit_code)
-                            };
-                            results.push((op_name.to_string(), outcome));
-
-                            if exit_code != 0 {
-                                eprintln!(
-                                    "\n⛔ {} apply failed (exit {}). Stopping batch.",
-                                    op_name, exit_code
-                                );
-                                break;
-                            }
-                            eprintln!("  ✅ {} completed", op_name);
                         }
                     }
 
@@ -6479,7 +6374,7 @@ fn print_run_journal(j: &RunJournal) {
 /// Discover namespace scope for a single target operator.
 /// Must run before journal creation so the journal captures provenance.
 /// Fails closed: discovery scan failures abort the teardown.
-async fn discover_audit_scope(
+pub(crate) async fn discover_audit_scope(
     client: &::kube::Client,
     target_operator: &crate::analyzers::olm::OperatorInstance,
     kind_map: &crate::kube::discovery::KindMap,
@@ -6567,7 +6462,7 @@ async fn discover_audit_scope(
     Ok(candidates)
 }
 
-async fn create_run_journal(
+pub(crate) async fn create_run_journal(
     client: &::kube::Client,
     plan: &crate::teardown::planner::TeardownPlan,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
@@ -6665,7 +6560,7 @@ async fn create_run_journal(
 
 /// Build a fresh OperatorIdentitySnapshot with live UIDs from the cluster.
 /// Used for basis drift validation before journal creation.
-async fn build_operator_identity_snapshot(
+pub(crate) async fn build_operator_identity_snapshot(
     client: &::kube::Client,
     target_operators: &[&crate::analyzers::olm::OperatorInstance],
 ) -> Result<crate::teardown::plan::OperatorIdentitySnapshot> {

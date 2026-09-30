@@ -9,6 +9,10 @@ use crate::teardown::journal::{self, CleanupResult, JournalStore, RunState};
 use crate::teardown::permit::MutationGate;
 use crate::teardown::planner::TeardownPlan;
 
+use crate::DeleteResourceSpec;
+use crate::kube::discovery;
+use std::time::Instant;
+
 pub struct WorkflowContext<'a> {
     pub client: &'a kube::Client,
     pub plan: &'a TeardownPlan,
@@ -1136,6 +1140,493 @@ async fn run_resume_cleanup(
     }
 
     Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Batch in-process runners
+// ──────────────────────────────────────────────────────────────
+
+pub struct PlanAndApplyParams<'a> {
+    pub operator_name: &'a str,
+    pub approve_delete: &'a [String],
+    pub preserve: &'a [String],
+    pub delete_resources: &'a [DeleteResourceSpec],
+    pub dry_run: bool,
+    pub backup_dir: Option<&'a str>,
+    pub refresh_discovery: bool,
+}
+
+/// In-process plan generation + apply for a single operator.
+pub async fn run_plan_and_apply(
+    client: &kube::Client,
+    config: &kube::Config,
+    params: &PlanAndApplyParams<'_>,
+) -> anyhow::Result<WorkflowOutcome> {
+    let no_cache =
+        crate::should_refresh_discovery(params.refresh_discovery, params.delete_resources.len());
+
+    let t0 = Instant::now();
+    eprintln!("🔍 Discovering API resources...");
+    let (kind_map, gvr_map, gk_map, gvk_map) =
+        discovery::build_kind_lookup_cached(client, config, no_cache).await?;
+    eprintln!("   Discovery: {:.1}s", t0.elapsed().as_secs_f64());
+
+    let plan_semaphore = Arc::new(tokio::sync::Semaphore::new(
+        crate::kube::scanner::DEFAULT_API_CONCURRENCY,
+    ));
+    let plan_planner = crate::kube::planner::QueryPlanner::new(Some(plan_semaphore));
+
+    eprint!("🔍 Discovering operators...");
+    let all_operators = crate::analyzers::olm::discover_operators_full(
+        client,
+        &kind_map,
+        None,
+        Some(plan_planner.clone()),
+    )
+    .await?;
+    eprintln!(" found {} operators", all_operators.len());
+
+    let target_indices = crate::teardown::planner::resolve_operator_targets(
+        &[params.operator_name.to_string()],
+        &all_operators,
+    )?;
+    let target_operators: Vec<&_> = target_indices.iter().map(|&i| &all_operators[i]).collect();
+
+    let policy =
+        crate::teardown::planner::DecisionPolicy::from_args(params.approve_delete, params.preserve);
+    let plan = crate::teardown::planner::generate_teardown_plan(
+        client,
+        &target_operators,
+        &all_operators,
+        &kind_map,
+        &gvr_map,
+        &gk_map,
+        &gvk_map,
+        false,
+        &policy,
+        Some(plan_planner),
+    )
+    .await?;
+
+    let mut plan = plan;
+    let explicit_targets = if !params.delete_resources.is_empty() {
+        let targets =
+            crate::resolve_explicit_delete_targets(client, params.delete_resources, &plan, &gk_map)
+                .await?;
+        crate::inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
+        targets
+    } else {
+        Vec::new()
+    };
+
+    let cluster_identity = journal::fetch_cluster_identity(client).await?;
+    let approve_scopes: Vec<crate::cli::ApprovalScope> = params
+        .approve_delete
+        .iter()
+        .filter_map(|s| match s.as_str() {
+            "root" => Some(crate::cli::ApprovalScope::Root),
+            "independent" => Some(crate::cli::ApprovalScope::Independent),
+            "label-only" => Some(crate::cli::ApprovalScope::LabelOnly),
+            "operator-group" => Some(crate::cli::ApprovalScope::OperatorGroup),
+            _ => None,
+        })
+        .collect();
+    let approve_resources: Vec<String> = params
+        .approve_delete
+        .iter()
+        .filter(|s| {
+            !matches!(
+                s.as_str(),
+                "root" | "independent" | "label-only" | "operator-group"
+            )
+        })
+        .cloned()
+        .collect();
+
+    let mut exec_plan = crate::build_execution_plan_from_teardown(
+        &plan,
+        &target_operators,
+        &cluster_identity,
+        false,
+        &approve_scopes,
+        &approve_resources,
+        params.preserve,
+    )?;
+    exec_plan.explicit_deletes = explicit_targets;
+
+    // Drift detection
+    {
+        let fresh_exec = crate::build_execution_plan_from_teardown(
+            &plan,
+            &target_operators,
+            &cluster_identity,
+            false,
+            &approve_scopes,
+            &approve_resources,
+            params.preserve,
+        )?;
+        if let Err(drift_errors) =
+            crate::teardown::plan::validate_execution_plan_against_fresh(&exec_plan, &fresh_exec)
+        {
+            for err in &drift_errors {
+                eprintln!("  - {}", err);
+            }
+            bail!("{} drift error(s) detected.", drift_errors.len());
+        }
+        eprintln!("✅ Execution plan validated — no drift detected");
+    }
+
+    // Explicit target authority
+    if !exec_plan.explicit_deletes.is_empty() {
+        let fresh_specs: Vec<DeleteResourceSpec> = exec_plan
+            .explicit_deletes
+            .iter()
+            .map(|t| DeleteResourceSpec {
+                group: t.group.clone(),
+                kind: t.kind.clone(),
+                namespace: t.namespace.clone(),
+                name: t.name.clone(),
+            })
+            .collect();
+        let fresh_targets =
+            crate::resolve_explicit_delete_targets(client, &fresh_specs, &plan, &gk_map).await?;
+        if let Err(drift_errors) = crate::teardown::plan::validate_explicit_targets_authority(
+            &exec_plan.explicit_deletes,
+            &fresh_targets,
+            &exec_plan.phases,
+        ) {
+            for e in &drift_errors {
+                eprintln!("❌ {}", e);
+            }
+            bail!("{} explicit target authority error(s).", drift_errors.len());
+        }
+    }
+
+    // Backup gate
+    let backup_receipts = if let Some(bp) = params.backup_dir {
+        let ctx = crate::teardown::backup::BackupGateContext {
+            client,
+            final_plan: &plan,
+            target_operators: target_operators.clone(),
+            cluster_identity: &cluster_identity,
+            plan_path: "",
+            kind_map: &kind_map,
+            gvr_map: &gvr_map,
+            gk_map: &gk_map,
+            gvk_map: &gvk_map,
+        };
+        crate::teardown::backup::prepare_backup_gate(&ctx, std::path::Path::new(bp)).await?
+    } else {
+        vec![]
+    };
+
+    // Journal
+    let journal_store: Option<Arc<JournalStore>> = if !params.dry_run {
+        let audit_ns =
+            crate::discover_audit_scope(client, target_operators[0], &kind_map, &gvr_map, &gk_map)
+                .await?;
+        let store = crate::create_run_journal(
+            client,
+            &plan,
+            &target_operators,
+            &gk_map,
+            true,
+            backup_receipts,
+            Some(audit_ns),
+        )
+        .await?;
+        eprintln!("📓 Run journal: {}", store.path().display());
+        let current_id = journal::fetch_cluster_identity(client).await?;
+        let stored = store.read().await;
+        if !current_id.matches(&stored.cluster_identity) {
+            bail!("Cluster identity changed between journal creation and execution.");
+        }
+        Some(Arc::new(store))
+    } else {
+        None
+    };
+
+    // MutationGate
+    let gate = Arc::new(MutationGate::new(16));
+    if !params.dry_run {
+        let gate_for_signal = gate.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                eprintln!("\n⏸ Pausing... waiting for active mutations to complete...");
+                gate_for_signal.close_and_drain().await;
+            }
+        });
+    }
+
+    let ctx = WorkflowContext {
+        client,
+        plan: &plan,
+        kind_map: &kind_map,
+        gk_map: &gk_map,
+        gvk_map: &gvk_map,
+        gvr_map: &gvr_map,
+    };
+    run_teardown_workflow(
+        &ctx,
+        journal_store.as_ref(),
+        &gate,
+        WorkflowStart::Fresh {
+            dry_run: params.dry_run,
+            skip_confirm: true,
+        },
+    )
+    .await
+}
+
+/// In-process resume for pending explicit cleanup journals.
+pub async fn run_in_process_resume(
+    client: &kube::Client,
+    config: &kube::Config,
+    run_id: &str,
+    refresh_discovery: bool,
+) -> anyhow::Result<WorkflowOutcome> {
+    let mut no_cache = refresh_discovery;
+    let cluster_id = journal::fetch_cluster_identity(client).await?;
+    let path = journal::run_path(&cluster_id, run_id)?;
+    let j = journal::load_journal(&path)?;
+
+    if !j.cluster_identity.matches(&cluster_id) {
+        bail!("Journal cluster identity does not match current cluster");
+    }
+    match j.state {
+        RunState::Paused
+        | RunState::Applying
+        | RunState::InteractiveCleanup
+        | RunState::ExplicitCleanupBlocked => {}
+        RunState::ApplyCompleted => {}
+        RunState::Finished => bail!("Run already finished"),
+        RunState::Failed => match crate::explicit_cleanup_resume_mode(&j) {
+            Ok(_) => {}
+            Err(reason) => bail!("Run failed: {}", reason),
+        },
+        _ => bail!("Run in state {:?} — cannot resume", j.state),
+    }
+
+    let store = Arc::new(JournalStore::new_with_lock(j.clone(), path)?);
+    let mut j = store.read().await;
+
+    match j.state {
+        RunState::Paused
+        | RunState::Applying
+        | RunState::InteractiveCleanup
+        | RunState::ExplicitCleanupBlocked
+        | RunState::ApplyCompleted => {}
+        RunState::Finished => bail!("Run finished after lock"),
+        RunState::Failed => match crate::explicit_cleanup_resume_mode(&j) {
+            Ok(_) => {}
+            Err(reason) => bail!("Run failed after lock: {}", reason),
+        },
+        _ => bail!("Run in state {:?} after lock", j.state),
+    }
+
+    if j.schema_version != journal::RUN_JOURNAL_SCHEMA_VERSION {
+        bail!(
+            "Journal schema v{} does not match current v{}.",
+            j.schema_version,
+            journal::RUN_JOURNAL_SCHEMA_VERSION
+        );
+    }
+    if !j.cluster_identity.matches(&cluster_id) {
+        bail!("Cluster identity mismatch after lock");
+    }
+
+    if !j.backup_receipts.is_empty() {
+        eprintln!(
+            "📦 Validating {} backup receipt(s)...",
+            j.backup_receipts.len()
+        );
+        for receipt in &j.backup_receipts {
+            crate::teardown::backup::validate_receipt(receipt, &cluster_id)?;
+            eprintln!("  ✅ Backup intact: {}", receipt.root);
+        }
+    }
+
+    let explicit_resume_mode = crate::explicit_cleanup_resume_mode(&j).ok();
+    if explicit_resume_mode == Some(crate::ExplicitCleanupResumeMode::LegacyFailed) {
+        store
+            .update(|journal| {
+                journal.state = RunState::ExplicitCleanupBlocked;
+                journal.execution.explicit_cleanup_error = Some(journal::ExplicitCleanupError {
+                    target: "saved Explicit cleanup phase".to_string(),
+                    error_kind: journal::ExplicitCleanupErrorKind::LegacyStateMigration,
+                    message: "migrated from structurally eligible legacy Failed journal"
+                        .to_string(),
+                });
+            })
+            .await
+            .context("Failed to persist legacy migration")?;
+        j = store.read().await;
+        eprintln!("  ✅ Migrated legacy Failed journal to ExplicitCleanupBlocked");
+    }
+    let is_explicit_cleanup_resume = crate::explicit_cleanup_resume_mode(&j).is_ok();
+    no_cache |= is_explicit_cleanup_resume;
+
+    eprintln!(
+        "Resuming run {} (state: {:?}, operator: {})",
+        j.run_id, j.state, j.operator.csv_name
+    );
+
+    let (kind_map, _gvr_map, gk_map, gvk_map) =
+        discovery::build_kind_lookup_cached(client, config, no_cache).await?;
+
+    let gen_state =
+        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
+            .await;
+    if is_explicit_cleanup_resume {
+        match gen_state {
+            OperatorGenerationState::Absent => {
+                eprintln!("  ✅ Operator absent — explicit cleanup eligible");
+            }
+            OperatorGenerationState::Reappeared => {
+                bail!("Operator reappeared");
+            }
+            _ => {
+                bail!("Operator generation not absent ({:?})", gen_state);
+            }
+        }
+    } else {
+        match gen_state {
+            OperatorGenerationState::SameGeneration => {}
+            OperatorGenerationState::Absent => {
+                eprintln!("  Operator generation absent.");
+            }
+            OperatorGenerationState::Reappeared => {
+                bail!("Operator reinstalled. Cannot resume.");
+            }
+            OperatorGenerationState::Unknown(reason) => {
+                bail!("Cannot verify operator generation: {}", reason);
+            }
+        }
+    }
+
+    // Phase reconciliation
+    use crate::teardown::planner::Action;
+    let start_phase = {
+        let completed = j.execution.phases_completed;
+        let mut verified_through = completed;
+        'phase_check: for (pi, phase) in j.plan_snapshot.phases.iter().take(completed).enumerate() {
+            for action in &phase.actions {
+                let resource = match action {
+                    Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => {
+                        resource
+                    }
+                    _ => continue,
+                };
+                let (api, _) = match crate::kube::resource::resolve_api(
+                    client, resource, &kind_map, &gk_map,
+                ) {
+                    Some(r) => r,
+                    None => bail!("Cannot resolve API for {}/{}", resource.kind, resource.name),
+                };
+                match api.get(&resource.name).await {
+                    Ok(obj) => {
+                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
+                        let plan_uid = match &resource.uid {
+                            Some(u) if !u.is_empty() => u.as_str(),
+                            _ => bail!(
+                                "Plan resource {}/{} has no UID",
+                                resource.kind,
+                                resource.name
+                            ),
+                        };
+                        if live_uid != plan_uid {
+                            bail!(
+                                "Resource {}/{} recreated (plan {} vs live {})",
+                                resource.kind,
+                                resource.name,
+                                plan_uid,
+                                live_uid
+                            );
+                        }
+                        verified_through = pi;
+                        break 'phase_check;
+                    }
+                    Err(::kube::Error::Api(ref err)) if err.code == 404 => {
+                        match api.list(&::kube::api::ListParams::default().limit(1)).await {
+                            Ok(_) => {}
+                            Err(_) => {
+                                bail!(
+                                    "{}/{}: GET 404 but endpoint verification failed",
+                                    resource.kind,
+                                    resource.name
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        bail!(
+                            "Cannot verify {}/{} state: {}",
+                            resource.kind,
+                            resource.name,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        verified_through
+    };
+
+    let gate = Arc::new(MutationGate::new(16));
+    {
+        let gate_for_signal = gate.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                eprintln!("\n⏸ Pausing...");
+                gate_for_signal.close_and_drain().await;
+            }
+        });
+    }
+
+    let resume_stage =
+        crate::classify_resume_stage(&j).map_err(|e| anyhow::anyhow!("Cannot resume: {}", e))?;
+    let main_complete = j.execution.phases_completed == j.execution.phases_total;
+    let paused_from_residual =
+        j.state == RunState::Paused && main_complete && j.last_residual_audit.is_some();
+
+    let ctx = WorkflowContext {
+        client,
+        plan: &j.plan_snapshot,
+        kind_map: &kind_map,
+        gk_map: &gk_map,
+        gvk_map: &gvk_map,
+        gvr_map: &_gvr_map,
+    };
+
+    if resume_stage == crate::ResumeStage::Cleanup {
+        return run_teardown_workflow(
+            &ctx,
+            Some(&store),
+            &gate,
+            WorkflowStart::ResumeCleanup {
+                journal: &j,
+                main_complete,
+                paused_from_residual,
+            },
+        )
+        .await;
+    }
+
+    store
+        .update(|journal| {
+            journal.state = RunState::Applying;
+            journal.execution.explicit_cleanup_error = None;
+        })
+        .await
+        .context("Failed to persist Applying state")?;
+
+    run_teardown_workflow(
+        &ctx,
+        Some(&store),
+        &gate,
+        WorkflowStart::ResumeExecution { start_phase },
+    )
+    .await
 }
 
 #[cfg(test)]
