@@ -11,9 +11,9 @@ Base commit: ad93e09 (PR #50 merge)
 | `execute_residual_cleanup` / `_with_progress` | 6 | 0 | main.rs(4), tui/mod.rs(2) | validate-callsite-counts.py |
 | `run_post_mutation_audit` | 6 | 0 | main.rs(4), tui/mod.rs(1), executor.rs(1) | validate-callsite-counts.py |
 | `check_operator_generation_fresh` | 26 | 0 | main.rs(16), tui/mod.rs(7), executor.rs(3) | validate-callsite-counts.py |
-| Journal `.update()` closures | 73 | 6 | main.rs(26), executor.rs(28), tui/mod.rs(19) | rg count |
+| Journal `.update()` closures | 74 | 6 | main.rs(27), executor.rs(28), tui/mod.rs(19) | validate-callsite-counts.py |
 | `std::process::Command` (self-spawn) | 3 | 0 | main.rs (Batch arm only) | validate-callsite-counts.py |
-| `MutationGate::new` | 4 | 21 | main.rs(4 prod, 1 test), permit.rs(9), executor.rs(5), harness.rs(4), watch.rs(1), runtime.rs(1) | validate-callsite-counts.py |
+| `MutationGate::new` | 4 | 21 | main.rs(4 prod, 1 test), permit.rs(9), executor.rs(6), harness.rs(4), watch.rs(1) | validate-callsite-counts.py |
 | `check_and_persist_paused` | 6 | 1 | tui/mod.rs(6), main.rs(1 test) | rg count |
 | TUI entry points (`run_tui`, `run_residual_only`) | 3 | 0 | main.rs(2 callers), tui/mod.rs(1 def) | rg count |
 | `AppState::new` | 2 | 10 | main.rs(1), tui/mod.rs(1), app.rs(10 test) | rg count |
@@ -210,11 +210,11 @@ Note: `audit.rs:972` is the definition, which delegates to `run_post_mutation_au
 
 ## 6. Journal `.update()` closures
 
-### Production (73 total)
+### Production (74 total)
 
 | File | Count | Lines (sample) |
 |---|---|---|
-| `src/main.rs` | 26 | 2800, 2830, 2914, 3058, 3211, 3299, 3612, 4252, 4265, 4335, 4371, 4408, 4529, 4548, 4567, 4703, 4787, 4914, 4972, 5032, 5067, 5095, 5134, 5194, 5212, 3948 |
+| `src/main.rs` | 27 | 2800, 2830, 2914, 3058, 3211, 3299, 3612, 3948, 4252, 4265, 4335, 4371, 4408, 4529, 4548, 4567, 4703, 4787, 4914, 4972, 5032, 5067, 5095, 5134, 5194, 5212, and 1 more |
 | `src/teardown/executor.rs` | 28 | 513, 738, 843, 1102, 1352, 1524, 1672, 1709, 2080, 2126, 2454, 2477, 2540, 2635, 2816, 3292, 3362, 3395, 3512, 4033, 4185, 4221, 4367, 4415, 4452, 4466, 4478, 4522 |
 | `src/tui/mod.rs` | 19 | 596, 1013, 1022, and 16 others across run_tui_inner and run_residual_tui |
 
@@ -275,10 +275,9 @@ Note: `audit.rs:972` is the definition, which delegates to `run_post_mutation_au
 | File | Count | Lines |
 |---|---|---|
 | `src/teardown/permit.rs` | 9 | 141, 148, 156, 166, 197, 226, 252, 263, 282 |
-| `src/teardown/executor.rs` | 5 | 5316, 6104, 7879, 7974, 8044 |
+| `src/teardown/executor.rs` | 6 | 5316, 6104, 7879, 7974, 8044, 8193 |
 | `src/teardown/harness.rs` | 4 | 217, 245, 277, 492 |
 | `src/teardown/watch.rs` | 1 | 677 |
-| `src/teardown/executor.rs` | 1 | 8193 |
 | `src/main.rs` | 1 | 10839 |
 
 ---

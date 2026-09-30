@@ -39,7 +39,7 @@
     },
     "callsite_inventory": {
       "file": "callsite-inventory.md",
-      "sha256": "184e2398c0a2b977fc00a6c3cfe33635585e414d6998539777e9403a6c68922a",
+      "sha256": "bdfcb12a24bb1ab172f3b31a21b77db70323ffdd17c3b1d4fa5d5a52931f429a",
       "description": "Complete production call sites across main.rs, tui/, executor.rs, journal.rs. Counts verified by validate-callsite-counts.py."
     },
     "test_inventory": {
@@ -92,7 +92,7 @@
     "check_operator_generation_fresh_callers": 26,
     "run_post_mutation_audit_callers": 6,
     "mutation_gate_new_production": 4,
-    "journal_update_production_sites": 73,
+    "journal_update_production_sites": 74,
     "std_process_command_sites": 3,
     "existing_tests_base": 1369,
     "new_contract_tests": 6,

@@ -53,8 +53,8 @@ def is_explicit_match(resource, explicit_deletes):
                 and ed["kind"] == resource["kind"]
                 and ed.get("namespace", "") == resource.get("namespace", "")
                 and ed["name"] == resource["name"]
-                and (not ed.get("uid") or not resource.get("uid")
-                     or ed["uid"] == resource["uid"])):
+                and bool(ed.get("uid")) and bool(resource.get("uid"))
+                and ed["uid"] == resource["uid"]):
             return True
     return False
 

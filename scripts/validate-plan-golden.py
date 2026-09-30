@@ -67,8 +67,8 @@ def is_explicit_match(resource, explicit_deletes):
                 and ed["kind"] == resource["kind"]
                 and ed.get("namespace", "") == resource.get("namespace", "")
                 and ed["name"] == resource["name"]
-                and (not ed.get("uid") or not resource.get("uid")
-                     or ed["uid"] == resource["uid"])):
+                and bool(ed.get("uid")) and bool(resource.get("uid"))
+                and ed["uid"] == resource["uid"]):
             return True
     return False
 
@@ -185,8 +185,8 @@ def main():
                     and r["kind"] == ed["kind"]
                     and r["namespace"] == ed.get("namespace", "")
                     and r["name"] == ed["name"]
-                    and (not ed.get("uid") or not r.get("uid")
-                         or ed["uid"] == r["uid"]))
+                    and bool(ed.get("uid")) and bool(r.get("uid"))
+                    and ed["uid"] == r["uid"])
             ]
             if len(matches) != 1:
                 failures.append(
@@ -237,7 +237,8 @@ def main():
                 and r["kind"] == ed["kind"]
                 and r.get("namespace", "") == ed.get("namespace", "")
                 and r["name"] == ed["name"]
-                and (not ed.get("uid") or not r.get("uid") or ed["uid"] == r["uid"]))
+                and bool(ed.get("uid")) and bool(r.get("uid"))
+                and ed["uid"] == r["uid"])
 
     # Fixture: same kind/ns/name but different group → must NOT match
     r_wrong_group = {"group": "wrong.api", "kind": "Config", "namespace": "default", "name": "test", "uid": "aaa"}
@@ -257,10 +258,17 @@ def main():
     if not _match(r_same, ed_same):
         failures.append("Self-check FAIL: identical resource was not matched")
 
-    # Fixture: empty UID on either side → should match (UID not required)
+    # Fixture: missing UID on ed side → must NOT match (nonempty exact required)
+    r_has_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": "uid-1"}
+    ed_no_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": ""}
+    if _match(r_has_uid, ed_no_uid):
+        failures.append("Self-check FAIL: missing ed UID should be rejected")
+
+    # Fixture: missing UID on resource side → must NOT match
     r_no_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": ""}
-    if not _match(r_no_uid, ed_same):
-        failures.append("Self-check FAIL: empty UID should be permissive")
+    ed_has_uid = {"group": "api", "kind": "Config", "namespace": "ns", "name": "x", "uid": "uid-1"}
+    if _match(r_no_uid, ed_has_uid):
+        failures.append("Self-check FAIL: missing resource UID should be rejected")
 
     if failures:
         print("FAIL")
