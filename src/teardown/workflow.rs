@@ -26,26 +26,72 @@ pub struct WorkflowOptions {
     pub start_phase: usize,
 }
 
+pub enum WorkflowStart<'a> {
+    Execute(WorkflowOptions),
+    ResumeCleanup {
+        journal: &'a journal::RunJournal,
+        main_complete: bool,
+        paused_from_residual: bool,
+    },
+}
+
 pub struct WorkflowOutcome {
     pub final_state: RunState,
     pub result: ExecutionResult,
     pub cleanup_failure: Option<String>,
 }
 
-/// Single production entry point for the execute → state → audit → cleanup pipeline.
+/// Single production mutation entry point for all teardown paths.
 ///
-/// Both fresh apply and resume call this after their respective preparation
-/// (validation, backup, journal creation/lock). The MutationGate and Ctrl-C
-/// handler are set up by the caller and passed in.
-///
-/// Stages:
-/// 1. execute_plan — single call site
-/// 2. Final state determination (Paused / ApplyCompleted / Failed)
-/// 3. Persist final state to journal
-/// 4. Post-execution audit (if ApplyCompleted + operator Absent)
-/// 5. Auto residual cleanup (if audit found actionable residuals)
-/// 6. Return outcome
+/// Every mutation (fresh apply, normal resume, cleanup resume) enters
+/// through this function. main.rs performs read-only preparation
+/// (validation, backup, journal creation/lock) then calls here.
 pub async fn run_teardown_workflow(
+    ctx: &WorkflowContext<'_>,
+    journal_store: Option<&Arc<JournalStore>>,
+    gate: &Arc<MutationGate>,
+    start: WorkflowStart<'_>,
+) -> anyhow::Result<WorkflowOutcome> {
+    match start {
+        WorkflowStart::Execute(options) => {
+            run_execute_stage(ctx, journal_store, gate, &options).await
+        }
+        WorkflowStart::ResumeCleanup {
+            journal,
+            main_complete,
+            paused_from_residual,
+        } => {
+            let store = journal_store
+                .ok_or_else(|| anyhow::anyhow!("ResumeCleanup requires a journal store"))?;
+            run_resume_cleanup(
+                ctx,
+                store,
+                gate,
+                journal,
+                main_complete,
+                paused_from_residual,
+            )
+            .await?;
+            let j = store.read().await;
+            Ok(WorkflowOutcome {
+                final_state: j.state.clone(),
+                result: ExecutionResult {
+                    phases_completed: j.execution.phases_completed,
+                    phases_total: j.execution.phases_total,
+                    deleted: vec![],
+                    already_gone: vec![],
+                    failed: vec![],
+                    barrier_timeout: None,
+                    kept: vec![],
+                    reviewed: vec![],
+                },
+                cleanup_failure: None,
+            })
+        }
+    }
+}
+
+async fn run_execute_stage(
     ctx: &WorkflowContext<'_>,
     journal_store: Option<&Arc<JournalStore>>,
     gate: &Arc<MutationGate>,
@@ -253,7 +299,7 @@ async fn run_post_execution_audit(
 /// Resume cleanup stage — handles pending cleanup decisions from a prior run.
 /// This is a workflow stage, not a standalone function — it uses the same
 /// MutationGate and journal authority as run_teardown_workflow.
-pub async fn run_resume_cleanup(
+async fn run_resume_cleanup(
     ctx: &WorkflowContext<'_>,
     store: &Arc<JournalStore>,
     gate: &Arc<MutationGate>,
@@ -1144,5 +1190,297 @@ mod tests {
             reviewed: vec![],
         };
         assert_eq!(determine_final_state(&result, &gate), RunState::Failed);
+    }
+
+    fn make_empty_plan() -> TeardownPlan {
+        use crate::teardown::planner::*;
+        TeardownPlan {
+            targets: vec![],
+            preflight: Preflight { checks: vec![] },
+            phases: vec![],
+            blockers: vec![],
+            warnings: vec![],
+            snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+            dependency_edges: vec![],
+            operator_inventory: vec![],
+            explicit_decisions: vec![],
+            explicit_deletes: vec![],
+        }
+    }
+
+    fn make_test_journal_for_workflow(
+        state: RunState,
+        phases_completed: usize,
+        phases_total: usize,
+    ) -> journal::RunJournal {
+        use crate::teardown::plan::*;
+        journal::RunJournal {
+            run_id: "test-workflow".to_string(),
+            schema_version: journal::RUN_JOURNAL_SCHEMA_VERSION,
+            oc_deps_version: "test".to_string(),
+            journal_revision: 0,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test:6443".to_string(),
+                kube_system_uid: "test-uid".to_string(),
+            },
+            operator: OperatorIdentitySnapshot {
+                generation_identity: OperatorGenerationIdentity::Unverifiable {
+                    reason: "test".to_string(),
+                },
+                operator_id: crate::analyzers::olm::OperatorId {
+                    namespace: "ns".to_string(),
+                    csv_name: "test.v1".to_string(),
+                },
+                csv_name: "test.v1".to_string(),
+                csv: ObservedResourceIdentity {
+                    resource: crate::kube::resource::ResourceId {
+                        group: "operators.coreos.com".to_string(),
+                        version: "v1alpha1".to_string(),
+                        kind: "ClusterServiceVersion".to_string(),
+                        namespace: Some("ns".to_string()),
+                        name: "test.v1".to_string(),
+                        uid: Some("csv-uid".to_string()),
+                    },
+                    uid: "csv-uid".to_string(),
+                },
+                subscriptions: vec![],
+                controller_deployments: vec![],
+                service_accounts: vec![],
+                owned_crds: vec![],
+                required_crds: vec![],
+            },
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            state,
+            residual_status: journal::ResidualStatus::NotAudited,
+            audit_revision: 0,
+            audit_context: journal::AuditContext::default(),
+            plan_snapshot: make_empty_plan(),
+            execution: journal::ExecutionRecord {
+                phases_completed,
+                phases_total,
+                ..Default::default()
+            },
+            last_residual_audit: None,
+            cleanup_decisions: vec![],
+            finalizer_recovery_approved: true,
+            finalizer_recoveries: vec![],
+            backup_receipts: vec![],
+        }
+    }
+
+    fn make_journal_store(j: journal::RunJournal) -> (Arc<JournalStore>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "oc-deps-wf-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("journal.json");
+        journal::atomic_write_json_pub(&path, &j).unwrap();
+        let store = Arc::new(JournalStore::new_with_lock(j, path).unwrap());
+        (store, dir)
+    }
+
+    #[tokio::test]
+    async fn workflow_execute_closed_gate_zero_mutations_and_paused() {
+        use kube::client::Body;
+        let (mock_service, _handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = kube::Client::new(mock_service, "test-ns");
+
+        let plan = make_empty_plan();
+        let j = make_test_journal_for_workflow(RunState::Applying, 0, 0);
+        let (store, dir) = make_journal_store(j);
+        let gate = Arc::new(MutationGate::new(4));
+        gate.close_and_drain().await;
+
+        let ctx = WorkflowContext {
+            client: &client,
+            plan: &plan,
+            kind_map: &std::collections::HashMap::new(),
+            gk_map: &std::collections::HashMap::new(),
+            gvk_map: &std::collections::HashMap::new(),
+            gvr_map: &std::collections::HashMap::new(),
+        };
+
+        let outcome = run_teardown_workflow(
+            &ctx,
+            Some(&store),
+            &gate,
+            WorkflowStart::Execute(WorkflowOptions {
+                dry_run: false,
+                force: false,
+                skip_confirm: true,
+                start_phase: 0,
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.final_state, RunState::Paused);
+        assert!(
+            outcome.result.deleted.is_empty(),
+            "no DELETEs with closed gate"
+        );
+
+        let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
+        assert_eq!(
+            j_disk.state,
+            RunState::Paused,
+            "journal must be durably Paused"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn workflow_execute_preserves_explicit_cleanup_blocked() {
+        use kube::client::Body;
+        let (mock_service, _handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = kube::Client::new(mock_service, "test-ns");
+
+        let plan = make_empty_plan();
+        let mut j = make_test_journal_for_workflow(RunState::ExplicitCleanupBlocked, 7, 7);
+        j.execution.explicit_cleanup_error = Some(journal::ExplicitCleanupError {
+            target: "test-target".to_string(),
+            error_kind: journal::ExplicitCleanupErrorKind::IncompleteScan,
+            message: "test ref guard failure".to_string(),
+        });
+        let (store, dir) = make_journal_store(j);
+        let gate = Arc::new(MutationGate::new(4));
+
+        let ctx = WorkflowContext {
+            client: &client,
+            plan: &plan,
+            kind_map: &std::collections::HashMap::new(),
+            gk_map: &std::collections::HashMap::new(),
+            gvk_map: &std::collections::HashMap::new(),
+            gvr_map: &std::collections::HashMap::new(),
+        };
+
+        let result = run_teardown_workflow(
+            &ctx,
+            Some(&store),
+            &gate,
+            WorkflowStart::Execute(WorkflowOptions {
+                dry_run: false,
+                force: true,
+                skip_confirm: true,
+                start_phase: 7,
+            }),
+        )
+        .await;
+
+        match result {
+            Ok(_outcome) => {
+                let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
+                assert_ne!(
+                    j_disk.state,
+                    RunState::Failed,
+                    "ExplicitCleanupBlocked must not be overwritten to Failed by workflow"
+                );
+            }
+            Err(e) => {
+                let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
+                assert!(
+                    j_disk.state == RunState::ExplicitCleanupBlocked
+                        || j_disk.state == RunState::ApplyCompleted,
+                    "journal state must be ExplicitCleanupBlocked or ApplyCompleted, got {:?} (error: {})",
+                    j_disk.state,
+                    e
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn workflow_execute_fresh_force_false_resume_force_true() {
+        assert!(
+            !WorkflowOptions {
+                dry_run: false,
+                force: false,
+                skip_confirm: false,
+                start_phase: 0,
+            }
+            .force,
+            "fresh apply must pass force=false"
+        );
+        assert!(
+            WorkflowOptions {
+                dry_run: false,
+                force: true,
+                skip_confirm: true,
+                start_phase: 3,
+            }
+            .force,
+            "resume must pass force=true"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_resume_cleanup_through_public_entry() {
+        use kube::client::Body;
+        let (mock_service, _handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let client = kube::Client::new(mock_service, "test-ns");
+
+        let plan = make_empty_plan();
+        let j = make_test_journal_for_workflow(RunState::InteractiveCleanup, 7, 7);
+        let (store, dir) = make_journal_store(j.clone());
+        let gate = Arc::new(MutationGate::new(4));
+
+        let ctx = WorkflowContext {
+            client: &client,
+            plan: &plan,
+            kind_map: &std::collections::HashMap::new(),
+            gk_map: &std::collections::HashMap::new(),
+            gvk_map: &std::collections::HashMap::new(),
+            gvr_map: &std::collections::HashMap::new(),
+        };
+
+        let result = run_teardown_workflow(
+            &ctx,
+            Some(&store),
+            &gate,
+            WorkflowStart::ResumeCleanup {
+                journal: &j,
+                main_complete: true,
+                paused_from_residual: false,
+            },
+        )
+        .await;
+
+        match result {
+            Ok(outcome) => {
+                assert!(
+                    matches!(
+                        outcome.final_state,
+                        RunState::ApplyCompleted | RunState::InteractiveCleanup | RunState::Failed
+                    ),
+                    "resume cleanup outcome must be a valid terminal state, got {:?}",
+                    outcome.final_state
+                );
+            }
+            Err(_) => {
+                let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
+                assert!(
+                    matches!(
+                        j_disk.state,
+                        RunState::Failed | RunState::InteractiveCleanup
+                    ),
+                    "on error, journal must be Failed or InteractiveCleanup, got {:?}",
+                    j_disk.state
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

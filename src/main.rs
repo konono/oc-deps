@@ -2466,17 +2466,18 @@ async fn main() -> Result<()> {
                         gvk_map: &gvk_map,
                         gvr_map: &gvr_map,
                     };
-                    let workflow_opts = crate::teardown::workflow::WorkflowOptions {
-                        dry_run,
-                        force: false,
-                        skip_confirm: yes,
-                        start_phase: 0,
-                    };
                     let outcome = crate::teardown::workflow::run_teardown_workflow(
                         &workflow_ctx,
                         journal_store.as_ref(),
                         &gate,
-                        &workflow_opts,
+                        crate::teardown::workflow::WorkflowStart::Execute(
+                            crate::teardown::workflow::WorkflowOptions {
+                                dry_run,
+                                force: false,
+                                skip_confirm: yes,
+                                start_phase: 0,
+                            },
+                        ),
                     )
                     .await?;
 
@@ -3140,13 +3141,15 @@ async fn main() -> Result<()> {
                             gvk_map: &gvk_map,
                             gvr_map: &_gvr_map,
                         };
-                        crate::teardown::workflow::run_resume_cleanup(
+                        crate::teardown::workflow::run_teardown_workflow(
                             &workflow_ctx,
-                            &store,
+                            Some(&store),
                             &gate,
-                            &j,
-                            main_complete,
-                            paused_from_residual,
+                            crate::teardown::workflow::WorkflowStart::ResumeCleanup {
+                                journal: &j,
+                                main_complete,
+                                paused_from_residual,
+                            },
                         )
                         .await?;
                         return Ok(());
@@ -3169,17 +3172,18 @@ async fn main() -> Result<()> {
                         gvk_map: &gvk_map,
                         gvr_map: &_gvr_map,
                     };
-                    let workflow_opts = crate::teardown::workflow::WorkflowOptions {
-                        dry_run: false,
-                        force: true,
-                        skip_confirm: true,
-                        start_phase,
-                    };
                     let outcome = crate::teardown::workflow::run_teardown_workflow(
                         &workflow_ctx,
                         Some(&store),
                         &gate,
-                        &workflow_opts,
+                        crate::teardown::workflow::WorkflowStart::Execute(
+                            crate::teardown::workflow::WorkflowOptions {
+                                dry_run: false,
+                                force: true,
+                                skip_confirm: true,
+                                start_phase,
+                            },
+                        ),
                     )
                     .await?;
 
