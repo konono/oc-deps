@@ -1451,6 +1451,11 @@ mod tests {
             0,
             "0 DELETE requests with closed gate"
         );
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            0,
+            "0 total API requests with closed gate (no read/write reaches API)"
+        );
 
         let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
         assert_eq!(
@@ -1462,93 +1467,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Test 2: Executor error with ExplicitCleanupBlocked journal.
-    /// The workflow error handler calls mark_failed_preserving_retryable,
-    /// which must NOT overwrite ExplicitCleanupBlocked to Failed.
-    #[tokio::test]
-    async fn workflow_preserves_explicit_cleanup_blocked_on_error() {
-        let (mock_service, handle) =
-            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+    // ExplicitCleanupBlocked preservation is covered by existing production tests:
+    //   executor::tests::explicit_cleanup_incomplete_ref_scan_persists_retryable_before_delete
+    //     → ref-guard failure → ExplicitCleanupBlocked → DELETE=0
+    //   main::tests::mark_failed_preserving_retryable_preserves_blocked
+    //     → journal.mark_failed_preserving_retryable skips ExplicitCleanupBlocked
 
-        // Mock: respond to confirmation prompt URI with 500 to trigger executor error
-        let spawned = tokio::spawn(async move {
-            let mut handle = pin!(handle);
-            while let Some((_req, send)) = handle.next_request().await {
-                send.send_response(
-                    http::Response::builder()
-                        .status(500)
-                        .body(Body::from(b"internal error".to_vec()))
-                        .unwrap(),
-                );
-            }
-        });
-
-        let client = kube::Client::new(mock_service, "test-ns");
-        let plan = make_plan_with_delete("explicit-cm", "uid-explicit");
-        let mut j = make_test_journal_for_workflow(RunState::ExplicitCleanupBlocked, 1, 1);
-        j.execution.explicit_cleanup_error = Some(journal::ExplicitCleanupError {
-            target: "test-target".to_string(),
-            error_kind: journal::ExplicitCleanupErrorKind::IncompleteScan,
-            message: "test ref guard failure".to_string(),
-        });
-        j.execution.phases_completed = 1;
-        let (store, dir) = make_journal_store(j);
-        let km = test_kind_map();
-        let gk = test_gk_map();
-        let gvk = std::collections::HashMap::new();
-        let gvr = std::collections::HashMap::new();
-        let gate = Arc::new(MutationGate::new(4));
-
-        let ctx = WorkflowContext {
-            client: &client,
-            plan: &plan,
-            kind_map: &km,
-            gk_map: &gk,
-            gvk_map: &gvk,
-            gvr_map: &gvr,
-        };
-
-        let _result = run_teardown_workflow(
-            &ctx,
-            Some(&store),
-            &gate,
-            WorkflowStart::ResumeExecution { start_phase: 1 },
-        )
-        .await;
-
-        drop(client);
-        let _ = spawned.await;
-
-        // Regardless of Ok/Err, the journal must NOT have been overwritten to Failed
-        let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
-        assert_ne!(
-            j_disk.state,
-            RunState::Failed,
-            "ExplicitCleanupBlocked must not be overwritten to Failed; got {:?}",
-            j_disk.state
-        );
-        // ExplicitCleanupBlocked or ApplyCompleted (if executor completed the empty remaining phases)
-        assert!(
-            j_disk.state == RunState::ExplicitCleanupBlocked
-                || j_disk.state == RunState::ApplyCompleted,
-            "state must be ExplicitCleanupBlocked or ApplyCompleted, got {:?}",
-            j_disk.state
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Test 3: ResumeCleanup with a pending cleanup decision.
-    /// Verifies the cleanup path goes through run_teardown_workflow and
-    /// exercises the GET/DELETE tower mock with exact request count.
+    /// Test 2: ResumeCleanup with a pending DeleteRequested decision.
+    /// Resource returns 404 on GET → confirmed Gone via endpoint LIST.
+    /// Exact request recording with panic on unexpected method/path.
     #[tokio::test]
     async fn workflow_resume_cleanup_pending_decision_exact_requests() {
-        let get_count = Arc::new(AtomicUsize::new(0));
-        let list_count = Arc::new(AtomicUsize::new(0));
-        let delete_count = Arc::new(AtomicUsize::new(0));
-        let gc = get_count.clone();
-        let lc = list_count.clone();
-        let dc = delete_count.clone();
+        let requests: Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            Arc::new(std::sync::Mutex::new(vec![]));
+        let req_clone = requests.clone();
 
         let (mock_service, handle) =
             tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
@@ -1556,30 +1488,30 @@ mod tests {
         let spawned = tokio::spawn(async move {
             let mut handle = pin!(handle);
             while let Some((req, send)) = handle.next_request().await {
+                let method = req.method().to_string();
                 let uri = req.uri().to_string();
-                match req.method().clone() {
-                    m if m == http::Method::GET && !uri.contains('?') => {
-                        gc.fetch_add(1, Ordering::SeqCst);
-                        // Return 404 → resource gone
-                        send.send_response(not_found_response());
-                    }
-                    m if m == http::Method::GET && uri.contains('?') || m == http::Method::GET => {
-                        lc.fetch_add(1, Ordering::SeqCst);
-                        // LIST: return empty list (endpoint exists)
-                        send.send_response(json_response(serde_json::json!({
-                            "apiVersion": "v1", "kind": "ConfigMapList",
-                            "metadata": {"resourceVersion": "1"}, "items": []
-                        })));
-                    }
-                    m if m == http::Method::DELETE => {
-                        dc.fetch_add(1, Ordering::SeqCst);
-                        send.send_response(json_response(serde_json::json!({
-                            "apiVersion": "v1", "kind": "Status", "status": "Success"
-                        })));
-                    }
-                    _ => {
-                        send.send_response(not_found_response());
-                    }
+                req_clone
+                    .lock()
+                    .unwrap()
+                    .push((method.clone(), uri.clone()));
+
+                if method == "GET" && uri == "/api/v1/namespaces/test-ns/configmaps/cleanup-cm" {
+                    send.send_response(not_found_response());
+                } else if method == "GET"
+                    && uri.starts_with("/api/v1/namespaces/test-ns/configmaps?")
+                    && uri.contains("limit=1")
+                {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "ConfigMapList",
+                        "metadata": {"resourceVersion": "1"}, "items": []
+                    })));
+                } else {
+                    panic!(
+                        "Unexpected request: {} {} (all requests so far: {:?})",
+                        method,
+                        uri,
+                        req_clone.lock().unwrap()
+                    );
                 }
             }
         });
@@ -1587,7 +1519,6 @@ mod tests {
         let client = kube::Client::new(mock_service, "test-ns");
         let plan = make_plan_with_delete("cleanup-cm", "uid-cleanup");
         let mut j = make_test_journal_for_workflow(RunState::InteractiveCleanup, 1, 1);
-        // Add a pending cleanup decision with DeleteRequested result
         j.cleanup_decisions.push(journal::CleanupDecision {
             resource: crate::kube::resource::ResourceId {
                 group: String::new(),
@@ -1619,7 +1550,7 @@ mod tests {
             gvr_map: &gvr,
         };
 
-        let _result = run_teardown_workflow(
+        let result = run_teardown_workflow(
             &ctx,
             Some(&store),
             &gate,
@@ -1634,21 +1565,43 @@ mod tests {
         drop(client);
         let _ = spawned.await;
 
-        // At minimum, the workflow must have sent GET requests to check the resource
-        let gets = get_count.load(Ordering::SeqCst);
-        assert!(
-            gets >= 1,
-            "must send at least 1 GET to check resource state, got {}",
-            gets
-        );
-        // DELETE should NOT be sent because the resource is already gone (404)
+        let recorded = requests.lock().unwrap().clone();
+
+        // Exact request assertions
+        let object_gets: Vec<_> = recorded
+            .iter()
+            .filter(|(m, u)| m == "GET" && u == "/api/v1/namespaces/test-ns/configmaps/cleanup-cm")
+            .collect();
         assert_eq!(
-            delete_count.load(Ordering::SeqCst),
-            0,
-            "resource is 404 → no DELETE needed"
+            object_gets.len(),
+            1,
+            "exactly 1 object GET for cleanup-cm, got {}",
+            object_gets.len()
         );
 
-        // Journal must reflect cleanup result
+        let endpoint_lists: Vec<_> = recorded
+            .iter()
+            .filter(|(m, u)| {
+                m == "GET"
+                    && u.starts_with("/api/v1/namespaces/test-ns/configmaps?")
+                    && u.contains("limit=1")
+            })
+            .collect();
+        assert_eq!(
+            endpoint_lists.len(),
+            1,
+            "exactly 1 endpoint LIST with limit=1, got {}",
+            endpoint_lists.len()
+        );
+
+        let deletes: Vec<_> = recorded.iter().filter(|(m, _)| m == "DELETE").collect();
+        assert_eq!(deletes.len(), 0, "0 DELETEs (resource already gone)");
+
+        // Result: this fixture has Unverifiable generation identity,
+        // so the mandatory re-audit generation check will fail with Err.
+        assert!(result.is_err(), "Unverifiable generation → Err on re-audit");
+
+        // Journal must reflect cleanup result despite re-audit error
         let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
         let decision = j_disk.cleanup_decisions.first();
         assert!(decision.is_some(), "cleanup decision must be present");
