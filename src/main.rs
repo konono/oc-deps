@@ -2470,14 +2470,10 @@ async fn main() -> Result<()> {
                         &workflow_ctx,
                         journal_store.as_ref(),
                         &gate,
-                        crate::teardown::workflow::WorkflowStart::Execute(
-                            crate::teardown::workflow::WorkflowOptions {
-                                dry_run,
-                                force: false,
-                                skip_confirm: yes,
-                                start_phase: 0,
-                            },
-                        ),
+                        crate::teardown::workflow::WorkflowStart::Fresh {
+                            dry_run,
+                            skip_confirm: yes,
+                        },
                     )
                     .await?;
 
@@ -3176,14 +3172,7 @@ async fn main() -> Result<()> {
                         &workflow_ctx,
                         Some(&store),
                         &gate,
-                        crate::teardown::workflow::WorkflowStart::Execute(
-                            crate::teardown::workflow::WorkflowOptions {
-                                dry_run: false,
-                                force: true,
-                                skip_confirm: true,
-                                start_phase,
-                            },
-                        ),
+                        crate::teardown::workflow::WorkflowStart::ResumeExecution { start_phase },
                     )
                     .await?;
 

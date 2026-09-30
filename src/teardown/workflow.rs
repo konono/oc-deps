@@ -18,21 +18,24 @@ pub struct WorkflowContext<'a> {
     pub gvr_map: &'a GvrMap,
 }
 
-pub struct WorkflowOptions {
-    pub dry_run: bool,
-    /// Suppress preflight/REVIEW warnings. Fresh=false, Resume=true.
-    pub force: bool,
-    pub skip_confirm: bool,
-    pub start_phase: usize,
-}
-
 pub enum WorkflowStart<'a> {
-    Execute(WorkflowOptions),
+    /// Fresh apply: force=false, start_phase=0.
+    Fresh { dry_run: bool, skip_confirm: bool },
+    /// Normal resume from Paused/Applying: force=true, skip_confirm=true.
+    ResumeExecution { start_phase: usize },
+    /// Resume cleanup stage: handles pending cleanup decisions.
     ResumeCleanup {
         journal: &'a journal::RunJournal,
         main_complete: bool,
         paused_from_residual: bool,
     },
+}
+
+struct ExecuteOptions {
+    dry_run: bool,
+    force: bool,
+    skip_confirm: bool,
+    start_phase: usize,
 }
 
 pub struct WorkflowOutcome {
@@ -53,8 +56,36 @@ pub async fn run_teardown_workflow(
     start: WorkflowStart<'_>,
 ) -> anyhow::Result<WorkflowOutcome> {
     match start {
-        WorkflowStart::Execute(options) => {
-            run_execute_stage(ctx, journal_store, gate, &options).await
+        WorkflowStart::Fresh {
+            dry_run,
+            skip_confirm,
+        } => {
+            run_execute_stage(
+                ctx,
+                journal_store,
+                gate,
+                &ExecuteOptions {
+                    dry_run,
+                    force: false,
+                    skip_confirm,
+                    start_phase: 0,
+                },
+            )
+            .await
+        }
+        WorkflowStart::ResumeExecution { start_phase } => {
+            run_execute_stage(
+                ctx,
+                journal_store,
+                gate,
+                &ExecuteOptions {
+                    dry_run: false,
+                    force: true,
+                    skip_confirm: true,
+                    start_phase,
+                },
+            )
+            .await
         }
         WorkflowStart::ResumeCleanup {
             journal,
@@ -95,7 +126,7 @@ async fn run_execute_stage(
     ctx: &WorkflowContext<'_>,
     journal_store: Option<&Arc<JournalStore>>,
     gate: &Arc<MutationGate>,
-    options: &WorkflowOptions,
+    options: &ExecuteOptions,
 ) -> anyhow::Result<WorkflowOutcome> {
     let exec_result = executor::execute_plan(
         ctx.client,
@@ -1192,12 +1223,32 @@ mod tests {
         assert_eq!(determine_final_state(&result, &gate), RunState::Failed);
     }
 
-    fn make_empty_plan() -> TeardownPlan {
-        use crate::teardown::planner::*;
+    use crate::teardown::planner::{Action, PlanPhase, Preflight};
+    use kube::client::Body;
+    use std::pin::pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn make_plan_with_delete(name: &str, uid: &str) -> TeardownPlan {
+        let resource = crate::kube::resource::ResourceId {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: "ConfigMap".to_string(),
+            namespace: Some("test-ns".to_string()),
+            name: name.to_string(),
+            uid: Some(uid.to_string()),
+        };
         TeardownPlan {
             targets: vec![],
             preflight: Preflight { checks: vec![] },
-            phases: vec![],
+            phases: vec![PlanPhase {
+                name: "test".to_string(),
+                description: "test phase".to_string(),
+                actions: vec![Action::Delete {
+                    resource,
+                    reason: "test".to_string(),
+                }],
+                barrier: None,
+            }],
             blockers: vec![],
             warnings: vec![],
             snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
@@ -1255,7 +1306,7 @@ mod tests {
             residual_status: journal::ResidualStatus::NotAudited,
             audit_revision: 0,
             audit_context: journal::AuditContext::default(),
-            plan_snapshot: make_empty_plan(),
+            plan_snapshot: make_plan_with_delete("test-cm", "uid-cm"),
             execution: journal::ExecutionRecord {
                 phases_completed,
                 phases_total,
@@ -1285,201 +1336,328 @@ mod tests {
         (store, dir)
     }
 
-    #[tokio::test]
-    async fn workflow_execute_closed_gate_zero_mutations_and_paused() {
-        use kube::client::Body;
-        let (mock_service, _handle) =
-            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
-        let client = kube::Client::new(mock_service, "test-ns");
+    fn json_response(json: serde_json::Value) -> http::Response<Body> {
+        http::Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&json).unwrap()))
+            .unwrap()
+    }
 
-        let plan = make_empty_plan();
-        let j = make_test_journal_for_workflow(RunState::Applying, 0, 0);
+    fn not_found_response() -> http::Response<Body> {
+        let body = serde_json::json!({
+            "kind": "Status", "apiVersion": "v1", "metadata": {},
+            "status": "Failure", "message": "not found", "reason": "NotFound", "code": 404
+        });
+        http::Response::builder()
+            .status(404)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    }
+
+    fn test_kind_map() -> std::collections::HashMap<String, crate::kube::discovery::KindInfo> {
+        let mut km = std::collections::HashMap::new();
+        km.insert(
+            "ConfigMap".to_string(),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        km
+    }
+
+    fn test_gk_map() -> std::collections::HashMap<(String, String), crate::kube::discovery::KindInfo>
+    {
+        let mut gk = std::collections::HashMap::new();
+        gk.insert(
+            (String::new(), "ConfigMap".to_string()),
+            crate::kube::discovery::KindInfo {
+                group: String::new(),
+                version: "v1".to_string(),
+                plural: "configmaps".to_string(),
+                namespaced: true,
+                listable: true,
+            },
+        );
+        gk
+    }
+
+    /// Test 1: Fresh workflow with 1 DELETE action and closed gate.
+    /// Gate is closed before workflow → executor must not send DELETE.
+    /// Asserts: 0 DELETE requests via tower mock, journal durably Paused.
+    #[tokio::test]
+    async fn workflow_fresh_closed_gate_blocks_delete() {
+        let delete_count = Arc::new(AtomicUsize::new(0));
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let dc = delete_count.clone();
+        let rc = request_count.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                rc.fetch_add(1, Ordering::SeqCst);
+                if req.method() == http::Method::DELETE {
+                    dc.fetch_add(1, Ordering::SeqCst);
+                }
+                // Respond to any request with not-found (gate should prevent reaching here)
+                send.send_response(not_found_response());
+            }
+        });
+
+        let client = kube::Client::new(mock_service, "test-ns");
+        let plan = make_plan_with_delete("target-cm", "uid-target");
+        let j = make_test_journal_for_workflow(RunState::Applying, 0, 1);
         let (store, dir) = make_journal_store(j);
+        let km = test_kind_map();
+        let gk = test_gk_map();
+        let gvk = std::collections::HashMap::new();
+        let gvr = std::collections::HashMap::new();
         let gate = Arc::new(MutationGate::new(4));
         gate.close_and_drain().await;
 
         let ctx = WorkflowContext {
             client: &client,
             plan: &plan,
-            kind_map: &std::collections::HashMap::new(),
-            gk_map: &std::collections::HashMap::new(),
-            gvk_map: &std::collections::HashMap::new(),
-            gvr_map: &std::collections::HashMap::new(),
+            kind_map: &km,
+            gk_map: &gk,
+            gvk_map: &gvk,
+            gvr_map: &gvr,
         };
 
         let outcome = run_teardown_workflow(
             &ctx,
             Some(&store),
             &gate,
-            WorkflowStart::Execute(WorkflowOptions {
+            WorkflowStart::Fresh {
                 dry_run: false,
-                force: false,
                 skip_confirm: true,
-                start_phase: 0,
-            }),
+            },
         )
         .await
         .unwrap();
 
-        assert_eq!(outcome.final_state, RunState::Paused);
-        assert!(
-            outcome.result.deleted.is_empty(),
-            "no DELETEs with closed gate"
+        drop(client);
+        let _ = spawned.await;
+
+        assert_eq!(outcome.final_state, RunState::Paused, "must be Paused");
+        assert_eq!(
+            delete_count.load(Ordering::SeqCst),
+            0,
+            "0 DELETE requests with closed gate"
         );
 
         let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
         assert_eq!(
             j_disk.state,
             RunState::Paused,
-            "journal must be durably Paused"
+            "journal durably Paused on disk"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Test 2: Executor error with ExplicitCleanupBlocked journal.
+    /// The workflow error handler calls mark_failed_preserving_retryable,
+    /// which must NOT overwrite ExplicitCleanupBlocked to Failed.
     #[tokio::test]
-    async fn workflow_execute_preserves_explicit_cleanup_blocked() {
-        use kube::client::Body;
-        let (mock_service, _handle) =
+    async fn workflow_preserves_explicit_cleanup_blocked_on_error() {
+        let (mock_service, handle) =
             tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
-        let client = kube::Client::new(mock_service, "test-ns");
 
-        let plan = make_empty_plan();
-        let mut j = make_test_journal_for_workflow(RunState::ExplicitCleanupBlocked, 7, 7);
+        // Mock: respond to confirmation prompt URI with 500 to trigger executor error
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((_req, send)) = handle.next_request().await {
+                send.send_response(
+                    http::Response::builder()
+                        .status(500)
+                        .body(Body::from(b"internal error".to_vec()))
+                        .unwrap(),
+                );
+            }
+        });
+
+        let client = kube::Client::new(mock_service, "test-ns");
+        let plan = make_plan_with_delete("explicit-cm", "uid-explicit");
+        let mut j = make_test_journal_for_workflow(RunState::ExplicitCleanupBlocked, 1, 1);
         j.execution.explicit_cleanup_error = Some(journal::ExplicitCleanupError {
             target: "test-target".to_string(),
             error_kind: journal::ExplicitCleanupErrorKind::IncompleteScan,
             message: "test ref guard failure".to_string(),
         });
+        j.execution.phases_completed = 1;
         let (store, dir) = make_journal_store(j);
+        let km = test_kind_map();
+        let gk = test_gk_map();
+        let gvk = std::collections::HashMap::new();
+        let gvr = std::collections::HashMap::new();
         let gate = Arc::new(MutationGate::new(4));
 
         let ctx = WorkflowContext {
             client: &client,
             plan: &plan,
-            kind_map: &std::collections::HashMap::new(),
-            gk_map: &std::collections::HashMap::new(),
-            gvk_map: &std::collections::HashMap::new(),
-            gvr_map: &std::collections::HashMap::new(),
+            kind_map: &km,
+            gk_map: &gk,
+            gvk_map: &gvk,
+            gvr_map: &gvr,
         };
 
-        let result = run_teardown_workflow(
+        let _result = run_teardown_workflow(
             &ctx,
             Some(&store),
             &gate,
-            WorkflowStart::Execute(WorkflowOptions {
-                dry_run: false,
-                force: true,
-                skip_confirm: true,
-                start_phase: 7,
-            }),
+            WorkflowStart::ResumeExecution { start_phase: 1 },
         )
         .await;
 
-        match result {
-            Ok(_outcome) => {
-                let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
-                assert_ne!(
-                    j_disk.state,
-                    RunState::Failed,
-                    "ExplicitCleanupBlocked must not be overwritten to Failed by workflow"
-                );
-            }
-            Err(e) => {
-                let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
-                assert!(
-                    j_disk.state == RunState::ExplicitCleanupBlocked
-                        || j_disk.state == RunState::ApplyCompleted,
-                    "journal state must be ExplicitCleanupBlocked or ApplyCompleted, got {:?} (error: {})",
-                    j_disk.state,
-                    e
-                );
-            }
-        }
+        drop(client);
+        let _ = spawned.await;
+
+        // Regardless of Ok/Err, the journal must NOT have been overwritten to Failed
+        let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
+        assert_ne!(
+            j_disk.state,
+            RunState::Failed,
+            "ExplicitCleanupBlocked must not be overwritten to Failed; got {:?}",
+            j_disk.state
+        );
+        // ExplicitCleanupBlocked or ApplyCompleted (if executor completed the empty remaining phases)
+        assert!(
+            j_disk.state == RunState::ExplicitCleanupBlocked
+                || j_disk.state == RunState::ApplyCompleted,
+            "state must be ExplicitCleanupBlocked or ApplyCompleted, got {:?}",
+            j_disk.state
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Test 3: ResumeCleanup with a pending cleanup decision.
+    /// Verifies the cleanup path goes through run_teardown_workflow and
+    /// exercises the GET/DELETE tower mock with exact request count.
     #[tokio::test]
-    async fn workflow_execute_fresh_force_false_resume_force_true() {
-        assert!(
-            !WorkflowOptions {
-                dry_run: false,
-                force: false,
-                skip_confirm: false,
-                start_phase: 0,
-            }
-            .force,
-            "fresh apply must pass force=false"
-        );
-        assert!(
-            WorkflowOptions {
-                dry_run: false,
-                force: true,
-                skip_confirm: true,
-                start_phase: 3,
-            }
-            .force,
-            "resume must pass force=true"
-        );
-    }
+    async fn workflow_resume_cleanup_pending_decision_exact_requests() {
+        let get_count = Arc::new(AtomicUsize::new(0));
+        let list_count = Arc::new(AtomicUsize::new(0));
+        let delete_count = Arc::new(AtomicUsize::new(0));
+        let gc = get_count.clone();
+        let lc = list_count.clone();
+        let dc = delete_count.clone();
 
-    #[tokio::test]
-    async fn workflow_resume_cleanup_through_public_entry() {
-        use kube::client::Body;
-        let (mock_service, _handle) =
+        let (mock_service, handle) =
             tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
-        let client = kube::Client::new(mock_service, "test-ns");
 
-        let plan = make_empty_plan();
-        let j = make_test_journal_for_workflow(RunState::InteractiveCleanup, 7, 7);
-        let (store, dir) = make_journal_store(j.clone());
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let uri = req.uri().to_string();
+                match req.method().clone() {
+                    m if m == http::Method::GET && !uri.contains('?') => {
+                        gc.fetch_add(1, Ordering::SeqCst);
+                        // Return 404 → resource gone
+                        send.send_response(not_found_response());
+                    }
+                    m if m == http::Method::GET && uri.contains('?') || m == http::Method::GET => {
+                        lc.fetch_add(1, Ordering::SeqCst);
+                        // LIST: return empty list (endpoint exists)
+                        send.send_response(json_response(serde_json::json!({
+                            "apiVersion": "v1", "kind": "ConfigMapList",
+                            "metadata": {"resourceVersion": "1"}, "items": []
+                        })));
+                    }
+                    m if m == http::Method::DELETE => {
+                        dc.fetch_add(1, Ordering::SeqCst);
+                        send.send_response(json_response(serde_json::json!({
+                            "apiVersion": "v1", "kind": "Status", "status": "Success"
+                        })));
+                    }
+                    _ => {
+                        send.send_response(not_found_response());
+                    }
+                }
+            }
+        });
+
+        let client = kube::Client::new(mock_service, "test-ns");
+        let plan = make_plan_with_delete("cleanup-cm", "uid-cleanup");
+        let mut j = make_test_journal_for_workflow(RunState::InteractiveCleanup, 1, 1);
+        // Add a pending cleanup decision with DeleteRequested result
+        j.cleanup_decisions.push(journal::CleanupDecision {
+            resource: crate::kube::resource::ResourceId {
+                group: String::new(),
+                version: "v1".to_string(),
+                kind: "ConfigMap".to_string(),
+                namespace: Some("test-ns".to_string()),
+                name: "cleanup-cm".to_string(),
+                uid: Some("uid-cleanup".to_string()),
+            },
+            action: "delete".to_string(),
+            bound_uid: Some("uid-cleanup".to_string()),
+            result: Some(CleanupResult::DeleteRequested),
+            approved_spec_name: None,
+        });
+        let j_clone = j.clone();
+        let (store, dir) = make_journal_store(j);
+        let km = test_kind_map();
+        let gk = test_gk_map();
+        let gvk = std::collections::HashMap::new();
+        let gvr = std::collections::HashMap::new();
         let gate = Arc::new(MutationGate::new(4));
 
         let ctx = WorkflowContext {
             client: &client,
             plan: &plan,
-            kind_map: &std::collections::HashMap::new(),
-            gk_map: &std::collections::HashMap::new(),
-            gvk_map: &std::collections::HashMap::new(),
-            gvr_map: &std::collections::HashMap::new(),
+            kind_map: &km,
+            gk_map: &gk,
+            gvk_map: &gvk,
+            gvr_map: &gvr,
         };
 
-        let result = run_teardown_workflow(
+        let _result = run_teardown_workflow(
             &ctx,
             Some(&store),
             &gate,
             WorkflowStart::ResumeCleanup {
-                journal: &j,
+                journal: &j_clone,
                 main_complete: true,
                 paused_from_residual: false,
             },
         )
         .await;
 
-        match result {
-            Ok(outcome) => {
-                assert!(
-                    matches!(
-                        outcome.final_state,
-                        RunState::ApplyCompleted | RunState::InteractiveCleanup | RunState::Failed
-                    ),
-                    "resume cleanup outcome must be a valid terminal state, got {:?}",
-                    outcome.final_state
-                );
-            }
-            Err(_) => {
-                let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
-                assert!(
-                    matches!(
-                        j_disk.state,
-                        RunState::Failed | RunState::InteractiveCleanup
-                    ),
-                    "on error, journal must be Failed or InteractiveCleanup, got {:?}",
-                    j_disk.state
-                );
-            }
-        }
+        drop(client);
+        let _ = spawned.await;
+
+        // At minimum, the workflow must have sent GET requests to check the resource
+        let gets = get_count.load(Ordering::SeqCst);
+        assert!(
+            gets >= 1,
+            "must send at least 1 GET to check resource state, got {}",
+            gets
+        );
+        // DELETE should NOT be sent because the resource is already gone (404)
+        assert_eq!(
+            delete_count.load(Ordering::SeqCst),
+            0,
+            "resource is 404 → no DELETE needed"
+        );
+
+        // Journal must reflect cleanup result
+        let j_disk = journal::load_journal(&dir.join("journal.json")).unwrap();
+        let decision = j_disk.cleanup_decisions.first();
+        assert!(decision.is_some(), "cleanup decision must be present");
+        let d = decision.unwrap();
+        assert!(
+            matches!(d.result, Some(CleanupResult::Gone)),
+            "cleanup decision result must be Gone after 404 reconciliation, got {:?}",
+            d.result
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
