@@ -1,0 +1,75 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/leader-worker-set.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/leader-worker-set.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-leader-worker-set.v1.0.1-2026-09-29T17-38-14.025782813_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-leaderworkerset] elapsed 0s
+✅ Scanned 269 resource types in 13.0s
+   openshift-leaderworkerset — 36 resources
+   Scanned 1 namespace(s), 36 total resources
+🔍 Running targeted adapters... found 0 resources
+  6 candidate(s) for leader-worker-set.v1.0.1 (5 discovery + 1 plan)
+    6 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/leader-worker-set/20260929T173831Z-0004792e-0 (6 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/leader-worker-set  (ns: openshift-leaderworkerset)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/leader-worker-set  (ns: openshift-leaderworkerset)
+             operator group approved via --approve-scope operator-group
+  REVIEW   Lease/openshift-lws-operator-lock  (ns: openshift-leaderworkerset)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-leaderworkerset  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+exit=0

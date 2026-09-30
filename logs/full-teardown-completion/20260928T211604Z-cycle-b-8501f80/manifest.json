@@ -1,0 +1,44 @@
+{
+  "type": "cycle-b-gap-reproduction",
+  "purpose": "Gap reproduction evidence with current production code (pre-Phase-B/C/D fix). Not a Phase D validation cycle.",
+  "issue": 46,
+  "base_commit": "8501f80",
+  "binary_sha256": "eb724f680f3541848e99301bb3128047f5bee192acbfa39d324daaca2be3f245",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "config": "configs/full-teardown.json",
+  "command": "oc-deps teardown batch configs/full-teardown.json --refresh-discovery --backup-dir backups",
+  "result": {
+    "succeeded": 15,
+    "skipped": 0,
+    "failed": 0,
+    "total_deleted": 90,
+    "total_already_gone": 1,
+    "total_failed": 0,
+    "drift": 0
+  },
+  "backup": {
+    "bundles": 15,
+    "total_captured": 574,
+    "all_cluster_uid_match": true,
+    "all_captured_eq_total": true
+  },
+  "post_delete": {
+    "target_subscriptions_absent": true,
+    "nfd_crs_absent": true,
+    "nfd_sccs_absent": true,
+    "authorino_crbs_absent": true,
+    "terminating": 0,
+    "residual_workloads": {
+      "keycloak/postgres": "present (attribution gap)",
+      "redhat-ods-applications/maas-postgres": "present (attribution gap)",
+      "redhat-ods-applications/ogx-postgres": "present (attribution gap)",
+      "rhoai-model-registries/model-catalog": "present (inventory gap)"
+    }
+  },
+  "notes": [
+    "First batch attempt failed: rhods-operator backup had 1 inaccessible query failure (transient API timeout during 269-type namespace scan). Retry succeeded.",
+    "NFD nfd-worker/nfd-topology-updater SCCs deleted by targeted adapter.",
+    "Authorino CRBs deleted by targeted adapter.",
+    "model-catalog has 0/1 ready (kube-rbac-proxy sidecar broken after operator deletion)."
+  ]
+}

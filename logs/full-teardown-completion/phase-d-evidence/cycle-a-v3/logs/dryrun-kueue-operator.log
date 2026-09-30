@@ -1,0 +1,72 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/kueue-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/kueue-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-kueue-operator.v1.4.2-2026-09-29T17-39-07.504066826_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 2 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-kueue] elapsed 0s
+✅ Scanned 269 resource types in 15.6s
+   openshift-kueue — 36 resources
+   Scanned 1 namespace(s), 36 total resources
+🔍 Running targeted adapters... found 0 resources
+  7 candidate(s) for kueue-operator.v1.4.2 (6 discovery + 1 plan)
+    7 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/kueue-operator/20260929T173927Z-000479d0-0 (7 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/kueue-operator  (ns: openshift-kueue)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/kueue-operator.v1.4.2  (ns: openshift-kueue)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/kueue-operator.v1.4.2  (ns: openshift-kueue)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/kueue-operator  (ns: openshift-kueue)
+             operator group approved via --approve-scope operator-group
+  REVIEW   Lease/openshift-kueue-operator-lock  (ns: openshift-kueue)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/kueues.kueue.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-kueue  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+exit=0

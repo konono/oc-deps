@@ -1,0 +1,85 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/gpu-operator-certified.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/gpu-operator-certified.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-gpu-operator-certified.v26.7.1-2026-09-29T17-41-36.418689891_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: nvidia-gpu-operator] elapsed 0s
+✅ Scanned 269 resource types in 21.8s
+   nvidia-gpu-operator — 126 resources
+   Scanned 1 namespace(s), 126 total resources
+   Found 85 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  92 candidate(s) for gpu-operator-certified.v26.7.1 (91 discovery + 1 plan)
+    92 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/gpu-operator-certified/20260929T174221Z-00047aad-0 (92 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/gpu-operator-certified  (ns: nvidia-gpu-operator)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE ClusterPolicy/gpu-cluster-policy  (cluster-scoped)
+             independent CR approved via --approve-scope independent
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/gpu-operator-certified  (ns: nvidia-gpu-operator)
+             operator group approved via --approve-scope operator-group
+  REVIEW   Lease/53822513.nvidia.com  (ns: nvidia-gpu-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/nvidiadrivers.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gpuclusters.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/computedomains.resource.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/computedomaincliques.resource.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/clusterpolicies.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/nvidia-gpu-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 7 KEEP, 1 REVIEW
+exit=0

@@ -1,0 +1,70 @@
+{
+  "cycle": "B",
+  "description": "Full 15-operator teardown with explicit cleanup lifecycle fix",
+  "binary_sha256": "8b5f6a35e52dbb983eded28e2348484770e1de4c30ecf9dba37cc090d688f04d",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "execution_date": "2026-09-30",
+  "command": "oc-deps teardown batch configs/full-teardown.json --skip-missing --backup-dir /tmp/cycle-b2-backup",
+  "exit_code": 0,
+  "batch_result": {
+    "succeeded": 1,
+    "skipped": 14,
+    "failed": 0,
+    "not_run": 0,
+    "rhcl_resume_run_id": "run-18da1a5069642413-69e89",
+    "rhcl_legacy_migration": "Failed -> ExplicitCleanupBlocked (after cluster/receipt validation)",
+    "audit_coverage": "2483/2483 probes succeeded"
+  },
+  "journal_post_state": {
+    "run_id": "run-18da1a5069642413-69e89",
+    "state": "ApplyCompleted",
+    "phases_completed": 8,
+    "phases_total": 8,
+    "deleted": 8,
+    "failed": 0,
+    "journal_sha256": "9d3965956808fec729a9d315ef93c9169032689abb9563cd1ca504e569552398"
+  },
+  "explicit_targets_10_of_10_notfound": true,
+  "explicit_targets": [
+    "StatefulSet/postgres ns=keycloak",
+    "Deployment/maas-postgres ns=redhat-ods-applications",
+    "StatefulSet/ogx-postgres ns=redhat-ods-applications",
+    "Deployment/model-catalog ns=rhoai-model-registries",
+    "Gateway/maas-default-gateway ns=openshift-ingress",
+    "ConfigMap/maas-gateway-options ns=openshift-ingress",
+    "ConsolePlugin/kuadrant-console-plugin (cluster)",
+    "Deployment/kuadrant-console-plugin ns=openshift-rhcl",
+    "Service/kuadrant-console-plugin ns=openshift-rhcl",
+    "ConfigMap/kuadrant-console-nginx-conf ns=openshift-rhcl"
+  ],
+  "target_subscriptions": 0,
+  "remaining_subscriptions": [
+    "group-sync-operator",
+    "openshift-storage (13 ODF subs)"
+  ],
+  "cluster_health": {
+    "node": "Ready",
+    "terminating": 0,
+    "pv_count": 7,
+    "pvc_count": 8
+  },
+  "batch_stdout_sha256": "5fc79967715836747583b53ce55e0703e29000a4300afac80019aac3f78c9bf9",
+  "batch_stdout_path": "/tmp/cycle-b2-final/batch-output.log",
+  "cancelled_redundant_audit": {
+    "reason": "batch already completed 2483/2483 residual audit; separate journal audit was redundant",
+    "stderr_sha256": "6834c62207fcc22d85b0302d46caa5dc2ca5c02ac590c703f209cf0eb69250a0"
+  },
+  "pre_journal_sha256": "fb8a6fc6fbda15257703b751a7e2274cc437ad88c734195a91b6e5150e35432b",
+  "pre_journal_state": "Failed",
+  "destructive_e2e_tested_commit_pre_history_rewrite": "c75e22e31eead25f7639e536e6e1fb69b730b9be",
+  "final_quality_gate_commit": "d5a6ef6711c4722838b81998033a931676d65d22",
+  "evidence_commit": "containing git commit",
+  "provenance_note": "Branch history was squashed to remove a plaintext cluster credential from a checked-in evidence script. Product paths (src, tests, configs, Cargo.toml, Cargo.lock, README.md) are byte-identical between the destructive E2E source revision and final_quality_gate_commit.",
+  "final_quality_gates": {
+    "cargo_fmt": "pass",
+    "cargo_clippy_all_targets_deny_warnings": "pass",
+    "cargo_test": "1363 unit + 5 CLI UX + 1 corpus replay passed",
+    "cargo_build_release": "pass",
+    "final_review_binary_sha256_macos": "c293ff6d699b200bc34ecafe42b43f9fb219796054ad6fedb07395c39da69820"
+  }
+}

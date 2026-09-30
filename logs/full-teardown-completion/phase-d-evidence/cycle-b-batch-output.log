@@ -1,0 +1,199 @@
+📋 Batch: 15 operator(s) from configs/full-teardown.json
+  1: rhods-operator (+5 explicit)
+  2: rhbk-operator (+1 explicit)
+  3: leader-worker-set
+  4: job-set
+  5: kueue-operator
+  6: servicemeshoperator3
+  7: nfd
+  8: gpu-operator-certified
+  9: openshift-cert-manager-operator
+  10: rhcl-operator (+4 explicit)
+  11: authorino-operator
+  12: dns-operator
+  13: limitador-operator
+  14: cluster-observability-operator
+  15: opentelemetry-product
+
+📦 Backup dir: /tmp/cycle-b2-backup
+🔍 Baseline gate: verifying 15 target operators...
+  ⏭ rhods-operator — not found, will skip
+  ⏭ rhbk-operator — not found, will skip
+  ⏭ leader-worker-set — not found, will skip
+  ⏭ job-set — not found, will skip
+  ⏭ kueue-operator — not found, will skip
+  ⏭ servicemeshoperator3 — not found, will skip
+  ⏭ nfd — not found, will skip
+  ⏭ gpu-operator-certified — not found, will skip
+  ⏭ openshift-cert-manager-operator — not found, will skip
+  🔄 rhcl-operator — absent but has pending explicit cleanup (run-18da1a5069642413-69e89)
+  ⏭ authorino-operator — not found, will skip
+  ⏭ dns-operator — not found, will skip
+  ⏭ limitador-operator — not found, will skip
+  ⏭ cluster-observability-operator — not found, will skip
+  ⏭ opentelemetry-product — not found, will skip
+✅ Baseline: 0/15 operators present, 14 skipped, 1 pending resume
+
+
+  ⏭ [1/15] SKIP rhods-operator (not found)
+
+  ⏭ [2/15] SKIP rhbk-operator (not found)
+
+  ⏭ [3/15] SKIP leader-worker-set (not found)
+
+  ⏭ [4/15] SKIP job-set (not found)
+
+  ⏭ [5/15] SKIP kueue-operator (not found)
+
+  ⏭ [6/15] SKIP servicemeshoperator3 (not found)
+
+  ⏭ [7/15] SKIP nfd (not found)
+
+  ⏭ [8/15] SKIP gpu-operator-certified (not found)
+
+  ⏭ [9/15] SKIP openshift-cert-manager-operator (not found)
+
+============================================================
+  [10/15] RESUME rhcl-operator (run-18da1a5069642413-69e89)
+============================================================
+📦 Validating 1 backup receipt(s)...
+  ✅ Backup intact: /tmp/cycle-b2-backup/operator/rhcl-operator/20260930T125209Z-00069e89-0
+  ✅ Migrated legacy Failed journal to ExplicitCleanupBlocked
+Resuming run run-18da1a5069642413-69e89 (state: ExplicitCleanupBlocked, operator: rhcl-operator.v1.4.3)
+  5/8 phases completed, 4 deleted
+🔍 Re-discovering API resources...
+   Discovery: 32.4s
+  ✅ Operator absent — explicit cleanup eligible
+  Resuming from phase 5/8
+
+Phase 0 Freeze OLM (completed in prior run)
+
+Phase 1 Trigger operand cleanup (completed in prior run)
+
+Phase 2 Remaining cleanup (completed in prior run)
+
+Phase 3 Remove Operator controllers (completed in prior run)
+
+Phase 4 Namespace cleanup (completed in prior run)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DELETED  ConsolePlugin/kuadrant-console-plugin  (cluster-scoped)
+  DELETED  Deployment/kuadrant-console-plugin  (ns: openshift-rhcl)
+  DELETED  Service/kuadrant-console-plugin  (ns: openshift-rhcl)
+  DELETED  ConfigMap/kuadrant-console-nginx-conf  (ns: openshift-rhcl)
+  ⏳ wave 1: 4/4 Gone (0s)
+
+  ⏳ 4/4 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/apikeyapprovals.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apikeyrequests.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apikeys.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apiproducts.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dnspolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/kuadrants.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/oidcpolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/planpolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/ratelimitpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/telemetrypolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/tlspolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/tokenratelimitpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  8 deleted, 0 already gone, 0 failed
+
+Planned preserved: 14 KEEP, 0 REVIEW
+
+Teardown Residual Audit: rhcl-operator.v1.4.3
+Session: run-18da1a5069642413-69e89
+Target operator absent: yes
+Execution: ApplyCompleted (8/8 phases)
+
+EXPECTED PRESERVED (17)
+  ClusterServiceVersion/rhcl-operator.v1.4.3  (openshift-rhcl)
+    controller needed for operand cleanup
+  OperatorGroup/rhcl-operator  (openshift-rhcl)
+    other operators remain in namespace
+  Lease/f139389e.kuadrant.io  (openshift-rhcl)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/apikeyapprovals.devportal.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/apikeyrequests.devportal.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/apikeys.devportal.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/apiproducts.devportal.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/authpolicies.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/dnspolicies.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/kuadrants.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/oidcpolicies.extensions.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/planpolicies.extensions.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/ratelimitpolicies.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/telemetrypolicies.extensions.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/tlspolicies.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/tokenratelimitpolicies.kuadrant.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-rhcl  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 2483/2483 probes succeeded
+  ✅ rhcl-operator resumed and completed
+
+  ⏭ [11/15] SKIP authorino-operator (not found)
+
+  ⏭ [12/15] SKIP dns-operator (not found)
+
+  ⏭ [13/15] SKIP limitador-operator (not found)
+
+  ⏭ [14/15] SKIP cluster-observability-operator (not found)
+
+  ⏭ [15/15] SKIP opentelemetry-product (not found)
+
+📊 Batch results:
+  ⏭ rhods-operator SKIPPED
+  ⏭ rhbk-operator SKIPPED
+  ⏭ leader-worker-set SKIPPED
+  ⏭ job-set SKIPPED
+  ⏭ kueue-operator SKIPPED
+  ⏭ servicemeshoperator3 SKIPPED
+  ⏭ nfd SKIPPED
+  ⏭ gpu-operator-certified SKIPPED
+  ⏭ openshift-cert-manager-operator SKIPPED
+  ✅ rhcl-operator
+  ⏭ authorino-operator SKIPPED
+  ⏭ dns-operator SKIPPED
+  ⏭ limitador-operator SKIPPED
+  ⏭ cluster-observability-operator SKIPPED
+  ⏭ opentelemetry-product SKIPPED
+
+  1 succeeded, 14 skipped, 0 failed, 0 not run

@@ -787,6 +787,15 @@ fn print_inspection_tree(inspection: &OperatorInspection, verbose: bool) {
                     crate::analyzers::namespace_scope::NamespaceEvidence::SpecNamespaceRef {
                         ..
                     } => "spec-ns-ref",
+                    crate::analyzers::namespace_scope::NamespaceEvidence::PlanActionNamespace => {
+                        "plan-action"
+                    }
+                    crate::analyzers::namespace_scope::NamespaceEvidence::OperatorGroupAllNamespaces => {
+                        "OG all-namespaces"
+                    }
+                    crate::analyzers::namespace_scope::NamespaceEvidence::ExplicitCleanupTarget => {
+                        "explicit-target"
+                    }
                 })
                 .collect();
             println!(

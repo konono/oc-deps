@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "issue": 46,
+    "phase": "D-Cycle-A-attempt-2",
+    "status": "FAILED",
+    "commit": "d2e339f",
+    "timestamp": "2026-09-29T12:00-14:00Z"
+  },
+  "failures": [
+    {
+      "id": "F1-nfd-scc-baseline",
+      "description": "Recovery did not restore NFD SCC operands. SCCs were absent at baseline, so NFD backup failed with 'Adapter nfd-finalizer-cleanup reported status=Unknown'",
+      "impact": "NFD backup incomplete, violating mandatory pre-delete backup gate"
+    },
+    {
+      "id": "F2-nfd-no-backup",
+      "description": "NFD applied without --backup-dir after backup failure. Violates mandatory pre-delete backup gate.",
+      "command": "printf 'y\\n' | ./target/release/oc-deps teardown apply /tmp/cycle-a-v2/nfd-retry.json"
+    },
+    {
+      "id": "F3-no-evidence",
+      "description": "No Cycle A v2 evidence committed. HEAD d2e339f contains only cycle-a-attempt1-failed.json. No v2 plans, journals, backup receipts, command logs, or post audit."
+    },
+    {
+      "id": "F4-pvc-drift",
+      "description": "PV/PVC 'retained' claim unsupported. Current 6/7 vs prior deleted-state 7/8. No pre-baseline PV/PVC inventory saved for comparison."
+    },
+    {
+      "id": "F5-input-piping",
+      "description": "stdin piping misused twice: echo 'y' and printf 'y\\n' treated 'y' as namespace name by the scan. Must use -y flag.",
+      "raw_error": "Error: Adapter nfd-finalizer-cleanup reported status=Unknown \u2014 scanned namespace 'y'"
+    }
+  ],
+  "what_succeeded": {
+    "14_of_15_operators": "deleted through oc-deps with backup (excluding NFD)",
+    "10_explicit_targets": "all absent (9 with backup, 1 NFD without)",
+    "typemeta_normalization": "audit_list normalization enabled clean NFD audit"
+  },
+  "current_cluster_state": {
+    "target_subs": 0,
+    "explicit_targets_absent": "10/10",
+    "node": "Ready",
+    "terminating": 0,
+    "pvs": 6,
+    "pvcs": 7
+  }
+}

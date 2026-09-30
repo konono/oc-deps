@@ -4,3 +4,4 @@ target
 .claude/worktrees/
 .tracecraft/
 mise.lock
+logs/full-teardown-completion/*/backups/

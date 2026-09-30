@@ -1,0 +1,78 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/opentelemetry-product.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/opentelemetry-product.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-opentelemetry-operator.v0.158.0-2-2026-09-29T17-46-06.465672729_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-opentelemetry-operator] elapsed 0s
+✅ Scanned 269 resource types in 23.7s
+   openshift-opentelemetry-operator — 53 resources
+   Scanned 1 namespace(s), 53 total resources
+🔍 Running targeted adapters... found 0 resources
+  9 candidate(s) for opentelemetry-operator.v0.158.0-2 (8 discovery + 1 plan)
+    9 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/opentelemetry-product/20260929T174635Z-00047c4c-0 (9 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/opentelemetry-product  (ns: openshift-opentelemetry-operator)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ns: openshift-opentelemetry-operator)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ns: openshift-opentelemetry-operator)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/opentelemetry-product  (ns: openshift-opentelemetry-operator)
+             operator group approved via --approve-scope operator-group
+  REVIEW   Lease/9f7554c3.opentelemetry.io  (ns: openshift-opentelemetry-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/instrumentations.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/opampbridges.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/opentelemetrycollectors.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/targetallocators.opentelemetry.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-opentelemetry-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 6 KEEP, 1 REVIEW
+exit=0

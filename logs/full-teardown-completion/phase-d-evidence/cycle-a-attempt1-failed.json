@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "issue": 46,
+    "phase": "D-Cycle-A-attempt-1",
+    "status": "FAILED",
+    "commit": "d15869a",
+    "binary_sha256": "b488909ad12df455d4d748eebbceb270848ea68c901e319c43b0781f11bf1b58",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "timestamp": "2026-09-29T08:30-10:30Z"
+  },
+  "result": "PARTIAL \u2014 15 operators + 4 Phase C workloads deleted through oc-deps, but 6 pre-configured explicit targets missed",
+  "root_cause": "Individual teardown plan CLI (--delete-resource) was used for only the 4 Phase C targets. The 6 existing delete_resources entries in configs/full-teardown.json (2 for rhods-operator, 4 for rhcl-operator) were NOT passed as --delete-resource CLI flags. The config file is consumed by teardown apply --config batch flow, not individual plan+apply.",
+  "what_worked": {
+    "15_operator_subscriptions": "all deleted, 0 failed",
+    "4_phase_c_workloads": "all deleted through oc-deps explicit_deletes (UID-bound, ref-guard, backup)",
+    "nfd_sccs_authorino_crbs": "deleted"
+  },
+  "what_failed": {
+    "6_configured_explicit_targets_missed": [
+      "gateway.networking.k8s.io/Gateway/openshift-ingress/maas-default-gateway",
+      "core/ConfigMap/openshift-ingress/maas-gateway-options",
+      "console.openshift.io/ConsolePlugin/cluster/kuadrant-console-plugin",
+      "apps/Deployment/openshift-rhcl/kuadrant-console-plugin",
+      "core/Service/openshift-rhcl/kuadrant-console-plugin",
+      "core/ConfigMap/openshift-rhcl/kuadrant-console-nginx-conf"
+    ],
+    "manual_remediation": "6 targets deleted via direct oc delete (bypassed plan/UID/ref-guard/backup/journal)"
+  },
+  "audit_incomplete_issue": {
+    "cause": "CronJob/image-pruner in openshift-image-registry had missing TypeMeta from k8s LIST",
+    "fix": "TypeMeta normalization added to audit_list in post-attempt commit d4c63ea"
+  },
+  "lesson": "Individual plan+apply must include ALL configured delete_resources for the operator, not just Phase C additions. Use --delete-resource for every entry."
+}

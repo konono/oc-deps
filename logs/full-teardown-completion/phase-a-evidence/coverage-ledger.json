@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "issue": 46,
+    "phase": "A",
+    "timestamp": "2026-09-28T21:00:00Z"
+  },
+  "coverage": {
+    "total_residual_workloads": 4,
+    "in_residual_scan_scope": 3,
+    "in_residual_report": 3,
+    "attributed": 0,
+    "unattributed": 3,
+    "inventory_gap": 1,
+    "failures": 0
+  },
+  "per_resource": [
+    {
+      "resource": "StatefulSet/postgres (keycloak)",
+      "in_scope": true,
+      "reported": true,
+      "classification": "UNATTRIBUTED",
+      "gap": "attribution"
+    },
+    {
+      "resource": "Deployment/maas-postgres (redhat-ods-applications)",
+      "in_scope": true,
+      "reported": true,
+      "classification": "UNATTRIBUTED",
+      "gap": "attribution"
+    },
+    {
+      "resource": "StatefulSet/ogx-postgres (redhat-ods-applications)",
+      "in_scope": true,
+      "reported": true,
+      "classification": "UNATTRIBUTED",
+      "gap": "attribution"
+    },
+    {
+      "resource": "Deployment/model-catalog (rhoai-model-registries)",
+      "in_scope": false,
+      "reported": false,
+      "classification": null,
+      "gap": "inventory"
+    }
+  ]
+}

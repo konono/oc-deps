@@ -1,0 +1,86 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhbk-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhbk-operator.json
+🔍 Discovering API resources...
+   Discovery: 35.1s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhbk-operator.v26.6.7-opr.1-2026-09-29T17-35-52.625840903_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: keycloak] elapsed 0s
+✅ Scanned 269 resource types in 13.4s
+   keycloak — 65 resources
+   Scanned 1 namespace(s), 65 total resources
+   Found 14 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  23 candidate(s) for rhbk-operator.v26.6.7-opr.1 (21 discovery + 2 plan)
+    23 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/rhbk-operator/20260929T173613Z-0004780e-0 (23 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/rhbk-operator  (ns: keycloak)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE Keycloak/keycloak  (ns: keycloak)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE KeycloakRealmImport/maas-realm  (ns: keycloak)
+             independent CR approved via --approve-scope independent
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/rhbk-operator  (ns: keycloak)
+             operator group approved via --approve-scope operator-group
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DRY-DELETE StatefulSet/postgres  (ns: keycloak)
+             config explicit
+
+  BARRIER (skipped in dry-run)
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/keycloak  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 4 KEEP, 0 REVIEW
+exit=0

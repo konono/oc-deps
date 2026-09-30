@@ -1,0 +1,110 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/leader-worker-set.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 26 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-leader-worker-set.v1.0.1-2026-09-29T18-17-45.064480025_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-leaderworkerset] elapsed 0s
+✅ Scanned 269 resource types in 21.7s
+   openshift-leaderworkerset — 34 resources
+   Scanned 1 namespace(s), 34 total resources
+🔍 Running targeted adapters... found 0 resources
+  6 candidate(s) for leader-worker-set.v1.0.1 (5 discovery + 1 plan)
+    6 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/leader-worker-set/20260929T181810Z-00048229-0 (6 resources)
+
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9dd860376ccf0-48229.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/leader-worker-set  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/leader-worker-set  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/openshift-lws-operator-lock  (ns: openshift-leaderworkerset)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-leaderworkerset  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown Residual Audit: leader-worker-set.v1.0.1
+Session: run-18d9dd860376ccf0-48229
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+UNATTRIBUTED RELATED RESOURCES (8)
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/authorino-operator.v1.4.3  (openshift-leaderworkerset)  [uid:ccd58efc-a4f9-47c1-9c68-c1ab4fefc20e]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cert-manager-operator.v1.20.0  (openshift-leaderworkerset)  [uid:88888501-e35f-4393-89d8-bee54cb95211]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cluster-observability-operator.v1.5.2  (openshift-leaderworkerset)  [uid:825ad36c-fd50-4600-8fc4-89612a007150]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/dns-operator.v1.4.2  (openshift-leaderworkerset)  [uid:6ac9628c-dc93-4efd-b981-b0063148c8ae]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/kueue-operator.v1.4.2  (openshift-leaderworkerset)  [uid:dae95e02-9049-449e-8d56-f22fe030d2ca]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/limitador-operator.v1.4.2  (openshift-leaderworkerset)  [uid:5b90a333-518c-4d1f-920b-0f9f080ffc60]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-leaderworkerset)  [uid:946800de-bcbf-4ece-b459-be6c8b569288]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/servicemeshoperator3.v3.4.2  (openshift-leaderworkerset)  [uid:670946e7-0de6-46e0-bae7-f5497fd3a477]
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/leader-worker-set.v1.0.1  (openshift-leaderworkerset)
+    controller needed for operand cleanup
+  Lease/openshift-lws-operator-lock  (openshift-leaderworkerset)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-leaderworkerset  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 16/16 probes succeeded
+
+📋 8 residual(s) observed.
+  Use 'teardown journal' to review.
+exit=0

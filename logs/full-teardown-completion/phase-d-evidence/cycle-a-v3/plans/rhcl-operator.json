@@ -1,0 +1,387 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-29T18:05:42.773492474+00:00",
+  "targets": [
+    {
+      "package_name": "rhcl-operator",
+      "install_namespace": "openshift-rhcl",
+      "csv_name_pattern": "rhcl-operator.v1.4.3"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator",
+          "uid": "1ca03138-9fd1-480a-b72e-5314b4939355",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator.v1.4.3",
+          "uid": "6cbf6963-a18e-43c3-a663-41fb8f823ddc",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "kuadrant.io",
+          "kind": "AuthPolicy",
+          "namespace": "openshift-ingress",
+          "name": "maas-gateway-auth",
+          "uid": "3ae65a06-b6c8-4763-8dc1-3015d2c6f684",
+          "action": "DELETE"
+        },
+        {
+          "group": "kuadrant.io",
+          "kind": "Kuadrant",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant",
+          "uid": "c9061526-c651-48cd-bd46-57f9ab65eb97",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator.v1.4.3",
+          "uid": "6cbf6963-a18e-43c3-a663-41fb8f823ddc",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator",
+          "uid": "3746fb8a-203e-42f7-a3f0-558364a1ee67",
+          "action": "KEEP"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-rhcl",
+          "name": "f139389e.kuadrant.io",
+          "uid": "36322248-b597-4a67-ae22-8798348e86df",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Explicit cleanup",
+      "resources": [
+        {
+          "group": "console.openshift.io",
+          "kind": "ConsolePlugin",
+          "namespace": null,
+          "name": "kuadrant-console-plugin",
+          "uid": "b33501b2-f7b6-44a6-9567-44f2bc24a886",
+          "action": "DELETE"
+        },
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin",
+          "uid": "f48c2899-a52d-4f4b-85c8-ae22b6c90c9f",
+          "action": "DELETE"
+        },
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin",
+          "uid": "66f7d874-e724-443d-acd8-2ebd0415a7a6",
+          "action": "DELETE"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-nginx-conf",
+          "uid": "b3b875ff-7b95-453d-af89-ef600e3c79da",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "apikeyapprovals.devportal.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "apikeyrequests.devportal.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "apikeys.devportal.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "apiproducts.devportal.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "authpolicies.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "dnspolicies.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "kuadrants.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "oidcpolicies.extensions.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "planpolicies.extensions.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "ratelimitpolicies.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "telemetrypolicies.extensions.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "tlspolicies.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "tokenratelimitpolicies.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 8,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-rhcl",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ],
+  "explicit_deletes": [
+    {
+      "group": "console.openshift.io",
+      "kind": "ConsolePlugin",
+      "namespace": null,
+      "name": "kuadrant-console-plugin",
+      "uid": "b33501b2-f7b6-44a6-9567-44f2bc24a886",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "operator.openshift.io/Console"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "apps",
+      "kind": "Deployment",
+      "namespace": "openshift-rhcl",
+      "name": "kuadrant-console-plugin",
+      "uid": "f48c2899-a52d-4f4b-85c8-ae22b6c90c9f",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "autoscaling/HorizontalPodAutoscaler"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "",
+      "kind": "Service",
+      "namespace": "openshift-rhcl",
+      "name": "kuadrant-console-plugin",
+      "uid": "66f7d874-e724-443d-acd8-2ebd0415a7a6",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [
+        {
+          "group": "console.openshift.io",
+          "kind": "ConsolePlugin",
+          "namespace": null,
+          "name": "kuadrant-console-plugin",
+          "uid": "b33501b2-f7b6-44a6-9567-44f2bc24a886",
+          "ref_field": "spec.backend.service.name",
+          "in_deletion_plan": true
+        }
+      ],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "console.openshift.io/ConsolePlugin",
+          "gateway.networking.k8s.io/HTTPRoute",
+          "gateway.networking.k8s.io/GRPCRoute",
+          "gateway.networking.k8s.io/TCPRoute",
+          "gateway.networking.k8s.io/TLSRoute",
+          "gateway.networking.k8s.io/UDPRoute",
+          "networking.k8s.io/Ingress",
+          "route.openshift.io/Route"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "",
+      "kind": "ConfigMap",
+      "namespace": "openshift-rhcl",
+      "name": "kuadrant-console-nginx-conf",
+      "uid": "b3b875ff-7b95-453d-af89-ef600e3c79da",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin",
+          "uid": "f48c2899-a52d-4f4b-85c8-ae22b6c90c9f",
+          "ref_field": "spec.template.spec.volumes[1].configMap.name",
+          "in_deletion_plan": true
+        },
+        {
+          "group": "apps",
+          "kind": "ReplicaSet",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin-7d64bff6cd",
+          "uid": "c7cfda04-ea4a-4403-b1d6-701f3b0e9a26",
+          "ref_field": "spec.template.spec.volumes[1].configMap.name",
+          "in_deletion_plan": true
+        },
+        {
+          "group": "",
+          "kind": "Pod",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin-7d64bff6cd-89xvr",
+          "uid": "69cda3a8-1825-4c58-8e9e-5acb0480d01c",
+          "ref_field": "spec.volumes[1].configMap.name",
+          "in_deletion_plan": true
+        }
+      ],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "apps/Deployment",
+          "apps/StatefulSet",
+          "apps/DaemonSet",
+          "apps/ReplicaSet",
+          "batch/Job",
+          "batch/CronJob",
+          "Pod",
+          "gateway.networking.k8s.io/Gateway"
+        ],
+        "scan_complete": true
+      }
+    }
+  ]
+}

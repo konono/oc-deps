@@ -179,7 +179,7 @@ async fn run_tui_inner(
             "  Applying {} draft override(s) with fresh validation...",
             app.draft_overrides.len()
         );
-        let audit_ctx = journal::build_audit_context(plan, target_operators, gk_map);
+        let audit_ctx = journal::build_audit_context(plan, target_operators, gk_map, None);
         let j = journal_store.read().await;
         let operator_snapshot = &j.operator;
 
@@ -354,7 +354,7 @@ async fn run_tui_inner(
     // P0: Verify operator generation is still SameGeneration before Start.
     {
         let j = journal_store.read().await;
-        let gen_state = crate::teardown::audit::check_operator_generation(
+        let gen_state = crate::teardown::audit::check_operator_generation_fresh(
             client,
             &j.operator,
             &j.audit_context.csv_baseline,
@@ -537,7 +537,7 @@ async fn run_execution_screen(
             if let Err(exec_err) = exec_r {
                 let _ = journal_store
                     .update(|j| {
-                        j.state = RunState::Failed;
+                        crate::teardown::journal::mark_failed_preserving_retryable(j);
                     })
                     .await;
                 return Err(exec_err.context("Executor error during TUI draw failure"));
@@ -580,7 +580,11 @@ async fn run_execution_screen(
                             );
                             // If executor had a hard error, persist Failed and propagate
                             if let Err(exec_err) = exec_r {
-                                let _ = journal_store.update(|j| { j.state = RunState::Failed; }).await;
+                                let _ = journal_store
+                                    .update(|j| {
+                                        crate::teardown::journal::mark_failed_preserving_retryable(j);
+                                    })
+                                    .await;
                                 disable_raw_mode().ok();
                                 execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
                                 return Err(exec_err.context(
@@ -626,7 +630,7 @@ async fn run_execution_screen(
         Some(Err(e)) => {
             let _ = journal_store
                 .update(|j| {
-                    j.state = RunState::Failed;
+                    crate::teardown::journal::mark_failed_preserving_retryable(j);
                 })
                 .await;
             Err(e)
@@ -691,7 +695,8 @@ async fn handle_execution_completed(
     // ApplyCompleted is durably persisted. Verify generation Absent before Residual.
     let gen_state = {
         let j = journal_store.read().await;
-        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await
+        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
+            .await
     };
     match gen_state {
         OperatorGenerationState::Absent => {}
@@ -715,7 +720,7 @@ async fn handle_execution_completed(
     // Run fresh complete audit and persist before entering residual screen
     let audit_result = {
         let j = journal_store.read().await;
-        audit::run_residual_audit(client, &j)
+        audit::run_observed_audit(client, &j)
             .await
             .context("Fresh residual audit failed")?
     };
@@ -723,9 +728,12 @@ async fn handle_execution_completed(
     // Re-verify generation hasn't changed during audit
     {
         let j = journal_store.read().await;
-        let gen_recheck =
-            audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline)
-                .await;
+        let gen_recheck = audit::check_operator_generation_fresh(
+            client,
+            &j.operator,
+            &j.audit_context.csv_baseline,
+        )
+        .await;
         if !matches!(gen_recheck, OperatorGenerationState::Absent) {
             eprintln!("⚠ Operator generation changed during audit — residual cleanup blocked.");
             return Ok(());
@@ -1108,17 +1116,18 @@ pub async fn run_residual_cleanup(
     let j = journal_store.read().await;
 
     let gen_state =
-        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
+        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
+            .await;
 
     match gen_state {
         OperatorGenerationState::Absent => {
             eprintln!("\n🔍 Running post-apply residual audit...");
-            match audit::run_residual_audit(client, &j).await {
+            match audit::run_post_mutation_audit(client, &j).await {
                 Ok(audit_result) => {
                     let status = audit::residual_status_from_audit(&audit_result);
                     audit::print_residual_audit(&audit_result, &j);
 
-                    let gen_recheck = audit::check_operator_generation(
+                    let gen_recheck = audit::check_operator_generation_fresh(
                         client,
                         &j.operator,
                         &j.audit_context.csv_baseline,
@@ -1192,7 +1201,8 @@ pub async fn run_residual_only(
     // Fresh generation Absent check
     let j = journal_store.read().await;
     let gen_state =
-        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
+        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
+            .await;
     if check_and_persist_paused(journal_store, gate).await? {
         return Ok(());
     }
@@ -1201,7 +1211,7 @@ pub async fn run_residual_only(
     }
 
     // Fresh complete audit
-    let audit_result = match audit::run_residual_audit(client, &j).await {
+    let audit_result = match audit::run_observed_audit(client, &j).await {
         Ok(a) => a,
         Err(e) => {
             if check_and_persist_paused(journal_store, gate).await? {
@@ -1216,7 +1226,8 @@ pub async fn run_residual_only(
 
     // Post-audit generation recheck
     let gen_recheck =
-        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
+        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
+            .await;
     if check_and_persist_paused(journal_store, gate).await? {
         return Ok(());
     }

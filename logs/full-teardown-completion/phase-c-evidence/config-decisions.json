@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "issue": 46,
+    "phase": "C",
+    "commit": "f7602ffa",
+    "timestamp": "2026-09-29"
+  },
+  "decisions": [
+    {
+      "resource": "apps/StatefulSet/keycloak/postgres",
+      "action": "DELETE",
+      "rationale": "Ansible-created Keycloak postgres without ownerRef. No controller manages it. Attribution gap \u2014 in keycloak namespace (rhbk-operator footprint) but no label/ownerRef evidence. Config explicit_delete via configs/full-teardown.json under rhbk-operator.",
+      "recovery_note": "PVCs retained by config (not deleted). Ansible --tags keycloak for re-deploy after operator restore. If PVCs are manually deleted, stale credentials require full keycloak re-deploy."
+    },
+    {
+      "resource": "apps/Deployment/redhat-ods-applications/maas-postgres",
+      "action": "DELETE",
+      "rationale": "Ansible-created MaaS postgres without ownerRef. No controller manages it. In redhat-ods-applications (rhods-operator footprint). Config explicit_delete under rhods-operator.",
+      "recovery_note": "Ansible --tags platform for re-deploy."
+    },
+    {
+      "resource": "apps/StatefulSet/redhat-ods-applications/ogx-postgres",
+      "action": "DELETE",
+      "rationale": "Ansible-created OGX postgres without ownerRef. No controller manages it. Config explicit_delete under rhods-operator.",
+      "recovery_note": "PVCs retained by config (not deleted). Ansible --tags ogx for re-deploy after operator restore."
+    },
+    {
+      "resource": "apps/Deployment/rhoai-model-registries/model-catalog",
+      "action": "DELETE",
+      "rationale": "Model registry operator workload without ownerRef. Has managed-by: model-registry-operator label but no lifecycle ownership. Inventory gap (not in plan scope until Phase B SpecNamespaceRef). Config explicit_delete under rhods-operator.",
+      "recovery_note": "Ansible --tags workload for re-deploy."
+    }
+  ]
+}

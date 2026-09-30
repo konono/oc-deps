@@ -1,0 +1,4 @@
+authorino-authorino
+authorino-authorino-k8s-auth
+authorino-operator.v1.4.-aebi6w2LhknWTDhwOWTKKEMwWvTQbaFJbmu0Bk
+authorino-operator.v1.4.3-8Ri3BqEPMeEohu5zJF8dQiaZcQVTRxPQ24ufyi

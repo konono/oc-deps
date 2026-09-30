@@ -1,0 +1,79 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 22 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  nfd.4.22.0-202609212027 (ns: openshift-nfd) (Subscription/nfd@openshift-nfd)
+
+Preflight
+  ✓ Subscription resolved (nfd.4.22.0-202609212027) — Subscription/nfd found — will be deleted in Phase 0
+  ✓ CSV health (nfd.4.22.0-202609212027) — phase=Succeeded
+  ✓ Controller available (nfd.4.22.0-202609212027) — nfd-controller-manager: Available (1)
+  ! Provenance — 2 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/nfd  (ns: openshift-nfd)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/nfd.4.22.0-202609212027  (ns: openshift-nfd)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE NodeFeature/ip-10-0-23-226.us-east-2.compute.internal  (ns: openshift-nfd)
+         independent CR approved via --approve-scope independent
+  DELETE NodeFeatureDiscovery/nfd-instance  (ns: openshift-nfd)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/nfd.4.22.0-202609212027  (ns: openshift-nfd)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/nfd  (ns: openshift-nfd)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io  (ns: openshift-nfd)
+         leader election lease (holder references operator deployment)
+  REVIEW ConfigMap/nfd-manager-config  (ns: openshift-nfd)
+         operator-related ConfigMap — verify before deleting
+  REVIEW ConfigMap/nfd-worker  (ns: openshift-nfd)
+         operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/nodefeaturerules.nfd.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/nodefeatures.nfd.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-nfd  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  2 CRs have uncertain provenance (owned API, but origin unknown)
+  6 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 5 DELETE, 0 EXPECT-GONE, 8 KEEP, 3 REVIEW
+  0 blockers, 2 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-nfd.4.22.0-202609212027-2026-09-29T18-47-36.543200962_00-00.json
+📄 Execution plan saved to logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/nfd-final.json
+
+⏱ Discovery: 34.9s, OLM: 3.0s, Plan: 2.9s, Total: 41.0s

@@ -1,0 +1,842 @@
+[
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-cluster-csi-drivers",
+    "name": "aws-ebs-csi-driver-node",
+    "uid": "01ea8746-fb24-4cc8-ae41-86db2b656793"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-cluster-node-tuning-operator",
+    "name": "tuned",
+    "uid": "2efa3080-97ad-4ca4-a9cc-b29bcd6697cf"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-dns",
+    "name": "dns-default",
+    "uid": "67558e76-1b66-4e1c-a980-2f16c53f222c"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-dns",
+    "name": "node-resolver",
+    "uid": "7e679548-3e60-470f-9965-210cc7b82eca"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-image-registry",
+    "name": "node-ca",
+    "uid": "f81ab2e2-ed44-4460-a588-0b5cc4a5d2da"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-ingress-canary",
+    "name": "ingress-canary",
+    "uid": "89f0bc5e-306f-4ddf-bae0-4c8b9b71ef02"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-insights",
+    "name": "insights-runtime-extractor",
+    "uid": "2bff9336-6995-4de5-9ec0-49299ad5cc45"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-machine-config-operator",
+    "name": "machine-config-daemon",
+    "uid": "a556e30c-f03f-4356-b832-310afab773af"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-machine-config-operator",
+    "name": "machine-config-server",
+    "uid": "8a9839ba-b460-4bd4-b8aa-c174401a0653"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-monitoring",
+    "name": "node-exporter",
+    "uid": "a9af88f8-d5ca-4928-b706-5921e3dd2419"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-multus",
+    "name": "multus",
+    "uid": "4e0ff7e3-59f8-4ef5-a609-447aa5b5eb49"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-multus",
+    "name": "multus-additional-cni-plugins",
+    "uid": "48d787e0-409b-4fc2-8e43-8216304d4950"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-multus",
+    "name": "network-metrics-daemon",
+    "uid": "3ae144af-3f62-495b-9203-e0a19e4091c3"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-network-diagnostics",
+    "name": "network-check-target",
+    "uid": "ebc4b66a-b0a1-4776-b320-d4ba3bab5efe"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-network-node-identity",
+    "name": "network-node-identity",
+    "uid": "fe2ac497-c672-4c10-a699-30498e8a1a9b"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-network-operator",
+    "name": "iptables-alerter",
+    "uid": "e32deb11-3636-4cce-8ed7-4092de3781fa"
+  },
+  {
+    "group": "apps",
+    "kind": "DaemonSet",
+    "namespace": "openshift-ovn-kubernetes",
+    "name": "ovnkube-node",
+    "uid": "2bdf915b-115d-4615-b859-b7103350621e"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "group-sync-operator",
+    "name": "group-sync-operator-controller-manager",
+    "uid": "809f7e37-b02c-4bed-a7d7-15eeaea3042c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-apiserver",
+    "name": "apiserver",
+    "uid": "7450b832-5d4a-4bae-8018-4cfe58c651b7"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-apiserver-operator",
+    "name": "openshift-apiserver-operator",
+    "uid": "ff915dec-21b3-42ec-9102-5859ae49f327"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-authentication",
+    "name": "oauth-openshift",
+    "uid": "fc6b9166-fd74-46cc-ad29-d45e49228375"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-authentication-operator",
+    "name": "authentication-operator",
+    "uid": "2b371382-cf85-4ed9-ab9c-269e67e3af9c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-catalogd",
+    "name": "catalogd-controller-manager",
+    "uid": "539189a7-b084-4b2b-b0fa-08d813f11c25"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cloud-controller-manager",
+    "name": "aws-cloud-controller-manager",
+    "uid": "3fbbff36-835f-489e-bc86-4edef8b5ab67"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cloud-controller-manager-operator",
+    "name": "cluster-cloud-controller-manager-operator",
+    "uid": "a3f2ce71-9f7f-42f0-8ff9-5bd38f6b35e0"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cloud-credential-operator",
+    "name": "cloud-credential-operator",
+    "uid": "b696939f-055a-4075-90d8-39519b25b4e9"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cloud-credential-operator",
+    "name": "pod-identity-webhook",
+    "uid": "83186f48-54d5-41f7-9658-8fb57a455fb9"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cloud-network-config-controller",
+    "name": "cloud-network-config-controller",
+    "uid": "d2eeee7a-cad6-48cc-a48b-c37363931315"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-csi-drivers",
+    "name": "aws-ebs-csi-driver-controller",
+    "uid": "d10b4935-d5f4-4c21-be4f-998a24be92fd"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-csi-drivers",
+    "name": "aws-ebs-csi-driver-operator",
+    "uid": "7da9459c-664b-402b-b341-77fc70ee84ba"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-machine-approver",
+    "name": "machine-approver",
+    "uid": "e1cc454b-bde6-4648-bed2-fa30084c74f5"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-node-tuning-operator",
+    "name": "cluster-node-tuning-operator",
+    "uid": "df971e92-7ce6-49f7-bbc2-35e9da1e1475"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-olm-operator",
+    "name": "cluster-olm-operator",
+    "uid": "ce5dfbf6-af0a-4538-bcb6-f3c01b85a2ab"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-samples-operator",
+    "name": "cluster-samples-operator",
+    "uid": "75ea721b-268b-4b9e-afc8-8bec38e2720f"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-storage-operator",
+    "name": "cluster-storage-operator",
+    "uid": "97dfbed2-9bea-478e-820f-3756b1c50b3f"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-storage-operator",
+    "name": "csi-snapshot-controller",
+    "uid": "40a2b7ff-f2f2-4fb8-b7ca-f7639885851b"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-storage-operator",
+    "name": "csi-snapshot-controller-operator",
+    "uid": "1b7384a0-d7d7-41db-9304-a91b0718acac"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-storage-operator",
+    "name": "volume-data-source-validator",
+    "uid": "9fb29b2b-fdbb-4f39-997f-31c1f53290d3"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-cluster-version",
+    "name": "cluster-version-operator",
+    "uid": "1cca6dc5-e650-4c75-84d6-8ffcaaf254b5"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-config-operator",
+    "name": "openshift-config-operator",
+    "uid": "bc56295f-2123-4374-b1ae-c51bf333b1f9"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-console",
+    "name": "console",
+    "uid": "72153752-a3cf-4812-b537-0ddd8051e06c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-console",
+    "name": "downloads",
+    "uid": "29d623b2-8e1b-4b6a-9960-41da0feaf86f"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-console-operator",
+    "name": "console-operator",
+    "uid": "bd94ff99-b2c4-4400-ad6f-9545429d65bb"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-controller-manager",
+    "name": "controller-manager",
+    "uid": "b9cb15fe-d106-4625-b845-82d85361a19c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-controller-manager-operator",
+    "name": "openshift-controller-manager-operator",
+    "uid": "1f70cafa-0f25-43f8-ad96-2936fe3f575c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-dns-operator",
+    "name": "dns-operator",
+    "uid": "bda5e263-c3c8-48b7-8fb7-f6e5d078020a"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-etcd-operator",
+    "name": "etcd-operator",
+    "uid": "b157a868-574d-4686-b668-2a0718f9b4d0"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-image-registry",
+    "name": "cluster-image-registry-operator",
+    "uid": "c79b5bee-3d70-4605-a0f6-3adfff4375d5"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-image-registry",
+    "name": "image-registry",
+    "uid": "a6f6bc3f-7bfc-4db0-83f0-261b8e674a15"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-ingress",
+    "name": "router-default",
+    "uid": "1877d8eb-e619-4f4c-a979-c05f1fe80941"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-ingress-operator",
+    "name": "ingress-operator",
+    "uid": "39bd12de-4cd6-4e33-b0b9-9493db94be3b"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-insights",
+    "name": "insights-operator",
+    "uid": "ca70cf6b-9282-42e7-b6f9-b59b97c9edfb"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-kube-apiserver-operator",
+    "name": "kube-apiserver-operator",
+    "uid": "4b63830b-870b-4b19-8319-38e9d76551bd"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-kube-controller-manager-operator",
+    "name": "kube-controller-manager-operator",
+    "uid": "a90fada1-4e99-4f19-9c64-5119f853aa2e"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-kube-scheduler-operator",
+    "name": "openshift-kube-scheduler-operator",
+    "uid": "608f237a-b589-4ce5-8963-0086ea93dc7b"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-kube-storage-version-migrator",
+    "name": "migrator",
+    "uid": "f244613d-5901-4b82-8367-f4b4ffd9ec71"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-kube-storage-version-migrator-operator",
+    "name": "kube-storage-version-migrator-operator",
+    "uid": "38a195eb-e556-471e-b082-bd99ee0d33ff"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-api",
+    "name": "cluster-autoscaler-operator",
+    "uid": "7bf36786-93d1-4b5a-b07f-e51222798f29"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-api",
+    "name": "cluster-baremetal-operator",
+    "uid": "c90becee-8d5a-4c14-8961-a1d5ac5fa955"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-api",
+    "name": "control-plane-machine-set-operator",
+    "uid": "c0c8a98f-0174-4170-81ab-637f4e48173b"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-api",
+    "name": "machine-api-controllers",
+    "uid": "45d036fa-89d5-4072-91f2-8830a7649f88"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-api",
+    "name": "machine-api-operator",
+    "uid": "45a153e0-c899-476f-b0f6-fc02101583ef"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-config-operator",
+    "name": "machine-config-controller",
+    "uid": "192971ca-70ff-4ea8-affd-d035943ae684"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-machine-config-operator",
+    "name": "machine-config-operator",
+    "uid": "08a783bf-e9e3-48ef-9e32-e67ae91d7c49"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-marketplace",
+    "name": "marketplace-operator",
+    "uid": "dfc78285-ac5d-449a-ab8f-7a8fa21f97e1"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "cluster-monitoring-operator",
+    "uid": "bdc2520c-3532-44bd-bd2b-41daba29b356"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "kube-state-metrics",
+    "uid": "8aa35b34-069a-48ac-b988-5e04de5ef4fd"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "metrics-server",
+    "uid": "e68ecea0-ad26-4f23-85cd-067adce8f29c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "monitoring-plugin",
+    "uid": "567972e0-8879-4ec5-86a0-b53173fb28db"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "openshift-state-metrics",
+    "uid": "2004d6aa-7397-4931-83be-b7b76187df56"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "prometheus-operator",
+    "uid": "fddb0cd0-b47c-4565-b531-ce8718876460"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "prometheus-operator-admission-webhook",
+    "uid": "2518546a-717a-44b4-9775-b1bada0f6e9e"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "telemeter-client",
+    "uid": "0550902b-2759-4b81-933f-dbfac59c5fe8"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-monitoring",
+    "name": "thanos-querier",
+    "uid": "7bdaa969-6d90-4b57-9efd-43915c965b21"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-multus",
+    "name": "multus-admission-controller",
+    "uid": "d9f4bc26-763c-4746-9950-8a3f474a6192"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-network-console",
+    "name": "networking-console-plugin",
+    "uid": "bc4b9862-c888-49cb-b54d-f6a0f1d4ffce"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-network-diagnostics",
+    "name": "network-check-source",
+    "uid": "9a96f350-e6d8-4599-a1ab-41933975170f"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-network-operator",
+    "name": "network-operator",
+    "uid": "7d64a059-a6cb-458e-963b-f562c1929366"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-oauth-apiserver",
+    "name": "apiserver",
+    "uid": "4e11b80d-f217-4a37-b736-fa04283779a5"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-operator-controller",
+    "name": "operator-controller-controller-manager",
+    "uid": "0d30ba85-2051-4269-842d-c8b18823e606"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-operator-lifecycle-manager",
+    "name": "catalog-operator",
+    "uid": "314ec854-4d5c-4a57-af13-c5bc86ed53a2"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-operator-lifecycle-manager",
+    "name": "olm-operator",
+    "uid": "15219133-ac6d-4a84-8a23-5b36b861e555"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-operator-lifecycle-manager",
+    "name": "package-server-manager",
+    "uid": "5027b577-36cb-4a85-9e9c-4fc9ae8b9e56"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-operator-lifecycle-manager",
+    "name": "packageserver",
+    "uid": "b45fa4c4-d822-4c29-95ca-71b746990ea6"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-ovn-kubernetes",
+    "name": "ovnkube-control-plane",
+    "uid": "edeb40fc-b7d5-42ae-9372-d937ecdf8b69"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-route-controller-manager",
+    "name": "route-controller-manager",
+    "uid": "d8e7684f-052c-4cb6-be9a-63826a95f244"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-service-ca",
+    "name": "service-ca",
+    "uid": "208f35ac-efb9-49fb-a77a-a274cd981451"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-service-ca-operator",
+    "name": "service-ca-operator",
+    "uid": "3cadbe77-088f-4ab2-914b-748a6b9dd892"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "ceph-csi-controller-manager",
+    "uid": "80c29632-da2b-48dd-94c9-6128d40e107d"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "cnpg-controller-manager",
+    "uid": "12df9b89-571f-4bc1-aa0b-40374afc67db"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "csi-addons-controller-manager",
+    "uid": "4200aea1-0140-47a1-baa9-a5ade0299a8c"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "noobaa-endpoint",
+    "uid": "756e09c8-da60-4a8c-a60e-1bc5b111aef3"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "noobaa-operator",
+    "uid": "14a4ad7d-324d-4d2c-9bc7-94992c16553d"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "ocs-client-operator-console",
+    "uid": "0b25e872-29c1-4a2f-bf5e-4d1909099700"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "ocs-client-operator-controller-manager",
+    "uid": "e467c730-e2df-43b6-acb9-0949b4d27453"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "ocs-operator",
+    "uid": "99282ad4-01e8-44c0-b4b4-d2e4194c844b"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "odf-console",
+    "uid": "d6dc286f-406d-48bb-aa23-ec76360bc743"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "odf-external-snapshotter-operator",
+    "uid": "471e1a6c-3782-41b8-b7d3-8e4e7dd5cf2a"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "odf-operator-controller-manager",
+    "uid": "9134f2f9-61df-4e42-a898-aaccdbbecabf"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "prometheus-operator",
+    "uid": "512c6405-79e1-4bf4-87dc-139835495bb5"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "rook-ceph-operator",
+    "uid": "2e94dfcf-b193-4cde-934d-5db64b2b897e"
+  },
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "namespace": "openshift-storage",
+    "name": "ux-backend-server",
+    "uid": "d0730759-15c8-4bdd-8405-a341541e4a65"
+  },
+  {
+    "group": "apps",
+    "kind": "StatefulSet",
+    "namespace": "openshift-monitoring",
+    "name": "alertmanager-main",
+    "uid": "fd4e38e2-2863-4bd2-ae82-1e5649e9c4d4"
+  },
+  {
+    "group": "apps",
+    "kind": "StatefulSet",
+    "namespace": "openshift-monitoring",
+    "name": "prometheus-k8s",
+    "uid": "17925df7-19a9-4e90-9873-8f57882ba267"
+  },
+  {
+    "group": "apps",
+    "kind": "StatefulSet",
+    "namespace": "openshift-storage",
+    "name": "noobaa-core",
+    "uid": "51b96376-c721-48a6-b6ae-4be645696fcb"
+  },
+  {
+    "group": "apps",
+    "kind": "StatefulSet",
+    "namespace": "openshift-storage",
+    "name": "noobaa-db-pg",
+    "uid": "3a076d26-b3bc-48be-b185-430c1e95766e"
+  },
+  {
+    "group": "batch",
+    "kind": "CronJob",
+    "namespace": "openshift-image-registry",
+    "name": "image-pruner",
+    "uid": "be422b9c-6b49-4813-93a6-bbf32135e16f"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "llm-serving",
+    "name": "download-qwen3-06b",
+    "uid": "887b86f3-20c4-4fbc-ba37-d8ebcbb0fd49"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-2llm5",
+    "uid": "2bba41f9-be08-44c1-a312-62bd8525b312"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-445vw",
+    "uid": "2c5d493d-585b-46bb-afe2-12af9179be18"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-9vltd",
+    "uid": "3a3663e8-ae7c-4af1-91b7-fb22317a96c0"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-dvgpq",
+    "uid": "10838d1c-e4f9-46d0-b9c9-349779792a89"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-g9tfp",
+    "uid": "7f170f2c-a121-46e9-a69a-dc70442cf9f1"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-jgf46",
+    "uid": "957c8c1c-c3b5-49c3-90e9-9cf18fbb23e3"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-knwqq",
+    "uid": "2579790c-acba-4b7c-9ae4-1f7186bf8ace"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-lpzx6",
+    "uid": "cd8d0a2f-058c-4994-a482-e7c085d4f1f3"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-mhl2z",
+    "uid": "25e7f2a1-e290-43fc-8730-5e29df5186f3"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-p2p4k",
+    "uid": "5e61ea73-68f1-42bc-a179-0a3c39fb16c4"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-sg44x",
+    "uid": "0decf8e9-0e17-4794-914a-a0b62807dbfc"
+  },
+  {
+    "group": "batch",
+    "kind": "Job",
+    "namespace": "openshift-insights",
+    "name": "periodic-gathering-x6ntn",
+    "uid": "90f4b820-cb70-4335-a85e-9e29d1a7855f"
+  }
+]

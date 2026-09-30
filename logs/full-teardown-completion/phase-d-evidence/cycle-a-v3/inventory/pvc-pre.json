@@ -1,0 +1,65 @@
+[
+  {
+    "name": "data-postgres-0",
+    "namespace": "keycloak",
+    "uid": "2cf4dcae-0cfd-4800-9c63-6ef4e59f5854",
+    "capacity": "10Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "hf-model-cache",
+    "namespace": "llm-serving",
+    "uid": "78d0aa75-0dd3-497a-be8e-0e9e0b3417b0",
+    "capacity": "200Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "storage-perses-0",
+    "namespace": "openshift-cluster-observability-operator",
+    "uid": "6b6d4c88-acfe-44a9-acd1-217ac99cbdde",
+    "capacity": "1Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "db-noobaa-db-pg-0",
+    "namespace": "openshift-storage",
+    "uid": "c785139b-a313-424f-8109-13f0bdfafecc",
+    "capacity": "50Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "data-ogx-postgres-0",
+    "namespace": "redhat-ods-applications",
+    "uid": "e0688bd2-abce-4cc8-9ae3-39eb451d3644",
+    "capacity": "10Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "maas-postgres-data",
+    "namespace": "redhat-ods-applications",
+    "uid": "6e4e4b88-e15a-42d9-99e1-1be379710dc0",
+    "capacity": "10Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "mlflow-pvc",
+    "namespace": "redhat-ods-applications",
+    "uid": "f53e4754-fba3-40f7-8bb0-c2c98902d697",
+    "capacity": "10Gi",
+    "status": "Bound"
+  },
+  {
+    "name": "ogx-postgres-data",
+    "namespace": "redhat-ods-applications",
+    "uid": "ea156cb5-14ea-4a1d-a208-29127bd94776",
+    "capacity": "10Gi",
+    "status": "Pending"
+  },
+  {
+    "name": "ogx-server-pvc",
+    "namespace": "redhat-ods-applications",
+    "uid": "e72f9f4c-d55e-472c-a99c-f36c4e8b0546",
+    "capacity": "10Gi",
+    "status": "Bound"
+  }
+]

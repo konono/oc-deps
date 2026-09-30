@@ -11,14 +11,14 @@ use crate::kube::scanner::SharedPlanner;
 
 pub const ADAPTER_ID: &str = "nfd-finalizer-cleanup";
 
-const SUPPORTED_CSV_VERSIONS: &[&str] = &["4.22.0-202609151747"];
+const SUPPORTED_CSV_VERSIONS: &[&str] = &["4.22.0-202609151747", "4.22.0-202609212027"];
 
 const SOURCE_COMMIT: &str = "3931a6191fa842897327f105a862f58f59db1a7d";
 const SOURCE_URL: &str = "https://github.com/openshift/cluster-nfd-operator/tree/3931a6191fa842897327f105a862f58f59db1a7d";
 const CLEANUP_FUNCTION: &str =
     "internal/controllers/nodefeaturediscovery_reconciler.go:finalizeComponents";
 const NAMING_FUNCTION: &str = "internal/controllers/nodefeaturediscovery_reconciler.go:handleSCCs (hardcoded deterministic names)";
-const BINDING_NOTE: &str = "binding=package nfd + exact CSV 4.22.0-202609151747 (corpus/live empirical); source contract reference=upstream commit 3931a619 (approximate for downstream image)";
+const BINDING_NOTE: &str = "binding=package nfd + exact CSV 4.22.0-{202609151747,202609212027} (corpus/live empirical); source contract reference=upstream commit 3931a619 (approximate for downstream image)";
 
 const ROOT_GROUP: &str = "nfd.openshift.io";
 const ROOT_VERSION: &str = "v1";
@@ -986,5 +986,28 @@ mod tests {
         assert_eq!(merged.resources.len(), 1);
         assert_eq!(merged.resources[0].id.name, "nfd-worker");
         assert_eq!(merged.incomplete_count, 0);
+    }
+
+    #[test]
+    fn new_csv_version_202609212027_is_supported() {
+        let version = extract_csv_version("nfd.4.22.0-202609212027");
+        assert_eq!(version, Some("4.22.0-202609212027"));
+        assert!(SUPPORTED_CSV_VERSIONS.contains(&"4.22.0-202609212027"));
+    }
+
+    #[test]
+    fn unsupported_neighbor_version_rejected() {
+        let version = extract_csv_version("nfd.4.22.0-999999999999");
+        assert_eq!(version, Some("4.22.0-999999999999"));
+        assert!(!SUPPORTED_CSV_VERSIONS.contains(&"4.22.0-999999999999"));
+    }
+
+    #[test]
+    fn wildcard_version_not_accepted() {
+        // Verify only exact versions are in the list, not patterns
+        for v in SUPPORTED_CSV_VERSIONS {
+            assert!(!v.contains('*'), "no wildcards allowed: {}", v);
+            assert!(v.len() > 10, "version must be exact, not short: {}", v);
+        }
     }
 }

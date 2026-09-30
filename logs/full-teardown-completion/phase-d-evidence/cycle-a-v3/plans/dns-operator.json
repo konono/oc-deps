@@ -1,0 +1,138 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-29T17:27:35.441601681+00:00",
+  "targets": [
+    {
+      "package_name": "dns-operator",
+      "install_namespace": "openshift-rhcl",
+      "csv_name_pattern": "dns-operator.v1.4.2"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "openshift-rhcl",
+          "name": "dns-operator-stable-redhat-operators-openshift-marketplace",
+          "uid": "cb88ae27-a31c-4cd8-bd10-917e109df36f",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "dns-operator.v1.4.2",
+          "uid": "d2d35c11-995d-4224-a741-67f9ce04c7d1",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": []
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "openshift-rhcl",
+          "name": "dns-operator.v1.4.2",
+          "uid": "d2d35c11-995d-4224-a741-67f9ce04c7d1",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "openshift-rhcl",
+          "name": "rhcl-operator",
+          "uid": "3746fb8a-203e-42f7-a3f0-558364a1ee67",
+          "action": "KEEP"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "openshift-rhcl",
+          "name": "a3f98d6c.kuadrant.io",
+          "uid": "308313cb-bbb0-4bf2-ba29-5f53d7f46197",
+          "action": "REVIEW"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-rhcl",
+          "name": "dns-operator-controller-env",
+          "uid": "a1af0a04-4da0-4f3c-9b2f-022399ab96b4",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "dnshealthcheckprobes.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "dnsrecords.kuadrant.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "openshift-rhcl",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ]
+}

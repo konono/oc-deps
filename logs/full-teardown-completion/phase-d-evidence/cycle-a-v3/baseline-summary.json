@@ -1,0 +1,11 @@
+{
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "target_subs": 15,
+  "pre_pv_count": 8,
+  "pre_pvc_count": 9,
+  "nfd_scc_uids": [
+    "279aa445-d3f9-4e7e-8e32-1fb3eebbd650",
+    "0b085876-8f4d-4589-a5c2-7d901206a8f6"
+  ],
+  "authorino_crb_count": 4
+}

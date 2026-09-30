@@ -1,0 +1,121 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhcl-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhcl-operator.json
+🔍 Discovering API resources...
+   Discovery: 32.1s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 3 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhcl-operator.v1.4.3-2026-09-29T17-36-51.219597549_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 3 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-rhcl] elapsed 0s
+✅ Scanned 269 resource types in 15.9s
+   openshift-rhcl — 143 resources
+[namespace 2/2: openshift-ingress] elapsed 15s
+✅ Scanned 269 resource types in 23.7s
+   openshift-ingress — 135 resources
+   Scanned 2 namespace(s), 278 total resources
+   Found 26 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  39 candidate(s) for rhcl-operator.v1.4.3 (35 discovery + 4 plan)
+    39 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/rhcl-operator/20260929T173753Z-0004787e-0 (39 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/rhcl-operator  (ns: openshift-rhcl)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/rhcl-operator.v1.4.3  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE AuthPolicy/maas-gateway-auth  (ns: openshift-ingress)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE Kuadrant/kuadrant  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE TokenRateLimitPolicy/gateway-default-deny  (ns: openshift-ingress)
+             independent CR approved via --approve-scope independent
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/rhcl-operator.v1.4.3  (ns: openshift-rhcl)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/f139389e.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DRY-DELETE ConsolePlugin/kuadrant-console-plugin  (cluster-scoped)
+             config explicit
+  DRY-DELETE Deployment/kuadrant-console-plugin  (ns: openshift-rhcl)
+             config explicit
+  DRY-DELETE Service/kuadrant-console-plugin  (ns: openshift-rhcl)
+             config explicit
+  DRY-DELETE ConfigMap/kuadrant-console-nginx-conf  (ns: openshift-rhcl)
+             config explicit
+
+  BARRIER (skipped in dry-run)
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/apikeyapprovals.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apikeyrequests.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apikeys.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/apiproducts.devportal.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dnspolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/kuadrants.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/oidcpolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/planpolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/ratelimitpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/telemetrypolicies.extensions.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/tlspolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/tokenratelimitpolicies.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 16 KEEP, 1 REVIEW
+exit=0

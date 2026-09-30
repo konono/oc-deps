@@ -1,0 +1,27 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/servicemeshoperator3.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-servicemeshoperator3.v3.4.2-2026-09-29T18-27-01.178123459_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-servicemesh] elapsed 0s
+✅ Scanned 268 resource types in 19.8s
+   openshift-servicemesh — 35 resources
+   Scanned 1 namespace(s), 35 total resources
+🔍 Running targeted adapters... found 0 resources
+Error: Operator servicemeshoperator3.v3.4.2 discovery has 1 inaccessible query failure(s) — backup cannot proceed

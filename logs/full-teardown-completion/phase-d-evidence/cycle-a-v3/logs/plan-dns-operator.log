@@ -1,0 +1,64 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown plan dns-operator --approve-scope root --approve-scope independent --approve-scope label-only --approve-scope operator-group --refresh-discovery --file /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/dns-operator.json
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  dns-operator.v1.4.2 (ns: openshift-rhcl) (Subscription/dns-operator-stable-redhat-operators-openshift-marketplace@openshift-rhcl)
+
+Preflight
+  ✓ Subscription resolved (dns-operator.v1.4.2) — Subscription/dns-operator-stable-redhat-operators-openshift-marketplace found — will be deleted in Phase 0
+  ✓ CSV health (dns-operator.v1.4.2) — phase=Succeeded
+  ✓ Controller available (dns-operator.v1.4.2) — dns-operator-controller-manager: Available (1)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/dns-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/dns-operator.v1.4.2  (ns: openshift-rhcl)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/dns-operator.v1.4.2  (ns: openshift-rhcl)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  KEEP   OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+         other operators remain in namespace
+  REVIEW Lease/a3f98d6c.kuadrant.io  (ns: openshift-rhcl)
+         leader election lease (holder references operator deployment)
+  REVIEW ConfigMap/dns-operator-controller-env  (ns: openshift-rhcl)
+         operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/dnshealthcheckprobes.kuadrant.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/dnsrecords.kuadrant.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-rhcl  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  2 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 2 DELETE, 0 EXPECT-GONE, 5 KEEP, 2 REVIEW
+  0 blockers, 1 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-dns-operator.v1.4.2-2026-09-29T17-27-35.441601681_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/dns-operator.json
+
+⏱ Discovery: 35.4s, OLM: 2.4s, Plan: 2.2s, Total: 40.2s
+exit=0

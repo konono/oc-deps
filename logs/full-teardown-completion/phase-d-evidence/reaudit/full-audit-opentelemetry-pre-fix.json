@@ -1,0 +1,6252 @@
+{
+  "targetOperatorsAbsent": true,
+  "residualWorkloads": [
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-cluster-csi-drivers",
+        "name": "aws-ebs-csi-driver-node",
+        "uid": "01ea8746-fb24-4cc8-ae41-86db2b656793"
+      },
+      "uid": "01ea8746-fb24-4cc8-ae41-86db2b656793",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "aws-ebs-csi-driver-node",
+          "uid": "01ea8746-fb24-4cc8-ae41-86db2b656793"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-cluster-node-tuning-operator",
+        "name": "tuned",
+        "uid": "2efa3080-97ad-4ca4-a9cc-b29bcd6697cf"
+      },
+      "uid": "2efa3080-97ad-4ca4-a9cc-b29bcd6697cf",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "tuned",
+          "uid": "2efa3080-97ad-4ca4-a9cc-b29bcd6697cf"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-dns",
+        "name": "dns-default",
+        "uid": "67558e76-1b66-4e1c-a980-2f16c53f222c"
+      },
+      "uid": "67558e76-1b66-4e1c-a980-2f16c53f222c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "dns-default",
+          "uid": "67558e76-1b66-4e1c-a980-2f16c53f222c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-dns",
+        "name": "node-resolver",
+        "uid": "7e679548-3e60-470f-9965-210cc7b82eca"
+      },
+      "uid": "7e679548-3e60-470f-9965-210cc7b82eca",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "node-resolver",
+          "uid": "7e679548-3e60-470f-9965-210cc7b82eca"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-image-registry",
+        "name": "node-ca",
+        "uid": "f81ab2e2-ed44-4460-a588-0b5cc4a5d2da"
+      },
+      "uid": "f81ab2e2-ed44-4460-a588-0b5cc4a5d2da",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "node-ca",
+          "uid": "f81ab2e2-ed44-4460-a588-0b5cc4a5d2da"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-ingress-canary",
+        "name": "ingress-canary",
+        "uid": "89f0bc5e-306f-4ddf-bae0-4c8b9b71ef02"
+      },
+      "uid": "89f0bc5e-306f-4ddf-bae0-4c8b9b71ef02",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "ingress-canary",
+          "uid": "89f0bc5e-306f-4ddf-bae0-4c8b9b71ef02"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-insights",
+        "name": "insights-runtime-extractor",
+        "uid": "2bff9336-6995-4de5-9ec0-49299ad5cc45"
+      },
+      "uid": "2bff9336-6995-4de5-9ec0-49299ad5cc45",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "insights-runtime-extractor",
+          "uid": "2bff9336-6995-4de5-9ec0-49299ad5cc45"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-daemon",
+        "uid": "a556e30c-f03f-4356-b832-310afab773af"
+      },
+      "uid": "a556e30c-f03f-4356-b832-310afab773af",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "machine-config-daemon",
+          "uid": "a556e30c-f03f-4356-b832-310afab773af"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-server",
+        "uid": "8a9839ba-b460-4bd4-b8aa-c174401a0653"
+      },
+      "uid": "8a9839ba-b460-4bd4-b8aa-c174401a0653",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "machine-config-server",
+          "uid": "8a9839ba-b460-4bd4-b8aa-c174401a0653"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-monitoring",
+        "name": "node-exporter",
+        "uid": "a9af88f8-d5ca-4928-b706-5921e3dd2419"
+      },
+      "uid": "a9af88f8-d5ca-4928-b706-5921e3dd2419",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "node-exporter",
+          "uid": "a9af88f8-d5ca-4928-b706-5921e3dd2419"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-multus",
+        "name": "multus",
+        "uid": "4e0ff7e3-59f8-4ef5-a609-447aa5b5eb49"
+      },
+      "uid": "4e0ff7e3-59f8-4ef5-a609-447aa5b5eb49",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "multus",
+          "uid": "4e0ff7e3-59f8-4ef5-a609-447aa5b5eb49"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-multus",
+        "name": "multus-additional-cni-plugins",
+        "uid": "48d787e0-409b-4fc2-8e43-8216304d4950"
+      },
+      "uid": "48d787e0-409b-4fc2-8e43-8216304d4950",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "multus-additional-cni-plugins",
+          "uid": "48d787e0-409b-4fc2-8e43-8216304d4950"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-multus",
+        "name": "network-metrics-daemon",
+        "uid": "3ae144af-3f62-495b-9203-e0a19e4091c3"
+      },
+      "uid": "3ae144af-3f62-495b-9203-e0a19e4091c3",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "network-metrics-daemon",
+          "uid": "3ae144af-3f62-495b-9203-e0a19e4091c3"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-network-diagnostics",
+        "name": "network-check-target",
+        "uid": "ebc4b66a-b0a1-4776-b320-d4ba3bab5efe"
+      },
+      "uid": "ebc4b66a-b0a1-4776-b320-d4ba3bab5efe",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "network-check-target",
+          "uid": "ebc4b66a-b0a1-4776-b320-d4ba3bab5efe"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-network-node-identity",
+        "name": "network-node-identity",
+        "uid": "fe2ac497-c672-4c10-a699-30498e8a1a9b"
+      },
+      "uid": "fe2ac497-c672-4c10-a699-30498e8a1a9b",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "network-node-identity",
+          "uid": "fe2ac497-c672-4c10-a699-30498e8a1a9b"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-network-operator",
+        "name": "iptables-alerter",
+        "uid": "e32deb11-3636-4cce-8ed7-4092de3781fa"
+      },
+      "uid": "e32deb11-3636-4cce-8ed7-4092de3781fa",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "iptables-alerter",
+          "uid": "e32deb11-3636-4cce-8ed7-4092de3781fa"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-ovn-kubernetes",
+        "name": "ovnkube-node",
+        "uid": "2bdf915b-115d-4615-b859-b7103350621e"
+      },
+      "uid": "2bdf915b-115d-4615-b859-b7103350621e",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "DaemonSet",
+          "name": "ovnkube-node",
+          "uid": "2bdf915b-115d-4615-b859-b7103350621e"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "group-sync-operator",
+        "name": "group-sync-operator-controller-manager",
+        "uid": "809f7e37-b02c-4bed-a7d7-15eeaea3042c"
+      },
+      "uid": "809f7e37-b02c-4bed-a7d7-15eeaea3042c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "group-sync-operator-controller-manager-bb6ff9dc8",
+          "uid": "124a04a3-c513-4d50-ae77-854ad59a0f17"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "group-sync-operator-controller-manager",
+          "uid": "809f7e37-b02c-4bed-a7d7-15eeaea3042c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-apiserver",
+        "name": "apiserver",
+        "uid": "7450b832-5d4a-4bae-8018-4cfe58c651b7"
+      },
+      "uid": "7450b832-5d4a-4bae-8018-4cfe58c651b7",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "apiserver-58b655cc86",
+          "uid": "953d8c60-ebc7-49e4-9bb5-8332abf939ab"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "apiserver",
+          "uid": "7450b832-5d4a-4bae-8018-4cfe58c651b7"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-apiserver-operator",
+        "name": "openshift-apiserver-operator",
+        "uid": "ff915dec-21b3-42ec-9102-5859ae49f327"
+      },
+      "uid": "ff915dec-21b3-42ec-9102-5859ae49f327",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "openshift-apiserver-operator-d87c678fc",
+          "uid": "5f48f9ee-4e2a-4343-9bc6-599dd8818aca"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "openshift-apiserver-operator",
+          "uid": "ff915dec-21b3-42ec-9102-5859ae49f327"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-authentication",
+        "name": "oauth-openshift",
+        "uid": "fc6b9166-fd74-46cc-ad29-d45e49228375"
+      },
+      "uid": "fc6b9166-fd74-46cc-ad29-d45e49228375",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "oauth-openshift-546b9bc8f",
+          "uid": "10895533-c724-4f08-b9f8-56106ebaa58a"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "oauth-openshift",
+          "uid": "fc6b9166-fd74-46cc-ad29-d45e49228375"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-authentication-operator",
+        "name": "authentication-operator",
+        "uid": "2b371382-cf85-4ed9-ab9c-269e67e3af9c"
+      },
+      "uid": "2b371382-cf85-4ed9-ab9c-269e67e3af9c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "authentication-operator-756f4bdbb8",
+          "uid": "f7316a13-7e77-4f59-a04f-ca75b368e3e3"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "authentication-operator",
+          "uid": "2b371382-cf85-4ed9-ab9c-269e67e3af9c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-catalogd",
+        "name": "catalogd-controller-manager",
+        "uid": "539189a7-b084-4b2b-b0fa-08d813f11c25"
+      },
+      "uid": "539189a7-b084-4b2b-b0fa-08d813f11c25",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "catalogd-controller-manager-66d5b5b9b6",
+          "uid": "91d9ec3e-2a49-4532-9c0d-832533f8b546"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "catalogd-controller-manager",
+          "uid": "539189a7-b084-4b2b-b0fa-08d813f11c25"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-controller-manager",
+        "name": "aws-cloud-controller-manager",
+        "uid": "3fbbff36-835f-489e-bc86-4edef8b5ab67"
+      },
+      "uid": "3fbbff36-835f-489e-bc86-4edef8b5ab67",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "aws-cloud-controller-manager-9867c88cb",
+          "uid": "9aaae093-f57e-4f2c-b58a-50c14b200fb7"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "aws-cloud-controller-manager",
+          "uid": "3fbbff36-835f-489e-bc86-4edef8b5ab67"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-controller-manager-operator",
+        "name": "cluster-cloud-controller-manager-operator",
+        "uid": "a3f2ce71-9f7f-42f0-8ff9-5bd38f6b35e0"
+      },
+      "uid": "a3f2ce71-9f7f-42f0-8ff9-5bd38f6b35e0",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-cloud-controller-manager-operator-78fbf9fb68",
+          "uid": "9f5400bb-f7d2-4fa1-bbb0-7eee35d0f9f2"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-cloud-controller-manager-operator",
+          "uid": "a3f2ce71-9f7f-42f0-8ff9-5bd38f6b35e0"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-credential-operator",
+        "name": "cloud-credential-operator",
+        "uid": "b696939f-055a-4075-90d8-39519b25b4e9"
+      },
+      "uid": "b696939f-055a-4075-90d8-39519b25b4e9",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cloud-credential-operator-6fc894b54c",
+          "uid": "9fe63896-22a5-49cf-bd1b-a0e85d09e09c"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cloud-credential-operator",
+          "uid": "b696939f-055a-4075-90d8-39519b25b4e9"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-credential-operator",
+        "name": "pod-identity-webhook",
+        "uid": "83186f48-54d5-41f7-9658-8fb57a455fb9"
+      },
+      "uid": "83186f48-54d5-41f7-9658-8fb57a455fb9",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "pod-identity-webhook-587f546c76",
+          "uid": "eca5471e-c68a-404c-8e09-6e7eeee0b8ea"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "pod-identity-webhook",
+          "uid": "83186f48-54d5-41f7-9658-8fb57a455fb9"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-network-config-controller",
+        "name": "cloud-network-config-controller",
+        "uid": "d2eeee7a-cad6-48cc-a48b-c37363931315"
+      },
+      "uid": "d2eeee7a-cad6-48cc-a48b-c37363931315",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cloud-network-config-controller-7884b7d647",
+          "uid": "4b63bed2-e890-4c6f-b27a-76da21169ad2"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cloud-network-config-controller",
+          "uid": "d2eeee7a-cad6-48cc-a48b-c37363931315"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-csi-drivers",
+        "name": "aws-ebs-csi-driver-controller",
+        "uid": "d10b4935-d5f4-4c21-be4f-998a24be92fd"
+      },
+      "uid": "d10b4935-d5f4-4c21-be4f-998a24be92fd",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "aws-ebs-csi-driver-controller-b854df8d8",
+          "uid": "398306cd-8b65-41d9-b14b-1f33852fa9c6"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "aws-ebs-csi-driver-controller",
+          "uid": "d10b4935-d5f4-4c21-be4f-998a24be92fd"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-csi-drivers",
+        "name": "aws-ebs-csi-driver-operator",
+        "uid": "7da9459c-664b-402b-b341-77fc70ee84ba"
+      },
+      "uid": "7da9459c-664b-402b-b341-77fc70ee84ba",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "aws-ebs-csi-driver-operator-7b69f49fb4",
+          "uid": "bb114c35-0cda-424d-8a7b-143a03bcf422"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "aws-ebs-csi-driver-operator",
+          "uid": "7da9459c-664b-402b-b341-77fc70ee84ba"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-machine-approver",
+        "name": "machine-approver",
+        "uid": "e1cc454b-bde6-4648-bed2-fa30084c74f5"
+      },
+      "uid": "e1cc454b-bde6-4648-bed2-fa30084c74f5",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "machine-approver-554b974d46",
+          "uid": "605d2aab-34b5-45d2-9f26-c74be0444925"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "machine-approver",
+          "uid": "e1cc454b-bde6-4648-bed2-fa30084c74f5"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-node-tuning-operator",
+        "name": "cluster-node-tuning-operator",
+        "uid": "df971e92-7ce6-49f7-bbc2-35e9da1e1475"
+      },
+      "uid": "df971e92-7ce6-49f7-bbc2-35e9da1e1475",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-node-tuning-operator-6747f8bfff",
+          "uid": "fe54046f-80e6-4b6d-a01b-d429ab5470ab"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-node-tuning-operator",
+          "uid": "df971e92-7ce6-49f7-bbc2-35e9da1e1475"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-olm-operator",
+        "name": "cluster-olm-operator",
+        "uid": "ce5dfbf6-af0a-4538-bcb6-f3c01b85a2ab"
+      },
+      "uid": "ce5dfbf6-af0a-4538-bcb6-f3c01b85a2ab",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-olm-operator-66ccc7ffbf",
+          "uid": "233cf74b-c52f-47fe-99c5-a4e22cdcc279"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-olm-operator",
+          "uid": "ce5dfbf6-af0a-4538-bcb6-f3c01b85a2ab"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-samples-operator",
+        "name": "cluster-samples-operator",
+        "uid": "75ea721b-268b-4b9e-afc8-8bec38e2720f"
+      },
+      "uid": "75ea721b-268b-4b9e-afc8-8bec38e2720f",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-samples-operator-fcd6675f6",
+          "uid": "d95a3656-5879-4f52-848d-9cc33fde4396"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-samples-operator",
+          "uid": "75ea721b-268b-4b9e-afc8-8bec38e2720f"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "cluster-storage-operator",
+        "uid": "97dfbed2-9bea-478e-820f-3756b1c50b3f"
+      },
+      "uid": "97dfbed2-9bea-478e-820f-3756b1c50b3f",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-storage-operator-74c7dc868d",
+          "uid": "b993d73f-82f0-49f5-8d73-39d8e3f0c950"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-storage-operator",
+          "uid": "97dfbed2-9bea-478e-820f-3756b1c50b3f"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "csi-snapshot-controller",
+        "uid": "40a2b7ff-f2f2-4fb8-b7ca-f7639885851b"
+      },
+      "uid": "40a2b7ff-f2f2-4fb8-b7ca-f7639885851b",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "csi-snapshot-controller-54dcf86dff",
+          "uid": "ab7d4227-c899-4a9d-9f96-4702fc2ca85f"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "csi-snapshot-controller",
+          "uid": "40a2b7ff-f2f2-4fb8-b7ca-f7639885851b"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "csi-snapshot-controller-operator",
+        "uid": "1b7384a0-d7d7-41db-9304-a91b0718acac"
+      },
+      "uid": "1b7384a0-d7d7-41db-9304-a91b0718acac",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "csi-snapshot-controller-operator-df5577489",
+          "uid": "f84d98c7-28f5-45e5-831b-890fc2dd62cb"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "csi-snapshot-controller-operator",
+          "uid": "1b7384a0-d7d7-41db-9304-a91b0718acac"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "volume-data-source-validator",
+        "uid": "9fb29b2b-fdbb-4f39-997f-31c1f53290d3"
+      },
+      "uid": "9fb29b2b-fdbb-4f39-997f-31c1f53290d3",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "volume-data-source-validator-76965c55f9",
+          "uid": "4c0292db-877c-4278-8c9b-4d790adefeed"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "volume-data-source-validator",
+          "uid": "9fb29b2b-fdbb-4f39-997f-31c1f53290d3"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-version",
+        "name": "cluster-version-operator",
+        "uid": "1cca6dc5-e650-4c75-84d6-8ffcaaf254b5"
+      },
+      "uid": "1cca6dc5-e650-4c75-84d6-8ffcaaf254b5",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-version-operator-ffbd8f5dd",
+          "uid": "ad836080-b5c2-4005-81a0-ad655afe8d8f"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-version-operator",
+          "uid": "1cca6dc5-e650-4c75-84d6-8ffcaaf254b5"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-config-operator",
+        "name": "openshift-config-operator",
+        "uid": "bc56295f-2123-4374-b1ae-c51bf333b1f9"
+      },
+      "uid": "bc56295f-2123-4374-b1ae-c51bf333b1f9",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "openshift-config-operator-7fc6cc47d4",
+          "uid": "ac250079-3170-4a1d-858e-475520772920"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "openshift-config-operator",
+          "uid": "bc56295f-2123-4374-b1ae-c51bf333b1f9"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-console",
+        "name": "console",
+        "uid": "72153752-a3cf-4812-b537-0ddd8051e06c"
+      },
+      "uid": "72153752-a3cf-4812-b537-0ddd8051e06c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "console-55f987f586",
+          "uid": "740eb31b-e7d1-45bc-8a59-869c56cb45e3"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "console",
+          "uid": "72153752-a3cf-4812-b537-0ddd8051e06c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-console",
+        "name": "downloads",
+        "uid": "29d623b2-8e1b-4b6a-9960-41da0feaf86f"
+      },
+      "uid": "29d623b2-8e1b-4b6a-9960-41da0feaf86f",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "downloads-588cdb8cb4",
+          "uid": "c3653d0b-324e-4db6-bd70-d2c3f4fa9db9"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "downloads",
+          "uid": "29d623b2-8e1b-4b6a-9960-41da0feaf86f"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-console-operator",
+        "name": "console-operator",
+        "uid": "bd94ff99-b2c4-4400-ad6f-9545429d65bb"
+      },
+      "uid": "bd94ff99-b2c4-4400-ad6f-9545429d65bb",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "console-operator-699d8678d7",
+          "uid": "3a3f1c75-9bd0-43eb-acb1-511c56281468"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "console-operator",
+          "uid": "bd94ff99-b2c4-4400-ad6f-9545429d65bb"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-controller-manager",
+        "name": "controller-manager",
+        "uid": "b9cb15fe-d106-4625-b845-82d85361a19c"
+      },
+      "uid": "b9cb15fe-d106-4625-b845-82d85361a19c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "controller-manager-64677bd74c",
+          "uid": "adf4b84d-1ba8-49e7-aaae-28d7df7e9de6"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "controller-manager",
+          "uid": "b9cb15fe-d106-4625-b845-82d85361a19c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-controller-manager-operator",
+        "name": "openshift-controller-manager-operator",
+        "uid": "1f70cafa-0f25-43f8-ad96-2936fe3f575c"
+      },
+      "uid": "1f70cafa-0f25-43f8-ad96-2936fe3f575c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "openshift-controller-manager-operator-ff9c56b46",
+          "uid": "bb0cb79f-b892-4a3e-9432-dbb8aa7e3a14"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "openshift-controller-manager-operator",
+          "uid": "1f70cafa-0f25-43f8-ad96-2936fe3f575c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-dns-operator",
+        "name": "dns-operator",
+        "uid": "bda5e263-c3c8-48b7-8fb7-f6e5d078020a"
+      },
+      "uid": "bda5e263-c3c8-48b7-8fb7-f6e5d078020a",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "dns-operator-75d6d65979",
+          "uid": "6d7d2397-4bf6-47b3-93a6-b04e6906b617"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "dns-operator",
+          "uid": "bda5e263-c3c8-48b7-8fb7-f6e5d078020a"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-etcd-operator",
+        "name": "etcd-operator",
+        "uid": "b157a868-574d-4686-b668-2a0718f9b4d0"
+      },
+      "uid": "b157a868-574d-4686-b668-2a0718f9b4d0",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "etcd-operator-7c6cd78b85",
+          "uid": "24e4ffd9-1deb-49dd-8420-d50c1202f045"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "etcd-operator",
+          "uid": "b157a868-574d-4686-b668-2a0718f9b4d0"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-image-registry",
+        "name": "cluster-image-registry-operator",
+        "uid": "c79b5bee-3d70-4605-a0f6-3adfff4375d5"
+      },
+      "uid": "c79b5bee-3d70-4605-a0f6-3adfff4375d5",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-image-registry-operator-68f4555bfb",
+          "uid": "b1fc94c6-583e-4e21-9d72-7d5379f6aeb2"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-image-registry-operator",
+          "uid": "c79b5bee-3d70-4605-a0f6-3adfff4375d5"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-image-registry",
+        "name": "image-registry",
+        "uid": "a6f6bc3f-7bfc-4db0-83f0-261b8e674a15"
+      },
+      "uid": "a6f6bc3f-7bfc-4db0-83f0-261b8e674a15",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "image-registry-7d8d64ddf9",
+          "uid": "0f06d6d1-a96a-4eb8-bd6a-e9d1c9f9adaf"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "image-registry",
+          "uid": "a6f6bc3f-7bfc-4db0-83f0-261b8e674a15"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-ingress",
+        "name": "router-default",
+        "uid": "1877d8eb-e619-4f4c-a979-c05f1fe80941"
+      },
+      "uid": "1877d8eb-e619-4f4c-a979-c05f1fe80941",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "router-default-7c64cf477",
+          "uid": "16968b9c-33ae-4f5c-a2fa-16e7ad0e5f76"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "router-default",
+          "uid": "1877d8eb-e619-4f4c-a979-c05f1fe80941"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-ingress-operator",
+        "name": "ingress-operator",
+        "uid": "39bd12de-4cd6-4e33-b0b9-9493db94be3b"
+      },
+      "uid": "39bd12de-4cd6-4e33-b0b9-9493db94be3b",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ingress-operator-78ffdbd4b",
+          "uid": "ba6db7a5-6703-4a48-a4a2-4ea3816a48fe"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ingress-operator",
+          "uid": "39bd12de-4cd6-4e33-b0b9-9493db94be3b"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-insights",
+        "name": "insights-operator",
+        "uid": "ca70cf6b-9282-42e7-b6f9-b59b97c9edfb"
+      },
+      "uid": "ca70cf6b-9282-42e7-b6f9-b59b97c9edfb",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "insights-operator-6c6d5bbf59",
+          "uid": "353702f1-0d51-4019-93a8-d62a84cd32cb"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "insights-operator",
+          "uid": "ca70cf6b-9282-42e7-b6f9-b59b97c9edfb"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-apiserver-operator",
+        "name": "kube-apiserver-operator",
+        "uid": "4b63830b-870b-4b19-8319-38e9d76551bd"
+      },
+      "uid": "4b63830b-870b-4b19-8319-38e9d76551bd",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "kube-apiserver-operator-7c4b7d8458",
+          "uid": "b0da951f-d82d-4078-bd2d-e4e936d560ae"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "kube-apiserver-operator",
+          "uid": "4b63830b-870b-4b19-8319-38e9d76551bd"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-controller-manager-operator",
+        "name": "kube-controller-manager-operator",
+        "uid": "a90fada1-4e99-4f19-9c64-5119f853aa2e"
+      },
+      "uid": "a90fada1-4e99-4f19-9c64-5119f853aa2e",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "kube-controller-manager-operator-64dd4cd4d8",
+          "uid": "b91ed6c9-fb25-4eb4-93ff-10f3841a3e71"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "kube-controller-manager-operator",
+          "uid": "a90fada1-4e99-4f19-9c64-5119f853aa2e"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-scheduler-operator",
+        "name": "openshift-kube-scheduler-operator",
+        "uid": "608f237a-b589-4ce5-8963-0086ea93dc7b"
+      },
+      "uid": "608f237a-b589-4ce5-8963-0086ea93dc7b",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "openshift-kube-scheduler-operator-574df9f4f",
+          "uid": "9ead498c-e4f6-4d59-b82a-59ee0ce96379"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "openshift-kube-scheduler-operator",
+          "uid": "608f237a-b589-4ce5-8963-0086ea93dc7b"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-storage-version-migrator",
+        "name": "migrator",
+        "uid": "f244613d-5901-4b82-8367-f4b4ffd9ec71"
+      },
+      "uid": "f244613d-5901-4b82-8367-f4b4ffd9ec71",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "migrator-7798cb987d",
+          "uid": "1ea8aa15-cddf-41cb-b2ba-f4ed42d534b7"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "migrator",
+          "uid": "f244613d-5901-4b82-8367-f4b4ffd9ec71"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-storage-version-migrator-operator",
+        "name": "kube-storage-version-migrator-operator",
+        "uid": "38a195eb-e556-471e-b082-bd99ee0d33ff"
+      },
+      "uid": "38a195eb-e556-471e-b082-bd99ee0d33ff",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "kube-storage-version-migrator-operator-6d976cdf8d",
+          "uid": "c84171ff-86c3-44c6-a9d2-99f1be140ec8"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "kube-storage-version-migrator-operator",
+          "uid": "38a195eb-e556-471e-b082-bd99ee0d33ff"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "cluster-autoscaler-operator",
+        "uid": "7bf36786-93d1-4b5a-b07f-e51222798f29"
+      },
+      "uid": "7bf36786-93d1-4b5a-b07f-e51222798f29",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-autoscaler-operator-69b799c845",
+          "uid": "a0cee447-4d70-404b-8e48-4faebe7b6cb8"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-autoscaler-operator",
+          "uid": "7bf36786-93d1-4b5a-b07f-e51222798f29"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "cluster-baremetal-operator",
+        "uid": "c90becee-8d5a-4c14-8961-a1d5ac5fa955"
+      },
+      "uid": "c90becee-8d5a-4c14-8961-a1d5ac5fa955",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-baremetal-operator-558c649f9b",
+          "uid": "df43c82c-a5ac-4c81-a3e9-c5b1296c3566"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-baremetal-operator",
+          "uid": "c90becee-8d5a-4c14-8961-a1d5ac5fa955"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "control-plane-machine-set-operator",
+        "uid": "c0c8a98f-0174-4170-81ab-637f4e48173b"
+      },
+      "uid": "c0c8a98f-0174-4170-81ab-637f4e48173b",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "control-plane-machine-set-operator-774b779b4",
+          "uid": "a6e1e4b5-077a-4683-bdbf-d2be3e3b62b8"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "control-plane-machine-set-operator",
+          "uid": "c0c8a98f-0174-4170-81ab-637f4e48173b"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "machine-api-controllers",
+        "uid": "45d036fa-89d5-4072-91f2-8830a7649f88"
+      },
+      "uid": "45d036fa-89d5-4072-91f2-8830a7649f88",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "machine-api-controllers-7f4446786f",
+          "uid": "0f389b00-9f0a-48e8-a510-26c0b183ee9a"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "machine-api-controllers",
+          "uid": "45d036fa-89d5-4072-91f2-8830a7649f88"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "machine-api-operator",
+        "uid": "45a153e0-c899-476f-b0f6-fc02101583ef"
+      },
+      "uid": "45a153e0-c899-476f-b0f6-fc02101583ef",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "machine-api-operator-64f9ccc694",
+          "uid": "6c4088ae-ee71-4b3b-a9e0-10f5973d41b9"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "machine-api-operator",
+          "uid": "45a153e0-c899-476f-b0f6-fc02101583ef"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-controller",
+        "uid": "192971ca-70ff-4ea8-affd-d035943ae684"
+      },
+      "uid": "192971ca-70ff-4ea8-affd-d035943ae684",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "machine-config-controller-5597f6f8c6",
+          "uid": "e0358211-daf6-451f-a03b-6491cabb8af0"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "machine-config-controller",
+          "uid": "192971ca-70ff-4ea8-affd-d035943ae684"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-operator",
+        "uid": "08a783bf-e9e3-48ef-9e32-e67ae91d7c49"
+      },
+      "uid": "08a783bf-e9e3-48ef-9e32-e67ae91d7c49",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "machine-config-operator-cdf4774c",
+          "uid": "2c212f1d-ca0b-48f5-88eb-2b8971074028"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "machine-config-operator",
+          "uid": "08a783bf-e9e3-48ef-9e32-e67ae91d7c49"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-marketplace",
+        "name": "marketplace-operator",
+        "uid": "dfc78285-ac5d-449a-ab8f-7a8fa21f97e1"
+      },
+      "uid": "dfc78285-ac5d-449a-ab8f-7a8fa21f97e1",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "marketplace-operator-6657bfdcf6",
+          "uid": "efcee98f-5631-4ec3-8887-5cca59150289"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "marketplace-operator",
+          "uid": "dfc78285-ac5d-449a-ab8f-7a8fa21f97e1"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "cluster-monitoring-operator",
+        "uid": "bdc2520c-3532-44bd-bd2b-41daba29b356"
+      },
+      "uid": "bdc2520c-3532-44bd-bd2b-41daba29b356",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cluster-monitoring-operator-65f87b4858",
+          "uid": "9480e4af-d4f4-482d-b347-4ebbaae56e8c"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cluster-monitoring-operator",
+          "uid": "bdc2520c-3532-44bd-bd2b-41daba29b356"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "kube-state-metrics",
+        "uid": "8aa35b34-069a-48ac-b988-5e04de5ef4fd"
+      },
+      "uid": "8aa35b34-069a-48ac-b988-5e04de5ef4fd",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "kube-state-metrics-56d6f47f66",
+          "uid": "b2680020-68d0-4068-8333-3dda879fe38d"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "kube-state-metrics",
+          "uid": "8aa35b34-069a-48ac-b988-5e04de5ef4fd"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "metrics-server",
+        "uid": "e68ecea0-ad26-4f23-85cd-067adce8f29c"
+      },
+      "uid": "e68ecea0-ad26-4f23-85cd-067adce8f29c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "metrics-server-85778c6cd6",
+          "uid": "88b3c742-7de5-4539-a7cb-6b73bb10c75f"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "metrics-server",
+          "uid": "e68ecea0-ad26-4f23-85cd-067adce8f29c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "monitoring-plugin",
+        "uid": "567972e0-8879-4ec5-86a0-b53173fb28db"
+      },
+      "uid": "567972e0-8879-4ec5-86a0-b53173fb28db",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "monitoring-plugin-dfdd75b44",
+          "uid": "748713ef-e8ef-4678-ba7d-0efb82c3dd99"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "monitoring-plugin",
+          "uid": "567972e0-8879-4ec5-86a0-b53173fb28db"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "openshift-state-metrics",
+        "uid": "2004d6aa-7397-4931-83be-b7b76187df56"
+      },
+      "uid": "2004d6aa-7397-4931-83be-b7b76187df56",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "openshift-state-metrics-568d5b948",
+          "uid": "ae2d762f-2ffb-4529-a2b7-85045ac0d0e1"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "openshift-state-metrics",
+          "uid": "2004d6aa-7397-4931-83be-b7b76187df56"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "prometheus-operator",
+        "uid": "fddb0cd0-b47c-4565-b531-ce8718876460"
+      },
+      "uid": "fddb0cd0-b47c-4565-b531-ce8718876460",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "prometheus-operator-7d5cccbd55",
+          "uid": "9536bde9-188a-4db4-9a17-e3b6699665db"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "prometheus-operator",
+          "uid": "fddb0cd0-b47c-4565-b531-ce8718876460"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "prometheus-operator-admission-webhook",
+        "uid": "2518546a-717a-44b4-9775-b1bada0f6e9e"
+      },
+      "uid": "2518546a-717a-44b4-9775-b1bada0f6e9e",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "prometheus-operator-admission-webhook-f765848b8",
+          "uid": "ffc88156-0828-4aee-b899-6d935a4487ab"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "prometheus-operator-admission-webhook",
+          "uid": "2518546a-717a-44b4-9775-b1bada0f6e9e"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "telemeter-client",
+        "uid": "0550902b-2759-4b81-933f-dbfac59c5fe8"
+      },
+      "uid": "0550902b-2759-4b81-933f-dbfac59c5fe8",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "telemeter-client-566d6895b",
+          "uid": "363969f2-ef26-4bd7-a623-efec7b49091a"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "telemeter-client",
+          "uid": "0550902b-2759-4b81-933f-dbfac59c5fe8"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "thanos-querier",
+        "uid": "7bdaa969-6d90-4b57-9efd-43915c965b21"
+      },
+      "uid": "7bdaa969-6d90-4b57-9efd-43915c965b21",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "thanos-querier-6599fc649b",
+          "uid": "94b1afbd-1bdb-459a-a584-dce396d5923a"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "thanos-querier",
+          "uid": "7bdaa969-6d90-4b57-9efd-43915c965b21"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-multus",
+        "name": "multus-admission-controller",
+        "uid": "d9f4bc26-763c-4746-9950-8a3f474a6192"
+      },
+      "uid": "d9f4bc26-763c-4746-9950-8a3f474a6192",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "multus-admission-controller-69bbb5ff77",
+          "uid": "4c00c870-5cdf-4c07-9ecf-6e9ac8d6f5f0"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "multus-admission-controller",
+          "uid": "d9f4bc26-763c-4746-9950-8a3f474a6192"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-network-console",
+        "name": "networking-console-plugin",
+        "uid": "bc4b9862-c888-49cb-b54d-f6a0f1d4ffce"
+      },
+      "uid": "bc4b9862-c888-49cb-b54d-f6a0f1d4ffce",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "networking-console-plugin-757f76d8fb",
+          "uid": "4c657665-2201-44a7-8b92-457fb7f1056f"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "networking-console-plugin",
+          "uid": "bc4b9862-c888-49cb-b54d-f6a0f1d4ffce"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-network-diagnostics",
+        "name": "network-check-source",
+        "uid": "9a96f350-e6d8-4599-a1ab-41933975170f"
+      },
+      "uid": "9a96f350-e6d8-4599-a1ab-41933975170f",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "network-check-source-788645b4b",
+          "uid": "fc812b83-8f62-4766-a0b7-51948a594c4c"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "network-check-source",
+          "uid": "9a96f350-e6d8-4599-a1ab-41933975170f"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-network-operator",
+        "name": "network-operator",
+        "uid": "7d64a059-a6cb-458e-963b-f562c1929366"
+      },
+      "uid": "7d64a059-a6cb-458e-963b-f562c1929366",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "network-operator-7876f69b94",
+          "uid": "7a9578c8-e23a-4707-80be-931803d3be76"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "network-operator",
+          "uid": "7d64a059-a6cb-458e-963b-f562c1929366"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-oauth-apiserver",
+        "name": "apiserver",
+        "uid": "4e11b80d-f217-4a37-b736-fa04283779a5"
+      },
+      "uid": "4e11b80d-f217-4a37-b736-fa04283779a5",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "apiserver-568df68dd6",
+          "uid": "e3ae3fba-763e-4dbf-ac41-9a6f4e152420"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "apiserver",
+          "uid": "4e11b80d-f217-4a37-b736-fa04283779a5"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-controller",
+        "name": "operator-controller-controller-manager",
+        "uid": "0d30ba85-2051-4269-842d-c8b18823e606"
+      },
+      "uid": "0d30ba85-2051-4269-842d-c8b18823e606",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "operator-controller-controller-manager-c8b5c644f",
+          "uid": "fad4373c-1710-48cc-b8df-9168d61a0037"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "operator-controller-controller-manager",
+          "uid": "0d30ba85-2051-4269-842d-c8b18823e606"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "catalog-operator",
+        "uid": "314ec854-4d5c-4a57-af13-c5bc86ed53a2"
+      },
+      "uid": "314ec854-4d5c-4a57-af13-c5bc86ed53a2",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "catalog-operator-9fb9d7b96",
+          "uid": "ca00dbcc-a18e-4c7d-a306-3f67f05e9561"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "catalog-operator",
+          "uid": "314ec854-4d5c-4a57-af13-c5bc86ed53a2"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "olm-operator",
+        "uid": "15219133-ac6d-4a84-8a23-5b36b861e555"
+      },
+      "uid": "15219133-ac6d-4a84-8a23-5b36b861e555",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "olm-operator-744b5d7d46",
+          "uid": "43b09f86-b549-479a-8aa7-517ac48fa70a"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "olm-operator",
+          "uid": "15219133-ac6d-4a84-8a23-5b36b861e555"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "package-server-manager",
+        "uid": "5027b577-36cb-4a85-9e9c-4fc9ae8b9e56"
+      },
+      "uid": "5027b577-36cb-4a85-9e9c-4fc9ae8b9e56",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "package-server-manager-6458669dcd",
+          "uid": "2365f970-fd4a-4274-9cde-d108de4ab3a9"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "package-server-manager",
+          "uid": "5027b577-36cb-4a85-9e9c-4fc9ae8b9e56"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "packageserver",
+        "uid": "b45fa4c4-d822-4c29-95ca-71b746990ea6"
+      },
+      "uid": "b45fa4c4-d822-4c29-95ca-71b746990ea6",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "packageserver-5564659655",
+          "uid": "e286be69-cdf7-4db7-ab4b-c7b74ecb7f07"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "packageserver",
+          "uid": "b45fa4c4-d822-4c29-95ca-71b746990ea6"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-ovn-kubernetes",
+        "name": "ovnkube-control-plane",
+        "uid": "edeb40fc-b7d5-42ae-9372-d937ecdf8b69"
+      },
+      "uid": "edeb40fc-b7d5-42ae-9372-d937ecdf8b69",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ovnkube-control-plane-6dbcc9fbbb",
+          "uid": "3123c93a-7181-4f32-9c97-6d5265ee10f2"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ovnkube-control-plane",
+          "uid": "edeb40fc-b7d5-42ae-9372-d937ecdf8b69"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-route-controller-manager",
+        "name": "route-controller-manager",
+        "uid": "d8e7684f-052c-4cb6-be9a-63826a95f244"
+      },
+      "uid": "d8e7684f-052c-4cb6-be9a-63826a95f244",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "route-controller-manager-b4d564fc8",
+          "uid": "2b1628dc-f4c7-47fb-8e1b-43fe141603a8"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "route-controller-manager",
+          "uid": "d8e7684f-052c-4cb6-be9a-63826a95f244"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-service-ca",
+        "name": "service-ca",
+        "uid": "208f35ac-efb9-49fb-a77a-a274cd981451"
+      },
+      "uid": "208f35ac-efb9-49fb-a77a-a274cd981451",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "service-ca-6c87f96585",
+          "uid": "9f352050-ae1c-4a2e-ae9c-e93e4cb4e693"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "service-ca",
+          "uid": "208f35ac-efb9-49fb-a77a-a274cd981451"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-service-ca-operator",
+        "name": "service-ca-operator",
+        "uid": "3cadbe77-088f-4ab2-914b-748a6b9dd892"
+      },
+      "uid": "3cadbe77-088f-4ab2-914b-748a6b9dd892",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "service-ca-operator-75dd859df7",
+          "uid": "f412f858-ec87-404e-b619-51229b95b25f"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "service-ca-operator",
+          "uid": "3cadbe77-088f-4ab2-914b-748a6b9dd892"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ceph-csi-controller-manager",
+        "uid": "80c29632-da2b-48dd-94c9-6128d40e107d"
+      },
+      "uid": "80c29632-da2b-48dd-94c9-6128d40e107d",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ceph-csi-controller-manager-7fc879dbfc",
+          "uid": "33c7068b-e9eb-4474-b33a-b40263e34cfe"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ceph-csi-controller-manager",
+          "uid": "80c29632-da2b-48dd-94c9-6128d40e107d"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "cnpg-controller-manager",
+        "uid": "12df9b89-571f-4bc1-aa0b-40374afc67db"
+      },
+      "uid": "12df9b89-571f-4bc1-aa0b-40374afc67db",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "cnpg-controller-manager-7b495895dc",
+          "uid": "ddf413a1-ae49-434a-8109-3fc5756f555f"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "cnpg-controller-manager",
+          "uid": "12df9b89-571f-4bc1-aa0b-40374afc67db"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "csi-addons-controller-manager",
+        "uid": "4200aea1-0140-47a1-baa9-a5ade0299a8c"
+      },
+      "uid": "4200aea1-0140-47a1-baa9-a5ade0299a8c",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "csi-addons-controller-manager-69cdf968f5",
+          "uid": "06bf3d3c-5f66-4f35-830d-9c8871537ce4"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "csi-addons-controller-manager",
+          "uid": "4200aea1-0140-47a1-baa9-a5ade0299a8c"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "noobaa-endpoint",
+        "uid": "756e09c8-da60-4a8c-a60e-1bc5b111aef3"
+      },
+      "uid": "756e09c8-da60-4a8c-a60e-1bc5b111aef3",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "noobaa-endpoint-64f54cc546",
+          "uid": "b0e70ec5-a33f-498c-a163-9864f24b9dcb"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "noobaa-endpoint",
+          "uid": "756e09c8-da60-4a8c-a60e-1bc5b111aef3"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "noobaa-operator",
+        "uid": "14a4ad7d-324d-4d2c-9bc7-94992c16553d"
+      },
+      "uid": "14a4ad7d-324d-4d2c-9bc7-94992c16553d",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "noobaa-operator-55cb7bc59c",
+          "uid": "347fc057-3984-4320-a515-d086bbf47526"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "noobaa-operator",
+          "uid": "14a4ad7d-324d-4d2c-9bc7-94992c16553d"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ocs-client-operator-console",
+        "uid": "0b25e872-29c1-4a2f-bf5e-4d1909099700"
+      },
+      "uid": "0b25e872-29c1-4a2f-bf5e-4d1909099700",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ocs-client-operator-console-d566cfb4",
+          "uid": "0377a1d6-8e34-47af-9de1-733a16d52c63"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ocs-client-operator-console",
+          "uid": "0b25e872-29c1-4a2f-bf5e-4d1909099700"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ocs-client-operator-controller-manager",
+        "uid": "e467c730-e2df-43b6-acb9-0949b4d27453"
+      },
+      "uid": "e467c730-e2df-43b6-acb9-0949b4d27453",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ocs-client-operator-controller-manager-6cbd96f5fd",
+          "uid": "7245de88-160c-477b-a648-c970480c93de"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ocs-client-operator-controller-manager",
+          "uid": "e467c730-e2df-43b6-acb9-0949b4d27453"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ocs-operator",
+        "uid": "99282ad4-01e8-44c0-b4b4-d2e4194c844b"
+      },
+      "uid": "99282ad4-01e8-44c0-b4b4-d2e4194c844b",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ocs-operator-66469b9876",
+          "uid": "8aae3140-71e2-4d38-b01a-b89e63ee4322"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ocs-operator",
+          "uid": "99282ad4-01e8-44c0-b4b4-d2e4194c844b"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "odf-console",
+        "uid": "d6dc286f-406d-48bb-aa23-ec76360bc743"
+      },
+      "uid": "d6dc286f-406d-48bb-aa23-ec76360bc743",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "odf-console-6b4cf6b8b",
+          "uid": "dfa7ec47-2eaf-4889-b089-b63cd4d96648"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "odf-console",
+          "uid": "d6dc286f-406d-48bb-aa23-ec76360bc743"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "odf-external-snapshotter-operator",
+        "uid": "471e1a6c-3782-41b8-b7d3-8e4e7dd5cf2a"
+      },
+      "uid": "471e1a6c-3782-41b8-b7d3-8e4e7dd5cf2a",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "odf-external-snapshotter-operator-796b45ddbf",
+          "uid": "84fce5cd-25da-498e-b00c-785595907f9a"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "odf-external-snapshotter-operator",
+          "uid": "471e1a6c-3782-41b8-b7d3-8e4e7dd5cf2a"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "odf-operator-controller-manager",
+        "uid": "9134f2f9-61df-4e42-a898-aaccdbbecabf"
+      },
+      "uid": "9134f2f9-61df-4e42-a898-aaccdbbecabf",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "odf-operator-controller-manager-68d464475f",
+          "uid": "11628f5a-d017-48c1-af8b-3684d180c9b9"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "odf-operator-controller-manager",
+          "uid": "9134f2f9-61df-4e42-a898-aaccdbbecabf"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "prometheus-operator",
+        "uid": "512c6405-79e1-4bf4-87dc-139835495bb5"
+      },
+      "uid": "512c6405-79e1-4bf4-87dc-139835495bb5",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "prometheus-operator-6bb9779b94",
+          "uid": "4850ead8-187e-4866-abed-b0dd4d452db7"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "prometheus-operator",
+          "uid": "512c6405-79e1-4bf4-87dc-139835495bb5"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "rook-ceph-operator",
+        "uid": "2e94dfcf-b193-4cde-934d-5db64b2b897e"
+      },
+      "uid": "2e94dfcf-b193-4cde-934d-5db64b2b897e",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "rook-ceph-operator-54fb97c7",
+          "uid": "43618cc4-70a7-4bef-a945-5f3f2e56c319"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "rook-ceph-operator",
+          "uid": "2e94dfcf-b193-4cde-934d-5db64b2b897e"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ux-backend-server",
+        "uid": "d0730759-15c8-4bdd-8405-a341541e4a65"
+      },
+      "uid": "d0730759-15c8-4bdd-8405-a341541e4a65",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "ReplicaSet",
+          "name": "ux-backend-server-5c58658f55",
+          "uid": "9cd303c4-520b-422b-b2ed-82d5fca6ba58"
+        },
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "Deployment",
+          "name": "ux-backend-server",
+          "uid": "d0730759-15c8-4bdd-8405-a341541e4a65"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-monitoring",
+        "name": "alertmanager-main",
+        "uid": "fd4e38e2-2863-4bd2-ae82-1e5649e9c4d4"
+      },
+      "uid": "fd4e38e2-2863-4bd2-ae82-1e5649e9c4d4",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "StatefulSet",
+          "name": "alertmanager-main",
+          "uid": "fd4e38e2-2863-4bd2-ae82-1e5649e9c4d4"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-monitoring",
+        "name": "prometheus-k8s",
+        "uid": "17925df7-19a9-4e90-9873-8f57882ba267"
+      },
+      "uid": "17925df7-19a9-4e90-9873-8f57882ba267",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "StatefulSet",
+          "name": "prometheus-k8s",
+          "uid": "17925df7-19a9-4e90-9873-8f57882ba267"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-storage",
+        "name": "noobaa-core",
+        "uid": "51b96376-c721-48a6-b6ae-4be645696fcb"
+      },
+      "uid": "51b96376-c721-48a6-b6ae-4be645696fcb",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "StatefulSet",
+          "name": "noobaa-core",
+          "uid": "51b96376-c721-48a6-b6ae-4be645696fcb"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-storage",
+        "name": "noobaa-db-pg",
+        "uid": "3a076d26-b3bc-48be-b185-430c1e95766e"
+      },
+      "uid": "3a076d26-b3bc-48be-b185-430c1e95766e",
+      "owner_chain": [
+        {
+          "group": "apps",
+          "version": "v1",
+          "kind": "StatefulSet",
+          "name": "noobaa-db-pg",
+          "uid": "3a076d26-b3bc-48be-b185-430c1e95766e"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "CronJob",
+        "namespace": "openshift-image-registry",
+        "name": "image-pruner",
+        "uid": "be422b9c-6b49-4813-93a6-bbf32135e16f"
+      },
+      "uid": "be422b9c-6b49-4813-93a6-bbf32135e16f",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "image-pruner-29841120",
+          "uid": "5fa17daa-2512-4567-98b0-16a54d889edd"
+        },
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "CronJob",
+          "name": "image-pruner",
+          "uid": "be422b9c-6b49-4813-93a6-bbf32135e16f"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "llm-serving",
+        "name": "download-qwen3-06b",
+        "uid": "887b86f3-20c4-4fbc-ba37-d8ebcbb0fd49"
+      },
+      "uid": "887b86f3-20c4-4fbc-ba37-d8ebcbb0fd49",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "download-qwen3-06b",
+          "uid": "887b86f3-20c4-4fbc-ba37-d8ebcbb0fd49"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-2llm5",
+        "uid": "2bba41f9-be08-44c1-a312-62bd8525b312"
+      },
+      "uid": "2bba41f9-be08-44c1-a312-62bd8525b312",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-2llm5",
+          "uid": "2bba41f9-be08-44c1-a312-62bd8525b312"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-445vw",
+        "uid": "2c5d493d-585b-46bb-afe2-12af9179be18"
+      },
+      "uid": "2c5d493d-585b-46bb-afe2-12af9179be18",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-445vw",
+          "uid": "2c5d493d-585b-46bb-afe2-12af9179be18"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-9vltd",
+        "uid": "3a3663e8-ae7c-4af1-91b7-fb22317a96c0"
+      },
+      "uid": "3a3663e8-ae7c-4af1-91b7-fb22317a96c0",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-9vltd",
+          "uid": "3a3663e8-ae7c-4af1-91b7-fb22317a96c0"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-dvgpq",
+        "uid": "10838d1c-e4f9-46d0-b9c9-349779792a89"
+      },
+      "uid": "10838d1c-e4f9-46d0-b9c9-349779792a89",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-dvgpq",
+          "uid": "10838d1c-e4f9-46d0-b9c9-349779792a89"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-g9tfp",
+        "uid": "7f170f2c-a121-46e9-a69a-dc70442cf9f1"
+      },
+      "uid": "7f170f2c-a121-46e9-a69a-dc70442cf9f1",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-g9tfp",
+          "uid": "7f170f2c-a121-46e9-a69a-dc70442cf9f1"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-jgf46",
+        "uid": "957c8c1c-c3b5-49c3-90e9-9cf18fbb23e3"
+      },
+      "uid": "957c8c1c-c3b5-49c3-90e9-9cf18fbb23e3",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-jgf46",
+          "uid": "957c8c1c-c3b5-49c3-90e9-9cf18fbb23e3"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-knwqq",
+        "uid": "2579790c-acba-4b7c-9ae4-1f7186bf8ace"
+      },
+      "uid": "2579790c-acba-4b7c-9ae4-1f7186bf8ace",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-knwqq",
+          "uid": "2579790c-acba-4b7c-9ae4-1f7186bf8ace"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-lpzx6",
+        "uid": "cd8d0a2f-058c-4994-a482-e7c085d4f1f3"
+      },
+      "uid": "cd8d0a2f-058c-4994-a482-e7c085d4f1f3",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-lpzx6",
+          "uid": "cd8d0a2f-058c-4994-a482-e7c085d4f1f3"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-mhl2z",
+        "uid": "25e7f2a1-e290-43fc-8730-5e29df5186f3"
+      },
+      "uid": "25e7f2a1-e290-43fc-8730-5e29df5186f3",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-mhl2z",
+          "uid": "25e7f2a1-e290-43fc-8730-5e29df5186f3"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-p2p4k",
+        "uid": "5e61ea73-68f1-42bc-a179-0a3c39fb16c4"
+      },
+      "uid": "5e61ea73-68f1-42bc-a179-0a3c39fb16c4",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-p2p4k",
+          "uid": "5e61ea73-68f1-42bc-a179-0a3c39fb16c4"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-sg44x",
+        "uid": "0decf8e9-0e17-4794-914a-a0b62807dbfc"
+      },
+      "uid": "0decf8e9-0e17-4794-914a-a0b62807dbfc",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-sg44x",
+          "uid": "0decf8e9-0e17-4794-914a-a0b62807dbfc"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-x6ntn",
+        "uid": "90f4b820-cb70-4335-a85e-9e29d1a7855f"
+      },
+      "uid": "90f4b820-cb70-4335-a85e-9e29d1a7855f",
+      "owner_chain": [
+        {
+          "group": "batch",
+          "version": "v1",
+          "kind": "Job",
+          "name": "periodic-gathering-x6ntn",
+          "uid": "90f4b820-cb70-4335-a85e-9e29d1a7855f"
+        }
+      ],
+      "classification": "Unattributed",
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "scope_provenance": "OperatorGroupAllNamespaces"
+    }
+  ],
+  "attributedResiduals": [],
+  "unattributedResiduals": [
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-cluster-csi-drivers",
+        "name": "aws-ebs-csi-driver-node",
+        "uid": "01ea8746-fb24-4cc8-ae41-86db2b656793"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-cluster-node-tuning-operator",
+        "name": "tuned",
+        "uid": "2efa3080-97ad-4ca4-a9cc-b29bcd6697cf"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-dns",
+        "name": "dns-default",
+        "uid": "67558e76-1b66-4e1c-a980-2f16c53f222c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-dns",
+        "name": "node-resolver",
+        "uid": "7e679548-3e60-470f-9965-210cc7b82eca"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-image-registry",
+        "name": "node-ca",
+        "uid": "f81ab2e2-ed44-4460-a588-0b5cc4a5d2da"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-ingress-canary",
+        "name": "ingress-canary",
+        "uid": "89f0bc5e-306f-4ddf-bae0-4c8b9b71ef02"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-insights",
+        "name": "insights-runtime-extractor",
+        "uid": "2bff9336-6995-4de5-9ec0-49299ad5cc45"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-daemon",
+        "uid": "a556e30c-f03f-4356-b832-310afab773af"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-server",
+        "uid": "8a9839ba-b460-4bd4-b8aa-c174401a0653"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-monitoring",
+        "name": "node-exporter",
+        "uid": "a9af88f8-d5ca-4928-b706-5921e3dd2419"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-multus",
+        "name": "multus",
+        "uid": "4e0ff7e3-59f8-4ef5-a609-447aa5b5eb49"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-multus",
+        "name": "multus-additional-cni-plugins",
+        "uid": "48d787e0-409b-4fc2-8e43-8216304d4950"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-multus",
+        "name": "network-metrics-daemon",
+        "uid": "3ae144af-3f62-495b-9203-e0a19e4091c3"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-network-diagnostics",
+        "name": "network-check-target",
+        "uid": "ebc4b66a-b0a1-4776-b320-d4ba3bab5efe"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-network-node-identity",
+        "name": "network-node-identity",
+        "uid": "fe2ac497-c672-4c10-a699-30498e8a1a9b"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-network-operator",
+        "name": "iptables-alerter",
+        "uid": "e32deb11-3636-4cce-8ed7-4092de3781fa"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "DaemonSet",
+        "namespace": "openshift-ovn-kubernetes",
+        "name": "ovnkube-node",
+        "uid": "2bdf915b-115d-4615-b859-b7103350621e"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "group-sync-operator",
+        "name": "group-sync-operator-controller-manager",
+        "uid": "809f7e37-b02c-4bed-a7d7-15eeaea3042c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-apiserver",
+        "name": "apiserver",
+        "uid": "7450b832-5d4a-4bae-8018-4cfe58c651b7"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-apiserver-operator",
+        "name": "openshift-apiserver-operator",
+        "uid": "ff915dec-21b3-42ec-9102-5859ae49f327"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-authentication",
+        "name": "oauth-openshift",
+        "uid": "fc6b9166-fd74-46cc-ad29-d45e49228375"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-authentication-operator",
+        "name": "authentication-operator",
+        "uid": "2b371382-cf85-4ed9-ab9c-269e67e3af9c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-catalogd",
+        "name": "catalogd-controller-manager",
+        "uid": "539189a7-b084-4b2b-b0fa-08d813f11c25"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-controller-manager",
+        "name": "aws-cloud-controller-manager",
+        "uid": "3fbbff36-835f-489e-bc86-4edef8b5ab67"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-controller-manager-operator",
+        "name": "cluster-cloud-controller-manager-operator",
+        "uid": "a3f2ce71-9f7f-42f0-8ff9-5bd38f6b35e0"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-credential-operator",
+        "name": "cloud-credential-operator",
+        "uid": "b696939f-055a-4075-90d8-39519b25b4e9"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-credential-operator",
+        "name": "pod-identity-webhook",
+        "uid": "83186f48-54d5-41f7-9658-8fb57a455fb9"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cloud-network-config-controller",
+        "name": "cloud-network-config-controller",
+        "uid": "d2eeee7a-cad6-48cc-a48b-c37363931315"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-csi-drivers",
+        "name": "aws-ebs-csi-driver-controller",
+        "uid": "d10b4935-d5f4-4c21-be4f-998a24be92fd"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-csi-drivers",
+        "name": "aws-ebs-csi-driver-operator",
+        "uid": "7da9459c-664b-402b-b341-77fc70ee84ba"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-machine-approver",
+        "name": "machine-approver",
+        "uid": "e1cc454b-bde6-4648-bed2-fa30084c74f5"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-node-tuning-operator",
+        "name": "cluster-node-tuning-operator",
+        "uid": "df971e92-7ce6-49f7-bbc2-35e9da1e1475"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-olm-operator",
+        "name": "cluster-olm-operator",
+        "uid": "ce5dfbf6-af0a-4538-bcb6-f3c01b85a2ab"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-samples-operator",
+        "name": "cluster-samples-operator",
+        "uid": "75ea721b-268b-4b9e-afc8-8bec38e2720f"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "cluster-storage-operator",
+        "uid": "97dfbed2-9bea-478e-820f-3756b1c50b3f"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "csi-snapshot-controller",
+        "uid": "40a2b7ff-f2f2-4fb8-b7ca-f7639885851b"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "csi-snapshot-controller-operator",
+        "uid": "1b7384a0-d7d7-41db-9304-a91b0718acac"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-storage-operator",
+        "name": "volume-data-source-validator",
+        "uid": "9fb29b2b-fdbb-4f39-997f-31c1f53290d3"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-cluster-version",
+        "name": "cluster-version-operator",
+        "uid": "1cca6dc5-e650-4c75-84d6-8ffcaaf254b5"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-config-operator",
+        "name": "openshift-config-operator",
+        "uid": "bc56295f-2123-4374-b1ae-c51bf333b1f9"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-console",
+        "name": "console",
+        "uid": "72153752-a3cf-4812-b537-0ddd8051e06c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-console",
+        "name": "downloads",
+        "uid": "29d623b2-8e1b-4b6a-9960-41da0feaf86f"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-console-operator",
+        "name": "console-operator",
+        "uid": "bd94ff99-b2c4-4400-ad6f-9545429d65bb"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-controller-manager",
+        "name": "controller-manager",
+        "uid": "b9cb15fe-d106-4625-b845-82d85361a19c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-controller-manager-operator",
+        "name": "openshift-controller-manager-operator",
+        "uid": "1f70cafa-0f25-43f8-ad96-2936fe3f575c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-dns-operator",
+        "name": "dns-operator",
+        "uid": "bda5e263-c3c8-48b7-8fb7-f6e5d078020a"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-etcd-operator",
+        "name": "etcd-operator",
+        "uid": "b157a868-574d-4686-b668-2a0718f9b4d0"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-image-registry",
+        "name": "cluster-image-registry-operator",
+        "uid": "c79b5bee-3d70-4605-a0f6-3adfff4375d5"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-image-registry",
+        "name": "image-registry",
+        "uid": "a6f6bc3f-7bfc-4db0-83f0-261b8e674a15"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-ingress",
+        "name": "router-default",
+        "uid": "1877d8eb-e619-4f4c-a979-c05f1fe80941"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-ingress-operator",
+        "name": "ingress-operator",
+        "uid": "39bd12de-4cd6-4e33-b0b9-9493db94be3b"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-insights",
+        "name": "insights-operator",
+        "uid": "ca70cf6b-9282-42e7-b6f9-b59b97c9edfb"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-apiserver-operator",
+        "name": "kube-apiserver-operator",
+        "uid": "4b63830b-870b-4b19-8319-38e9d76551bd"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-controller-manager-operator",
+        "name": "kube-controller-manager-operator",
+        "uid": "a90fada1-4e99-4f19-9c64-5119f853aa2e"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-scheduler-operator",
+        "name": "openshift-kube-scheduler-operator",
+        "uid": "608f237a-b589-4ce5-8963-0086ea93dc7b"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-storage-version-migrator",
+        "name": "migrator",
+        "uid": "f244613d-5901-4b82-8367-f4b4ffd9ec71"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-kube-storage-version-migrator-operator",
+        "name": "kube-storage-version-migrator-operator",
+        "uid": "38a195eb-e556-471e-b082-bd99ee0d33ff"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "cluster-autoscaler-operator",
+        "uid": "7bf36786-93d1-4b5a-b07f-e51222798f29"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "cluster-baremetal-operator",
+        "uid": "c90becee-8d5a-4c14-8961-a1d5ac5fa955"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "control-plane-machine-set-operator",
+        "uid": "c0c8a98f-0174-4170-81ab-637f4e48173b"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "machine-api-controllers",
+        "uid": "45d036fa-89d5-4072-91f2-8830a7649f88"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-api",
+        "name": "machine-api-operator",
+        "uid": "45a153e0-c899-476f-b0f6-fc02101583ef"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-controller",
+        "uid": "192971ca-70ff-4ea8-affd-d035943ae684"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-machine-config-operator",
+        "name": "machine-config-operator",
+        "uid": "08a783bf-e9e3-48ef-9e32-e67ae91d7c49"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-marketplace",
+        "name": "marketplace-operator",
+        "uid": "dfc78285-ac5d-449a-ab8f-7a8fa21f97e1"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "cluster-monitoring-operator",
+        "uid": "bdc2520c-3532-44bd-bd2b-41daba29b356"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "kube-state-metrics",
+        "uid": "8aa35b34-069a-48ac-b988-5e04de5ef4fd"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "metrics-server",
+        "uid": "e68ecea0-ad26-4f23-85cd-067adce8f29c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "monitoring-plugin",
+        "uid": "567972e0-8879-4ec5-86a0-b53173fb28db"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "openshift-state-metrics",
+        "uid": "2004d6aa-7397-4931-83be-b7b76187df56"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "prometheus-operator",
+        "uid": "fddb0cd0-b47c-4565-b531-ce8718876460"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "prometheus-operator-admission-webhook",
+        "uid": "2518546a-717a-44b4-9775-b1bada0f6e9e"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "telemeter-client",
+        "uid": "0550902b-2759-4b81-933f-dbfac59c5fe8"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-monitoring",
+        "name": "thanos-querier",
+        "uid": "7bdaa969-6d90-4b57-9efd-43915c965b21"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-multus",
+        "name": "multus-admission-controller",
+        "uid": "d9f4bc26-763c-4746-9950-8a3f474a6192"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-network-console",
+        "name": "networking-console-plugin",
+        "uid": "bc4b9862-c888-49cb-b54d-f6a0f1d4ffce"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-network-diagnostics",
+        "name": "network-check-source",
+        "uid": "9a96f350-e6d8-4599-a1ab-41933975170f"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-network-operator",
+        "name": "network-operator",
+        "uid": "7d64a059-a6cb-458e-963b-f562c1929366"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-oauth-apiserver",
+        "name": "apiserver",
+        "uid": "4e11b80d-f217-4a37-b736-fa04283779a5"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-controller",
+        "name": "operator-controller-controller-manager",
+        "uid": "0d30ba85-2051-4269-842d-c8b18823e606"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "catalog-operator",
+        "uid": "314ec854-4d5c-4a57-af13-c5bc86ed53a2"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "olm-operator",
+        "uid": "15219133-ac6d-4a84-8a23-5b36b861e555"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "package-server-manager",
+        "uid": "5027b577-36cb-4a85-9e9c-4fc9ae8b9e56"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-operator-lifecycle-manager",
+        "name": "packageserver",
+        "uid": "b45fa4c4-d822-4c29-95ca-71b746990ea6"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-ovn-kubernetes",
+        "name": "ovnkube-control-plane",
+        "uid": "edeb40fc-b7d5-42ae-9372-d937ecdf8b69"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-route-controller-manager",
+        "name": "route-controller-manager",
+        "uid": "d8e7684f-052c-4cb6-be9a-63826a95f244"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-service-ca",
+        "name": "service-ca",
+        "uid": "208f35ac-efb9-49fb-a77a-a274cd981451"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-service-ca-operator",
+        "name": "service-ca-operator",
+        "uid": "3cadbe77-088f-4ab2-914b-748a6b9dd892"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ceph-csi-controller-manager",
+        "uid": "80c29632-da2b-48dd-94c9-6128d40e107d"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "cnpg-controller-manager",
+        "uid": "12df9b89-571f-4bc1-aa0b-40374afc67db"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "csi-addons-controller-manager",
+        "uid": "4200aea1-0140-47a1-baa9-a5ade0299a8c"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "noobaa-endpoint",
+        "uid": "756e09c8-da60-4a8c-a60e-1bc5b111aef3"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "noobaa-operator",
+        "uid": "14a4ad7d-324d-4d2c-9bc7-94992c16553d"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ocs-client-operator-console",
+        "uid": "0b25e872-29c1-4a2f-bf5e-4d1909099700"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ocs-client-operator-controller-manager",
+        "uid": "e467c730-e2df-43b6-acb9-0949b4d27453"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ocs-operator",
+        "uid": "99282ad4-01e8-44c0-b4b4-d2e4194c844b"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "odf-console",
+        "uid": "d6dc286f-406d-48bb-aa23-ec76360bc743"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "odf-external-snapshotter-operator",
+        "uid": "471e1a6c-3782-41b8-b7d3-8e4e7dd5cf2a"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "odf-operator-controller-manager",
+        "uid": "9134f2f9-61df-4e42-a898-aaccdbbecabf"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "prometheus-operator",
+        "uid": "512c6405-79e1-4bf4-87dc-139835495bb5"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "rook-ceph-operator",
+        "uid": "2e94dfcf-b193-4cde-934d-5db64b2b897e"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "Deployment",
+        "namespace": "openshift-storage",
+        "name": "ux-backend-server",
+        "uid": "d0730759-15c8-4bdd-8405-a341541e4a65"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-monitoring",
+        "name": "alertmanager-main",
+        "uid": "fd4e38e2-2863-4bd2-ae82-1e5649e9c4d4"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-monitoring",
+        "name": "prometheus-k8s",
+        "uid": "17925df7-19a9-4e90-9873-8f57882ba267"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-storage",
+        "name": "noobaa-core",
+        "uid": "51b96376-c721-48a6-b6ae-4be645696fcb"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "apps",
+        "version": "v1",
+        "kind": "StatefulSet",
+        "namespace": "openshift-storage",
+        "name": "noobaa-db-pg",
+        "uid": "3a076d26-b3bc-48be-b185-430c1e95766e"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "CronJob",
+        "namespace": "openshift-image-registry",
+        "name": "image-pruner",
+        "uid": "be422b9c-6b49-4813-93a6-bbf32135e16f"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "llm-serving",
+        "name": "download-qwen3-06b",
+        "uid": "887b86f3-20c4-4fbc-ba37-d8ebcbb0fd49"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-2llm5",
+        "uid": "2bba41f9-be08-44c1-a312-62bd8525b312"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-445vw",
+        "uid": "2c5d493d-585b-46bb-afe2-12af9179be18"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-9vltd",
+        "uid": "3a3663e8-ae7c-4af1-91b7-fb22317a96c0"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-dvgpq",
+        "uid": "10838d1c-e4f9-46d0-b9c9-349779792a89"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-g9tfp",
+        "uid": "7f170f2c-a121-46e9-a69a-dc70442cf9f1"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-jgf46",
+        "uid": "957c8c1c-c3b5-49c3-90e9-9cf18fbb23e3"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-knwqq",
+        "uid": "2579790c-acba-4b7c-9ae4-1f7186bf8ace"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-lpzx6",
+        "uid": "cd8d0a2f-058c-4994-a482-e7c085d4f1f3"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-mhl2z",
+        "uid": "25e7f2a1-e290-43fc-8730-5e29df5186f3"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-p2p4k",
+        "uid": "5e61ea73-68f1-42bc-a179-0a3c39fb16c4"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-sg44x",
+        "uid": "0decf8e9-0e17-4794-914a-a0b62807dbfc"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    },
+    {
+      "resource": {
+        "group": "batch",
+        "version": "v1",
+        "kind": "Job",
+        "namespace": "openshift-insights",
+        "name": "periodic-gathering-x6ntn",
+        "uid": "90f4b820-cb70-4335-a85e-9e29d1a7855f"
+      },
+      "evidence": {
+        "owner_ref_match": false,
+        "matching_labels": [],
+        "matching_managers": [],
+        "namespace_affinity": true,
+        "service_account_match": false
+      },
+      "confidence": "None"
+    }
+  ],
+  "preservedResiduals": [],
+  "incompleteScopes": []
+}

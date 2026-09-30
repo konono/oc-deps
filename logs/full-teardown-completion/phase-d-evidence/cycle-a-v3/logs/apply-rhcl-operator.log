@@ -1,0 +1,15 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhcl-operator.json
+🔍 Discovering API resources...
+   Discovery: 33.4s
+🔍 Discovering operators... found 27 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+
+⛔ Execution plan drift detected:
+  - Resource count drift: saved 22, fresh 21
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE TokenRateLimitPolicy/gateway-default-deny uid=Some("87ca7068-31e5-4845-a6ea-de55b42de374") (×1)
+Error: 2 drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.
+exit=1

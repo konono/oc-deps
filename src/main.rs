@@ -980,6 +980,21 @@ enum BatchOutcome {
     Succeeded,
     Skipped,
     Failed(i32),
+    NotRun,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingResumeAction {
+    ReportOnly,
+    Execute,
+}
+
+fn pending_resume_action(dry_run: bool) -> PendingResumeAction {
+    if dry_run {
+        PendingResumeAction::ReportOnly
+    } else {
+        PendingResumeAction::Execute
+    }
 }
 
 fn batch_summary(results: &[(String, BatchOutcome)]) -> (usize, usize, usize) {
@@ -1003,6 +1018,261 @@ fn operator_matches_entry(op: &crate::analyzers::olm::OperatorInstance, entry_na
         || op.csv.name.starts_with(&format!("{}.v", entry_name))
         || op.package_name.as_deref() == Some(entry_name)
         || op.csv.name == entry_name
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExplicitCleanupResumeMode {
+    TypedBlocked,
+    LegacyFailed,
+}
+
+type ExplicitCleanupKey = (String, String, Option<String>, String, String);
+
+fn explicit_cleanup_resume_mode(
+    run: &crate::teardown::journal::RunJournal,
+) -> Result<ExplicitCleanupResumeMode, String> {
+    use crate::teardown::journal::{FinalizerRecoveryResult, ReDeleteResult, RunState};
+    use crate::teardown::planner::Action;
+
+    let mode = match run.state {
+        RunState::ExplicitCleanupBlocked => ExplicitCleanupResumeMode::TypedBlocked,
+        RunState::Failed => ExplicitCleanupResumeMode::LegacyFailed,
+        ref other => {
+            return Err(format!(
+                "state {:?} is not an explicit-cleanup retry state",
+                other
+            ));
+        }
+    };
+
+    if run.schema_version != crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION {
+        return Err(format!(
+            "journal schema v{} does not match current v{}",
+            run.schema_version,
+            crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION
+        ));
+    }
+    if run.execution.phases_total != run.plan_snapshot.phases.len() {
+        return Err(format!(
+            "phase count mismatch: journal={} plan={}",
+            run.execution.phases_total,
+            run.plan_snapshot.phases.len()
+        ));
+    }
+    if !run.plan_snapshot.blockers.is_empty() {
+        return Err("saved plan contains blockers".to_string());
+    }
+
+    let explicit_phase_indices: Vec<usize> = run
+        .plan_snapshot
+        .phases
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            (p.name == crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME).then_some(i)
+        })
+        .collect();
+    if explicit_phase_indices.len() != 1 {
+        return Err(format!(
+            "expected exactly one Explicit cleanup phase, found {}",
+            explicit_phase_indices.len()
+        ));
+    }
+    let explicit_phase_index = explicit_phase_indices[0];
+    if run.execution.phases_completed != explicit_phase_index {
+        return Err(format!(
+            "phases_completed {} does not point to Explicit cleanup phase {}",
+            run.execution.phases_completed, explicit_phase_index
+        ));
+    }
+    if run.plan_snapshot.explicit_deletes.is_empty() {
+        return Err("saved plan has no explicit_deletes".to_string());
+    }
+
+    let mut metadata_keys: Vec<ExplicitCleanupKey> = Vec::new();
+    for target in &run.plan_snapshot.explicit_deletes {
+        if target.kind.trim().is_empty()
+            || target.name.trim().is_empty()
+            || target.uid.trim().is_empty()
+            || target
+                .namespace
+                .as_ref()
+                .is_some_and(|ns| ns.trim().is_empty())
+            || !target.ref_scan_coverage.scan_complete
+        {
+            return Err(format!(
+                "invalid explicit target {}/{} (empty identity/UID or incomplete plan-time scan)",
+                target.kind, target.name
+            ));
+        }
+        metadata_keys.push((
+            target.group.clone(),
+            target.kind.clone(),
+            target.namespace.clone(),
+            target.name.clone(),
+            target.uid.clone(),
+        ));
+    }
+
+    let mut action_keys: Vec<ExplicitCleanupKey> = Vec::new();
+    for action in &run.plan_snapshot.phases[explicit_phase_index].actions {
+        let Action::Delete { resource, .. } = action else {
+            return Err("Explicit cleanup phase contains a non-DELETE action".to_string());
+        };
+        let uid = resource
+            .uid
+            .as_ref()
+            .filter(|uid| !uid.trim().is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Explicit cleanup action {}/{} has no bound UID",
+                    resource.kind, resource.name
+                )
+            })?;
+        if resource.version.trim().is_empty() {
+            return Err(format!(
+                "Explicit cleanup action {}/{} has no API version",
+                resource.kind, resource.name
+            ));
+        }
+        action_keys.push((
+            resource.group.clone(),
+            resource.kind.clone(),
+            resource.namespace.clone(),
+            resource.name.clone(),
+            uid.clone(),
+        ));
+    }
+    metadata_keys.sort();
+    action_keys.sort();
+    if metadata_keys.windows(2).any(|w| w[0] == w[1])
+        || action_keys.windows(2).any(|w| w[0] == w[1])
+    {
+        return Err("duplicate explicit cleanup identity in saved authority".to_string());
+    }
+    if metadata_keys != action_keys {
+        return Err("explicit_deletes do not match Explicit cleanup actions 1:1".to_string());
+    }
+
+    if run.execution.barrier_timeout.is_some() || !run.execution.failed.is_empty() {
+        return Err("journal contains a failed action or barrier timeout".to_string());
+    }
+    let has_explicit_outcome = run
+        .execution
+        .deleted
+        .iter()
+        .chain(run.execution.already_gone.iter())
+        .any(|r| {
+            r.uid.as_ref().is_some_and(|uid| {
+                metadata_keys
+                    .iter()
+                    .any(|(_, _, _, _, target_uid)| target_uid == uid)
+            })
+        });
+    if has_explicit_outcome {
+        return Err("journal already contains an explicit cleanup mutation outcome".to_string());
+    }
+    if !run.cleanup_decisions.is_empty() {
+        return Err(
+            "residual cleanup decisions exist before Explicit cleanup completed".to_string(),
+        );
+    }
+    if run
+        .finalizer_recoveries
+        .iter()
+        .any(|r| matches!(r.result, FinalizerRecoveryResult::PatchRequested))
+    {
+        return Err("unresolved finalizer recovery outcome".to_string());
+    }
+    if run.execution.re_delete_records.iter().any(|r| {
+        matches!(
+            r.result,
+            ReDeleteResult::Authorized
+                | ReDeleteResult::Accepted
+                | ReDeleteResult::UnknownOutcome(_)
+        )
+    }) {
+        return Err("unresolved re-delete outcome".to_string());
+    }
+
+    match mode {
+        ExplicitCleanupResumeMode::TypedBlocked => {
+            if run.execution.explicit_cleanup_error.is_none() {
+                return Err("typed blocked state has no typed cleanup error".to_string());
+            }
+        }
+        ExplicitCleanupResumeMode::LegacyFailed => {
+            if run.execution.explicit_cleanup_error.is_some() {
+                return Err(
+                    "legacy Failed journal unexpectedly has a typed cleanup error".to_string(),
+                );
+            }
+            if run.backup_receipts.is_empty() {
+                return Err("legacy Failed migration requires a backup receipt".to_string());
+            }
+        }
+    }
+
+    Ok(mode)
+}
+
+fn operator_snapshot_matches_entry(
+    run: &crate::teardown::journal::RunJournal,
+    operator_entry_name: &str,
+) -> bool {
+    let csv = &run.operator.csv_name;
+    let pkg = match &run.operator.generation_identity {
+        crate::teardown::plan::OperatorGenerationIdentity::OlmPackage { package_name, .. } => {
+            package_name.as_str()
+        }
+        _ => "",
+    };
+    csv.starts_with(&format!("{}.", operator_entry_name))
+        || csv.starts_with(&format!("{}.v", operator_entry_name))
+        || pkg == operator_entry_name
+        || csv == operator_entry_name
+}
+
+fn find_pending_explicit_cleanup_journal(
+    cluster_id: &crate::teardown::plan::ClusterIdentity,
+    operator_entry_name: &str,
+) -> anyhow::Result<Option<String>> {
+    let runs = crate::teardown::journal::list_runs(cluster_id)?;
+    select_pending_explicit_cleanup_journal(&runs, operator_entry_name).map_err(anyhow::Error::msg)
+}
+
+fn select_pending_explicit_cleanup_journal(
+    runs: &[crate::teardown::journal::RunJournal],
+    operator_entry_name: &str,
+) -> Result<Option<String>, String> {
+    let Some(latest) = runs
+        .iter()
+        .filter(|run| operator_snapshot_matches_entry(run, operator_entry_name))
+        .max_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.run_id.cmp(&b.run_id))
+        })
+    else {
+        return Ok(None);
+    };
+
+    if matches!(
+        latest.state,
+        crate::teardown::journal::RunState::ExplicitCleanupBlocked
+            | crate::teardown::journal::RunState::Failed
+    ) && !latest.plan_snapshot.explicit_deletes.is_empty()
+    {
+        explicit_cleanup_resume_mode(latest).map_err(|reason| {
+            format!(
+                "Latest run {} for {} has pending explicit cleanup but is not safely resumable: {}",
+                latest.run_id, operator_entry_name, reason
+            )
+        })?;
+        return Ok(Some(latest.run_id.clone()));
+    }
+
+    Ok(None)
 }
 
 fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
@@ -2135,6 +2405,14 @@ async fn main() -> Result<()> {
                     // TUI mode: ratatui interactive Plan Review → Execution → Residual Cleanup
                     if use_tui && !dry_run {
                         let journal_store = {
+                            let audit_ns = discover_audit_scope(
+                                &client,
+                                target_operators[0],
+                                &kind_map,
+                                &gvr_map,
+                                &gk_map,
+                            )
+                            .await?;
                             let store = create_run_journal(
                                 &client,
                                 &plan,
@@ -2142,6 +2420,7 @@ async fn main() -> Result<()> {
                                 &gk_map,
                                 approve_finalizer_recovery,
                                 vec![], // TUI updates receipts after review overrides
+                                Some(audit_ns),
                             )
                             .await?;
                             eprintln!("📓 Run journal: {}", store.path().display());
@@ -2341,7 +2620,7 @@ async fn main() -> Result<()> {
                                                                     // Basis drift: verify provenance hasn't degraded
                                                                     // Use journal's operator snapshot (has full controller deployment UIDs)
                                                                     {
-                                                                        let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map);
+                                                                        let ctx = journal::build_audit_context(&plan, &target_operators, &gk_map, None);
                                                                         let action_metadata =
                                                                             metadata.clone();
                                                                         let snap = if let Some(
@@ -2445,6 +2724,14 @@ async fn main() -> Result<()> {
 
                                 // Run executor with the plan
                                 script_journal = if !dry_run {
+                                    let audit_ns = discover_audit_scope(
+                                        &client,
+                                        target_operators[0],
+                                        &kind_map,
+                                        &gvr_map,
+                                        &gk_map,
+                                    )
+                                    .await?;
                                     let store = create_run_journal(
                                         &client,
                                         &plan,
@@ -2452,6 +2739,7 @@ async fn main() -> Result<()> {
                                         &gk_map,
                                         app.finalizer_recovery_approved,
                                         script_backup_receipts,
+                                        Some(audit_ns),
                                     )
                                     .await?;
                                     Some(std::sync::Arc::new(store))
@@ -2540,7 +2828,7 @@ async fn main() -> Result<()> {
                                         if let Some(ref store) = script_journal {
                                             let _ = store
                                                 .update(|j| {
-                                                    j.state = RunState::Failed;
+                                                    journal::mark_failed_preserving_retryable(j);
                                                 })
                                                 .await;
                                         }
@@ -2558,7 +2846,7 @@ async fn main() -> Result<()> {
                                 let j = store.read().await;
                                 if j.state == RunState::ApplyCompleted {
                                     let gen_check =
-                                        crate::teardown::audit::check_operator_generation(
+                                        crate::teardown::audit::check_operator_generation_fresh(
                                             &client,
                                             &j.operator,
                                             &j.audit_context.csv_baseline,
@@ -2568,7 +2856,7 @@ async fn main() -> Result<()> {
                                         gen_check,
                                         crate::teardown::audit::OperatorGenerationState::Absent
                                     ) {
-                                        match crate::teardown::audit::run_residual_audit(
+                                        match crate::teardown::audit::run_post_mutation_audit(
                                             &client, &j,
                                         )
                                         .await
@@ -2584,7 +2872,7 @@ async fn main() -> Result<()> {
                                                             }));
                                                 } else {
                                                     // Re-verify generation after audit
-                                                    let gen_recheck = crate::teardown::audit::check_operator_generation(
+                                                    let gen_recheck = crate::teardown::audit::check_operator_generation_fresh(
                                                                 &client, &j.operator, &j.audit_context.csv_baseline,
                                                             ).await;
                                                     if !matches!(gen_recheck, crate::teardown::audit::OperatorGenerationState::Absent) {
@@ -2756,7 +3044,7 @@ async fn main() -> Result<()> {
                                 } else {
                                     // Final generation check before Finished persist
                                     let fin_gen =
-                                        crate::teardown::audit::check_operator_generation(
+                                        crate::teardown::audit::check_operator_generation_fresh(
                                             &client,
                                             &j.operator,
                                             &j.audit_context.csv_baseline,
@@ -2831,6 +3119,14 @@ async fn main() -> Result<()> {
                     // Create RunJournal before first mutation (fail-closed)
                     // Use process lock to prevent dual-writer from resume
                     let journal_store: Option<std::sync::Arc<JournalStore>> = if !dry_run {
+                        let audit_ns = discover_audit_scope(
+                            &client,
+                            target_operators[0],
+                            &kind_map,
+                            &gvr_map,
+                            &gk_map,
+                        )
+                        .await?;
                         let store = create_run_journal(
                             &client,
                             &plan,
@@ -2838,6 +3134,7 @@ async fn main() -> Result<()> {
                             &gk_map,
                             effective_finalizer_recovery,
                             normal_backup_receipts,
+                            Some(audit_ns),
                         )
                         .await?;
                         eprintln!("📓 Run journal: {}", store.path().display());
@@ -2937,7 +3234,7 @@ async fn main() -> Result<()> {
                             {
                                 use crate::teardown::audit::{self, OperatorGenerationState};
                                 let j = store.read().await;
-                                let gen_state = audit::check_operator_generation(
+                                let gen_state = audit::check_operator_generation_fresh(
                                     &client,
                                     &j.operator,
                                     &j.audit_context.csv_baseline,
@@ -2946,7 +3243,11 @@ async fn main() -> Result<()> {
                                 match gen_state {
                                     OperatorGenerationState::Absent => {
                                         eprintln!("\n🔍 Running post-apply residual audit...");
-                                        match audit::run_residual_audit(&client, &j).await {
+                                        match crate::teardown::audit::run_post_mutation_audit(
+                                            &client, &j,
+                                        )
+                                        .await
+                                        {
                                             Ok(audit_result) => {
                                                 let status = audit::residual_status_from_audit(
                                                     &audit_result,
@@ -2983,12 +3284,13 @@ async fn main() -> Result<()> {
                                                     ))
                                                 });
                                                 // Re-verify generation before saving
-                                                let gen_recheck = audit::check_operator_generation(
-                                                    &client,
-                                                    &j.operator,
-                                                    &j.audit_context.csv_baseline,
-                                                )
-                                                .await;
+                                                let gen_recheck =
+                                                    audit::check_operator_generation_fresh(
+                                                        &client,
+                                                        &j.operator,
+                                                        &j.audit_context.csv_baseline,
+                                                    )
+                                                    .await;
                                                 if matches!(
                                                     gen_recheck,
                                                     OperatorGenerationState::Absent
@@ -3302,17 +3604,19 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            // Best-effort: record Failed state in journal, then propagate error
+                            // Best-effort: record Failed state in journal, then propagate error.
+                            // If the executor already set ExplicitCleanupBlocked, preserve that
+                            // retryable state instead of overwriting with terminal Failed.
                             if let Some(store) = &journal_store
-                                && let Err(je) = store
+                                && store
                                     .update(|j| {
-                                        j.state = RunState::Failed;
+                                        journal::mark_failed_preserving_retryable(j);
                                     })
                                     .await
+                                    .is_err()
                             {
                                 eprintln!(
-                                    "⚠ Additionally, failed to persist Failed state to journal: {}",
-                                    je
+                                    "⚠ Additionally, failed to persist Failed state to journal"
                                 );
                             }
                             return Err(e);
@@ -3512,7 +3816,7 @@ async fn main() -> Result<()> {
                     run,
                     refresh_discovery,
                 } => {
-                    let no_cache = refresh_discovery;
+                    let mut no_cache = refresh_discovery;
                     let cluster_id = journal::fetch_cluster_identity(&client).await?;
 
                     let found = if let Some(run_id) = run {
@@ -3540,7 +3844,10 @@ async fn main() -> Result<()> {
                     }
 
                     match j.state {
-                        RunState::Paused | RunState::Applying | RunState::InteractiveCleanup => {}
+                        RunState::Paused
+                        | RunState::Applying
+                        | RunState::InteractiveCleanup
+                        | RunState::ExplicitCleanupBlocked => {}
                         RunState::ApplyCompleted => {
                             if j.last_residual_audit.is_none() {
                                 eprintln!(
@@ -3557,12 +3864,14 @@ async fn main() -> Result<()> {
                         RunState::Finished => {
                             bail!("Run {} already finished — nothing to resume", j.run_id);
                         }
-                        RunState::Failed => {
-                            bail!(
-                                "Run {} has failed. Review the journal and create a new plan if needed.",
-                                j.run_id
-                            );
-                        }
+                        RunState::Failed => match explicit_cleanup_resume_mode(&j) {
+                            Ok(_) => {}
+                            Err(reason) => bail!(
+                                "Run {} has failed and is not an eligible legacy explicit-cleanup retry: {}",
+                                j.run_id,
+                                reason
+                            ),
+                        },
                         _ => {
                             bail!("Run {} is in state {:?} — cannot resume", j.run_id, j.state);
                         }
@@ -3574,11 +3883,14 @@ async fn main() -> Result<()> {
 
                     // Re-read from store — this is the AUTHORITATIVE state after lock.
                     // All decisions below use ONLY this `j`, not the pre-lock one.
-                    let j = store.read().await;
+                    let mut j = store.read().await;
 
                     // Re-verify state after lock (another process may have completed it)
                     match j.state {
-                        RunState::Paused | RunState::Applying | RunState::InteractiveCleanup => {}
+                        RunState::Paused
+                        | RunState::Applying
+                        | RunState::InteractiveCleanup
+                        | RunState::ExplicitCleanupBlocked => {}
                         // A completed main apply can re-enter residual cleanup.
                         // The process lock, not the presence of a prior audit,
                         // prevents concurrent resume writers.
@@ -3586,9 +3898,13 @@ async fn main() -> Result<()> {
                         RunState::Finished => {
                             bail!("Run finished — nothing to resume");
                         }
-                        RunState::Failed => {
-                            bail!("Run failed (possibly by another process). Create a new plan.");
-                        }
+                        RunState::Failed => match explicit_cleanup_resume_mode(&j) {
+                            Ok(_) => {}
+                            Err(reason) => bail!(
+                                "Run failed and is not an eligible legacy explicit-cleanup retry: {}",
+                                reason
+                            ),
+                        },
                         _ => {
                             bail!("Run is in state {:?} after lock — cannot resume", j.state);
                         }
@@ -3621,6 +3937,33 @@ async fn main() -> Result<()> {
                         }
                     }
 
+                    // v12 journals written before ExplicitCleanupBlocked existed used the
+                    // terminal Failed state for a pre-DELETE ref-scan failure.  Migrate only
+                    // the narrowly proven shape, after process lock, cluster identity and
+                    // backup receipts have all been validated.  The normal resume path then
+                    // applies every current UID/reference safety check again.
+                    let explicit_resume_mode = explicit_cleanup_resume_mode(&j).ok();
+                    if explicit_resume_mode == Some(ExplicitCleanupResumeMode::LegacyFailed) {
+                        store
+                            .update(|journal| {
+                                journal.state = RunState::ExplicitCleanupBlocked;
+                                journal.execution.explicit_cleanup_error = Some(
+                                    crate::teardown::journal::ExplicitCleanupError {
+                                        target: "saved Explicit cleanup phase".to_string(),
+                                        error_kind: crate::teardown::journal::ExplicitCleanupErrorKind::LegacyStateMigration,
+                                        message: "migrated from structurally eligible legacy Failed journal"
+                                            .to_string(),
+                                    },
+                                );
+                            })
+                            .await
+                            .context("Failed to persist legacy ExplicitCleanupBlocked migration")?;
+                        j = store.read().await;
+                        eprintln!("  ✅ Migrated legacy Failed journal to ExplicitCleanupBlocked");
+                    }
+                    let is_explicit_cleanup_resume = explicit_cleanup_resume_mode(&j).is_ok();
+                    no_cache |= is_explicit_cleanup_resume;
+
                     eprintln!(
                         "Resuming run {} (state: {:?}, operator: {})",
                         j.run_id, j.state, j.operator.csv_name
@@ -3641,33 +3984,51 @@ async fn main() -> Result<()> {
 
                     // Re-verify operator generation with AUTHORITATIVE journal
                     use crate::teardown::audit::{self, OperatorGenerationState};
-                    let gen_state = audit::check_operator_generation(
+                    let gen_state = audit::check_operator_generation_fresh(
                         &client,
                         &j.operator,
                         &j.audit_context.csv_baseline,
                     )
                     .await;
 
-                    match gen_state {
-                        OperatorGenerationState::SameGeneration => {}
-                        OperatorGenerationState::Absent => {
-                            eprintln!(
-                                "  Operator generation absent — \
-                                             teardown may have completed. Check status."
-                            );
+                    if is_explicit_cleanup_resume {
+                        match gen_state {
+                            OperatorGenerationState::Absent => {
+                                eprintln!("  ✅ Operator absent — explicit cleanup eligible");
+                            }
+                            OperatorGenerationState::Reappeared => {
+                                bail!("Operator reappeared — cannot resume explicit cleanup");
+                            }
+                            _ => {
+                                bail!(
+                                    "Operator generation not absent ({:?}) — \
+                                     explicit cleanup blocked",
+                                    gen_state
+                                );
+                            }
                         }
-                        OperatorGenerationState::Reappeared => {
-                            bail!(
-                                "Operator has been reinstalled (new generation). \
-                                             Cannot resume old teardown — create a new plan."
-                            );
-                        }
-                        OperatorGenerationState::Unknown(reason) => {
-                            bail!(
-                                "Cannot verify operator generation: {}. \
-                                             Cannot safely resume.",
-                                reason
-                            );
+                    } else {
+                        match gen_state {
+                            OperatorGenerationState::SameGeneration => {}
+                            OperatorGenerationState::Absent => {
+                                eprintln!(
+                                    "  Operator generation absent — \
+                                                 teardown may have completed. Check status."
+                                );
+                            }
+                            OperatorGenerationState::Reappeared => {
+                                bail!(
+                                    "Operator has been reinstalled (new generation). \
+                                                 Cannot resume old teardown — create a new plan."
+                                );
+                            }
+                            OperatorGenerationState::Unknown(reason) => {
+                                bail!(
+                                    "Cannot verify operator generation: {}. \
+                                                 Cannot safely resume.",
+                                    reason
+                                );
+                            }
                         }
                     }
 
@@ -3922,7 +4283,7 @@ async fn main() -> Result<()> {
                         if pending.is_empty() {
                             if is_residual_reentry {
                                 eprintln!("Resuming Residual Cleanup stage.");
-                                let gen_check = audit::check_operator_generation(
+                                let gen_check = audit::check_operator_generation_fresh(
                                     &client,
                                     &j.operator,
                                     &j.audit_context.csv_baseline,
@@ -4077,12 +4438,13 @@ async fn main() -> Result<()> {
 
                                                 // Post-permit: generation + audit + membership
                                                 let re_j = store.read().await;
-                                                let re_gen = audit::check_operator_generation(
-                                                    &client,
-                                                    &re_j.operator,
-                                                    &re_j.audit_context.csv_baseline,
-                                                )
-                                                .await;
+                                                let re_gen =
+                                                    audit::check_operator_generation_fresh(
+                                                        &client,
+                                                        &re_j.operator,
+                                                        &re_j.audit_context.csv_baseline,
+                                                    )
+                                                    .await;
                                                 if !matches!(
                                                     re_gen,
                                                     OperatorGenerationState::Absent
@@ -4093,7 +4455,7 @@ async fn main() -> Result<()> {
                                                     any_retryable = true;
                                                     drop(_re_permit);
                                                 } else {
-                                                    match audit::run_residual_audit(&client, &re_j)
+                                                    match crate::teardown::audit::run_observed_audit(&client, &re_j)
                                                         .await
                                                     {
                                                         Ok(re_audit) => {
@@ -4113,7 +4475,7 @@ async fn main() -> Result<()> {
                                                                 drop(_re_permit);
                                                             } else {
                                                                 // Post-audit generation recheck before mutation
-                                                                let re_gen2 = audit::check_operator_generation(
+                                                                let re_gen2 = audit::check_operator_generation_fresh(
                                                                                 &client, &re_j.operator, &re_j.audit_context.csv_baseline,
                                                                             ).await;
                                                                 if !matches!(
@@ -4279,7 +4641,7 @@ async fn main() -> Result<()> {
 
                                 // 1. Per-resource generation check
                                 let j_cur = store.read().await;
-                                let gen_state = audit::check_operator_generation(
+                                let gen_state = audit::check_operator_generation_fresh(
                                     &client,
                                     &j_cur.operator,
                                     &j_cur.audit_context.csv_baseline,
@@ -4290,9 +4652,10 @@ async fn main() -> Result<()> {
                                 }
 
                                 // 2. Fresh complete audit + membership check
-                                let fresh_audit = audit::run_residual_audit(&client, &j_cur)
-                                    .await
-                                    .context("Fresh audit failed during cleanup resume")?;
+                                let fresh_audit =
+                                    crate::teardown::audit::run_observed_audit(&client, &j_cur)
+                                        .await
+                                        .context("Fresh audit failed during cleanup resume")?;
                                 let audit_status = audit::residual_status_from_audit(&fresh_audit);
                                 if matches!(
                                     audit_status,
@@ -4469,7 +4832,7 @@ async fn main() -> Result<()> {
                                 // Post-permit rechecks: generation + audit + membership could have changed
                                 {
                                     let pp_j = store.read().await;
-                                    let pp_gen = audit::check_operator_generation(
+                                    let pp_gen = audit::check_operator_generation_fresh(
                                         &client,
                                         &pp_j.operator,
                                         &pp_j.audit_context.csv_baseline,
@@ -4480,9 +4843,10 @@ async fn main() -> Result<()> {
                                             "Generation changed after permit acquisition — aborting resume"
                                         );
                                     }
-                                    let pp_audit = audit::run_residual_audit(&client, &pp_j)
-                                        .await
-                                        .context("Post-permit audit failed during resume")?;
+                                    let pp_audit =
+                                        crate::teardown::audit::run_observed_audit(&client, &pp_j)
+                                            .await
+                                            .context("Post-permit audit failed during resume")?;
                                     let pp_status = audit::residual_status_from_audit(&pp_audit);
                                     if matches!(pp_status, journal::ResidualStatus::AuditIncomplete)
                                     {
@@ -4507,7 +4871,7 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                     // Final generation recheck after audit
-                                    let pp_gen2 = audit::check_operator_generation(
+                                    let pp_gen2 = audit::check_operator_generation_fresh(
                                         &client,
                                         &pp_j.operator,
                                         &pp_j.audit_context.csv_baseline,
@@ -4645,7 +5009,7 @@ async fn main() -> Result<()> {
 
                         // 6. Mandatory re-audit
                         let j_cur = store.read().await;
-                        let gen_state = audit::check_operator_generation(
+                        let gen_state = audit::check_operator_generation_fresh(
                             &client,
                             &j_cur.operator,
                             &j_cur.audit_context.csv_baseline,
@@ -4658,7 +5022,9 @@ async fn main() -> Result<()> {
                         } else if any_retryable {
                             RunState::InteractiveCleanup
                         } else if matches!(gen_state, OperatorGenerationState::Absent) {
-                            match audit::run_residual_audit(&client, &j_cur).await {
+                            match crate::teardown::audit::run_post_mutation_audit(&client, &j_cur)
+                                .await
+                            {
                                 Ok(re_audit) => {
                                     let status = audit::residual_status_from_audit(&re_audit);
                                     audit::print_residual_audit(&re_audit, &j_cur);
@@ -4723,10 +5089,12 @@ async fn main() -> Result<()> {
                         return Ok(());
                     }
 
-                    // Main execution resume: write Applying before first mutation
+                    // Main execution resume: write Applying before first mutation.
+                    // If resuming from ExplicitCleanupBlocked, clear the typed error.
                     store
                         .update(|journal| {
                             journal.state = RunState::Applying;
+                            journal.execution.explicit_cleanup_error = None;
                         })
                         .await
                         .context("Failed to persist Applying state for resume")?;
@@ -4794,25 +5162,30 @@ async fn main() -> Result<()> {
                             // Post-resume: run residual audit (same as normal apply)
                             if final_state == RunState::ApplyCompleted {
                                 let j_post = store.read().await;
-                                let post_gen = audit::check_operator_generation(
+                                let post_gen = audit::check_operator_generation_fresh(
                                     &client,
                                     &j_post.operator,
                                     &j_post.audit_context.csv_baseline,
                                 )
                                 .await;
                                 if matches!(post_gen, OperatorGenerationState::Absent) {
-                                    match audit::run_residual_audit(&client, &j_post).await {
+                                    match crate::teardown::audit::run_post_mutation_audit(
+                                        &client, &j_post,
+                                    )
+                                    .await
+                                    {
                                         Ok(post_audit) => {
                                             let post_status =
                                                 audit::residual_status_from_audit(&post_audit);
                                             audit::print_residual_audit(&post_audit, &j_post);
                                             // Re-verify generation after audit
-                                            let gen_recheck = audit::check_operator_generation(
-                                                &client,
-                                                &j_post.operator,
-                                                &j_post.audit_context.csv_baseline,
-                                            )
-                                            .await;
+                                            let gen_recheck =
+                                                audit::check_operator_generation_fresh(
+                                                    &client,
+                                                    &j_post.operator,
+                                                    &j_post.audit_context.csv_baseline,
+                                                )
+                                                .await;
                                             if matches!(
                                                 gen_recheck,
                                                 OperatorGenerationState::Absent
@@ -4837,7 +5210,7 @@ async fn main() -> Result<()> {
                             // Best-effort record Failed
                             if let Err(je) = store
                                 .update(|journal| {
-                                    journal.state = RunState::Failed;
+                                    journal::mark_failed_preserving_retryable(journal);
                                 })
                                 .await
                             {
@@ -4904,9 +5277,12 @@ async fn main() -> Result<()> {
                     let (kind_map, _, _, _) =
                         build_kind_lookup_cached(&client, &config, true).await?;
                     let all_operators = discover_operators(&client, &kind_map).await?;
+                    let cluster_id = journal::fetch_cluster_identity(&client).await?;
                     let mut baseline_missing: Vec<String> = Vec::new();
                     let mut skip_indices: std::collections::HashSet<usize> =
                         std::collections::HashSet::new();
+                    let mut pending_resume_map: std::collections::HashMap<usize, String> =
+                        std::collections::HashMap::new();
                     for (idx, entry) in entries.iter().enumerate() {
                         let found = all_operators
                             .iter()
@@ -4925,8 +5301,21 @@ async fn main() -> Result<()> {
                             }
                             None => {
                                 if skip_missing {
-                                    eprintln!("  ⏭ {} — not found, will skip", entry.name);
-                                    skip_indices.insert(idx);
+                                    // Check for pending explicit cleanup journal
+                                    let pending_run = find_pending_explicit_cleanup_journal(
+                                        &cluster_id,
+                                        &entry.name,
+                                    )?;
+                                    if let Some(ref run_id) = pending_run {
+                                        eprintln!(
+                                            "  🔄 {} — absent but has pending explicit cleanup ({})",
+                                            entry.name, run_id
+                                        );
+                                        pending_resume_map.insert(idx, run_id.clone());
+                                    } else {
+                                        eprintln!("  ⏭ {} — not found, will skip", entry.name);
+                                        skip_indices.insert(idx);
+                                    }
                                 } else {
                                     baseline_missing.push(entry.name.clone());
                                     eprintln!("  ⛔ {} — NOT FOUND", entry.name);
@@ -4942,16 +5331,21 @@ async fn main() -> Result<()> {
                             baseline_missing.join(", ")
                         );
                     }
-                    let present_count = entries.len() - skip_indices.len();
+                    let present_count =
+                        entries.len() - skip_indices.len() - pending_resume_map.len();
+                    let mut baseline_note = String::new();
+                    if !skip_indices.is_empty() {
+                        baseline_note.push_str(&format!(", {} skipped", skip_indices.len()));
+                    }
+                    if !pending_resume_map.is_empty() {
+                        baseline_note
+                            .push_str(&format!(", {} pending resume", pending_resume_map.len()));
+                    }
                     eprintln!(
                         "✅ Baseline: {}/{} operators present{}\n",
                         present_count,
                         entries.len(),
-                        if skip_indices.is_empty() {
-                            String::new()
-                        } else {
-                            format!(", {} skipped", skip_indices.len())
-                        }
+                        baseline_note,
                     );
 
                     if no_cache {
@@ -4989,6 +5383,62 @@ async fn main() -> Result<()> {
                                 entry.name
                             );
                             results.push((entry.name.clone(), BatchOutcome::Skipped));
+                            continue;
+                        }
+                        // Pending explicit cleanup resume: delegate to `teardown resume`
+                        if let Some(run_id) = pending_resume_map.get(&i) {
+                            if pending_resume_action(dry_run) == PendingResumeAction::ReportOnly {
+                                eprintln!(
+                                    "\n  🧪 [{}/{}] DRY-RUN {} would resume pending explicit cleanup ({})",
+                                    i + 1,
+                                    entry_count,
+                                    entry.name,
+                                    run_id
+                                );
+                                results.push((entry.name.clone(), BatchOutcome::Succeeded));
+                                continue;
+                            }
+                            eprintln!(
+                                "\n{}\n  [{}/{}] RESUME {} ({})\n{}",
+                                "=".repeat(60),
+                                i + 1,
+                                entry_count,
+                                entry.name,
+                                run_id,
+                                "=".repeat(60),
+                            );
+                            let mut cmd = std::process::Command::new(&exe);
+                            cmd.arg("teardown").arg("resume").arg("--run").arg(run_id);
+                            if let Ok(kc) = std::env::var("KUBECONFIG") {
+                                cmd.env("KUBECONFIG", kc);
+                            }
+                            cmd.stdout(std::process::Stdio::inherit());
+                            cmd.stderr(std::process::Stdio::inherit());
+                            let status = cmd.status().with_context(|| {
+                                format!("Failed to run teardown resume for {}", entry.name)
+                            })?;
+                            if status.success() {
+                                eprintln!("  ✅ {} resumed and completed", entry.name);
+                                results.push((entry.name.clone(), BatchOutcome::Succeeded));
+                            } else {
+                                let exit = status.code().unwrap_or(-1);
+                                eprintln!(
+                                    "\n⛔ {} resume failed (exit {}). Stopping batch.",
+                                    entry.name, exit
+                                );
+                                results.push((entry.name.clone(), BatchOutcome::Failed(exit)));
+                                let remaining = entry_count - i - 1;
+                                if remaining > 0 {
+                                    eprintln!(
+                                        "  ⏭ {} operator(s) not run (stopped on failure)",
+                                        remaining
+                                    );
+                                }
+                                for entry in entries.iter().skip(i + 1) {
+                                    results.push((entry.name.clone(), BatchOutcome::NotRun));
+                                }
+                                break;
+                            }
                             continue;
                         }
                         let op_name = &entry.name;
@@ -5119,6 +5569,7 @@ async fn main() -> Result<()> {
                     let (s, sk, f) = batch_summary(&results);
                     eprintln!("\n📊 Batch results:");
                     let mut any_failed = false;
+                    let mut not_run = 0usize;
                     for (name, outcome) in &results {
                         match outcome {
                             BatchOutcome::Succeeded => eprintln!("  ✅ {}", name),
@@ -5127,9 +5578,13 @@ async fn main() -> Result<()> {
                                 eprintln!("  ⛔ {} (exit {})", name, c);
                                 any_failed = true;
                             }
+                            BatchOutcome::NotRun => {
+                                not_run += 1;
+                            }
                         }
                     }
-                    let not_run = entry_count - results.len();
+                    let unrecorded = entry_count.saturating_sub(results.len());
+                    not_run += unrecorded;
                     if not_run > 0 {
                         eprintln!("  ⏭ {} operator(s) not run (stopped on failure)", not_run);
                     }
@@ -5164,6 +5619,7 @@ async fn main() -> Result<()> {
                     operator,
                     run,
                     no_audit,
+                    output,
                 } => {
                     let cluster_id = journal::fetch_cluster_identity(&client).await?;
 
@@ -5187,7 +5643,7 @@ async fn main() -> Result<()> {
                             if no_audit {
                                 eprintln!("\n(audit skipped via --no-audit)");
                             } else {
-                                let gen_state = audit::check_operator_generation(
+                                let gen_state = audit::check_operator_generation_fresh(
                                     &client,
                                     &j.operator,
                                     &j.audit_context.csv_baseline,
@@ -5197,9 +5653,30 @@ async fn main() -> Result<()> {
                                 match gen_state {
                                     OperatorGenerationState::Absent => {
                                         eprintln!("\n🔍 Running live residual audit...");
-                                        match audit::run_residual_audit(&client, &j).await {
+                                        match crate::teardown::audit::run_observed_audit(
+                                            &client, &j,
+                                        )
+                                        .await
+                                        {
                                             Ok(result) => {
-                                                print_residual_audit(&result, &j);
+                                                match output {
+                                                    crate::cli::OutputFormat::Json => {
+                                                        println!(
+                                                            "{}",
+                                                            audit::format_residual_audit_json(
+                                                                &result
+                                                            )
+                                                        );
+                                                    }
+                                                    crate::cli::OutputFormat::Table => {
+                                                        audit::format_residual_audit_table(
+                                                            &result, &j,
+                                                        );
+                                                    }
+                                                    crate::cli::OutputFormat::Tree => {
+                                                        print_residual_audit(&result, &j);
+                                                    }
+                                                }
                                                 // teardown journal is read-only — audit results are
                                                 // displayed but NOT persisted to the journal file.
                                                 // Cross-process journal writes require PR3's full
@@ -8035,6 +8512,97 @@ fn print_run_journal(j: &RunJournal) {
     }
 }
 
+/// Discover namespace scope for a single target operator.
+/// Must run before journal creation so the journal captures provenance.
+/// Fails closed: discovery scan failures abort the teardown.
+async fn discover_audit_scope(
+    client: &::kube::Client,
+    target_operator: &crate::analyzers::olm::OperatorInstance,
+    kind_map: &crate::kube::discovery::KindMap,
+    gvr_map: &crate::kube::discovery::GvrMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<Vec<crate::analyzers::namespace_scope::CandidateNamespace>> {
+    use crate::analyzers::namespace_scope::{CandidateNamespace, NamespaceEvidence};
+    use crate::kube::planner::QueryPlanner;
+    use crate::kube::scanner::DEFAULT_API_CONCURRENCY;
+
+    let scope_planner = QueryPlanner::new(Some(std::sync::Arc::new(tokio::sync::Semaphore::new(
+        DEFAULT_API_CONCURRENCY,
+    ))));
+
+    let scope_result = discover_operator_namespaces_opts(
+        client,
+        target_operator,
+        kind_map,
+        gvr_map,
+        gk_map,
+        None,
+        None,
+        Some(scope_planner.clone()),
+    )
+    .await
+    .context("Namespace scope discovery failed for audit context")?;
+    if !scope_result.scan_failures.is_empty() {
+        let msgs: Vec<String> = scope_result
+            .scan_failures
+            .iter()
+            .map(|w| format!("{:?}", w))
+            .collect();
+        bail!(
+            "Namespace scope discovery had {} scan failure(s) — audit scope incomplete, aborting: {}",
+            msgs.len(),
+            msgs.join("; ")
+        );
+    }
+    let mut candidates = scope_result.candidates;
+    if scope_result.is_all_namespaces {
+        let ns_items = scope_planner
+            .list_all(
+                client,
+                "",
+                "v1",
+                "namespaces",
+                None,
+                crate::kube::resource::QueryRequirement::Required,
+            )
+            .await
+            .map_err(|w| anyhow::anyhow!("Failed to LIST Namespaces: {:?}", w))?;
+        // Validate every Namespace identity — fail closed on missing/invalid
+        for obj in ns_items.iter() {
+            let raw = obj.metadata.name.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "AllNamespaces LIST returned Namespace without metadata.name — fail closed"
+                )
+            })?;
+            if raw.is_empty() || !crate::analyzers::namespace_scope::is_valid_k8s_namespace(raw) {
+                bail!(
+                    "AllNamespaces LIST returned invalid namespace name {:?} — fail closed",
+                    raw
+                );
+            }
+            let ns_name = raw.to_string();
+
+            if let Some(existing) = candidates.iter_mut().find(|c| c.namespace == ns_name) {
+                if !existing
+                    .evidence
+                    .iter()
+                    .any(|e| matches!(e, NamespaceEvidence::OperatorGroupAllNamespaces))
+                {
+                    existing
+                        .evidence
+                        .push(NamespaceEvidence::OperatorGroupAllNamespaces);
+                }
+            } else {
+                candidates.push(CandidateNamespace {
+                    namespace: ns_name,
+                    evidence: vec![NamespaceEvidence::OperatorGroupAllNamespaces],
+                });
+            }
+        }
+    }
+    Ok(candidates)
+}
+
 async fn create_run_journal(
     client: &::kube::Client,
     plan: &crate::teardown::planner::TeardownPlan,
@@ -8042,6 +8610,7 @@ async fn create_run_journal(
     gk_map: &crate::kube::discovery::GroupKindMap,
     _finalizer_recovery_approved: bool,
     backup_receipts: Vec<crate::teardown::backup::BackupReceipt>,
+    candidate_namespaces: Option<Vec<crate::analyzers::namespace_scope::CandidateNamespace>>,
 ) -> Result<JournalStore> {
     if target_operators.len() > 1 {
         bail!(
@@ -8058,7 +8627,8 @@ async fn create_run_journal(
         .context("Failed to build operator identity snapshot for journal")?;
 
     let first_op = target_operators[0];
-    let mut audit_context = journal::build_audit_context(plan, target_operators, gk_map);
+    let mut audit_context =
+        journal::build_audit_context(plan, target_operators, gk_map, candidate_namespaces);
 
     // Capture CSV baseline: all CSVs in install namespace at plan time (name → uid).
     // Used by generation check to detect new CSVs not present before teardown.
@@ -8763,6 +9333,16 @@ pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, Str
              Create a new teardown plan."
                 .to_string(),
         );
+    }
+
+    // Typed and narrowly proven legacy explicit-cleanup failures both resume
+    // through the saved main plan at the exact Explicit cleanup boundary.
+    if matches!(
+        j.state,
+        journal::RunState::ExplicitCleanupBlocked | journal::RunState::Failed
+    ) {
+        explicit_cleanup_resume_mode(j)?;
+        return Ok(ResumeStage::MainExecution);
     }
 
     if (j.state == journal::RunState::InteractiveCleanup && main_complete)
@@ -9608,6 +10188,9 @@ mod basis_drift_tests {
                         succeeded_probes: 0,
                     },
                     scan_errors: vec![],
+                    target_operators_absent: false,
+                    residual_workloads: Vec::new(),
+                    incomplete_scopes: Vec::new(),
                 })
             } else {
                 None
@@ -9832,6 +10415,337 @@ mod basis_drift_tests {
             classify_resume_stage(&j).is_ok(),
             "Resolved recovery (Stripped) should not block resume"
         );
+    }
+
+    // ── ExplicitCleanupBlocked resume tests ──
+
+    fn make_explicit_cleanup_journal(
+        state: crate::teardown::journal::RunState,
+        phases_completed: usize,
+        cleanup_error: Option<crate::teardown::journal::ExplicitCleanupError>,
+    ) -> crate::teardown::journal::RunJournal {
+        use crate::teardown::plan::*;
+        use crate::teardown::planner::*;
+        let mut j = make_test_journal(state, phases_completed, 8, false, vec![]);
+        j.plan_snapshot.explicit_deletes = vec![ExplicitDeleteTarget {
+            group: "apps".to_string(),
+            kind: "Deployment".to_string(),
+            namespace: Some("ns".to_string()),
+            name: "target-deploy".to_string(),
+            uid: "uid-1".to_string(),
+            reason: "explicit".to_string(),
+            inbound_refs_at_plan: vec![],
+            ref_scan_coverage: RefScanCoverage {
+                kinds_scanned: vec![],
+                scan_complete: true,
+            },
+        }];
+        j.plan_snapshot.phases = vec![
+            PlanPhase {
+                name: "Freeze OLM".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+            PlanPhase {
+                name: "Trigger operand cleanup".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+            PlanPhase {
+                name: "Remaining cleanup".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+            PlanPhase {
+                name: "Remove Operator controllers".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+            PlanPhase {
+                name: "Namespace cleanup".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+            PlanPhase {
+                name: EXPLICIT_CLEANUP_PHASE_NAME.to_string(),
+                description: "test".to_string(),
+                actions: vec![Action::Delete {
+                    resource: crate::kube::resource::ResourceId {
+                        group: "apps".to_string(),
+                        version: "v1".to_string(),
+                        kind: "Deployment".to_string(),
+                        namespace: Some("ns".to_string()),
+                        name: "target-deploy".to_string(),
+                        uid: Some("uid-1".to_string()),
+                    },
+                    reason: "explicit".to_string(),
+                }],
+                barrier: None,
+            },
+            PlanPhase {
+                name: "APIs".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+            PlanPhase {
+                name: "Namespaces".to_string(),
+                description: "test".to_string(),
+                actions: vec![],
+                barrier: None,
+            },
+        ];
+        j.execution.explicit_cleanup_error = cleanup_error;
+        j
+    }
+
+    #[test]
+    fn classify_resume_explicit_cleanup_blocked_routes_to_main() {
+        use crate::teardown::journal::{ExplicitCleanupError, ExplicitCleanupErrorKind, RunState};
+        let j = make_explicit_cleanup_journal(
+            RunState::ExplicitCleanupBlocked,
+            5,
+            Some(ExplicitCleanupError {
+                target: "Deployment/target-deploy".to_string(),
+                error_kind: ExplicitCleanupErrorKind::IncompleteScan,
+                message: "ref scan incomplete".to_string(),
+            }),
+        );
+        let stage = classify_resume_stage(&j).expect("should be resumable");
+        assert_eq!(stage, ResumeStage::MainExecution);
+    }
+
+    #[test]
+    fn classify_resume_explicit_cleanup_blocked_no_explicit_deletes_is_error() {
+        use crate::teardown::journal::RunState;
+        let mut j = make_explicit_cleanup_journal(RunState::ExplicitCleanupBlocked, 5, None);
+        j.plan_snapshot.explicit_deletes.clear();
+        let result = classify_resume_stage(&j);
+        assert!(result.is_err(), "should reject without explicit_deletes");
+    }
+
+    #[test]
+    fn classify_resume_explicit_cleanup_blocked_wrong_phase_is_error() {
+        use crate::teardown::journal::RunState;
+        // phases_completed=3 → next phase is "Remove Operator controllers", not Explicit cleanup
+        let j = make_explicit_cleanup_journal(RunState::ExplicitCleanupBlocked, 3, None);
+        let result = classify_resume_stage(&j);
+        assert!(
+            result.is_err(),
+            "should reject when next phase is not Explicit cleanup"
+        );
+    }
+
+    #[test]
+    fn classify_resume_generic_failed_remains_non_resumable() {
+        use crate::teardown::journal::RunState;
+        let j = make_test_journal(RunState::Failed, 5, 8, false, vec![]);
+        let err = classify_resume_stage(&j).unwrap_err();
+        assert!(
+            err.contains("phase count mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn legacy_failed_exact_explicit_boundary_is_narrowly_eligible() {
+        use crate::teardown::backup::BackupReceipt;
+        use crate::teardown::journal::RunState;
+        let mut j = make_explicit_cleanup_journal(RunState::Failed, 5, None);
+        j.backup_receipts.push(BackupReceipt {
+            root: "/tmp/test-backup".to_string(),
+            manifest_sha256: "manifest".to_string(),
+            tree_sha256: "tree".to_string(),
+            resource_set_sha256: "resources".to_string(),
+            resource_count: 1,
+            contains_secret_data: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        });
+        assert_eq!(
+            explicit_cleanup_resume_mode(&j).unwrap(),
+            ExplicitCleanupResumeMode::LegacyFailed
+        );
+        assert_eq!(
+            classify_resume_stage(&j).unwrap(),
+            ResumeStage::MainExecution
+        );
+    }
+
+    #[test]
+    fn legacy_failed_without_backup_is_not_migrated() {
+        use crate::teardown::journal::RunState;
+        let j = make_explicit_cleanup_journal(RunState::Failed, 5, None);
+        let err = explicit_cleanup_resume_mode(&j).unwrap_err();
+        assert!(err.contains("backup receipt"));
+    }
+
+    #[test]
+    fn batch_selection_delegates_eligible_legacy_failed_journal() {
+        use crate::teardown::backup::BackupReceipt;
+        use crate::teardown::journal::RunState;
+        let mut j = make_explicit_cleanup_journal(RunState::Failed, 5, None);
+        j.run_id = "retry4".to_string();
+        j.backup_receipts.push(BackupReceipt {
+            root: "/tmp/test-backup".to_string(),
+            manifest_sha256: "manifest".to_string(),
+            tree_sha256: "tree".to_string(),
+            resource_set_sha256: "resources".to_string(),
+            resource_count: 1,
+            contains_secret_data: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        });
+        assert_eq!(
+            select_pending_explicit_cleanup_journal(&[j], "test").unwrap(),
+            Some("retry4".to_string())
+        );
+    }
+
+    #[test]
+    fn batch_selection_rejects_ineligible_latest_explicit_journal() {
+        use crate::teardown::journal::RunState;
+        let mut j = make_explicit_cleanup_journal(RunState::Failed, 5, None);
+        j.run_id = "unsafe".to_string();
+        let err = select_pending_explicit_cleanup_journal(&[j], "test").unwrap_err();
+        assert!(err.contains("not safely resumable"));
+        assert!(err.contains("backup receipt"));
+    }
+
+    #[test]
+    fn batch_dry_run_never_executes_pending_resume() {
+        assert_eq!(pending_resume_action(true), PendingResumeAction::ReportOnly);
+        assert_eq!(pending_resume_action(false), PendingResumeAction::Execute);
+    }
+
+    #[test]
+    fn explicit_cleanup_resume_rejects_prior_target_outcome() {
+        use crate::teardown::journal::{ExplicitCleanupError, ExplicitCleanupErrorKind, RunState};
+        let mut j = make_explicit_cleanup_journal(
+            RunState::ExplicitCleanupBlocked,
+            5,
+            Some(ExplicitCleanupError {
+                target: "Deployment/target-deploy".to_string(),
+                error_kind: ExplicitCleanupErrorKind::IncompleteScan,
+                message: "incomplete".to_string(),
+            }),
+        );
+        let target = match &j.plan_snapshot.phases[5].actions[0] {
+            crate::teardown::planner::Action::Delete { resource, .. } => resource.clone(),
+            _ => unreachable!(),
+        };
+        j.execution.deleted.push(target);
+        let err = explicit_cleanup_resume_mode(&j).unwrap_err();
+        assert!(err.contains("mutation outcome"));
+    }
+
+    #[test]
+    fn explicit_cleanup_resume_rejects_metadata_action_mismatch() {
+        use crate::teardown::journal::{ExplicitCleanupError, ExplicitCleanupErrorKind, RunState};
+        let mut j = make_explicit_cleanup_journal(
+            RunState::ExplicitCleanupBlocked,
+            5,
+            Some(ExplicitCleanupError {
+                target: "Deployment/target-deploy".to_string(),
+                error_kind: ExplicitCleanupErrorKind::IncompleteScan,
+                message: "incomplete".to_string(),
+            }),
+        );
+        j.plan_snapshot.explicit_deletes[0].uid = "different-uid".to_string();
+        let err = explicit_cleanup_resume_mode(&j).unwrap_err();
+        assert!(err.contains("1:1"));
+    }
+
+    #[test]
+    fn explicit_guard_transient_timeout_classifies_correctly() {
+        use crate::kube::resource::ScanWarning;
+        use crate::teardown::executor::ExplicitGuardOutcome;
+        let w = ScanWarning::Timeout {
+            gvr: "v1/pods".to_string(),
+            message: Some("timeout".to_string()),
+            retries: 2,
+        };
+        let outcome = ExplicitGuardOutcome::from_scan_warning(&w, "Deployment/test");
+        assert!(matches!(outcome, ExplicitGuardOutcome::TransientFailure(_)));
+        if let ExplicitGuardOutcome::TransientFailure(err) = outcome {
+            assert_eq!(
+                err.error_kind,
+                crate::teardown::journal::ExplicitCleanupErrorKind::Timeout
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_guard_forbidden_classifies_transient() {
+        use crate::kube::resource::ScanWarning;
+        use crate::teardown::executor::ExplicitGuardOutcome;
+        let w = ScanWarning::Forbidden {
+            gvr: "apps/v1/deployments".to_string(),
+            status: 403,
+        };
+        let outcome = ExplicitGuardOutcome::from_scan_warning(&w, "Deployment/test");
+        assert!(matches!(outcome, ExplicitGuardOutcome::TransientFailure(_)));
+        if let ExplicitGuardOutcome::TransientFailure(err) = outcome {
+            assert_eq!(
+                err.error_kind,
+                crate::teardown::journal::ExplicitCleanupErrorKind::Forbidden
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_guard_server_error_classifies_transient() {
+        use crate::kube::resource::ScanWarning;
+        use crate::teardown::executor::ExplicitGuardOutcome;
+        let w = ScanWarning::ServerError {
+            gvr: "v1/pods".to_string(),
+            status: 500,
+            message: "internal".to_string(),
+            retries: 3,
+        };
+        let outcome = ExplicitGuardOutcome::from_scan_warning(&w, "Deployment/test");
+        assert!(matches!(outcome, ExplicitGuardOutcome::TransientFailure(_)));
+        if let ExplicitGuardOutcome::TransientFailure(err) = outcome {
+            assert_eq!(
+                err.error_kind,
+                crate::teardown::journal::ExplicitCleanupErrorKind::ServerError
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_guard_other_error_classifies_hard() {
+        use crate::kube::resource::ScanWarning;
+        use crate::teardown::executor::ExplicitGuardOutcome;
+        let w = ScanWarning::Other {
+            gvr: "v1/pods".to_string(),
+            message: "something weird".to_string(),
+        };
+        let outcome = ExplicitGuardOutcome::from_scan_warning(&w, "Deployment/test");
+        assert!(matches!(outcome, ExplicitGuardOutcome::HardFailure(_)));
+    }
+
+    #[test]
+    fn executor_error_checkpoint_preserves_only_typed_retryable_state() {
+        use crate::teardown::journal::{RunState, mark_failed_preserving_retryable};
+        let mut blocked = make_explicit_cleanup_journal(
+            RunState::ExplicitCleanupBlocked,
+            5,
+            Some(crate::teardown::journal::ExplicitCleanupError {
+                target: "Deployment/target-deploy".to_string(),
+                error_kind: crate::teardown::journal::ExplicitCleanupErrorKind::IncompleteScan,
+                message: "incomplete".to_string(),
+            }),
+        );
+        mark_failed_preserving_retryable(&mut blocked);
+        assert_eq!(blocked.state, RunState::ExplicitCleanupBlocked);
+
+        let mut applying = make_test_journal(RunState::Applying, 2, 8, false, vec![]);
+        mark_failed_preserving_retryable(&mut applying);
+        assert_eq!(applying.state, RunState::Failed);
     }
 
     // ── can_finish_run tests ──
@@ -10821,6 +11735,52 @@ mod resolve_explicit_target_tests {
         assert!(
             request_count.load(Ordering::SeqCst) >= 2,
             "500→200 must use at least 2 requests (GET retry + ref scan LISTs)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod config_parse_tests {
+    use super::*;
+
+    #[test]
+    fn full_teardown_config_parses_as_apply_set_config() {
+        let config_str = std::fs::read_to_string("configs/full-teardown.json")
+            .expect("configs/full-teardown.json should exist");
+        let config: ApplySetConfig = serde_json::from_str(&config_str)
+            .expect("configs/full-teardown.json must parse as ApplySetConfig");
+        assert!(!config.operators.is_empty(), "config should have operators");
+        // Validate every DeleteResourceSpec
+        for entry in &config.operators {
+            for spec in &entry.delete_resources {
+                spec.validate().unwrap_or_else(|e| {
+                    panic!(
+                        "delete_resources entry {}/{} failed validation: {}",
+                        spec.kind, spec.name, e
+                    )
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn config_with_unknown_field_fails() {
+        let bad = r#"{"operators":[{"name":"test","delete_resources":[{"group":"","kind":"Svc","name":"x","reason":"extra"}]}]}"#;
+        let result = serde_json::from_str::<ApplySetConfig>(bad);
+        assert!(result.is_err(), "unknown field 'reason' must be rejected");
+    }
+
+    #[test]
+    fn config_delete_resource_validate_rejects_empty_kind() {
+        let spec = DeleteResourceSpec {
+            group: String::new(),
+            kind: String::new(),
+            namespace: None,
+            name: "test".to_string(),
+        };
+        assert!(
+            spec.validate().is_err(),
+            "empty kind should fail validation"
         );
     }
 }

@@ -1,0 +1,113 @@
+{
+  "phase": "A",
+  "issue": 46,
+  "base_commit": "8501f80",
+  "capture_commit": "d491e8b",
+  "timestamp": "2026-09-28T21:00:00Z",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "binary_sha256": "eb724f680f3541848e99301bb3128047f5bee192acbfa39d324daaca2be3f245",
+  "artifacts": {
+    "baseline-provenance.json": "Recovery baseline: tags, exits, verify result",
+    "residual-raw-deleted-state.json": "4 residual workloads raw JSON in post-Cycle-B deleted state",
+    "residual-raw-recovered-state.json": "4 residual workloads raw JSON after Ansible recovery",
+    "rhoai-plan.json": "RHOAI teardown plan (129 actions: 37 DELETE, 73 EXPECT, 18 KEEP, 1 REVIEW)",
+    "rhoai-plan-stdout.txt": "RHOAI teardown plan stdout",
+    "rhbk-plan.json": "RHBK teardown plan (9 actions: 5 DELETE, 4 KEEP)",
+    "rhbk-plan-stdout.txt": "RHBK teardown plan stdout",
+    "rhoai-resources-related.json": "oc-deps operator resources --scope related for rhods-operator",
+    "rhbk-resources-related.json": "oc-deps operator resources --scope related for rhbk-operator",
+    "model-catalog-omission-analysis.md": "Root cause analysis: why model-catalog absent from residual report",
+    "ground-truth-residuals.json": "Machine-readable ground truth with deleted/recovered observation points",
+    "coverage-ledger.json": "Residual scan coverage: 3/4 in scope, 1 inventory gap"
+  },
+  "artifact_provenance": {
+    "rhoai-plan.json": {
+      "command": "oc-deps teardown plan rhods-operator --approve-scope root --approve-scope independent --approve-scope label-only --approve-scope operator-group --approve-resource maas.opendatahub.io/Config/-/default --approve-resource MLflow/mlflow --refresh-discovery --file rhoai-plan.json",
+      "exit_code": 0
+    },
+    "rhbk-plan.json": {
+      "command": "oc-deps teardown plan rhbk-operator --approve-scope root --approve-scope independent --approve-scope label-only --approve-scope operator-group --refresh-discovery --file rhbk-plan.json",
+      "exit_code": 0
+    },
+    "rhoai-resources-related.json": {
+      "command": "oc-deps operator resources rhods-operator --scope related -o json",
+      "exit_code": 0,
+      "note": "Initial capture at a39b3a6 was incomplete (stderr). Replaced at d491e8b with full JSON."
+    },
+    "rhbk-resources-related.json": {
+      "command": "oc-deps operator resources rhbk-operator --scope related -o json",
+      "exit_code": 0,
+      "note": "Added at d491e8b."
+    }
+  },
+  "sha256sums": {
+    "baseline-provenance.json": "53a8493a29109d0f2ad2c67a1924a5847dfcf9f3d5c30c181f4bfe7e1003362f",
+    "coverage-ledger.json": "f23b58106aaaa3a3d402d4f680cda88b07fb43bb0eca67386694016f431f6874",
+    "ground-truth-residuals.json": "8b29c2108629e6c4588dffd6618d4a478d374bcd6ab94f457d82eac4e0fd8ee5",
+    "manifest.json": "SELF",
+    "model-catalog-omission-analysis.md": "25238b1ade08d6aabdab47d3b78ec205c4b8fb01f476361121bfc96d11e481a0",
+    "residual-raw-deleted-state.json": "d75f34a859d96a4f8ebdf536dcfacc487acd627e61878dc3615ffce320a66a34",
+    "residual-raw-recovered-state.json": "2e32ff25bd08a0e178a10847bc7e64d2ce9ecbf14d88815bb83e4cbd3549517a",
+    "rhbk-plan.json": "90286883677ec878691e3f97c3e1ed079f7c1faf7a011647f423f5f96f3d5648",
+    "rhbk-plan-stdout.txt": "e03b74386d8e653b84b7040050973bcf16eadcc8c5282f80c79bca9e637b9ed0",
+    "rhbk-resources-related.json": "d0d39d8a3755b7b7d42e8a84333e83559150881d89538e80eea44f57eecda82c",
+    "rhoai-plan.json": "54b03c3238504e35e5c67c3f7f44613d3463933317f01fdcbb5a32d9e6d4a897",
+    "rhoai-plan-stdout.txt": "709a7d50848615e9a50cc796e7e9f25b11cd6e42b00beaaa568b30733e7c795a",
+    "rhoai-resources-related.json": "e6227d987c23ee11bb43d2d1bdbfdccb9f972b01b7ef840559a8d087cfd232c2"
+  },
+  "gates": {
+    "fmt": "pass",
+    "clippy": "pass",
+    "tests": "4/4 pass",
+    "release_build": "pass",
+    "json_parse": {"total": 9, "ok": 9, "fail": 0, "excluded": ["manifest.json"]},
+    "coverage_incomplete": 0,
+    "four_identity_plan_membership": {
+      "StatefulSet/postgres@keycloak": {"in_rhoai_plan": false, "in_rhbk_plan": false},
+      "Deployment/maas-postgres@redhat-ods-applications": {"in_rhoai_plan": false, "in_rhbk_plan": false},
+      "StatefulSet/ogx-postgres@redhat-ods-applications": {"in_rhoai_plan": false, "in_rhbk_plan": false},
+      "Deployment/model-catalog@rhoai-model-registries": {"in_rhoai_plan": false, "in_rhbk_plan": false}
+    },
+    "four_identity_match_count": 0,
+    "credential_scan": 0
+  },
+  "four_resource_matrix": {
+    "keycloak/postgres": {
+      "gap": "attribution",
+      "in_residual_report": true,
+      "in_plan": false
+    },
+    "redhat-ods-applications/maas-postgres": {
+      "gap": "attribution",
+      "in_residual_report": true,
+      "in_plan": false
+    },
+    "redhat-ods-applications/ogx-postgres": {
+      "gap": "attribution",
+      "in_residual_report": true,
+      "in_plan": false
+    },
+    "rhoai-model-registries/model-catalog": {
+      "gap": "inventory",
+      "in_residual_report": false,
+      "in_plan": false,
+      "model_catalog_omission_cause": "rhoai-model-registries not in footprint_namespaces (journal.rs:738-774). Only install_namespace + plan action namespaces populate footprint. Post-delete ownerRef is absent (at audit time, no ownerRef chain exists) → no plan action references this namespace → excluded from audit.rs:823 scan loop."
+    }
+  },
+  "cluster_state": {
+    "target_subscriptions": 15,
+    "target_csvs_succeeded": 15,
+    "dsc_ready": true,
+    "node_ready_schedulable": true,
+    "terminating": 0,
+    "nfd_cr": true,
+    "authorino_crbs": 2,
+    "residual_workloads_present": 4,
+    "verify_result": "20/21 passed (LLMInferenceService skipped by design)"
+  },
+  "cycle_b_addendum": {
+    "purpose": "Gap reproduction evidence with current production code (not Phase D product fix)",
+    "commit": "d491e8b",
+    "result": "15/15 succeeded, 0 failed, 0 drift. 4 residuals still present — confirms current gap."
+  }
+}

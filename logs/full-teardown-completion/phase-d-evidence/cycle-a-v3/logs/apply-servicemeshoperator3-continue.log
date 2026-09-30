@@ -1,0 +1,113 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/servicemeshoperator3.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-servicemeshoperator3.v3.4.2-2026-09-29T18-31-40.100285182_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-servicemesh] elapsed 0s
+✅ Scanned 268 resource types in 11.9s
+   openshift-servicemesh — 35 resources
+   Scanned 1 namespace(s), 35 total resources
+🔍 Running targeted adapters... found 0 resources
+  6 candidate(s) for servicemeshoperator3.v3.4.2 (5 discovery + 1 plan)
+    6 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/servicemeshoperator3/20260929T183159Z-000485e5-0 (6 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9de4684ceb666-485e5.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/servicemeshoperator3  (ns: openshift-servicemesh)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/servicemeshoperator3  (ns: openshift-servicemesh)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/sail-operator-lock  (ns: openshift-servicemesh)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/trafficextensions.extensions.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/wasmplugins.extensions.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/destinationrules.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/envoyfilters.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gateways.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/proxyconfigs.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/serviceentries.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/sidecars.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/virtualservices.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/workloadentries.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/workloadgroups.networking.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/ztunnels.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authorizationpolicies.security.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/peerauthentications.security.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/requestauthentications.security.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/telemetries.telemetry.istio.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiocnis.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiorevisions.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiorevisiontags.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istios.sailoperator.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-servicemesh  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 22 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...

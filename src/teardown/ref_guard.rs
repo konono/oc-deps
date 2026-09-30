@@ -371,6 +371,11 @@ fn referrer_specs_for_target(target_kind: &str, target_group: &str) -> Vec<Refer
             kind: "HorizontalPodAutoscaler",
             required: true,
         }],
+        ("apps", "StatefulSet") => vec![ReferrerSpec {
+            group: "autoscaling",
+            kind: "HorizontalPodAutoscaler",
+            required: true,
+        }],
         _ => vec![],
     }
 }
@@ -383,6 +388,7 @@ fn has_known_extractors(target_kind: &str, target_group: &str) -> bool {
             | ("", "Service")
             | ("console.openshift.io", "ConsolePlugin")
             | ("apps", "Deployment")
+            | ("apps", "StatefulSet")
     )
 }
 
@@ -1918,5 +1924,53 @@ mod tests {
             .find(|s| s.kind == "HorizontalPodAutoscaler")
             .unwrap();
         assert!(hpa.required, "autoscaling/HPA should be required");
+    }
+
+    #[test]
+    fn hpa_matches_statefulset_target() {
+        let hpa = make_dyn_obj(serde_json::json!({
+            "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
+            "metadata": {"name": "hpa-sts", "namespace": "ns"},
+            "spec": {"scaleTargetRef": {"apiVersion": "apps/v1", "kind": "StatefulSet", "name": "postgres"}}
+        }));
+        let fields =
+            extract_hpa_scale_target_ref(&hpa, "postgres", Some("ns"), "StatefulSet", "apps");
+        assert_eq!(
+            fields,
+            vec!["spec.scaleTargetRef"],
+            "HPA should match StatefulSet target"
+        );
+    }
+
+    #[test]
+    fn hpa_wrong_kind_does_not_match_statefulset() {
+        let hpa = make_dyn_obj(serde_json::json!({
+            "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
+            "metadata": {"name": "hpa-dep", "namespace": "ns"},
+            "spec": {"scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "dep"}}
+        }));
+        let fields = extract_hpa_scale_target_ref(&hpa, "dep", Some("ns"), "StatefulSet", "apps");
+        assert!(
+            fields.is_empty(),
+            "HPA targeting Deployment must not match StatefulSet"
+        );
+    }
+
+    #[test]
+    fn statefulset_has_known_extractors() {
+        assert!(
+            has_known_extractors("StatefulSet", "apps"),
+            "StatefulSet should have known extractors"
+        );
+    }
+
+    #[test]
+    fn statefulset_referrer_specs_include_hpa() {
+        let specs = referrer_specs_for_target("StatefulSet", "apps");
+        assert!(!specs.is_empty(), "StatefulSet should have referrer specs");
+        assert!(
+            specs.iter().any(|s| s.kind == "HorizontalPodAutoscaler"),
+            "StatefulSet should have HPA referrer"
+        );
     }
 }
