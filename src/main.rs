@@ -76,7 +76,6 @@ use crate::output::table::{print_chain_table, print_table};
 use crate::output::tree::{
     TreeDisplayOpts, count_nodes, format_container_resources, print_chain_tree, print_tree,
 };
-use crate::teardown::executor::{execute_plan, print_execution_result};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::journal::{
     self, CleanupResult, ExecutionRecord, JournalStore, ResidualStatus, RunJournal, RunState,
@@ -2133,7 +2132,6 @@ async fn main() -> Result<()> {
                     yes,
                     backup_dir,
                 } => {
-                    let force = false; // advisory warnings always shown
                     let approve_finalizer_recovery = true; // always enabled
 
                     // Load execution plan
@@ -2377,7 +2375,6 @@ async fn main() -> Result<()> {
                     // CLI uses the approved plan directly. REVIEW actions stay
                     // preserved; users can approve exact resources with
                     // --approve-scope/--approve-resource at plan time.
-                    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
                     let effective_finalizer_recovery = approve_finalizer_recovery;
 
                     // Backup gate: uses operator discovery (not plan actions)
@@ -2461,451 +2458,62 @@ async fn main() -> Result<()> {
                         });
                     }
 
-                    let exec_result = execute_plan(
-                        &client,
-                        &plan,
-                        &kind_map,
-                        &gk_map,
-                        &gvk_map,
-                        &gvr_map,
+                    let workflow_ctx = crate::teardown::workflow::WorkflowContext {
+                        client: &client,
+                        plan: &plan,
+                        kind_map: &kind_map,
+                        gk_map: &gk_map,
+                        gvk_map: &gvk_map,
+                        gvr_map: &gvr_map,
+                    };
+                    let workflow_opts = crate::teardown::workflow::WorkflowOptions {
                         dry_run,
-                        force,
-                        journal_store.as_deref(),
-                        Some(&gate),
-                        0,   // start from phase 0 (fresh execution)
-                        yes, // skip confirmation when --yes is passed
+                        skip_confirm: yes,
+                        start_phase: 0,
+                    };
+                    let outcome = crate::teardown::workflow::run_teardown_workflow(
+                        &workflow_ctx,
+                        journal_store.as_ref(),
+                        &gate,
+                        &workflow_opts,
                     )
-                    .await;
+                    .await?;
 
-                    match exec_result {
-                        Ok(result) => {
-                            // Determine final state: gate.is_open() distinguishes
-                            // completion from Ctrl-C pause. Single writer (main thread).
-                            let final_state = if !gate.is_open() {
-                                RunState::Paused
-                            } else if result.failed.is_empty()
-                                && result.barrier_timeout.is_none()
-                                && result.phases_completed == result.phases_total
-                            {
-                                RunState::ApplyCompleted
-                            } else {
-                                RunState::Failed
-                            };
-
-                            if let Some(store) = &journal_store {
-                                store
-                                    .update(|j| {
-                                        j.state = final_state.clone();
-                                        j.execution.phases_total = result.phases_total;
-                                    })
-                                    .await
-                                    .context("Failed to persist final execution state")?;
-                            }
-
-                            if final_state == RunState::Paused {
-                                eprintln!(
-                                    "\n⏸ Paused at phase {}/{}. Use 'teardown resume' to continue.",
-                                    result.phases_completed, result.phases_total
+                    match outcome.final_state {
+                        RunState::ApplyCompleted => {
+                            if let Some(reason) = outcome.cleanup_failure {
+                                bail!(
+                                    "Main teardown completed, but cleanup is incomplete: {}",
+                                    reason
                                 );
-                            }
-
-                            print_execution_result(&result);
-
-                            let mut cleanup_failure: Option<String> = None;
-
-                            // Run post-apply residual audit (only if apply succeeded and operator is Absent)
-                            if let Some(store) = &journal_store
-                                && result.failed.is_empty()
-                                && result.barrier_timeout.is_none()
-                            {
-                                use crate::teardown::audit::{self, OperatorGenerationState};
-                                let j = store.read().await;
-                                let gen_state = audit::check_operator_generation_fresh(
-                                    &client,
-                                    &j.operator,
-                                    &j.audit_context.csv_baseline,
-                                )
-                                .await;
-                                match gen_state {
-                                    OperatorGenerationState::Absent => {
-                                        eprintln!("\n🔍 Running post-apply residual audit...");
-                                        match crate::teardown::audit::run_post_mutation_audit(
-                                            &client, &j,
-                                        )
-                                        .await
-                                        {
-                                            Ok(audit_result) => {
-                                                let status = audit::residual_status_from_audit(
-                                                    &audit_result,
-                                                );
-                                                audit::print_residual_audit(&audit_result, &j);
-                                                let mut auto_candidates =
-                                                        crate::teardown::executor::auto_cleanup_candidates(
-                                                            &audit_result,
-                                                            &j.execution.deleted,
-                                                        );
-                                                if let Some(ref saved) = _saved_plan {
-                                                    match crate::teardown::executor::validate_saved_residual_decisions(
-                                                            &saved.residual_decisions,
-                                                            &audit_result,
-                                                        ) {
-                                                            Ok(extra) => auto_candidates.extend(extra),
-                                                            Err(errors) => {
-                                                                cleanup_failure = Some(format!(
-                                                                    "Saved residual decisions require review: {}",
-                                                                    errors.join("; ")
-                                                                ));
-                                                            }
-                                                        }
-                                                }
-                                                let mut seen = std::collections::HashSet::new();
-                                                auto_candidates.retain(|r| {
-                                                    seen.insert((
-                                                        r.group.clone(),
-                                                        r.version.clone(),
-                                                        r.kind.clone(),
-                                                        r.namespace.clone(),
-                                                        r.name.clone(),
-                                                        r.uid.clone(),
-                                                    ))
-                                                });
-                                                // Re-verify generation before saving
-                                                let gen_recheck =
-                                                    audit::check_operator_generation_fresh(
-                                                        &client,
-                                                        &j.operator,
-                                                        &j.audit_context.csv_baseline,
-                                                    )
-                                                    .await;
-                                                if matches!(
-                                                    gen_recheck,
-                                                    OperatorGenerationState::Absent
-                                                ) {
-                                                    let audit_persisted = match store
-                                                        .update(|j| {
-                                                            j.residual_status = status;
-                                                            j.audit_revision += 1;
-                                                            j.last_residual_audit =
-                                                                Some(audit_result.clone());
-                                                        })
-                                                        .await
-                                                    {
-                                                        Ok(()) => true,
-                                                        Err(e) => {
-                                                            eprintln!(
-                                                                "⚠ Failed to persist audit results: {}",
-                                                                e
-                                                            );
-                                                            eprintln!(
-                                                                "  Audit results were displayed but are NOT durable."
-                                                            );
-                                                            eprintln!(
-                                                                "  Do not use this audit for cleanup authority."
-                                                            );
-                                                            cleanup_failure = Some(format!(
-                                                                "Residual audit persistence failed: {}",
-                                                                e
-                                                            ));
-                                                            false
-                                                        }
-                                                    };
-                                                    if audit_persisted {
-                                                        if matches!(
-                                                                audit::residual_status_from_audit(&audit_result),
-                                                                journal::ResidualStatus::AuditIncomplete
-                                                            ) {
-                                                                cleanup_failure = Some(
-                                                                    "Residual audit incomplete".to_string(),
-                                                                );
-                                                            } else if cleanup_failure.is_none() {
-                                                                if !auto_candidates.is_empty() {
-                                                                    eprintln!(
-                                                                        "\n🧹 Cleaning {} planned/saved residual(s)...",
-                                                                        auto_candidates.len()
-                                                                    );
-                                                                    match crate::teardown::executor::execute_residual_cleanup(
-                                                                        &client,
-                                                                        &auto_candidates,
-                                                                        store.as_ref(),
-                                                                        gate.as_ref(),
-                                                                        &kind_map,
-                                                                        &gk_map,
-                                                                    )
-                                                                    .await
-                                                                    {
-                                                                        Ok(cleanup) => {
-                                                                            eprintln!(
-                                                                                "  {} Gone, {} skipped, {} failed",
-                                                                                cleanup.deleted.len(),
-                                                                                cleanup.skipped.len(),
-                                                                                cleanup.failed.len()
-                                                                            );
-                                                                            if !cleanup.skipped.is_empty()
-                                                                                || !cleanup.failed.is_empty()
-                                                                            {
-                                                                                cleanup_failure = Some(
-                                                                                    "Residual cleanup incomplete".to_string(),
-                                                                                );
-                                                                            }
-                                                                            if let Some(post) = cleanup.post_audit
-                                                                                && (!post.planned_delete_still_present.is_empty()
-                                                                                    || !post.planned_expect_still_present.is_empty())
-                                                                            {
-                                                                                cleanup_failure = Some(format!(
-                                                                                    "{} planned DELETE/EXPECT resources remain after cleanup",
-                                                                                    post.planned_delete_still_present.len()
-                                                                                        + post.planned_expect_still_present.len()
-                                                                                ));
-                                                                            }
-                                                                        }
-                                                                        Err(e) => {
-                                                                            cleanup_failure = Some(format!(
-                                                                                "Residual cleanup failed: {:#}", e
-                                                                            ));
-                                                                        }
-                                                                    }
-                                                                } else if !audit_result
-                                                                    .planned_delete_still_present
-                                                                    .is_empty()
-                                                                    || !audit_result
-                                                                        .planned_expect_still_present
-                                                                        .is_empty()
-                                                                {
-                                                                    cleanup_failure = Some(
-                                                                        "Planned residuals require review before cleanup"
-                                                                            .to_string(),
-                                                                    );
-                                                                }
-                                                            }
-                                                    }
-                                                } else {
-                                                    eprintln!(
-                                                        "⚠ Operator generation changed during audit; discarding results"
-                                                    );
-                                                    cleanup_failure = Some(
-                                                        "Operator generation changed during audit"
-                                                            .to_string(),
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                eprintln!(
-                                                    "⚠ Post-apply residual audit failed: {}",
-                                                    e
-                                                );
-                                                cleanup_failure = Some(format!(
-                                                    "Post-apply residual audit failed: {}",
-                                                    e
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        eprintln!(
-                                            "\nSkipping post-apply residual audit: operator generation not absent"
-                                        );
-                                        cleanup_failure =
-                                            Some("Operator generation not absent".to_string());
-                                    }
-                                }
-                            }
-
-                            // Residual cleanup transition — only if Absent + complete audit + TTY
-                            if final_state == RunState::ApplyCompleted
-                                && let Some(store) = &journal_store
-                            {
-                                let j = store.read().await;
-                                if let Some(ref audit) = j.last_residual_audit {
-                                    let rs =
-                                        crate::teardown::audit::residual_status_from_audit(audit);
-                                    match rs {
-                                        journal::ResidualStatus::ResidualsObserved { count } => {
-                                            eprintln!("\n📋 {} residual(s) observed.", count);
-
-                                            // Interactive residual cleanup (TTY only)
-                                            // Check schema supports cleanup authority
-                                            let j_for_schema = store.read().await;
-                                            if j_for_schema.schema_version < 5 {
-                                                eprintln!(
-                                                    "  ℹ Journal schema v{} does not support residual cleanup. \
-                                                             Create a new teardown plan to enable cleanup.",
-                                                    j_for_schema.schema_version
-                                                );
-                                            } else if is_tty {
-                                                let residuals: Vec<
-                                                    &crate::teardown::audit::AttributedResidual,
-                                                > = audit
-                                                    .likely_operator_residual
-                                                    .iter()
-                                                    .chain(audit.unattributed.iter())
-                                                    .collect();
-
-                                                if !residuals.is_empty() {
-                                                    use crate::kube::resource::ResourceId;
-                                                    eprintln!("\n\x1b[1mResidual Cleanup\x1b[0m:");
-                                                    for (i, res) in residuals.iter().enumerate() {
-                                                        eprintln!(
-                                                            "  [{}] {:?} {}/{}{}",
-                                                            i + 1,
-                                                            res.confidence,
-                                                            res.resource.kind,
-                                                            res.resource.name,
-                                                            res.resource
-                                                                .namespace
-                                                                .as_ref()
-                                                                .map(|ns| format!(" ({})", ns))
-                                                                .unwrap_or_default()
-                                                        );
-                                                    }
-                                                    eprintln!();
-                                                    eprintln!(
-                                                        "  Enter item numbers to DELETE (comma-separated),"
-                                                    );
-                                                    eprintln!("  or press Enter to skip cleanup:");
-                                                    eprint!("  > ");
-                                                    std::io::Write::flush(&mut std::io::stderr())
-                                                        .ok();
-
-                                                    let mut input = String::new();
-                                                    if std::io::stdin()
-                                                        .read_line(&mut input)
-                                                        .is_ok()
-                                                    {
-                                                        let input = input.trim();
-                                                        if !input.is_empty() {
-                                                            let mut selected: Vec<&ResourceId> =
-                                                                Vec::new();
-                                                            for token in input.split(',') {
-                                                                if let Ok(idx) =
-                                                                    token.trim().parse::<usize>()
-                                                                    && idx >= 1
-                                                                    && idx <= residuals.len()
-                                                                {
-                                                                    selected.push(
-                                                                        &residuals[idx - 1]
-                                                                            .resource,
-                                                                    );
-                                                                }
-                                                            }
-
-                                                            if !selected.is_empty() {
-                                                                eprintln!(
-                                                                    "\n  Deleting {} residual(s)...",
-                                                                    selected.len()
-                                                                );
-                                                                let selected_owned: Vec<crate::kube::resource::ResourceId> =
-                                                                            selected.into_iter().cloned().collect();
-                                                                match crate::teardown::executor::execute_residual_cleanup(
-                                                                            &client,
-                                                                            &selected_owned,
-                                                                            store.as_ref(),
-                                                                            gate.as_ref(),
-                                                                            &kind_map,
-                                                                            &gk_map,
-                                                                        ).await {
-                                                                            Ok(cleanup_result) => {
-                                                                                for res in &cleanup_result.deleted {
-                                                                                    eprintln!("    ✓ {}/{}: Gone", res.kind, res.name);
-                                                                                }
-                                                                                for (res, reason) in &cleanup_result.skipped {
-                                                                                    eprintln!("    ⚠ {}/{}: skipped — {}", res.kind, res.name, reason);
-                                                                                }
-                                                                                for (res, reason) in &cleanup_result.failed {
-                                                                                    eprintln!("    ✗ {}/{}: {}", res.kind, res.name, reason);
-                                                                                }
-                                                                                if let Some(ref post_audit) = cleanup_result.post_audit {
-                                                                                    let post_j = store.read().await;
-                                                                                    crate::teardown::audit::print_residual_audit(post_audit, &post_j);
-                                                                                }
-                                                                            }
-                                                                            Err(e) => {
-                                                                                bail!("Residual cleanup failed: {:#}", e);
-                                                                            }
-                                                                        }
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    eprintln!(
-                                                        "  Use 'teardown journal' to review details."
-                                                    );
-                                                }
-                                            } else {
-                                                eprintln!("  Use 'teardown journal' to review.");
-                                            }
-                                        }
-                                        journal::ResidualStatus::AuditIncomplete => {
-                                            eprintln!(
-                                                "\n⚠ Residual audit incomplete — manual cleanup is not available."
-                                            );
-                                        }
-                                        journal::ResidualStatus::NoneObservedInScope => {
-                                            eprintln!(
-                                                "\n✅ No residuals observed in scanned scope."
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-
-                            // (Execution plan saving is done by `teardown plan --file`)
-
-                            // Non-zero exit for non-ApplyCompleted states
-                            match final_state {
-                                RunState::ApplyCompleted => {
-                                    if let Some(reason) = cleanup_failure {
-                                        bail!(
-                                            "Main teardown completed, but cleanup is incomplete: {}",
-                                            reason
-                                        );
-                                    }
-                                }
-                                RunState::Paused => {
-                                    bail!(
-                                        "Teardown paused at phase {}/{}",
-                                        result.phases_completed,
-                                        result.phases_total
-                                    );
-                                }
-                                _ => {
-                                    if !result.failed.is_empty() || result.barrier_timeout.is_some()
-                                    {
-                                        bail!(
-                                            "Teardown completed with {} failed action(s){}",
-                                            result.failed.len(),
-                                            if result.barrier_timeout.is_some() {
-                                                " and barrier timeout"
-                                            } else {
-                                                ""
-                                            }
-                                        );
-                                    } else {
-                                        bail!(
-                                            "Teardown did not complete (state: {:?})",
-                                            final_state
-                                        );
-                                    }
-                                }
                             }
                         }
-                        Err(e) => {
-                            // Best-effort: record Failed state in journal, then propagate error.
-                            // If the executor already set ExplicitCleanupBlocked, preserve that
-                            // retryable state instead of overwriting with terminal Failed.
-                            if let Some(store) = &journal_store
-                                && store
-                                    .update(|j| {
-                                        journal::mark_failed_preserving_retryable(j);
-                                    })
-                                    .await
-                                    .is_err()
+                        RunState::Paused => {
+                            bail!(
+                                "Teardown paused at phase {}/{}",
+                                outcome.result.phases_completed,
+                                outcome.result.phases_total
+                            );
+                        }
+                        _ => {
+                            if !outcome.result.failed.is_empty()
+                                || outcome.result.barrier_timeout.is_some()
                             {
-                                eprintln!(
-                                    "⚠ Additionally, failed to persist Failed state to journal"
+                                bail!(
+                                    "Teardown completed with {} failed action(s){}",
+                                    outcome.result.failed.len(),
+                                    if outcome.result.barrier_timeout.is_some() {
+                                        " and barrier timeout"
+                                    } else {
+                                        ""
+                                    }
+                                );
+                            } else {
+                                bail!(
+                                    "Teardown did not complete (state: {:?})",
+                                    outcome.final_state
                                 );
                             }
-                            return Err(e);
                         }
                     }
                 }
@@ -4381,125 +3989,37 @@ async fn main() -> Result<()> {
                         .await
                         .context("Failed to persist Applying state for resume")?;
 
-                    let exec_result = execute_plan(
-                        &client,
-                        &j.plan_snapshot,
-                        &kind_map,
-                        &gk_map,
-                        &gvk_map,
-                        &_gvr_map,
-                        false,
-                        true, // force — already confirmed
-                        Some(&store),
-                        Some(&gate),
+                    let workflow_ctx = crate::teardown::workflow::WorkflowContext {
+                        client: &client,
+                        plan: &j.plan_snapshot,
+                        kind_map: &kind_map,
+                        gk_map: &gk_map,
+                        gvk_map: &gvk_map,
+                        gvr_map: &_gvr_map,
+                    };
+                    let workflow_opts = crate::teardown::workflow::WorkflowOptions {
+                        dry_run: false,
+                        skip_confirm: true,
                         start_phase,
-                        true, // skip_confirm — this is a resume
+                    };
+                    let outcome = crate::teardown::workflow::run_teardown_workflow(
+                        &workflow_ctx,
+                        Some(&store),
+                        &gate,
+                        &workflow_opts,
                     )
-                    .await;
+                    .await?;
 
-                    match exec_result {
-                        Ok(result) => {
-                            // Same final state logic as normal apply:
-                            // gate.is_open() + all-phases-completed
-                            let final_state = if !gate.is_open() {
-                                RunState::Paused
-                            } else if result.phases_completed == result.phases_total
-                                && result.failed.is_empty()
-                                && result.barrier_timeout.is_none()
-                            {
-                                RunState::ApplyCompleted
+                    if matches!(outcome.final_state, RunState::Failed) {
+                        bail!(
+                            "Resume completed with {} failed action(s){}",
+                            outcome.result.failed.len(),
+                            if outcome.result.barrier_timeout.is_some() {
+                                " and barrier timeout"
                             } else {
-                                RunState::Failed
-                            };
-
-                            store
-                                .update(|journal| {
-                                    journal.state = final_state.clone();
-                                    journal.execution.phases_total = result.phases_total;
-                                })
-                                .await
-                                .context("Failed to persist final state")?;
-
-                            if final_state == RunState::Paused {
-                                eprintln!(
-                                    "\n⏸ Paused at phase {}/{}.",
-                                    result.phases_completed, result.phases_total
-                                );
+                                ""
                             }
-
-                            print_execution_result(&result);
-
-                            if matches!(final_state, RunState::Failed) {
-                                bail!(
-                                    "Resume completed with {} failed action(s){}",
-                                    result.failed.len(),
-                                    if result.barrier_timeout.is_some() {
-                                        " and barrier timeout"
-                                    } else {
-                                        ""
-                                    }
-                                );
-                            }
-
-                            // Post-resume: run residual audit (same as normal apply)
-                            if final_state == RunState::ApplyCompleted {
-                                let j_post = store.read().await;
-                                let post_gen = audit::check_operator_generation_fresh(
-                                    &client,
-                                    &j_post.operator,
-                                    &j_post.audit_context.csv_baseline,
-                                )
-                                .await;
-                                if matches!(post_gen, OperatorGenerationState::Absent) {
-                                    match crate::teardown::audit::run_post_mutation_audit(
-                                        &client, &j_post,
-                                    )
-                                    .await
-                                    {
-                                        Ok(post_audit) => {
-                                            let post_status =
-                                                audit::residual_status_from_audit(&post_audit);
-                                            audit::print_residual_audit(&post_audit, &j_post);
-                                            // Re-verify generation after audit
-                                            let gen_recheck =
-                                                audit::check_operator_generation_fresh(
-                                                    &client,
-                                                    &j_post.operator,
-                                                    &j_post.audit_context.csv_baseline,
-                                                )
-                                                .await;
-                                            if matches!(
-                                                gen_recheck,
-                                                OperatorGenerationState::Absent
-                                            ) {
-                                                store
-                                                    .update(|j| {
-                                                        j.residual_status = post_status;
-                                                        j.audit_revision += 1;
-                                                        j.last_residual_audit = Some(post_audit);
-                                                    })
-                                                    .await?;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            eprintln!("⚠ Post-resume residual audit failed: {}", e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            // Best-effort record Failed
-                            if let Err(je) = store
-                                .update(|journal| {
-                                    journal::mark_failed_preserving_retryable(journal);
-                                })
-                                .await
-                            {
-                                eprintln!("⚠ Failed to persist Failed state: {}", je);
-                            }
-                            return Err(e);
-                        }
+                        );
                     }
                 }
                 TeardownAction::Batch {

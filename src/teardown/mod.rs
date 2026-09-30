@@ -11,3 +11,4 @@ pub mod progress;
 pub mod ref_guard;
 pub mod runtime;
 pub mod watch;
+pub mod workflow;

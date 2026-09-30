@@ -3716,6 +3716,7 @@ pub fn auto_cleanup_candidates(
 /// Returns ResourceIds with current UIDs for cleanup, or errors.
 /// Compares saved evidence signatures (labels, managers, service accounts) against
 /// current ResidualEvidence. ExplicitUnattributed → error. Basis empty/weakened → error.
+#[allow(dead_code)]
 pub fn validate_saved_residual_decisions(
     saved_decisions: &[crate::teardown::plan::SavedDecision],
     audit: &crate::teardown::audit::ResidualAudit,
@@ -3823,6 +3824,7 @@ pub fn validate_saved_residual_decisions(
     }
 }
 
+#[allow(dead_code)]
 fn check_residual_evidence_drift(
     saved_basis: &crate::teardown::plan::DecisionBasis,
     current: &crate::teardown::audit::ResidualEvidence,
