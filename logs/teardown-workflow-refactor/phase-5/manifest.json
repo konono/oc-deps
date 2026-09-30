@@ -1,0 +1,34 @@
+{
+  "phase": 5,
+  "base": "5388510",
+  "description": "Module split: commands/teardown.rs + mod.rs → 9 responsibility-scoped modules",
+  "modules": {
+    "main.rs": {"loc": 50, "responsibility": "entry point, calls commands::run()"},
+    "commands/mod.rs": {"loc": 316, "responsibility": "client init + dispatch only"},
+    "commands/teardown.rs": {"loc": 4576, "responsibility": "ApplySet, batch, journal, resume, provenance, handle_teardown"},
+    "commands/network.rs": {"loc": 1638, "responsibility": "network formatters, print_network_tree, handle_network"},
+    "commands/map.rs": {"loc": 1043, "responsibility": "namespace filters, cluster-wide map, validate_map_args, handle_map"},
+    "commands/snapshot.rs": {"loc": 442, "responsibility": "snapshot audit/diff/create handlers"},
+    "commands/tree.rs": {"loc": 238, "responsibility": "tree display, show_fields_to_tree_opts, handle_tree"},
+    "commands/operator.rs": {"loc": 191, "responsibility": "operator resources/list/owner handlers"},
+    "commands/trace.rs": {"loc": 333, "responsibility": "trace handler"},
+    "commands/graph.rs": {"loc": 50, "responsibility": "evidence graph handler"},
+    "commands/backup.rs": {"loc": 158, "responsibility": "operator/namespace backup handler"}
+  },
+  "tests": {
+    "before": 1347,
+    "after": 1347,
+    "deleted": 0,
+    "moved": "network_paths_to_json tests remain in teardown::basis_drift_tests with cross-module import"
+  },
+  "gates": {
+    "cargo_fmt": "pass",
+    "cargo_clippy": "pass",
+    "cargo_test": "1347 pass",
+    "cargo_build_release": "pass",
+    "corpus_replay": "pass",
+    "plan_golden": "15/343/10",
+    "phase1_validators": "3/3 pass",
+    "phase5_validator": "pass"
+  }
+}
