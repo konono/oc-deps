@@ -1,0 +1,76 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/dns-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/dns-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-dns-operator.v1.4.2-2026-09-29T17-43-41.319854920_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 269 resource types in 11.9s
+   openshift-rhcl — 143 resources
+   Scanned 1 namespace(s), 143 total resources
+🔍 Running targeted adapters... found 0 resources
+  5 candidate(s) for dns-operator.v1.4.2 (5 discovery + 0 plan)
+    5 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/dns-operator/20260929T174355Z-00047b7a-0 (5 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/dns-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/dns-operator.v1.4.2  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/dns-operator.v1.4.2  (ns: openshift-rhcl)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/a3f98d6c.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/dns-operator-controller-env  (ns: openshift-rhcl)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/dnshealthcheckprobes.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dnsrecords.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 5 KEEP, 2 REVIEW
+exit=0

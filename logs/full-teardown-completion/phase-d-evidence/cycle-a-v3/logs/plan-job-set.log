@@ -1,0 +1,66 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown plan job-set --approve-scope root --approve-scope independent --approve-scope label-only --approve-scope operator-group --refresh-discovery --file /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/job-set.json
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  jobset-operator.v1.0.1 (ns: openshift-jobset) (Subscription/job-set@openshift-jobset)
+
+Preflight
+  ✓ Subscription resolved (jobset-operator.v1.0.1) — Subscription/job-set found — will be deleted in Phase 0
+  ✓ CSV health (jobset-operator.v1.0.1) — phase=Succeeded
+  ✓ Controller available (jobset-operator.v1.0.1) — jobset-operator: Available (1)
+  ! Provenance — 1 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/job-set  (ns: openshift-jobset)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/jobset-operator.v1.0.1  (ns: openshift-jobset)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE JobSetOperator/cluster  (cluster-scoped)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/jobset-operator.v1.0.1  (ns: openshift-jobset)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/job-set  (ns: openshift-jobset)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/openshift-jobset-operator-lock  (ns: openshift-jobset)
+         leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/jobsetoperators.operator.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-jobset  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  1 CRs have uncertain provenance (owned API, but origin unknown)
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 4 DELETE, 0 EXPECT-GONE, 3 KEEP, 1 REVIEW
+  0 blockers, 2 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-jobset-operator.v1.0.1-2026-09-29T17-22-50.095676736_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/job-set.json
+
+⏱ Discovery: 32.6s, OLM: 1.8s, Plan: 2.4s, Total: 37.0s
+exit=0

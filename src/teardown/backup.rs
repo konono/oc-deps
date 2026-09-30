@@ -285,6 +285,46 @@ pub struct BackupReceipt {
 // ──────────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
+/// Merge plan-derived candidates into discovery candidates.
+/// Same UID + same identity → merge sources (dedup). Same UID + different identity → bail.
+/// New UID → append. Returns merged list.
+pub fn merge_backup_candidates(
+    mut discovery: Vec<BackupCandidate>,
+    plan: &[BackupCandidate],
+) -> Result<Vec<BackupCandidate>> {
+    for pc in plan {
+        if let Some(existing) = discovery
+            .iter_mut()
+            .find(|c| c.identity.uid == pc.identity.uid)
+        {
+            if existing.identity != pc.identity {
+                bail!(
+                    "Backup candidate UID {} has conflicting identity:                      {}/{} vs {}/{}",
+                    pc.identity.uid,
+                    existing.identity.kind,
+                    existing.identity.name,
+                    pc.identity.kind,
+                    pc.identity.name,
+                );
+            }
+            for src in &pc.sources {
+                if !existing.sources.iter().any(|s| s == src) {
+                    existing.sources.push(src.clone());
+                }
+            }
+        } else {
+            discovery.push(pc.clone());
+        }
+    }
+    // Sort sources within each candidate and sort candidates by identity
+    for candidate in &mut discovery {
+        candidate.sources.sort();
+        candidate.sources.dedup();
+    }
+    discovery.sort_by(|a, b| a.identity.cmp(&b.identity));
+    Ok(discovery)
+}
+
 pub fn extract_candidates(plan: &TeardownPlan) -> Result<Vec<BackupCandidate>> {
     let mut by_uid: BTreeMap<String, BackupCandidate> = BTreeMap::new();
 
@@ -1507,7 +1547,6 @@ pub fn namespace_target_dir(root: &Path, namespace: &str) -> Result<PathBuf> {
 
 pub struct BackupGateContext<'a> {
     pub client: &'a kube::Client,
-    #[allow(dead_code)]
     pub final_plan: &'a TeardownPlan,
     pub target_operators: Vec<&'a crate::analyzers::olm::OperatorInstance>,
     pub cluster_identity: &'a ClusterIdentity,
@@ -1869,6 +1908,10 @@ pub async fn prepare_backup_gate(
 
     let mut all_receipts = Vec::new();
 
+    // Extract plan candidates to union with discovery candidates.
+    // This ensures explicit delete targets (ownerRef-less residuals) are backed up.
+    let plan_candidates = extract_candidates(ctx.final_plan)?;
+
     for op in &ctx.target_operators {
         let (candidates, observations, resolved) = discover_operator_backup(
             ctx.client,
@@ -1880,9 +1923,18 @@ pub async fn prepare_backup_gate(
         )
         .await?;
 
-        eprintln!("  {} candidate(s) for {}", candidates.len(), op.csv.name,);
+        let pre_merge = candidates.len();
+        let merged = merge_backup_candidates(candidates, &plan_candidates)?;
+        let plan_added = merged.len() - pre_merge;
+        eprintln!(
+            "  {} candidate(s) for {} ({} discovery + {} plan)",
+            merged.len(),
+            op.csv.name,
+            merged.len() - plan_added,
+            plan_added,
+        );
 
-        let (fetched, _) = fetch_backup_resources(ctx.client, &candidates, ctx.gvk_map).await?;
+        let (fetched, _) = fetch_backup_resources(ctx.client, &merged, ctx.gvk_map).await?;
 
         let captured = fetched
             .iter()
@@ -1892,7 +1944,7 @@ pub async fn prepare_backup_gate(
             .iter()
             .filter(|r| r.state == BackupResourceState::AlreadyAbsent)
             .count();
-        eprintln!("  {} captured, {} already absent", captured, absent);
+        eprintln!("    {} captured, {} absent", captured, absent);
 
         let selection = BackupSelection::operator(vec![resolved]);
         let op_name = op.package_name.as_deref().unwrap_or(&op.csv.name);
@@ -1909,7 +1961,7 @@ pub async fn prepare_backup_gate(
         )?;
 
         eprintln!(
-            "  ✅ Backup: {} ({} resources)",
+            "  Backup: {} ({} resources)",
             receipt.root, receipt.resource_count,
         );
         all_receipts.push(receipt);
@@ -3407,5 +3459,110 @@ mod tests {
                 expected,
             );
         }
+    }
+
+    // ── merge_backup_candidates tests ──
+
+    fn make_merge_candidate(kind: &str, name: &str, uid: &str, source: &str) -> BackupCandidate {
+        BackupCandidate {
+            identity: BackupResourceIdentity {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: kind.to_string(),
+                namespace: Some("ns".to_string()),
+                name: name.to_string(),
+                uid: uid.to_string(),
+            },
+            sources: vec![BackupSource::plan_action(1, "DELETE", source)],
+        }
+    }
+
+    #[test]
+    fn test_merge_plan_only_add() {
+        let discovery = vec![];
+        let plan = vec![make_merge_candidate("Deployment", "dep", "uid-1", "root")];
+        let merged = merge_backup_candidates(discovery, &plan).unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].identity.name, "dep");
+    }
+
+    #[test]
+    fn test_merge_same_identity_dedup_sources() {
+        let discovery = vec![make_merge_candidate(
+            "Deployment",
+            "dep",
+            "uid-1",
+            "discovery",
+        )];
+        let plan = vec![make_merge_candidate(
+            "Deployment",
+            "dep",
+            "uid-1",
+            "plan-action",
+        )];
+        let merged = merge_backup_candidates(discovery, &plan).unwrap();
+        assert_eq!(merged.len(), 1, "same UID+identity should merge");
+        assert_eq!(merged[0].sources.len(), 2, "should have both sources");
+    }
+
+    #[test]
+    fn test_merge_same_identity_dedup_same_source() {
+        let discovery = vec![make_merge_candidate("Deployment", "dep", "uid-1", "same")];
+        let plan = vec![make_merge_candidate("Deployment", "dep", "uid-1", "same")];
+        let merged = merge_backup_candidates(discovery, &plan).unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].sources.len(),
+            1,
+            "duplicate source should not be added"
+        );
+    }
+
+    #[test]
+    fn test_merge_same_uid_different_identity_fails() {
+        let discovery = vec![make_merge_candidate("Deployment", "dep-a", "uid-1", "disc")];
+        let plan = vec![make_merge_candidate(
+            "StatefulSet",
+            "dep-b",
+            "uid-1",
+            "plan",
+        )];
+        let result = merge_backup_candidates(discovery, &plan);
+        assert!(result.is_err(), "conflicting identity should fail");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("conflicting identity"),
+            "error should mention conflicting identity"
+        );
+    }
+
+    #[test]
+    fn test_merge_deterministic_reversed_input() {
+        let discovery = vec![
+            make_merge_candidate("Deployment", "dep-b", "uid-2", "disc-b"),
+            make_merge_candidate("Deployment", "dep-a", "uid-1", "disc-a"),
+        ];
+        let plan = vec![make_merge_candidate("StatefulSet", "sts", "uid-3", "plan")];
+        let merged1 = merge_backup_candidates(discovery, &plan).unwrap();
+
+        // Reversed discovery order + reversed source reason
+        let discovery_rev = vec![
+            make_merge_candidate("Deployment", "dep-a", "uid-1", "disc-a"),
+            make_merge_candidate("Deployment", "dep-b", "uid-2", "disc-b"),
+        ];
+        let merged2 = merge_backup_candidates(discovery_rev, &plan).unwrap();
+
+        assert_eq!(merged1.len(), 3);
+        assert_eq!(merged2.len(), 3);
+        // Compare ordered identities
+        let ids1: Vec<_> = merged1.iter().map(|c| &c.identity).collect();
+        let ids2: Vec<_> = merged2.iter().map(|c| &c.identity).collect();
+        assert_eq!(ids1, ids2, "identity order must be deterministic");
+        // Compare ordered sources
+        let srcs1: Vec<Vec<_>> = merged1.iter().map(|c| c.sources.clone()).collect();
+        let srcs2: Vec<Vec<_>> = merged2.iter().map(|c| c.sources.clone()).collect();
+        assert_eq!(srcs1, srcs2, "source order must be deterministic");
     }
 }

@@ -1,0 +1,25 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/servicemeshoperator3.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+
+⛔ Execution plan drift detected:
+  - Resource count drift: saved 36, fresh 26
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/kuadrant-maas-default-gateway uid=Some("a86b9bdd-69ce-421e-9b4a-c34bb2fa69eb") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/kuadrant-ratelimiting-maas-default-gateway uid=Some("d961d1ef-174b-4689-ba33-31bebda0c8d2") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/maas-default-gateway-authn-ssl uid=Some("27d042eb-e67c-46a7-9116-d57adb77a176") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/payload-processing uid=Some("8a7adc7c-0291-4922-97bd-b3e0c5635780") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/data-science-authn-filter uid=Some("8ba8f4c0-7777-4cf0-91be-d63b52b27fcf") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/maas-api-backend-tls uid=Some("5a2a58c5-4ed2-479a-b3ed-074158da9e91") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/data-science-tls-rule uid=Some("f63ec2a2-ebb9-46fd-afa3-19af53fa12a9") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/payload-processing uid=Some("8dff7460-201d-4884-be04-f2208be05310") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/payload-pre-processing uid=Some("b7710e1e-30dc-44ca-8027-9d5af6c18a5a") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/kuadrant-auth-maas-default-gateway uid=Some("4fc9feda-e06c-4a67-96de-02784083ddeb") (×1)
+Error: 11 drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.
+exit=1

@@ -1,0 +1,126 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhbk-operator.json
+🔍 Discovering API resources...
+   Discovery: 34.9s
+🔍 Discovering operators... found 28 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhbk-operator.v26.6.7-opr.1-2026-09-29T18-03-45.338538759_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: keycloak] elapsed 0s
+✅ Scanned 269 resource types in 15.5s
+   keycloak — 64 resources
+   Scanned 1 namespace(s), 64 total resources
+   Found 14 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  23 candidate(s) for rhbk-operator.v26.6.7-opr.1 (21 discovery + 2 plan)
+    23 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/rhbk-operator/20260929T180407Z-00047fa6-0 (23 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9dcc15b703878-47fa6.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/rhbk-operator  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  KeycloakRealmImport/maas-realm  (ns: keycloak)
+  DELETED  Keycloak/keycloak  (ns: keycloak)
+  ⏳ wave 1: 2/2 Gone (0s)
+
+  ⏳ 2/2 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/rhbk-operator  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DELETED  StatefulSet/postgres  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/keycloak  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  6 deleted, 0 already gone, 0 failed
+
+Planned preserved: 4 KEEP, 0 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown Residual Audit: rhbk-operator.v26.6.7-opr.1
+Session: run-18d9dcc15b703878-47fa6
+Target operator absent: yes
+Execution: ApplyCompleted (8/8 phases)
+
+UNATTRIBUTED RELATED RESOURCES (11)
+  .v1/Service/postgres  (keycloak)  [uid:6e8a94bd-e9e5-4405-8135-ea276b3dfa43]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/authorino-operator.v1.4.3  (keycloak)  [uid:78aef97c-6b88-40f4-ae30-1143335a05cb]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cert-manager-operator.v1.20.0  (keycloak)  [uid:9214bd18-fe0b-4a75-8d3f-5dd2526c4514]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cluster-observability-operator.v1.5.2  (keycloak)  [uid:526d8759-67a9-4aca-8483-df7cb4e8730d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/dns-operator.v1.4.2  (keycloak)  [uid:1003dfde-8cf7-4910-aadb-070bea0321b1]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/kueue-operator.v1.4.2  (keycloak)  [uid:f805c68e-4e1e-4e5f-96dc-68f68991aeac]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/limitador-operator.v1.4.2  (keycloak)  [uid:937adf19-79a8-4448-9410-6c9c97cf2b3f]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (keycloak)  [uid:c0e72663-c535-40ab-af99-9e54fbacdeda]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/rhcl-operator.v1.4.3  (keycloak)  [uid:cd173528-f56d-4541-baa7-a853ec40b4e4]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/servicemeshoperator3.v3.4.2  (keycloak)  [uid:7dd447cc-bc40-4f64-b088-c5e0499bce08]
+  route.openshift.io.v1/Route/keycloak  (keycloak)  [uid:d0840582-004d-4e54-af11-13994c0f7122]
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (keycloak)
+    controller needed for operand cleanup
+  CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/keycloak  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 22/22 probes succeeded
+
+📋 11 residual(s) observed.
+  Use 'teardown journal' to review.
+exit=0

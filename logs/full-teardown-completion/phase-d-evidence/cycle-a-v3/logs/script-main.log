@@ -1,0 +1,206 @@
+
+[1m═══ PHASE 1: PRE-MUTATION BASELINE ASSERTIONS ═══[0m
+
+[0;32mPASS[0m: 15 target subscriptions (got 15)
+[0;32mPASS[0m: DSCI Ready (got Ready)
+[0;32mPASS[0m: DSC Ready=True (got True)
+[0;32mPASS[0m: 0 Terminating namespaces (got 0)
+[0;32mPASS[0m: Node Ready (got Ready)
+
+[1m--- Recording 10 explicit target UIDs ---[0m
+[0;32mPASS[0m: Target sts/postgres -n keycloak exists (uid=a1556a15-057)
+[0;32mPASS[0m: Target deploy/maas-postgres -n redhat-ods-applications exists (uid=c71dcc06-4e7)
+[0;32mPASS[0m: Target sts/ogx-postgres -n redhat-ods-applications exists (uid=f9060f89-dc0)
+[0;32mPASS[0m: Target deploy/model-catalog -n rhoai-model-registries exists (uid=6b1da06e-1b9)
+[0;32mPASS[0m: Target gateway.gateway.networking.k8s.io/maas-default-gateway -n openshift-ingress exists (uid=9739a44f-e31)
+[0;32mPASS[0m: Target configmap/maas-gateway-options -n openshift-ingress exists (uid=0a4f5c32-948)
+[0;32mPASS[0m: Target consoleplugin/kuadrant-console-plugin  exists (uid=b33501b2-f7b)
+[0;32mPASS[0m: Target deploy/kuadrant-console-plugin -n openshift-rhcl exists (uid=f48c2899-a52)
+[0;32mPASS[0m: Target svc/kuadrant-console-plugin -n openshift-rhcl exists (uid=66f7d874-e72)
+[0;32mPASS[0m: Target configmap/kuadrant-console-nginx-conf -n openshift-rhcl exists (uid=b3b875ff-7b9)
+[0;32mPASS[0m: NFD SCC nfd-topology-updater exists (uid=279aa445-d3f)
+[0;32mPASS[0m: NFD SCC nfd-worker exists (uid=0b085876-8f4)
+[0;32mPASS[0m: Authorino CRBs exist (count=4)
+
+[1m--- Recording PV/PVC pre-inventory ---[0m
+Pre PVs: 8
+Pre PVCs: 9
+Cluster UID: 73072fbb-5d55-4ad1-a239-256da1ebea4e
+
+[0;32mAll 18 baseline assertions passed.[0m
+
+[1m═══ PHASE 2: PLAN GENERATION ═══[0m
+
+[1m>>> plan-rhods[0m
+[0;32mOK (exit=0)[0m: plan-rhods
+[1m>>> plan-rhbk[0m
+[0;32mOK (exit=0)[0m: plan-rhbk
+[1m>>> plan-rhcl[0m
+[0;32mOK (exit=0)[0m: plan-rhcl
+[1m>>> plan-leader-worker-set[0m
+[0;32mOK (exit=0)[0m: plan-leader-worker-set
+[1m>>> plan-job-set[0m
+[0;32mOK (exit=0)[0m: plan-job-set
+[1m>>> plan-kueue-operator[0m
+[0;32mOK (exit=0)[0m: plan-kueue-operator
+[1m>>> plan-servicemeshoperator3[0m
+[0;32mOK (exit=0)[0m: plan-servicemeshoperator3
+[1m>>> plan-nfd[0m
+[0;32mOK (exit=0)[0m: plan-nfd
+[1m>>> plan-gpu-operator-certified[0m
+[0;32mOK (exit=0)[0m: plan-gpu-operator-certified
+[1m>>> plan-cert-manager-operator[0m
+[0;32mOK (exit=0)[0m: plan-cert-manager-operator
+[1m>>> plan-authorino-operator[0m
+[0;32mOK (exit=0)[0m: plan-authorino-operator
+[1m>>> plan-dns-operator[0m
+[0;32mOK (exit=0)[0m: plan-dns-operator
+[1m>>> plan-limitador-operator[0m
+[0;32mOK (exit=0)[0m: plan-limitador-operator
+[1m>>> plan-cluster-observability-operator[0m
+[0;32mOK (exit=0)[0m: plan-cluster-observability-operator
+[1m>>> plan-opentelemetry-product[0m
+[0;32mOK (exit=0)[0m: plan-opentelemetry-product
+
+[0;32mAll 15 plans generated.[0m
+
+[1m═══ PHASE 3: PLAN VALIDATION ═══[0m
+
+  rhods-operator: 5/5 explicit_deletes validated
+  rhbk-operator: 1/1 explicit_deletes validated
+  rhcl-operator: 4/4 explicit_deletes validated
+  All plan validations passed.
+[0;32mPlan validation passed.[0m
+
+[1m═══ PHASE 4: DRY-RUN WITH BACKUP ═══[0m
+
+[1m>>> dryrun-rhods-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-rhods-operator
+[1m>>> dryrun-rhbk-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-rhbk-operator
+[1m>>> dryrun-rhcl-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-rhcl-operator
+[1m>>> dryrun-leader-worker-set[0m
+[0;32mOK (exit=0)[0m: dryrun-leader-worker-set
+[1m>>> dryrun-job-set[0m
+[0;32mOK (exit=0)[0m: dryrun-job-set
+[1m>>> dryrun-kueue-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-kueue-operator
+[1m>>> dryrun-servicemeshoperator3[0m
+[0;32mOK (exit=0)[0m: dryrun-servicemeshoperator3
+[1m>>> dryrun-nfd[0m
+[0;32mOK (exit=0)[0m: dryrun-nfd
+[1m>>> dryrun-gpu-operator-certified[0m
+[0;32mOK (exit=0)[0m: dryrun-gpu-operator-certified
+[1m>>> dryrun-cert-manager-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-cert-manager-operator
+[1m>>> dryrun-authorino-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-authorino-operator
+[1m>>> dryrun-dns-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-dns-operator
+[1m>>> dryrun-limitador-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-limitador-operator
+[1m>>> dryrun-cluster-observability-operator[0m
+[0;32mOK (exit=0)[0m: dryrun-cluster-observability-operator
+[1m>>> dryrun-opentelemetry-product[0m
+[0;32mOK (exit=0)[0m: dryrun-opentelemetry-product
+
+[1m--- Verifying 10 explicit target UIDs in backup ---[0m
+[0;32mCAPTURED[0m: sts/postgres uid=a1556a15-057
+[0;32mCAPTURED[0m: deploy/maas-postgres uid=c71dcc06-4e7
+[0;32mCAPTURED[0m: sts/ogx-postgres uid=f9060f89-dc0
+[0;32mCAPTURED[0m: deploy/model-catalog uid=6b1da06e-1b9
+[0;32mCAPTURED[0m: gateway.gateway.networking.k8s.io/maas-default-gateway uid=9739a44f-e31
+[0;32mCAPTURED[0m: configmap/maas-gateway-options uid=0a4f5c32-948
+[0;32mCAPTURED[0m: consoleplugin/kuadrant-console-plugin uid=b33501b2-f7b
+[0;32mCAPTURED[0m: deploy/kuadrant-console-plugin uid=f48c2899-a52
+[0;32mCAPTURED[0m: svc/kuadrant-console-plugin uid=66f7d874-e72
+[0;32mCAPTURED[0m: configmap/kuadrant-console-nginx-conf uid=b3b875ff-7b9
+[0;32mPASS[0m: All 10 explicit target UIDs captured in backup
+
+[1m--- Verifying NFD SCCs in backup ---[0m
+[0;32mPASS[0m: NFD SCC nfd-topology-updater in backup
+[0;32mPASS[0m: NFD SCC nfd-worker in backup
+
+[1m--- Verifying Authorino CRBs in backup ---[0m
+[0;32mPASS[0m: Authorino CRBs in backup (count=2)
+
+[0;32mDry-run + backup verification passed.[0m
+
+[1m═══ PHASE 5: DESTRUCTIVE APPLY ═══[0m
+
+
+[0;33m>>> Applying rhods-operator[0m
+[0;31mAPPLY FAILED (exit=1): rhods-operator[0m
+  Pod/61b1ff68c7255ee5c5329fe19a5d96293a95788d9734a0a79829e8dc85gkv6g/openshift-marketplace: Job 61b1ff68c7255ee5c5329fe19a5d96293a95788d9734a0a79829e8dc859263b owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/c4959aeb960c8e20c88ac2de924a35b8221494bf772d0dcdd61893e644pz729/openshift-marketplace: Job c4959aeb960c8e20c88ac2de924a35b8221494bf772d0dcdd61893e644d5435 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/certified-operators-f4zhx/openshift-marketplace: Pod owned by unsupported GVK operators.coreos.com/v1alpha1/CatalogSource — expected apps/v1 workload or batch/v1/Job
+  Pod/community-operators-kmkt7/openshift-marketplace: Pod owned by unsupported GVK operators.coreos.com/v1alpha1/CatalogSource — expected apps/v1 workload or batch/v1/Job
+  Pod/e70034182827c4366ef3b2c22d117e5eecab471600e299bf6e8a5fe4948j46l/openshift-marketplace: Job e70034182827c4366ef3b2c22d117e5eecab471600e299bf6e8a5fe4940c426 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/fc45d78cb81048fa233b1aed31ef9b515f2a25befabc09645add0e36d8fmhjh/openshift-marketplace: Job fc45d78cb81048fa233b1aed31ef9b515f2a25befabc09645add0e36d89f264 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/redhat-operators-zjhzk/openshift-marketplace: Pod owned by unsupported GVK operators.coreos.com/v1alpha1/CatalogSource — expected apps/v1 workload or batch/v1/Job
+
+⚠ Residual audit incomplete — manual cleanup is not available.
+Error: Main teardown completed, but cleanup is incomplete: Residual audit incomplete
+[0;33mDeletions succeeded but audit incomplete — continuing[0m
+  Result: 42 deleted, 0 failed
+
+[0;33m>>> Applying rhbk-operator[0m
+  Result: 6 deleted, 0 failed
+
+[0;33m>>> Applying rhcl-operator[0m
+[0;31mAPPLY FAILED (exit=1): rhcl-operator[0m
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+
+⛔ Execution plan drift detected:
+  - Resource count drift: saved 22, fresh 21
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE TokenRateLimitPolicy/gateway-default-deny uid=Some("87ca7068-31e5-4845-a6ea-de55b42de374") (×1)
+Error: 2 drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.
+[0;33mDrift detected — regenerating plan and retrying[0m
+[0;33mRetry: deletions succeeded (audit may be incomplete)[0m
+  Result: 8 deleted, 0 failed
+
+[0;33m>>> Applying leader-worker-set[0m
+  Result: 3 deleted, 0 failed
+
+[0;33m>>> Applying job-set[0m
+  Result: 4 deleted, 0 failed
+
+[0;33m>>> Applying kueue-operator[0m
+[0;31mAPPLY FAILED (exit=1): kueue-operator[0m
+  Pod/61b1ff68c7255ee5c5329fe19a5d96293a95788d9734a0a79829e8dc85gkv6g/openshift-marketplace: Job 61b1ff68c7255ee5c5329fe19a5d96293a95788d9734a0a79829e8dc859263b owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/c4959aeb960c8e20c88ac2de924a35b8221494bf772d0dcdd61893e644pz729/openshift-marketplace: Job c4959aeb960c8e20c88ac2de924a35b8221494bf772d0dcdd61893e644d5435 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/certified-operators-f4zhx/openshift-marketplace: Pod owned by unsupported GVK operators.coreos.com/v1alpha1/CatalogSource — expected apps/v1 workload or batch/v1/Job
+  Pod/community-operators-kmkt7/openshift-marketplace: Pod owned by unsupported GVK operators.coreos.com/v1alpha1/CatalogSource — expected apps/v1 workload or batch/v1/Job
+  Pod/e70034182827c4366ef3b2c22d117e5eecab471600e299bf6e8a5fe4948j46l/openshift-marketplace: Job e70034182827c4366ef3b2c22d117e5eecab471600e299bf6e8a5fe4940c426 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/fc45d78cb81048fa233b1aed31ef9b515f2a25befabc09645add0e36d8fmhjh/openshift-marketplace: Job fc45d78cb81048fa233b1aed31ef9b515f2a25befabc09645add0e36d89f264 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/redhat-operators-zjhzk/openshift-marketplace: Pod owned by unsupported GVK operators.coreos.com/v1alpha1/CatalogSource — expected apps/v1 workload or batch/v1/Job
+
+⚠ Residual audit incomplete — manual cleanup is not available.
+Error: Main teardown completed, but cleanup is incomplete: Residual audit incomplete
+[0;33mDeletions succeeded but audit incomplete — continuing[0m
+  Result: 3 deleted, 0 failed
+
+[0;33m>>> Applying servicemeshoperator3[0m
+[0;31mAPPLY FAILED (exit=1): servicemeshoperator3[0m
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/kuadrant-ratelimiting-maas-default-gateway uid=Some("d961d1ef-174b-4689-ba33-31bebda0c8d2") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/maas-default-gateway-authn-ssl uid=Some("27d042eb-e67c-46a7-9116-d57adb77a176") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/payload-processing uid=Some("8a7adc7c-0291-4922-97bd-b3e0c5635780") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/data-science-authn-filter uid=Some("8ba8f4c0-7777-4cf0-91be-d63b52b27fcf") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/maas-api-backend-tls uid=Some("5a2a58c5-4ed2-479a-b3ed-074158da9e91") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/data-science-tls-rule uid=Some("f63ec2a2-ebb9-46fd-afa3-19af53fa12a9") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/payload-processing uid=Some("8dff7460-201d-4884-be04-f2208be05310") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE DestinationRule/payload-pre-processing uid=Some("b7710e1e-30dc-44ca-8027-9d5af6c18a5a") (×1)
+  - Resource missing from cluster: phase 2/Trigger operand cleanup DELETE EnvoyFilter/kuadrant-auth-maas-default-gateway uid=Some("4fc9feda-e06c-4a67-96de-02784083ddeb") (×1)
+Error: 11 drift error(s) detected. Re-run `teardown plan` to generate a fresh plan.
+[0;33mDrift detected — regenerating plan and retrying[0m
+[0;31mAPPLY RETRY FAILED: servicemeshoperator3[0m
+✅ Scanned 268 resource types in 19.8s
+   openshift-servicemesh — 35 resources
+   Scanned 1 namespace(s), 35 total resources
+🔍 Running targeted adapters... found 0 resources
+Error: Operator servicemeshoperator3.v3.4.2 discovery has 1 inaccessible query failure(s) — backup cannot proceed

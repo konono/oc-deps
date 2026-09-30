@@ -1,0 +1,67 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown plan limitador-operator --approve-scope root --approve-scope independent --approve-scope label-only --approve-scope operator-group --refresh-discovery --file /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/limitador-operator.json
+🔍 Discovering API resources...
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  limitador-operator.v1.4.2 (ns: openshift-rhcl) (Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace@openshift-rhcl)
+
+Preflight
+  ✓ Subscription resolved (limitador-operator.v1.4.2) — Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace found — will be deleted in Phase 0
+  ✓ CSV health (limitador-operator.v1.4.2) — phase=Succeeded
+  ✓ Controller available (limitador-operator.v1.4.2) — limitador-operator-controller-manager: Available (1)
+  ! Provenance — 1 CRs have uncertain provenance (will be marked REVIEW if independent)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  DELETE Limitador/limitador  (ns: openshift-rhcl)
+         independent CR approved via --approve-scope independent
+
+  BARRIER All operands removed (deleted + expected)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  KEEP   OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+         other operators remain in namespace
+  REVIEW Lease/3745a16e.kuadrant.io  (ns: openshift-rhcl)
+         leader election lease (holder references operator deployment)
+  REVIEW ConfigMap/limitador-operator-manager-config  (ns: openshift-rhcl)
+         operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/limitadors.limitador.kuadrant.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-rhcl  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  1 CRs have uncertain provenance (owned API, but origin unknown)
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 3 DELETE, 0 EXPECT-GONE, 4 KEEP, 2 REVIEW
+  0 blockers, 2 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-limitador-operator.v1.4.2-2026-09-29T17-28-14.635423811_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/limitador-operator.json
+
+⏱ Discovery: 35.2s, OLM: 2.1s, Plan: 1.7s, Total: 39.2s
+exit=0

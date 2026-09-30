@@ -1220,7 +1220,7 @@ pub(crate) async fn list_paginated_with_retry_opts(
                 field_selector: None,
                 outcome,
                 elapsed_ms: elapsed.as_millis() as u64,
-                requirement: req.clone(),
+                requirement: *req,
             });
         }
     };

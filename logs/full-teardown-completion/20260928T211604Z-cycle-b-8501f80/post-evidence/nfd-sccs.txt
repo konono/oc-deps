@@ -1,0 +1,2 @@
+Error from server (NotFound): securitycontextconstraints.security.openshift.io "nfd-worker" not found
+Error from server (NotFound): securitycontextconstraints.security.openshift.io "nfd-topology-updater" not found

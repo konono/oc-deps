@@ -1,0 +1,143 @@
+📄 Loaded execution plan from logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/nfd-final.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 22 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-nfd.4.22.0-202609212027-2026-09-29T18-47-44.043977350_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-nfd] elapsed 0s
+✅ Scanned 268 resource types in 12.8s
+   openshift-nfd — 63 resources
+[namespace 2/2: y] elapsed 12s
+✅ Scanned 268 resource types in 12.1s
+   y — 0 resources
+   Scanned 2 namespace(s), 63 total resources
+   Found 10 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 2 resources
+  20 candidate(s) for nfd.4.22.0-202609212027 (19 discovery + 1 plan)
+    20 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/nfd/20260929T184816Z-0004b771-0 (20 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9df2a16cb9507-4b771.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 3 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/nfd  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/nfd.4.22.0-202609212027  (ns: openshift-nfd)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  NodeFeatureDiscovery/nfd-instance  (ns: openshift-nfd)
+  DELETED  NodeFeature/ip-10-0-23-226.us-east-2.compute.internal  (ns: openshift-nfd)
+  ⏳ wave 1: 2/2 Gone (0s)
+
+  ⏳ 2/2 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/nfd.4.22.0-202609212027  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/nfd  (ns: openshift-nfd)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io  (ns: openshift-nfd)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/nfd-manager-config  (ns: openshift-nfd)
+             operator-related ConfigMap — verify before deleting
+  REVIEW   ConfigMap/nfd-worker  (ns: openshift-nfd)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeaturerules.nfd.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/nodefeatures.nfd.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-nfd  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  5 deleted, 0 already gone, 0 failed
+
+Planned preserved: 8 KEEP, 3 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown Residual Audit: nfd.4.22.0-202609212027
+Session: run-18d9df2a16cb9507-4b771
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+UNATTRIBUTED RELATED RESOURCES (6)
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/authorino-operator.v1.4.3  (openshift-nfd)  [uid:fe7d6bd8-9ccd-4d4c-b7b6-915f44c95fb5]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cert-manager-operator.v1.20.0  (openshift-nfd)  [uid:f9d2d44e-0540-451c-9582-e9de20534a4f]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cluster-observability-operator.v1.5.2  (openshift-nfd)  [uid:1dd12007-8388-4272-8943-d3f065ae42fd]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/dns-operator.v1.4.2  (openshift-nfd)  [uid:efb3b5fc-e227-4664-8e30-78bf3c051b54]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/limitador-operator.v1.4.2  (openshift-nfd)  [uid:5ac58e4a-246f-43bb-b2ca-015992933f1b]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-nfd)  [uid:6bf74a16-c8e6-4c8e-9278-b0f0788cf6df]
+
+EXPECTED PRESERVED (11)
+  ClusterServiceVersion/nfd.4.22.0-202609212027  (openshift-nfd)
+    controller needed for operand cleanup
+  Lease/39f5e5c3.nodefeaturediscoveries.nfd.openshift.io  (openshift-nfd)
+    leader election lease (holder references operator deployment)
+  ConfigMap/nfd-manager-config  (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  ConfigMap/nfd-worker  (openshift-nfd)
+    operator-related ConfigMap — verify before deleting
+  CustomResourceDefinition/nodefeaturediscoveries.nfd.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturegroups.nfd.k8s-sigs.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.k8s-sigs.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeaturerules.nfd.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.k8s-sigs.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/nodefeatures.nfd.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-nfd  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 41/41 probes succeeded
+
+📋 6 residual(s) observed.
+  Use 'teardown journal' to review.

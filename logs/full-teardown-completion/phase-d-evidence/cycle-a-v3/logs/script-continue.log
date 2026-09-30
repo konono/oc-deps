@@ -1,0 +1,24 @@
+--- nfd ---
+  plan OK
+  apply OK (exit=0)
+--- gpu-operator-certified ---
+  plan OK
+  apply exit=1 4 deleted 0 failed
+--- cert-manager-operator ---
+  plan OK
+  apply exit=1 4 deleted 0 failed
+--- authorino-operator ---
+  plan OK
+  apply exit=1 2 deleted 0 failed
+--- dns-operator ---
+  plan OK
+  apply exit=1 2 deleted 0 failed
+--- limitador-operator ---
+  plan OK
+  apply exit=1 3 deleted 0 failed
+--- cluster-observability-operator ---
+  plan OK
+  apply exit=1 8 deleted 0 failed
+--- opentelemetry-product ---
+  plan OK
+  apply exit=1 3 deleted 0 failed

@@ -1,0 +1,927 @@
+📄 Loaded execution plan from logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/cluster-observability-operator-final.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 16 operators
+🔍 Discovering CR instances...
+ found 9 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-cluster-observability-operator.v1.5.2-2026-09-29T19-19-54.625998397_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 5 pods
+🔍 Discovering CR instances...
+ found 9 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-cluster-observability-operator] elapsed 0s
+✅ Scanned 268 resource types in 26.3s
+   openshift-cluster-observability-operator — 96 resources
+[namespace 2/2: redhat-ods-monitoring] elapsed 26s
+✅ Scanned 268 resource types in 12.9s
+   redhat-ods-monitoring — 16 resources
+   Scanned 2 namespace(s), 112 total resources
+   Found 17 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  42 candidate(s) for cluster-observability-operator.v1.5.2 (41 discovery + 1 plan)
+    42 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/cluster-observability-operator/20260929T192047Z-0004c81d-0 (42 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9e0f0e4df2a89-4c81d.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/cluster-observability-operator  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/cluster-observability-operator.v1.5.2  (ns: openshift-cluster-observability-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  ScrapeConfig/maas-limitador  (ns: redhat-ods-monitoring)
+  DELETED  PersesDashboard/maas-gateway-gpu-resources  (ns: openshift-cluster-observability-operator)
+  DELETED  UIPlugin/monitoring  (cluster-scoped)
+  DELETED  PersesGlobalDatasource/thanos-querier-datasource  (cluster-scoped)
+  DELETED  PersesDashboard/maas-gateway-performance  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 5/5 Gone (0s)
+  EXPECT   Perses/perses  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+  EXPECT   PersesDashboard/accelerators-dashboard  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+  EXPECT   PersesDashboard/apm-dashboard  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+  EXPECT   PersesDatasource/accelerators-thanos-querier-datasource  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+
+  ⏳ 9/9 Gone, 0 Deleting, 0 FinalizerBlocked(0s)  ⏳ 9/9 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/cluster-observability-operator.v1.5.2  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/cluster-observability-operator  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/alertmanagers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/monitoringstacks.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/observabilityinstallers.observability.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/perses.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesdashboards.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesdatasources.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesglobaldatasources.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/podmonitors.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/probes.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheusagents.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheuses.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheusrules.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/scrapeconfigs.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/servicemonitors.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/thanosqueriers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/thanosrulers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/uiplugins.observability.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-cluster-observability-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  8 deleted, 0 already gone, 0 failed
+
+Planned preserved: 20 KEEP, 0 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown Residual Audit: cluster-observability-operator.v1.5.2
+Session: run-18d9e0f0e4df2a89-4c81d
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+UNATTRIBUTED WORKLOADS (124)
+  apps.v1/DaemonSet/aws-ebs-csi-driver-node  (openshift-cluster-csi-drivers)  [uid:01ea8746-fb24-4cc8-ae41-86db2b656793]
+    chain: DaemonSet/aws-ebs-csi-driver-node
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/tuned  (openshift-cluster-node-tuning-operator)  [uid:2efa3080-97ad-4ca4-a9cc-b29bcd6697cf]
+    chain: DaemonSet/tuned
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/dns-default  (openshift-dns)  [uid:67558e76-1b66-4e1c-a980-2f16c53f222c]
+    chain: DaemonSet/dns-default
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/node-resolver  (openshift-dns)  [uid:7e679548-3e60-470f-9965-210cc7b82eca]
+    chain: DaemonSet/node-resolver
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/node-ca  (openshift-image-registry)  [uid:f81ab2e2-ed44-4460-a588-0b5cc4a5d2da]
+    chain: DaemonSet/node-ca
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/ingress-canary  (openshift-ingress-canary)  [uid:89f0bc5e-306f-4ddf-bae0-4c8b9b71ef02]
+    chain: DaemonSet/ingress-canary
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/insights-runtime-extractor  (openshift-insights)  [uid:2bff9336-6995-4de5-9ec0-49299ad5cc45]
+    chain: DaemonSet/insights-runtime-extractor
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/machine-api-termination-handler  (openshift-machine-api)  [uid:2352fe05-52ec-4c01-add9-68e04702b690]
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/machine-config-daemon  (openshift-machine-config-operator)  [uid:a556e30c-f03f-4356-b832-310afab773af]
+    chain: DaemonSet/machine-config-daemon
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/machine-config-server  (openshift-machine-config-operator)  [uid:8a9839ba-b460-4bd4-b8aa-c174401a0653]
+    chain: DaemonSet/machine-config-server
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/node-exporter  (openshift-monitoring)  [uid:a9af88f8-d5ca-4928-b706-5921e3dd2419]
+    chain: DaemonSet/node-exporter
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/multus  (openshift-multus)  [uid:4e0ff7e3-59f8-4ef5-a609-447aa5b5eb49]
+    chain: DaemonSet/multus
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/multus-additional-cni-plugins  (openshift-multus)  [uid:48d787e0-409b-4fc2-8e43-8216304d4950]
+    chain: DaemonSet/multus-additional-cni-plugins
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/network-metrics-daemon  (openshift-multus)  [uid:3ae144af-3f62-495b-9203-e0a19e4091c3]
+    chain: DaemonSet/network-metrics-daemon
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/network-check-target  (openshift-network-diagnostics)  [uid:ebc4b66a-b0a1-4776-b320-d4ba3bab5efe]
+    chain: DaemonSet/network-check-target
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/network-node-identity  (openshift-network-node-identity)  [uid:fe2ac497-c672-4c10-a699-30498e8a1a9b]
+    chain: DaemonSet/network-node-identity
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/iptables-alerter  (openshift-network-operator)  [uid:e32deb11-3636-4cce-8ed7-4092de3781fa]
+    chain: DaemonSet/iptables-alerter
+    scope: OperatorGroupAllNamespaces
+  apps.v1/DaemonSet/ovnkube-node  (openshift-ovn-kubernetes)  [uid:2bdf915b-115d-4615-b859-b7103350621e]
+    chain: DaemonSet/ovnkube-node
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/group-sync-operator-controller-manager  (group-sync-operator)  [uid:809f7e37-b02c-4bed-a7d7-15eeaea3042c]
+    chain: ReplicaSet/group-sync-operator-controller-manager-bb6ff9dc8 -> Deployment/group-sync-operator-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/apiserver  (openshift-apiserver)  [uid:7450b832-5d4a-4bae-8018-4cfe58c651b7]
+    chain: ReplicaSet/apiserver-58b655cc86 -> Deployment/apiserver
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/openshift-apiserver-operator  (openshift-apiserver-operator)  [uid:ff915dec-21b3-42ec-9102-5859ae49f327]
+    chain: ReplicaSet/openshift-apiserver-operator-d87c678fc -> Deployment/openshift-apiserver-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/oauth-openshift  (openshift-authentication)  [uid:fc6b9166-fd74-46cc-ad29-d45e49228375]
+    chain: ReplicaSet/oauth-openshift-546b9bc8f -> Deployment/oauth-openshift
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/authentication-operator  (openshift-authentication-operator)  [uid:2b371382-cf85-4ed9-ab9c-269e67e3af9c]
+    chain: ReplicaSet/authentication-operator-756f4bdbb8 -> Deployment/authentication-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/catalogd-controller-manager  (openshift-catalogd)  [uid:539189a7-b084-4b2b-b0fa-08d813f11c25]
+    chain: ReplicaSet/catalogd-controller-manager-66d5b5b9b6 -> Deployment/catalogd-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/aws-cloud-controller-manager  (openshift-cloud-controller-manager)  [uid:3fbbff36-835f-489e-bc86-4edef8b5ab67]
+    chain: ReplicaSet/aws-cloud-controller-manager-9867c88cb -> Deployment/aws-cloud-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-cloud-controller-manager-operator  (openshift-cloud-controller-manager-operator)  [uid:a3f2ce71-9f7f-42f0-8ff9-5bd38f6b35e0]
+    chain: ReplicaSet/cluster-cloud-controller-manager-operator-78fbf9fb68 -> Deployment/cluster-cloud-controller-manager-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cloud-credential-operator  (openshift-cloud-credential-operator)  [uid:b696939f-055a-4075-90d8-39519b25b4e9]
+    chain: ReplicaSet/cloud-credential-operator-6fc894b54c -> Deployment/cloud-credential-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/pod-identity-webhook  (openshift-cloud-credential-operator)  [uid:83186f48-54d5-41f7-9658-8fb57a455fb9]
+    chain: ReplicaSet/pod-identity-webhook-587f546c76 -> Deployment/pod-identity-webhook
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cloud-network-config-controller  (openshift-cloud-network-config-controller)  [uid:d2eeee7a-cad6-48cc-a48b-c37363931315]
+    chain: ReplicaSet/cloud-network-config-controller-7884b7d647 -> Deployment/cloud-network-config-controller
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/aws-ebs-csi-driver-controller  (openshift-cluster-csi-drivers)  [uid:d10b4935-d5f4-4c21-be4f-998a24be92fd]
+    chain: ReplicaSet/aws-ebs-csi-driver-controller-b854df8d8 -> Deployment/aws-ebs-csi-driver-controller
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/aws-ebs-csi-driver-operator  (openshift-cluster-csi-drivers)  [uid:7da9459c-664b-402b-b341-77fc70ee84ba]
+    chain: ReplicaSet/aws-ebs-csi-driver-operator-7b69f49fb4 -> Deployment/aws-ebs-csi-driver-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/machine-approver  (openshift-cluster-machine-approver)  [uid:e1cc454b-bde6-4648-bed2-fa30084c74f5]
+    chain: ReplicaSet/machine-approver-554b974d46 -> Deployment/machine-approver
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-node-tuning-operator  (openshift-cluster-node-tuning-operator)  [uid:df971e92-7ce6-49f7-bbc2-35e9da1e1475]
+    chain: ReplicaSet/cluster-node-tuning-operator-6747f8bfff -> Deployment/cluster-node-tuning-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-olm-operator  (openshift-cluster-olm-operator)  [uid:ce5dfbf6-af0a-4538-bcb6-f3c01b85a2ab]
+    chain: ReplicaSet/cluster-olm-operator-66ccc7ffbf -> Deployment/cluster-olm-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-samples-operator  (openshift-cluster-samples-operator)  [uid:75ea721b-268b-4b9e-afc8-8bec38e2720f]
+    chain: ReplicaSet/cluster-samples-operator-fcd6675f6 -> Deployment/cluster-samples-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-storage-operator  (openshift-cluster-storage-operator)  [uid:97dfbed2-9bea-478e-820f-3756b1c50b3f]
+    chain: ReplicaSet/cluster-storage-operator-74c7dc868d -> Deployment/cluster-storage-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/csi-snapshot-controller  (openshift-cluster-storage-operator)  [uid:40a2b7ff-f2f2-4fb8-b7ca-f7639885851b]
+    chain: ReplicaSet/csi-snapshot-controller-54dcf86dff -> Deployment/csi-snapshot-controller
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/csi-snapshot-controller-operator  (openshift-cluster-storage-operator)  [uid:1b7384a0-d7d7-41db-9304-a91b0718acac]
+    chain: ReplicaSet/csi-snapshot-controller-operator-df5577489 -> Deployment/csi-snapshot-controller-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/volume-data-source-validator  (openshift-cluster-storage-operator)  [uid:9fb29b2b-fdbb-4f39-997f-31c1f53290d3]
+    chain: ReplicaSet/volume-data-source-validator-76965c55f9 -> Deployment/volume-data-source-validator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-version-operator  (openshift-cluster-version)  [uid:1cca6dc5-e650-4c75-84d6-8ffcaaf254b5]
+    chain: ReplicaSet/cluster-version-operator-ffbd8f5dd -> Deployment/cluster-version-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/openshift-config-operator  (openshift-config-operator)  [uid:bc56295f-2123-4374-b1ae-c51bf333b1f9]
+    chain: ReplicaSet/openshift-config-operator-7fc6cc47d4 -> Deployment/openshift-config-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/console  (openshift-console)  [uid:72153752-a3cf-4812-b537-0ddd8051e06c]
+    chain: ReplicaSet/console-55f987f586 -> Deployment/console
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/downloads  (openshift-console)  [uid:29d623b2-8e1b-4b6a-9960-41da0feaf86f]
+    chain: ReplicaSet/downloads-588cdb8cb4 -> Deployment/downloads
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/console-operator  (openshift-console-operator)  [uid:bd94ff99-b2c4-4400-ad6f-9545429d65bb]
+    chain: ReplicaSet/console-operator-699d8678d7 -> Deployment/console-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/controller-manager  (openshift-controller-manager)  [uid:b9cb15fe-d106-4625-b845-82d85361a19c]
+    chain: ReplicaSet/controller-manager-64677bd74c -> Deployment/controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/openshift-controller-manager-operator  (openshift-controller-manager-operator)  [uid:1f70cafa-0f25-43f8-ad96-2936fe3f575c]
+    chain: ReplicaSet/openshift-controller-manager-operator-ff9c56b46 -> Deployment/openshift-controller-manager-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/dns-operator  (openshift-dns-operator)  [uid:bda5e263-c3c8-48b7-8fb7-f6e5d078020a]
+    chain: ReplicaSet/dns-operator-75d6d65979 -> Deployment/dns-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/etcd-operator  (openshift-etcd-operator)  [uid:b157a868-574d-4686-b668-2a0718f9b4d0]
+    chain: ReplicaSet/etcd-operator-7c6cd78b85 -> Deployment/etcd-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-image-registry-operator  (openshift-image-registry)  [uid:c79b5bee-3d70-4605-a0f6-3adfff4375d5]
+    chain: ReplicaSet/cluster-image-registry-operator-68f4555bfb -> Deployment/cluster-image-registry-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/image-registry  (openshift-image-registry)  [uid:a6f6bc3f-7bfc-4db0-83f0-261b8e674a15]
+    chain: ReplicaSet/image-registry-7d8d64ddf9 -> Deployment/image-registry
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/router-default  (openshift-ingress)  [uid:1877d8eb-e619-4f4c-a979-c05f1fe80941]
+    chain: ReplicaSet/router-default-7c64cf477 -> Deployment/router-default
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ingress-operator  (openshift-ingress-operator)  [uid:39bd12de-4cd6-4e33-b0b9-9493db94be3b]
+    chain: ReplicaSet/ingress-operator-78ffdbd4b -> Deployment/ingress-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/insights-operator  (openshift-insights)  [uid:ca70cf6b-9282-42e7-b6f9-b59b97c9edfb]
+    chain: ReplicaSet/insights-operator-6c6d5bbf59 -> Deployment/insights-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/kube-apiserver-operator  (openshift-kube-apiserver-operator)  [uid:4b63830b-870b-4b19-8319-38e9d76551bd]
+    chain: ReplicaSet/kube-apiserver-operator-7c4b7d8458 -> Deployment/kube-apiserver-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/kube-controller-manager-operator  (openshift-kube-controller-manager-operator)  [uid:a90fada1-4e99-4f19-9c64-5119f853aa2e]
+    chain: ReplicaSet/kube-controller-manager-operator-64dd4cd4d8 -> Deployment/kube-controller-manager-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/openshift-kube-scheduler-operator  (openshift-kube-scheduler-operator)  [uid:608f237a-b589-4ce5-8963-0086ea93dc7b]
+    chain: ReplicaSet/openshift-kube-scheduler-operator-574df9f4f -> Deployment/openshift-kube-scheduler-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/migrator  (openshift-kube-storage-version-migrator)  [uid:f244613d-5901-4b82-8367-f4b4ffd9ec71]
+    chain: ReplicaSet/migrator-7798cb987d -> Deployment/migrator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/kube-storage-version-migrator-operator  (openshift-kube-storage-version-migrator-operator)  [uid:38a195eb-e556-471e-b082-bd99ee0d33ff]
+    chain: ReplicaSet/kube-storage-version-migrator-operator-6d976cdf8d -> Deployment/kube-storage-version-migrator-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-autoscaler-operator  (openshift-machine-api)  [uid:7bf36786-93d1-4b5a-b07f-e51222798f29]
+    chain: ReplicaSet/cluster-autoscaler-operator-69b799c845 -> Deployment/cluster-autoscaler-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-baremetal-operator  (openshift-machine-api)  [uid:c90becee-8d5a-4c14-8961-a1d5ac5fa955]
+    chain: ReplicaSet/cluster-baremetal-operator-558c649f9b -> Deployment/cluster-baremetal-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/control-plane-machine-set-operator  (openshift-machine-api)  [uid:c0c8a98f-0174-4170-81ab-637f4e48173b]
+    chain: ReplicaSet/control-plane-machine-set-operator-774b779b4 -> Deployment/control-plane-machine-set-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/machine-api-controllers  (openshift-machine-api)  [uid:45d036fa-89d5-4072-91f2-8830a7649f88]
+    chain: ReplicaSet/machine-api-controllers-7f4446786f -> Deployment/machine-api-controllers
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/machine-api-operator  (openshift-machine-api)  [uid:45a153e0-c899-476f-b0f6-fc02101583ef]
+    chain: ReplicaSet/machine-api-operator-64f9ccc694 -> Deployment/machine-api-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/machine-config-controller  (openshift-machine-config-operator)  [uid:192971ca-70ff-4ea8-affd-d035943ae684]
+    chain: ReplicaSet/machine-config-controller-5597f6f8c6 -> Deployment/machine-config-controller
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/machine-config-operator  (openshift-machine-config-operator)  [uid:08a783bf-e9e3-48ef-9e32-e67ae91d7c49]
+    chain: ReplicaSet/machine-config-operator-cdf4774c -> Deployment/machine-config-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/marketplace-operator  (openshift-marketplace)  [uid:dfc78285-ac5d-449a-ab8f-7a8fa21f97e1]
+    chain: ReplicaSet/marketplace-operator-6657bfdcf6 -> Deployment/marketplace-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cluster-monitoring-operator  (openshift-monitoring)  [uid:bdc2520c-3532-44bd-bd2b-41daba29b356]
+    chain: ReplicaSet/cluster-monitoring-operator-65f87b4858 -> Deployment/cluster-monitoring-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/kube-state-metrics  (openshift-monitoring)  [uid:8aa35b34-069a-48ac-b988-5e04de5ef4fd]
+    chain: ReplicaSet/kube-state-metrics-56d6f47f66 -> Deployment/kube-state-metrics
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/metrics-server  (openshift-monitoring)  [uid:e68ecea0-ad26-4f23-85cd-067adce8f29c]
+    chain: ReplicaSet/metrics-server-85778c6cd6 -> Deployment/metrics-server
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/monitoring-plugin  (openshift-monitoring)  [uid:567972e0-8879-4ec5-86a0-b53173fb28db]
+    chain: ReplicaSet/monitoring-plugin-dfdd75b44 -> Deployment/monitoring-plugin
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/openshift-state-metrics  (openshift-monitoring)  [uid:2004d6aa-7397-4931-83be-b7b76187df56]
+    chain: ReplicaSet/openshift-state-metrics-568d5b948 -> Deployment/openshift-state-metrics
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/prometheus-operator  (openshift-monitoring)  [uid:fddb0cd0-b47c-4565-b531-ce8718876460]
+    chain: ReplicaSet/prometheus-operator-7d5cccbd55 -> Deployment/prometheus-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/prometheus-operator-admission-webhook  (openshift-monitoring)  [uid:2518546a-717a-44b4-9775-b1bada0f6e9e]
+    chain: ReplicaSet/prometheus-operator-admission-webhook-f765848b8 -> Deployment/prometheus-operator-admission-webhook
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/telemeter-client  (openshift-monitoring)  [uid:0550902b-2759-4b81-933f-dbfac59c5fe8]
+    chain: ReplicaSet/telemeter-client-566d6895b -> Deployment/telemeter-client
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/thanos-querier  (openshift-monitoring)  [uid:7bdaa969-6d90-4b57-9efd-43915c965b21]
+    chain: ReplicaSet/thanos-querier-6599fc649b -> Deployment/thanos-querier
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/multus-admission-controller  (openshift-multus)  [uid:d9f4bc26-763c-4746-9950-8a3f474a6192]
+    chain: ReplicaSet/multus-admission-controller-69bbb5ff77 -> Deployment/multus-admission-controller
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/networking-console-plugin  (openshift-network-console)  [uid:bc4b9862-c888-49cb-b54d-f6a0f1d4ffce]
+    chain: ReplicaSet/networking-console-plugin-757f76d8fb -> Deployment/networking-console-plugin
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/network-check-source  (openshift-network-diagnostics)  [uid:9a96f350-e6d8-4599-a1ab-41933975170f]
+    chain: ReplicaSet/network-check-source-788645b4b -> Deployment/network-check-source
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/network-operator  (openshift-network-operator)  [uid:7d64a059-a6cb-458e-963b-f562c1929366]
+    chain: ReplicaSet/network-operator-7876f69b94 -> Deployment/network-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/apiserver  (openshift-oauth-apiserver)  [uid:4e11b80d-f217-4a37-b736-fa04283779a5]
+    chain: ReplicaSet/apiserver-568df68dd6 -> Deployment/apiserver
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/opentelemetry-operator-controller-manager  (openshift-opentelemetry-operator)  [uid:a19571d1-7a44-4050-b091-e107dc09d766]
+    chain: ReplicaSet/opentelemetry-operator-controller-manager-9f87ddf79 -> Deployment/opentelemetry-operator-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/opentelemetry-operator-webhook  (openshift-opentelemetry-operator)  [uid:fd9b9c7c-9952-4d6f-b879-af28c3d2fcc0]
+    chain: ReplicaSet/opentelemetry-operator-webhook-778b9dd68f -> Deployment/opentelemetry-operator-webhook
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/operator-controller-controller-manager  (openshift-operator-controller)  [uid:0d30ba85-2051-4269-842d-c8b18823e606]
+    chain: ReplicaSet/operator-controller-controller-manager-c8b5c644f -> Deployment/operator-controller-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/catalog-operator  (openshift-operator-lifecycle-manager)  [uid:314ec854-4d5c-4a57-af13-c5bc86ed53a2]
+    chain: ReplicaSet/catalog-operator-9fb9d7b96 -> Deployment/catalog-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/olm-operator  (openshift-operator-lifecycle-manager)  [uid:15219133-ac6d-4a84-8a23-5b36b861e555]
+    chain: ReplicaSet/olm-operator-744b5d7d46 -> Deployment/olm-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/package-server-manager  (openshift-operator-lifecycle-manager)  [uid:5027b577-36cb-4a85-9e9c-4fc9ae8b9e56]
+    chain: ReplicaSet/package-server-manager-6458669dcd -> Deployment/package-server-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/packageserver  (openshift-operator-lifecycle-manager)  [uid:b45fa4c4-d822-4c29-95ca-71b746990ea6]
+    chain: ReplicaSet/packageserver-5564659655 -> Deployment/packageserver
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ovnkube-control-plane  (openshift-ovn-kubernetes)  [uid:edeb40fc-b7d5-42ae-9372-d937ecdf8b69]
+    chain: ReplicaSet/ovnkube-control-plane-6dbcc9fbbb -> Deployment/ovnkube-control-plane
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/route-controller-manager  (openshift-route-controller-manager)  [uid:d8e7684f-052c-4cb6-be9a-63826a95f244]
+    chain: ReplicaSet/route-controller-manager-b4d564fc8 -> Deployment/route-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/service-ca  (openshift-service-ca)  [uid:208f35ac-efb9-49fb-a77a-a274cd981451]
+    chain: ReplicaSet/service-ca-6c87f96585 -> Deployment/service-ca
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/service-ca-operator  (openshift-service-ca-operator)  [uid:3cadbe77-088f-4ab2-914b-748a6b9dd892]
+    chain: ReplicaSet/service-ca-operator-75dd859df7 -> Deployment/service-ca-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ceph-csi-controller-manager  (openshift-storage)  [uid:80c29632-da2b-48dd-94c9-6128d40e107d]
+    chain: ReplicaSet/ceph-csi-controller-manager-7fc879dbfc -> Deployment/ceph-csi-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/cnpg-controller-manager  (openshift-storage)  [uid:12df9b89-571f-4bc1-aa0b-40374afc67db]
+    chain: ReplicaSet/cnpg-controller-manager-7b495895dc -> Deployment/cnpg-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/csi-addons-controller-manager  (openshift-storage)  [uid:4200aea1-0140-47a1-baa9-a5ade0299a8c]
+    chain: ReplicaSet/csi-addons-controller-manager-69cdf968f5 -> Deployment/csi-addons-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/noobaa-endpoint  (openshift-storage)  [uid:756e09c8-da60-4a8c-a60e-1bc5b111aef3]
+    chain: ReplicaSet/noobaa-endpoint-64f54cc546 -> Deployment/noobaa-endpoint
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/noobaa-operator  (openshift-storage)  [uid:14a4ad7d-324d-4d2c-9bc7-94992c16553d]
+    chain: ReplicaSet/noobaa-operator-55cb7bc59c -> Deployment/noobaa-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ocs-client-operator-console  (openshift-storage)  [uid:0b25e872-29c1-4a2f-bf5e-4d1909099700]
+    chain: ReplicaSet/ocs-client-operator-console-d566cfb4 -> Deployment/ocs-client-operator-console
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ocs-client-operator-controller-manager  (openshift-storage)  [uid:e467c730-e2df-43b6-acb9-0949b4d27453]
+    chain: ReplicaSet/ocs-client-operator-controller-manager-6cbd96f5fd -> Deployment/ocs-client-operator-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ocs-operator  (openshift-storage)  [uid:99282ad4-01e8-44c0-b4b4-d2e4194c844b]
+    chain: ReplicaSet/ocs-operator-66469b9876 -> Deployment/ocs-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/odf-console  (openshift-storage)  [uid:d6dc286f-406d-48bb-aa23-ec76360bc743]
+    chain: ReplicaSet/odf-console-6b4cf6b8b -> Deployment/odf-console
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/odf-external-snapshotter-operator  (openshift-storage)  [uid:471e1a6c-3782-41b8-b7d3-8e4e7dd5cf2a]
+    chain: ReplicaSet/odf-external-snapshotter-operator-796b45ddbf -> Deployment/odf-external-snapshotter-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/odf-operator-controller-manager  (openshift-storage)  [uid:9134f2f9-61df-4e42-a898-aaccdbbecabf]
+    chain: ReplicaSet/odf-operator-controller-manager-68d464475f -> Deployment/odf-operator-controller-manager
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/prometheus-operator  (openshift-storage)  [uid:512c6405-79e1-4bf4-87dc-139835495bb5]
+    chain: ReplicaSet/prometheus-operator-6bb9779b94 -> Deployment/prometheus-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/rook-ceph-operator  (openshift-storage)  [uid:2e94dfcf-b193-4cde-934d-5db64b2b897e]
+    chain: ReplicaSet/rook-ceph-operator-54fb97c7 -> Deployment/rook-ceph-operator
+    scope: OperatorGroupAllNamespaces
+  apps.v1/Deployment/ux-backend-server  (openshift-storage)  [uid:d0730759-15c8-4bdd-8405-a341541e4a65]
+    chain: ReplicaSet/ux-backend-server-5c58658f55 -> Deployment/ux-backend-server
+    scope: OperatorGroupAllNamespaces
+  apps.v1/StatefulSet/alertmanager-main  (openshift-monitoring)  [uid:fd4e38e2-2863-4bd2-ae82-1e5649e9c4d4]
+    chain: StatefulSet/alertmanager-main
+    scope: OperatorGroupAllNamespaces
+  apps.v1/StatefulSet/prometheus-k8s  (openshift-monitoring)  [uid:17925df7-19a9-4e90-9873-8f57882ba267]
+    chain: StatefulSet/prometheus-k8s
+    scope: OperatorGroupAllNamespaces
+  apps.v1/StatefulSet/noobaa-core  (openshift-storage)  [uid:51b96376-c721-48a6-b6ae-4be645696fcb]
+    chain: StatefulSet/noobaa-core
+    scope: OperatorGroupAllNamespaces
+  apps.v1/StatefulSet/noobaa-db-pg  (openshift-storage)  [uid:3a076d26-b3bc-48be-b185-430c1e95766e]
+    chain: StatefulSet/noobaa-db-pg
+    scope: OperatorGroupAllNamespaces
+  batch.v1/CronJob/image-pruner  (openshift-image-registry)  [uid:be422b9c-6b49-4813-93a6-bbf32135e16f]
+    chain: Job/image-pruner-29841120 -> CronJob/image-pruner
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/download-qwen3-06b  (llm-serving)  [uid:887b86f3-20c4-4fbc-ba37-d8ebcbb0fd49]
+    chain: Job/download-qwen3-06b
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-2llm5  (openshift-insights)  [uid:2bba41f9-be08-44c1-a312-62bd8525b312]
+    chain: Job/periodic-gathering-2llm5
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-445vw  (openshift-insights)  [uid:2c5d493d-585b-46bb-afe2-12af9179be18]
+    chain: Job/periodic-gathering-445vw
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-4x6pb  (openshift-insights)  [uid:09653291-1eb2-4da8-b27a-14e02154403d]
+    chain: Job/periodic-gathering-4x6pb
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-9vltd  (openshift-insights)  [uid:3a3663e8-ae7c-4af1-91b7-fb22317a96c0]
+    chain: Job/periodic-gathering-9vltd
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-dvgpq  (openshift-insights)  [uid:10838d1c-e4f9-46d0-b9c9-349779792a89]
+    chain: Job/periodic-gathering-dvgpq
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-g9tfp  (openshift-insights)  [uid:7f170f2c-a121-46e9-a69a-dc70442cf9f1]
+    chain: Job/periodic-gathering-g9tfp
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-jgf46  (openshift-insights)  [uid:957c8c1c-c3b5-49c3-90e9-9cf18fbb23e3]
+    chain: Job/periodic-gathering-jgf46
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-knwqq  (openshift-insights)  [uid:2579790c-acba-4b7c-9ae4-1f7186bf8ace]
+    chain: Job/periodic-gathering-knwqq
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-mhl2z  (openshift-insights)  [uid:25e7f2a1-e290-43fc-8730-5e29df5186f3]
+    chain: Job/periodic-gathering-mhl2z
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-p2p4k  (openshift-insights)  [uid:5e61ea73-68f1-42bc-a179-0a3c39fb16c4]
+    chain: Job/periodic-gathering-p2p4k
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-sg44x  (openshift-insights)  [uid:0decf8e9-0e17-4794-914a-a0b62807dbfc]
+    chain: Job/periodic-gathering-sg44x
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-wx2pf  (openshift-insights)  [uid:7b1469f9-e85a-4841-8795-b4d472c8f7cf]
+    scope: OperatorGroupAllNamespaces
+  batch.v1/Job/periodic-gathering-x6ntn  (openshift-insights)  [uid:90f4b820-cb70-4335-a85e-9e29d1a7855f]
+    chain: Job/periodic-gathering-x6ntn
+    scope: OperatorGroupAllNamespaces
+
+UNATTRIBUTED RELATED RESOURCES (350)
+  .v1/Service/cert-manager  (cert-manager)  [uid:41f05458-22b7-4830-bdca-3b6ac2da8caf]
+  .v1/Service/cert-manager-cainjector  (cert-manager)  [uid:efc4c836-cc8b-4b51-aa4f-d662b9ebb42d]
+  .v1/Service/cert-manager-webhook  (cert-manager)  [uid:991a1657-5dfd-4eb2-a897-347de03831c1]
+  .v1/Service/kubernetes  (default)  [uid:27213f93-d457-406d-a8ec-6ae838ed14d5]
+  .v1/Service/openshift  (default)  [uid:0d88837e-a52d-4c55-86f8-43afaa88656d]
+  .v1/Service/group-sync-operator-controller-manager-metrics-service  (group-sync-operator)  [uid:f164b34b-3042-4656-995f-c3675f1558cf]
+  .v1/Service/postgres  (keycloak)  [uid:6e8a94bd-e9e5-4405-8135-ea276b3dfa43]
+  .v1/Service/kubelet  (kube-system)  [uid:5c6a3c13-8273-4416-8096-2f542bacebfb]
+  .v1/Service/api  (openshift-apiserver)  [uid:2ad63ac0-4e7f-46bf-a288-19c267824a2c]
+  .v1/Service/check-endpoints  (openshift-apiserver)  [uid:af652d06-98aa-4ba8-bb47-b15558d7be5a]
+  .v1/Service/metrics  (openshift-apiserver-operator)  [uid:abade9a0-9600-4806-96d1-1a7d5db014bd]
+  .v1/Service/oauth-openshift  (openshift-authentication)  [uid:c116df01-f781-40dd-a20c-27d1caa5396d]
+  .v1/Service/metrics  (openshift-authentication-operator)  [uid:cc2f277e-ff24-4a13-a3ce-f3331b509702]
+  .v1/Service/catalogd-service  (openshift-catalogd)  [uid:4fdf6908-e4c8-4f37-b7d4-eed7dabba390]
+  .v1/Service/aws-cloud-controller-manager  (openshift-cloud-controller-manager)  [uid:752e5b0d-5336-4c52-8856-f1e65da76e7d]
+  .v1/Service/cloud-controller-manager-operator  (openshift-cloud-controller-manager-operator)  [uid:5a60c99b-e520-4853-b68a-2d78a7aa61c8]
+  .v1/Service/cco-metrics  (openshift-cloud-credential-operator)  [uid:8b6a6fa1-cbd2-48f2-8d3a-9bbcc7542237]
+  .v1/Service/pod-identity-webhook  (openshift-cloud-credential-operator)  [uid:34d2c69f-18bc-479c-aa65-3da3ec2b5f59]
+  .v1/Service/aws-ebs-csi-driver-controller-metrics  (openshift-cluster-csi-drivers)  [uid:039b89e7-337b-4465-88e8-c566cee7db70]
+  .v1/Service/aws-ebs-csi-driver-operator-metrics  (openshift-cluster-csi-drivers)  [uid:a9cd9541-68b5-4783-87e1-327c5ff17151]
+  .v1/Service/machine-approver  (openshift-cluster-machine-approver)  [uid:bea0fba4-7fbf-43b0-ad98-e66ffe49bf03]
+  .v1/Service/node-tuning-operator  (openshift-cluster-node-tuning-operator)  [uid:78ec98f9-2499-4f2c-9eb3-ac574b9320da]
+  .v1/Service/performance-addon-operator-service  (openshift-cluster-node-tuning-operator)  [uid:a5d88380-706a-4a8a-b9ed-bf925421bf09]
+  .v1/Service/cluster-olm-operator-metrics  (openshift-cluster-olm-operator)  [uid:12b7b233-81b0-43ad-b0bf-e8735777a03b]
+  .v1/Service/metrics  (openshift-cluster-samples-operator)  [uid:4551f02b-2319-4e89-b4bc-e88785a4c5d4]
+  .v1/Service/cluster-storage-operator-metrics  (openshift-cluster-storage-operator)  [uid:ef98a0f3-56f9-491b-9aea-211bf56d45f8]
+  .v1/Service/csi-snapshot-controller-operator-metrics  (openshift-cluster-storage-operator)  [uid:0621d948-18e7-4eca-901e-47fb7273ba5b]
+  .v1/Service/cluster-version-operator  (openshift-cluster-version)  [uid:1afc0d8b-0fc0-43c0-9aea-18a1c55f88a7]
+  .v1/Service/metrics  (openshift-config-operator)  [uid:4165b848-aa26-4774-b19f-cc9c45914788]
+  .v1/Service/console  (openshift-console)  [uid:cb128ff8-3d7b-44c9-b97f-37700327060a]
+  .v1/Service/downloads  (openshift-console)  [uid:f79bba54-8877-463a-b6e1-e82196ca60f0]
+  .v1/Service/metrics  (openshift-console-operator)  [uid:8fc519fe-fefd-4fe0-a65d-c7bbe0a0391b]
+  .v1/Service/controller-manager  (openshift-controller-manager)  [uid:c05d80ee-e2b8-4d5f-8145-4b4c9df952f8]
+  .v1/Service/metrics  (openshift-controller-manager-operator)  [uid:8eed93fe-f0e8-406b-a029-f280ae29681c]
+  .v1/Service/dns-default  (openshift-dns)  [uid:edec3adb-4b36-498a-8e8a-aad50e9c9b53]
+  .v1/Service/metrics  (openshift-dns-operator)  [uid:3d39c8c3-d619-4d4a-aee5-e8e5c7aea607]
+  .v1/Service/etcd  (openshift-etcd)  [uid:19b2ee7b-54f5-4d1c-a33a-5f4cd374405c]
+  .v1/Service/metrics  (openshift-etcd-operator)  [uid:2ac05b08-6a88-4f38-82df-f129d34a056b]
+  .v1/Service/image-registry  (openshift-image-registry)  [uid:7b67b31b-144c-412f-821a-963aa069708b]
+  .v1/Service/image-registry-operator  (openshift-image-registry)  [uid:e07889a8-222a-4de1-8afc-4a6aafa4d536]
+  .v1/Service/router-default  (openshift-ingress)  [uid:a0cdeff9-a87e-446a-a325-d2535a434378]
+  .v1/Service/router-internal-default  (openshift-ingress)  [uid:a0a15fc8-27ac-4bac-ba03-b6ba72c6cbc0]
+  .v1/Service/ingress-canary  (openshift-ingress-canary)  [uid:27468108-6809-446e-bf99-bf7cda4bcfb8]
+  .v1/Service/metrics  (openshift-ingress-operator)  [uid:a5b73970-8a87-469b-b765-ead310c84121]
+  .v1/Service/exporter  (openshift-insights)  [uid:36c027cb-4327-4c70-b991-81650f2b2f83]
+  .v1/Service/metrics  (openshift-insights)  [uid:04e6e23b-6005-422f-b384-e017b9fc34e5]
+  .v1/Service/apiserver  (openshift-kube-apiserver)  [uid:887d584d-8ad9-4cb4-a0f6-02f5ff37f496]
+  .v1/Service/metrics  (openshift-kube-apiserver-operator)  [uid:58ad20ca-bb77-4d42-b393-2339bda96994]
+  .v1/Service/kube-controller-manager  (openshift-kube-controller-manager)  [uid:db5c029d-23c4-42ad-b52c-0840f11047d6]
+  .v1/Service/metrics  (openshift-kube-controller-manager-operator)  [uid:97aeb7cb-4bb9-4157-ade0-4da70335f5c1]
+  .v1/Service/scheduler  (openshift-kube-scheduler)  [uid:bc4947d9-c4cb-4c11-9182-fb84fc5eaa28]
+  .v1/Service/metrics  (openshift-kube-scheduler-operator)  [uid:821298f5-4d27-4ac6-81b4-7574f0629ae4]
+  .v1/Service/metrics  (openshift-kube-storage-version-migrator-operator)  [uid:3aeea067-73b0-4e52-b6a8-441bf8a0c586]
+  .v1/Service/cluster-autoscaler-operator  (openshift-machine-api)  [uid:feb6f48e-8415-4034-b13e-16f97a89a3b2]
+  .v1/Service/cluster-baremetal-operator-service  (openshift-machine-api)  [uid:0bab8647-256c-42ab-94fa-da5b35c46e64]
+  .v1/Service/cluster-baremetal-webhook-service  (openshift-machine-api)  [uid:02190661-07d9-4a92-896c-d114d7cf41fe]
+  .v1/Service/control-plane-machine-set-operator  (openshift-machine-api)  [uid:88a6ec8c-11e6-499d-b3eb-999df52e1a13]
+  .v1/Service/machine-api-controllers  (openshift-machine-api)  [uid:b850df8d-bf08-4ae8-a145-1bc6705b224c]
+  .v1/Service/machine-api-operator  (openshift-machine-api)  [uid:49193c19-0e00-42d6-9dba-1e09cab9c0c8]
+  .v1/Service/machine-api-operator-machine-webhook  (openshift-machine-api)  [uid:5b3acaa5-218f-4513-b599-c304e7ebaacf]
+  .v1/Service/machine-api-operator-webhook  (openshift-machine-api)  [uid:09379584-c0f2-413d-8afe-bf191d75359a]
+  .v1/Service/internal-release-image-registry  (openshift-machine-config-operator)  [uid:e869adcf-7311-438d-accd-0ca110ab83f4]
+  .v1/Service/kube-rbac-proxy-crio  (openshift-machine-config-operator)  [uid:d84b9381-bfd7-4d10-9174-a75e58157617]
+  .v1/Service/machine-config-controller  (openshift-machine-config-operator)  [uid:c27bb008-b0ef-408d-ad0d-ae95a2b89091]
+  .v1/Service/machine-config-daemon  (openshift-machine-config-operator)  [uid:6904d6d8-fb6b-40e2-8d21-fc63c8b8e0e3]
+  .v1/Service/machine-config-server  (openshift-machine-config-operator)  [uid:61c0c253-5a46-4f8b-a771-2daa325d3061]
+  .v1/Service/certified-operators  (openshift-marketplace)  [uid:f91742f9-e669-4e74-babf-d2b4da96c513]
+  .v1/Service/community-operators  (openshift-marketplace)  [uid:d2d22fce-493d-4122-8a9a-f0e363fd630a]
+  .v1/Service/marketplace-operator-metrics  (openshift-marketplace)  [uid:252b0d72-0553-45c1-aa05-2586b7f76f83]
+  .v1/Service/redhat-operators  (openshift-marketplace)  [uid:2eca6b23-8f17-4c78-8df4-4f98578a375c]
+  .v1/Service/alertmanager-main  (openshift-monitoring)  [uid:2a061625-e538-4587-8431-b335eeb54a1a]
+  .v1/Service/alertmanager-operated  (openshift-monitoring)  [uid:bd5e9239-0126-474a-9955-32b1bcfc172d]
+  .v1/Service/cluster-monitoring-operator  (openshift-monitoring)  [uid:886bda87-00d1-482f-8259-c9b007878569]
+  .v1/Service/kube-state-metrics  (openshift-monitoring)  [uid:8ec1c289-370a-4465-9a5b-5e50ccd1ec39]
+  .v1/Service/metrics-server  (openshift-monitoring)  [uid:855d0ba6-af1f-455e-a667-3073d1e4f3af]
+  .v1/Service/monitoring-plugin  (openshift-monitoring)  [uid:f7fd3e10-d084-4710-accd-6363a9daa442]
+  .v1/Service/node-exporter  (openshift-monitoring)  [uid:42cfae82-26ca-47d0-8738-65968644d1d0]
+  .v1/Service/openshift-state-metrics  (openshift-monitoring)  [uid:3470b32a-1f8c-45ca-aa75-1d921eca5b10]
+  .v1/Service/prometheus-k8s  (openshift-monitoring)  [uid:3b3250d7-bec4-418d-aca0-6898ae7c0717]
+  .v1/Service/prometheus-k8s-thanos-sidecar  (openshift-monitoring)  [uid:c510e7fc-64cd-476a-b1a3-0f1fa7bef893]
+  .v1/Service/prometheus-operated  (openshift-monitoring)  [uid:3fc6b265-7e80-462b-b859-a008cdfa41ae]
+  .v1/Service/prometheus-operator  (openshift-monitoring)  [uid:6fce256f-0222-4865-a4c6-276a6a1d0a2e]
+  .v1/Service/prometheus-operator-admission-webhook  (openshift-monitoring)  [uid:423718b7-0e07-44fa-b1c3-3a669b2402e7]
+  .v1/Service/telemeter-client  (openshift-monitoring)  [uid:d34b1af7-8b67-41f3-b266-1313e93ba5dd]
+  .v1/Service/thanos-querier  (openshift-monitoring)  [uid:f6f20aac-b01d-4136-a8a0-abc550951d85]
+  .v1/Service/multus-admission-controller  (openshift-multus)  [uid:e4b0cab8-4c79-4a6f-a750-cee9f534b95c]
+  .v1/Service/network-metrics-service  (openshift-multus)  [uid:65a993f5-1444-4a3f-a929-ca5be524e675]
+  .v1/Service/networking-console-plugin  (openshift-network-console)  [uid:adbc9143-828d-4346-b198-b8d227f11b69]
+  .v1/Service/network-check-source  (openshift-network-diagnostics)  [uid:64375f21-02fe-4666-ae3a-1081f60193d9]
+  .v1/Service/network-check-target  (openshift-network-diagnostics)  [uid:48195783-5eb6-4315-8ba2-99061f6d84a6]
+  .v1/Service/metrics  (openshift-network-operator)  [uid:4bc66a45-063e-46e8-b4d2-a1c793b20ae1]
+  .v1/Service/api  (openshift-oauth-apiserver)  [uid:74b146ed-ab67-452d-81e8-d74c396ac0a7]
+  .v1/Service/opentelemetry-operator-controller-manager-metrics-service  (openshift-opentelemetry-operator)  [uid:8b8fbeee-ffea-487e-9e14-9df697d4f0ac]
+  .v1/Service/opentelemetry-operator-webhook-service  (openshift-opentelemetry-operator)  [uid:e960c11a-f091-44c8-9f19-329fa67efa6d]
+  .v1/Service/operator-controller-service  (openshift-operator-controller)  [uid:4a59f71a-0dbf-44c1-8e55-5a8793083567]
+  .v1/Service/catalog-operator-metrics  (openshift-operator-lifecycle-manager)  [uid:4faadc94-4cfc-4f88-a812-e7c4fde4e747]
+  .v1/Service/olm-operator-metrics  (openshift-operator-lifecycle-manager)  [uid:beb6af4b-5b2a-4fa7-b8d5-3c5b76a07bdb]
+  .v1/Service/package-server-manager-metrics  (openshift-operator-lifecycle-manager)  [uid:36306abf-7948-42ba-983b-02bf850fb8f6]
+  .v1/Service/packageserver-service  (openshift-operator-lifecycle-manager)  [uid:53325922-7259-4f56-8cda-f0d216a652ef]
+  .v1/Service/ovn-kubernetes-control-plane  (openshift-ovn-kubernetes)  [uid:12997b9c-3069-4c39-b267-0476471f4672]
+  .v1/Service/ovn-kubernetes-node  (openshift-ovn-kubernetes)  [uid:d708b47c-e808-4687-a504-438502c7fb80]
+  .v1/Service/route-controller-manager  (openshift-route-controller-manager)  [uid:f40c7a2b-0617-43b8-b980-da676a0320a0]
+  .v1/Service/metrics  (openshift-service-ca-operator)  [uid:7f654296-dd76-4104-bf7e-41f396162a30]
+  .v1/Service/cnpg-controller-manager-service  (openshift-storage)  [uid:5447547e-b62e-4806-8238-77f375a648bb]
+  .v1/Service/iam  (openshift-storage)  [uid:64dda938-c287-4095-8f18-308eb1fc3fc4]
+  .v1/Service/noobaa-db-pg  (openshift-storage)  [uid:3f87c45b-f7a8-41fc-9aef-0c7e8a3c6e7d]
+  .v1/Service/noobaa-mgmt  (openshift-storage)  [uid:f70e3b0d-36cf-498a-8bad-b455365d0bbb]
+  .v1/Service/noobaa-operator-service  (openshift-storage)  [uid:1113fa65-942a-4be9-8c45-00cc97afb4ab]
+  .v1/Service/noobaa-syslog  (openshift-storage)  [uid:b547ca57-9e96-4431-aaae-5b42d20d373a]
+  .v1/Service/ocs-client-operator-console  (openshift-storage)  [uid:41e5b895-bac6-472f-b2c3-e2d0d414b429]
+  .v1/Service/ocs-client-operator-metrics  (openshift-storage)  [uid:bacd2f5c-864d-4626-9bc8-9957283b53aa]
+  .v1/Service/ocs-client-operator-webhook-server  (openshift-storage)  [uid:17ca49eb-63d4-4b23-9bd0-398b11417104]
+  .v1/Service/odf-console-service  (openshift-storage)  [uid:9ae4e753-e86b-4ab9-a5b1-93d5741560d8]
+  .v1/Service/odf-operator-controller-manager-metrics-service  (openshift-storage)  [uid:6fc7e24a-2450-413c-a389-773e47ec1cda]
+  .v1/Service/odf-operator-webhook-server-service  (openshift-storage)  [uid:433445b2-d76c-4ec4-8dcf-b8f0ab161c50]
+  .v1/Service/s3  (openshift-storage)  [uid:a2dc8bc5-7902-453d-8bb8-e50fb6eb156d]
+  .v1/Service/sts  (openshift-storage)  [uid:b9150670-b4f7-4661-ba13-517171cdc0ce]
+  .v1/Service/ux-backend-proxy  (openshift-storage)  [uid:9c1f7723-c9ac-4415-adee-2d425f84a8f3]
+  .v1/Service/vectors  (openshift-storage)  [uid:f5279f47-4a45-4560-9085-c4a4d6b5ab70]
+  .v1/Service/maas-postgres  (redhat-ods-applications)  [uid:aaae6056-3ed1-4a32-ba62-10aac61ae4ac]
+  .v1/Service/ogx-postgres  (redhat-ods-applications)  [uid:d0729520-4b10-4d7f-b2aa-08caaa1a0f48]
+  image.openshift.io.v1/ImageStream/cli  (openshift)  [uid:a78ec5a8-b446-4e4e-a565-a75d1082c3e9]
+  image.openshift.io.v1/ImageStream/cli-artifacts  (openshift)  [uid:fcdfb176-0822-4ae8-9dd3-15da3ea17e07]
+  image.openshift.io.v1/ImageStream/dotnet  (openshift)  [uid:856f7553-1e5e-4d19-94d1-7d0f67c074be]
+  image.openshift.io.v1/ImageStream/dotnet-aspnet  (openshift)  [uid:f94390f5-97e2-4ef2-9f76-63395fb0c4cd]
+  image.openshift.io.v1/ImageStream/dotnet-runtime  (openshift)  [uid:7eff3a47-27ec-417a-8469-670ce373d2ce]
+  image.openshift.io.v1/ImageStream/driver-toolkit  (openshift)  [uid:1e713e26-fd55-4288-8d2d-e6fb6635c8ab]
+  image.openshift.io.v1/ImageStream/fuse7-eap-openshift  (openshift)  [uid:fcb56a0b-0bd8-48d6-9da7-333d0bd041a6]
+  image.openshift.io.v1/ImageStream/fuse7-eap-openshift-java11  (openshift)  [uid:525a1c67-3ebc-43c0-9260-4efcc400ef73]
+  image.openshift.io.v1/ImageStream/fuse7-java-openshift  (openshift)  [uid:7b72bea7-660f-4e04-99c0-3a9efb4e9516]
+  image.openshift.io.v1/ImageStream/fuse7-java11-openshift  (openshift)  [uid:0087d3d6-b768-4c90-8b7b-941528617511]
+  image.openshift.io.v1/ImageStream/fuse7-karaf-openshift  (openshift)  [uid:df2bc15c-f9c4-4268-9980-9011b11eb194]
+  image.openshift.io.v1/ImageStream/fuse7-karaf-openshift-jdk11  (openshift)  [uid:3c5dba51-6781-4af6-840d-a7cb5c287890]
+  image.openshift.io.v1/ImageStream/golang  (openshift)  [uid:93cbb98d-8a58-4c29-b79c-d2d1174e0842]
+  image.openshift.io.v1/ImageStream/httpd  (openshift)  [uid:c701f3f7-fd7d-4c5c-af59-86a78690fba4]
+  image.openshift.io.v1/ImageStream/installer  (openshift)  [uid:11e3931c-69d0-4adb-805e-7f94890d239e]
+  image.openshift.io.v1/ImageStream/installer-artifacts  (openshift)  [uid:95adb1bf-6df6-4524-aad8-414efef59724]
+  image.openshift.io.v1/ImageStream/java  (openshift)  [uid:380db4cc-c7cc-40af-ac97-b10fd5f8a188]
+  image.openshift.io.v1/ImageStream/java-runtime  (openshift)  [uid:6ace674f-d011-4869-9f84-a2f3ce423664]
+  image.openshift.io.v1/ImageStream/jboss-datagrid73-openshift  (openshift)  [uid:8a5f2007-f39a-4bcf-829f-08f6f5f3515c]
+  image.openshift.io.v1/ImageStream/jboss-eap-xp3-openjdk11-openshift  (openshift)  [uid:cc313257-410a-4266-a712-25c725cf4c37]
+  image.openshift.io.v1/ImageStream/jboss-eap-xp3-openjdk11-runtime-openshift  (openshift)  [uid:e11f35d6-2d04-4580-afc0-2a7b711514fb]
+  image.openshift.io.v1/ImageStream/jboss-eap-xp4-openjdk11-openshift  (openshift)  [uid:92f69a57-a02e-4da4-b7e5-99e064c0037b]
+  image.openshift.io.v1/ImageStream/jboss-eap-xp4-openjdk11-runtime-openshift  (openshift)  [uid:d59da725-3b4b-46e2-a282-06f7015e7c36]
+  image.openshift.io.v1/ImageStream/jboss-eap74-openjdk11-openshift  (openshift)  [uid:636cd20b-6b20-43e7-9033-dcb4c5cd60a6]
+  image.openshift.io.v1/ImageStream/jboss-eap74-openjdk11-runtime-openshift  (openshift)  [uid:b8ad19de-a598-485d-b373-372ae4b88f80]
+  image.openshift.io.v1/ImageStream/jboss-eap74-openjdk8-openshift  (openshift)  [uid:7787748c-b259-4eb0-9fca-d29ac879c13b]
+  image.openshift.io.v1/ImageStream/jboss-eap74-openjdk8-runtime-openshift  (openshift)  [uid:fc5a09fa-70b1-4a97-bf17-a97d75781339]
+  image.openshift.io.v1/ImageStream/jboss-webserver57-openjdk11-tomcat9-openshift-ubi8  (openshift)  [uid:515b3aea-90cf-44e0-a1df-0e66b634cc15]
+  image.openshift.io.v1/ImageStream/jboss-webserver57-openjdk8-tomcat9-openshift-ubi8  (openshift)  [uid:27061334-1a60-4ff3-94bc-a3bfb17a1995]
+  image.openshift.io.v1/ImageStream/jenkins  (openshift)  [uid:7066cc08-12f5-4c72-bfcd-3e96063d7895]
+  image.openshift.io.v1/ImageStream/jenkins-agent-base  (openshift)  [uid:c937c2ee-a6ac-4d36-919d-a3f4c79f97f9]
+  image.openshift.io.v1/ImageStream/mariadb  (openshift)  [uid:f4fbeb8b-3d8c-4aea-9d77-f064b86dd713]
+  image.openshift.io.v1/ImageStream/must-gather  (openshift)  [uid:c4e88a85-fe0c-4d95-8f98-e5aa77e83680]
+  image.openshift.io.v1/ImageStream/mysql  (openshift)  [uid:aeaa4e27-ab21-4a2f-916b-01585d459357]
+  image.openshift.io.v1/ImageStream/network-tools  (openshift)  [uid:cb833acd-03fe-4edc-b64b-1533a3fa1227]
+  image.openshift.io.v1/ImageStream/nginx  (openshift)  [uid:bff3ffc3-615f-485b-8d39-975e32973c98]
+  image.openshift.io.v1/ImageStream/nodejs  (openshift)  [uid:6fc2e17e-0daf-4bae-b6b5-24ef1f04828a]
+  image.openshift.io.v1/ImageStream/oauth-proxy  (openshift)  [uid:cd7768fb-2156-4b3f-bf9c-dbaaf7026f40]
+  image.openshift.io.v1/ImageStream/openjdk-11-rhel7  (openshift)  [uid:67685313-6029-48e5-995e-f09b49268056]
+  image.openshift.io.v1/ImageStream/perl  (openshift)  [uid:33f6a163-9cee-4142-9a0a-f5e44356f817]
+  image.openshift.io.v1/ImageStream/php  (openshift)  [uid:9c397ecf-aa39-4f0e-a228-706cfd843534]
+  image.openshift.io.v1/ImageStream/postgresql  (openshift)  [uid:719a077c-ad10-44fb-97c9-e2e4f33f8660]
+  image.openshift.io.v1/ImageStream/postgresql13-for-sso75-openshift-rhel8  (openshift)  [uid:02815c75-b878-48be-bccc-3b0bff7b0c49]
+  image.openshift.io.v1/ImageStream/postgresql13-for-sso76-openshift-rhel8  (openshift)  [uid:bff889a5-b590-449c-bd31-ccdf35987edb]
+  image.openshift.io.v1/ImageStream/python  (openshift)  [uid:fcd75a1b-8957-4269-9423-4122f4ee884f]
+  image.openshift.io.v1/ImageStream/redhat-openjdk18-openshift  (openshift)  [uid:338b8194-ca64-448f-b4d7-7d3745de975a]
+  image.openshift.io.v1/ImageStream/redis  (openshift)  [uid:3ae390cd-f7e6-4b03-8dab-65d57d0a7cdc]
+  image.openshift.io.v1/ImageStream/ruby  (openshift)  [uid:d328caec-ea2f-4bd4-b139-6776607f2eb8]
+  image.openshift.io.v1/ImageStream/sso75-openshift-rhel8  (openshift)  [uid:6e191b63-ebd9-443f-892a-e519c513c02e]
+  image.openshift.io.v1/ImageStream/sso76-openshift-rhel8  (openshift)  [uid:a1237662-d425-4369-99eb-a85367a43ebc]
+  image.openshift.io.v1/ImageStream/tests  (openshift)  [uid:d53a3606-4fef-4f97-84b3-679516f957fd]
+  image.openshift.io.v1/ImageStream/tools  (openshift)  [uid:2715c524-5758-494a-b7e9-104846fd24fc]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-11  (openshift)  [uid:fd94f8e9-05a6-404a-969a-a690cd5dfacf]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-11-runtime  (openshift)  [uid:3648fa92-bd5d-4649-a47a-cd2f65af48b9]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-17  (openshift)  [uid:2d81a13c-a977-4ed0-b8f1-c31104553f93]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-17-runtime  (openshift)  [uid:4b90a201-26b8-49bd-8d54-a5c92aabd9cf]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-21  (openshift)  [uid:b1bc4c7b-f792-422c-b688-ee4cbd5bb2c7]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-21-runtime  (openshift)  [uid:24a17c52-2ce2-4ecf-9e55-b50fe248a140]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-8  (openshift)  [uid:3b224d74-1bcf-49ef-8ecc-35d003eb9f95]
+  image.openshift.io.v1/ImageStream/ubi8-openjdk-8-runtime  (openshift)  [uid:03357f0e-a5dd-4696-9704-13cab00488cb]
+  image.openshift.io.v1/ImageStream/code-server-notebook  (redhat-ods-applications)  [uid:9c0dbdaa-dfd8-4451-a863-b94b28970428]
+  image.openshift.io.v1/ImageStream/jupyter-pytorch-llmcompressor  (redhat-ods-applications)  [uid:9fb603d3-eda2-40fc-982a-40e502f725b1]
+  image.openshift.io.v1/ImageStream/jupyter-rocm-minimal  (redhat-ods-applications)  [uid:e9406e4f-d953-4128-8b88-403316e5c15f]
+  image.openshift.io.v1/ImageStream/jupyter-rocm-pytorch  (redhat-ods-applications)  [uid:3b42d85d-779d-4cb3-a7c3-2a86d934d5b3]
+  image.openshift.io.v1/ImageStream/jupyter-rocm-tensorflow  (redhat-ods-applications)  [uid:e7a25dba-ec11-4e66-ac9f-62d4f65cf607]
+  image.openshift.io.v1/ImageStream/minimal-gpu  (redhat-ods-applications)  [uid:c118c6c4-0cf3-4337-9739-732bb5044ba2]
+  image.openshift.io.v1/ImageStream/odh-trustyai-notebook  (redhat-ods-applications)  [uid:1bf9d35d-e0dc-4014-83a9-9c90cf3ec028]
+  image.openshift.io.v1/ImageStream/pytorch  (redhat-ods-applications)  [uid:ea3be4b6-064d-4070-adb5-deb3c21f3d0d]
+  image.openshift.io.v1/ImageStream/runtime-datascience  (redhat-ods-applications)  [uid:4ad16eaa-12d6-4ec3-ba03-2f4a1fea71f0]
+  image.openshift.io.v1/ImageStream/runtime-datascience-2025-2  (redhat-ods-applications)  [uid:37b0b64c-47a8-4fd1-a5b6-6bb24fceb04c]
+  image.openshift.io.v1/ImageStream/runtime-minimal  (redhat-ods-applications)  [uid:5a2e322d-7094-4053-9fa8-4bc033945763]
+  image.openshift.io.v1/ImageStream/runtime-minimal-2025-2  (redhat-ods-applications)  [uid:dcccd6dc-0b55-43f3-b304-3ee88c025b51]
+  image.openshift.io.v1/ImageStream/runtime-pytorch  (redhat-ods-applications)  [uid:9eb9caa5-606b-4a0b-8975-eed5b97dacfa]
+  image.openshift.io.v1/ImageStream/runtime-pytorch-2025-2  (redhat-ods-applications)  [uid:8f2c80b5-6808-49e7-a7b5-e123037b1572]
+  image.openshift.io.v1/ImageStream/runtime-pytorch-llmcompressor  (redhat-ods-applications)  [uid:1587cc9b-87d6-44ac-9924-4d1b8a852dbc]
+  image.openshift.io.v1/ImageStream/runtime-pytorch-llmcompressor-2025-2  (redhat-ods-applications)  [uid:665e24ce-16d1-4b9f-bdc6-d3cdaa1dec12]
+  image.openshift.io.v1/ImageStream/runtime-rocm-pytorch  (redhat-ods-applications)  [uid:a8bd8c0e-b5ec-4268-915f-d6540b17fc97]
+  image.openshift.io.v1/ImageStream/runtime-rocm-pytorch-2025-2  (redhat-ods-applications)  [uid:9daeeaa5-9cce-4088-91e4-85970b6679d9]
+  image.openshift.io.v1/ImageStream/runtime-rocm-tensorflow  (redhat-ods-applications)  [uid:134add1a-bb97-4b79-b5c8-69e501fce44d]
+  image.openshift.io.v1/ImageStream/runtime-rocm-tensorflow-2025-2  (redhat-ods-applications)  [uid:a739643a-2be9-4eb1-ae98-688c0c8b442f]
+  image.openshift.io.v1/ImageStream/runtime-tensorflow  (redhat-ods-applications)  [uid:2a4c12aa-b49b-468a-b996-8f257b69a611]
+  image.openshift.io.v1/ImageStream/runtime-tensorflow-2025-2  (redhat-ods-applications)  [uid:d8d790e1-59c4-4720-b528-8d0ec28bab57]
+  image.openshift.io.v1/ImageStream/s2i-generic-data-science-notebook  (redhat-ods-applications)  [uid:313a5bae-2218-4dbb-91db-681e52722536]
+  image.openshift.io.v1/ImageStream/s2i-minimal-notebook  (redhat-ods-applications)  [uid:a6a429ec-702f-40c8-9720-e80f0dc3b83b]
+  image.openshift.io.v1/ImageStream/tensorflow  (redhat-ods-applications)  [uid:31fb179b-7f25-4ebc-9252-8e53f6571d67]
+  image.openshift.io.v1/ImageStream/training-hub-universal-cpu  (redhat-ods-applications)  [uid:8ef2a0df-1edc-4bc6-af2e-e4cbb0c1195d]
+  image.openshift.io.v1/ImageStream/training-hub-universal-cuda  (redhat-ods-applications)  [uid:92dcb10a-51aa-47c8-a045-3319189a481b]
+  image.openshift.io.v1/ImageStream/training-hub-universal-rocm  (redhat-ods-applications)  [uid:250e001e-dd27-4c9c-b016-c040b83caeac]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ai-tenants)  [uid:bc33812d-96ae-481b-be72-979999d8745c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (cert-manager)  [uid:fd45225e-921c-4d03-a0ad-10e8e214ff69]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (cert-manager-operator)  [uid:4a005c36-0f28-4f53-aae0-a954ee7f5073]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (default)  [uid:cf1a8287-4c86-4b35-bf07-520cb0d8b0a2]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/group-sync-operator.v0.0.36  (group-sync-operator)  [uid:361f172c-e34e-40a8-a943-ecdc0ed5f8f0]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (group-sync-operator)  [uid:3ce62360-c91f-4841-8a8c-c7158c70561c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (keycloak)  [uid:c0e72663-c535-40ab-af99-9e54fbacdeda]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (kube-node-lease)  [uid:bd4747e6-4204-46a1-8968-9acbd8e4f3db]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (kube-public)  [uid:cee1bc3f-2903-44d0-858c-db2a79d3e446]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (kube-system)  [uid:32bfebf3-ad14-4cce-bdba-30c213cce726]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (llm-serving)  [uid:37db4313-4ffb-46de-b9b5-60ce097c51e9]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (mlflow-workspace)  [uid:19952dbb-e137-4a36-b674-037df0168ace]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (models-as-a-service)  [uid:b934b94a-3e77-469f-aec9-6e2286945bc4]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (nvidia-gpu-operator)  [uid:f416cc7a-957e-4c94-b149-49455b41fdc3]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (oc-deps-enhancement-test)  [uid:9724b37c-ea1f-4c18-84bc-583a0f7902cc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (opendatahub-ogx-system)  [uid:3a6da6a7-a193-4ae1-81a1-22b66118d8de]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift)  [uid:c2e47d29-2a8c-4c75-95e6-b4781e00ad24]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-apiserver)  [uid:64c2b634-30dc-4968-957b-8245ffe7d39e]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-apiserver-operator)  [uid:0eb97aa5-102e-451b-b310-0d9bd0c44408]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-authentication)  [uid:42097ca2-fc1e-442c-baf5-5e5615fab1e9]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-authentication-operator)  [uid:bde184c8-143c-429f-b582-6cdd9ebdf958]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-catalogd)  [uid:8fbeb945-78ea-4369-8ef1-cd6aa7e22534]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cloud-controller-manager)  [uid:8f476374-3b61-4c8b-a02e-94614ba1fb1b]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cloud-controller-manager-operator)  [uid:339760cd-462c-4253-a901-967eedb0e39a]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cloud-credential-operator)  [uid:27c1c305-8fe3-4694-bce7-ba8cf98c1804]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cloud-network-config-controller)  [uid:70ea10c7-a953-4abc-9e60-1cfdad4109fd]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cloud-platform-infra)  [uid:bef2023c-2d15-4d66-9644-68bf87ed8261]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-csi-drivers)  [uid:379a4d5e-56b7-4819-8b2e-41a790090f08]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-machine-approver)  [uid:50666779-a186-4bfb-b754-ea9a9c7b825b]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-node-tuning-operator)  [uid:cbc7bdc7-61d2-4feb-92ee-b6a2db5026fb]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-observability-operator)  [uid:21c70a59-e477-4319-81c8-e3fbc334e989]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-olm-operator)  [uid:bed7f7b9-da3b-4b0d-8d35-d41296f5eedc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-samples-operator)  [uid:71eef0fc-469c-43fd-999d-5cec10d6a7c4]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-storage-operator)  [uid:ec0de606-999b-4fb3-8fb0-d353fb7849df]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-cluster-version)  [uid:96f8d7ce-4e3b-4e7e-b713-984476bf23ee]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-config)  [uid:6504173e-aa87-4486-968e-0f8892e7ed27]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-config-managed)  [uid:6ebdca51-c4da-46ad-9e6d-55026c4e0e85]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-config-operator)  [uid:c4a31982-a265-40da-afae-c0e761528026]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-console)  [uid:91fb8b54-2ff6-4f17-b343-14b0d6992f7a]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-console-operator)  [uid:70f513c4-5e16-469e-80e1-f3484e22e4fe]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-console-user-settings)  [uid:047f5b9c-4d2a-4d4f-b740-4616c19f65c6]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-controller-manager)  [uid:0844f1e2-84fb-4015-a4f4-1bc9f43d10c2]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-controller-manager-operator)  [uid:c302d3bb-8658-4107-ba68-4e17177287e0]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-dns)  [uid:ec415cd1-7c16-41ab-9c2f-e7013faf9967]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-dns-operator)  [uid:238e9a79-70a7-4b66-adfe-6f0de9bd7fa5]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-etcd)  [uid:c1e5c78e-9f19-4cc2-a675-bd05c51ac5cc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-etcd-operator)  [uid:a85c62d0-84b5-466d-85ed-98e7657b1e34]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-host-network)  [uid:2a9027dd-f157-478d-bbca-77e7af13434a]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-image-registry)  [uid:3912b3b3-17fe-4e87-bfa8-9d5ce3696042]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-infra)  [uid:71952691-b22d-4786-9cc5-f5620e12183d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-ingress)  [uid:b543575a-2cd4-41da-861a-f5290231c8fc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-ingress-canary)  [uid:8294e21b-e169-4aa8-82d6-ac858e85d56b]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-ingress-operator)  [uid:d43e4eef-f14d-4cb8-92c3-5ef4ff010654]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-insights)  [uid:4a553544-a39f-487f-9451-4b0d99198570]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-jobset)  [uid:bc894b49-52ab-4fc5-91d4-25c2d6afd165]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kni-infra)  [uid:33d6c101-3746-49f6-8e99-a1d1b5d48516]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-apiserver)  [uid:d38b9a7f-9975-41a8-ba25-1a1ec8937b08]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-apiserver-operator)  [uid:f9ccff93-0901-43ec-9956-c1926bdd7edf]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-controller-manager)  [uid:69421a03-1216-42c6-bcdb-0cdc13400cd9]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-controller-manager-operator)  [uid:4e8624e4-d180-454e-b812-6c0cc5d20513]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-scheduler)  [uid:4147e451-8c97-4614-9694-a59ba359cf08]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-scheduler-operator)  [uid:b1ff37e7-b8bd-4d85-bbaf-9bb63492e36e]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-storage-version-migrator)  [uid:f9aa78a7-f959-4b80-afe8-d9fd51f33931]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kube-storage-version-migrator-operator)  [uid:103319b1-170d-4d68-9e80-918139a65ce9]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-kueue)  [uid:7ad8719d-445a-4af4-a803-1f4887aed485]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-leaderworkerset)  [uid:946800de-bcbf-4ece-b459-be6c8b569288]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-machine-api)  [uid:38bb6ea4-1393-47d2-80a8-c2f806154fea]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-machine-config-operator)  [uid:105cb740-0d9e-42e5-b4a2-6f1153ca3264]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-marketplace)  [uid:68c90344-fc8d-4b29-8f34-b4d46918d249]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-monitoring)  [uid:514d9ce3-40ad-498e-ae73-d51336ed798a]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-multus)  [uid:265e8b78-5875-4c6e-84b3-12d9a212726c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-network-console)  [uid:d6510697-9abd-4ff2-b658-9ddeecbac00f]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-network-diagnostics)  [uid:3c9952e2-ffd3-4ebe-bf1b-467ac803ed6d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-network-node-identity)  [uid:389b5476-c7d4-4971-830b-b23ed97b15cc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-network-operator)  [uid:e55dd7b1-2727-45c2-8f96-d2586114e85c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-nfd)  [uid:6bf74a16-c8e6-4c8e-9278-b0f0788cf6df]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-node)  [uid:1bd12d57-a022-4d33-89ee-833a48eb807c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-nutanix-infra)  [uid:33cd26d8-7cda-4906-b110-6501948b6556]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-oauth-apiserver)  [uid:0426a62c-a99a-4cc8-be76-2cbe54aaa10d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-openstack-infra)  [uid:c0952255-98c0-4265-8ffb-bbc313bb69bb]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-opentelemetry-operator)  [uid:9dfd524f-9371-4d98-9cbc-0647d35ff1d7]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-operator-controller)  [uid:f657af23-5b9c-49ae-8e61-98535ae756ce]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-operator-lifecycle-manager)  [uid:4c27c76c-4b3f-49bd-813a-9b1d94c70dd4]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/packageserver  (openshift-operator-lifecycle-manager)  [uid:0aeed91b-492f-4aeb-89dc-980cfbaab23c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-operators)  [uid:09c6b917-d383-4a88-acbe-8bc9c558b29d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-ovirt-infra)  [uid:52b5773b-4767-4775-a367-3863bf798411]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-ovn-kubernetes)  [uid:3844f329-601d-4563-ac21-339381dd1ad6]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-rhcl)  [uid:70fe208a-ba30-4d24-b44b-802097937262]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-route-controller-manager)  [uid:0103f814-fbcb-4ee8-990e-2b691ecf41de]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-service-ca)  [uid:d2526a5f-1a15-4661-8471-c936d88dff8a]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-service-ca-operator)  [uid:1281fa2c-1e9f-46f1-bc9c-5130575594a1]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-servicemesh)  [uid:07bc96e3-23d6-4b3c-829b-0652f36255ca]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cephcsi-operator.v4.22.5-rhodf  (openshift-storage)  [uid:dffcf149-7666-44fe-beae-6cfb3308f47f]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/mcg-operator.v4.22.5-rhodf  (openshift-storage)  [uid:ab2ca367-bd37-4bd5-9310-916243f9e0b9]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/ocs-client-operator.v4.22.5-rhodf  (openshift-storage)  [uid:7885040d-76a0-4a65-960d-3d47a91c0a0b]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/ocs-operator.v4.22.5-rhodf  (openshift-storage)  [uid:145695af-e849-40a3-94f5-28d53b32a7b4]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/ocs-tls-profiles.v4.22.5-rhodf  (openshift-storage)  [uid:4f1e9b84-b9e9-4262-bfaa-0033a9f8da9d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/odf-csi-addons-operator.v4.22.5-rhodf  (openshift-storage)  [uid:143658d2-a093-4159-8098-2d83ac2f5ab6]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/odf-dependencies.v4.22.5-rhodf  (openshift-storage)  [uid:26cfd06f-0424-4ac1-a670-93517b08fa97]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/odf-external-snapshotter-operator.v4.22.5-rhodf  (openshift-storage)  [uid:7b5d348f-78ba-4744-85b2-4c9316b262ee]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/odf-operator.v4.22.5-rhodf  (openshift-storage)  [uid:4ea09f45-92c3-4e00-9189-27fbcb050c68]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/odf-prometheus-operator.v4.22.5-rhodf  (openshift-storage)  [uid:770cced7-77aa-463d-bab2-8a86219654e2]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-storage)  [uid:2d738157-34fc-4b9d-9611-a2da7e0f8330]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/recipe.v4.22.5-rhodf  (openshift-storage)  [uid:a97e2f95-e07b-4643-8c17-d19a20683c2d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/rook-ceph-operator.v4.22.5-rhodf  (openshift-storage)  [uid:63a7884e-58ab-49fb-b0af-542672433962]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-user-workload-monitoring)  [uid:8a99fe76-189c-4a42-8273-c60a865bb3cc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-vsphere-infra)  [uid:db0e7e94-4b3f-4888-b906-e2b5a93eea15]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (redhat-ai-gateway-infra)  [uid:eeb4cb74-0b4f-4e80-a4ff-4479cdc79dda]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (redhat-ods-applications)  [uid:8af4b22b-0794-4f67-85e0-135649d0084e]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (redhat-ods-monitoring)  [uid:d676eca2-79bd-476a-9031-ff94bec5654f]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (redhat-ods-operator)  [uid:39117366-7c31-44c2-a9fb-8a6c42c606df]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (rhoai-model-registries)  [uid:d1cfb8fe-b894-477d-b4f4-da0493dd4303]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (rhods-notebooks)  [uid:7e781234-133f-43d5-ba1b-bad7f58295ce]
+  operators.coreos.com.v1alpha1/Subscription/group-sync-operator  (group-sync-operator)  [uid:2313f534-0b48-4186-a70c-438f5af6a108]
+  operators.coreos.com.v1alpha1/Subscription/opentelemetry-product  (openshift-opentelemetry-operator)  [uid:9ddaf544-94a2-453e-8765-a155ae3c17a2]
+  operators.coreos.com.v1alpha1/Subscription/cephcsi-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:0d345296-fa04-44eb-a4f0-dbefa2d3a8a9]
+  operators.coreos.com.v1alpha1/Subscription/mcg-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:95ea1f75-f5a5-4255-b021-63f9485e9ef6]
+  operators.coreos.com.v1alpha1/Subscription/ocs-client-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:687abfa6-609d-4bd9-8586-9d84eddd389b]
+  operators.coreos.com.v1alpha1/Subscription/ocs-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:2256c587-2b4e-42d1-8c2f-325a4a3ef2da]
+  operators.coreos.com.v1alpha1/Subscription/ocs-tls-profiles-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:59bc723e-0fe5-47c4-b335-5a1f1e3c0e22]
+  operators.coreos.com.v1alpha1/Subscription/odf-csi-addons-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:d04a21f6-4060-4d47-80ac-b0d48d646500]
+  operators.coreos.com.v1alpha1/Subscription/odf-dependencies  (openshift-storage)  [uid:050c3778-446e-4949-a76c-fcc13068b2db]
+  operators.coreos.com.v1alpha1/Subscription/odf-external-snapshotter-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:e33c1c3f-92bb-4872-a3bf-0d1fed036b4c]
+  operators.coreos.com.v1alpha1/Subscription/odf-operator  (openshift-storage)  [uid:52017b72-ab64-4233-811f-30ad9e74002d]
+  operators.coreos.com.v1alpha1/Subscription/odf-prometheus-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:9a126796-b00f-4b20-aaf6-ee96659a6524]
+  operators.coreos.com.v1alpha1/Subscription/recipe-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:975e0de6-8f61-4619-93fd-0194b13a6ba0]
+  operators.coreos.com.v1alpha1/Subscription/rook-ceph-operator-stable-4.22-redhat-operators-openshift-marketplace  (openshift-storage)  [uid:264d3ccf-c116-4335-89e1-127784fece93]
+  route.openshift.io.v1/Route/keycloak  (keycloak)  [uid:d0840582-004d-4e54-af11-13994c0f7122]
+  route.openshift.io.v1/Route/oauth-openshift  (openshift-authentication)  [uid:ae9b1e19-17e6-4904-a44c-cd397e9910e0]
+  route.openshift.io.v1/Route/console  (openshift-console)  [uid:8e72d395-b4fb-4c45-89bf-bda0eaea022e]
+  route.openshift.io.v1/Route/downloads  (openshift-console)  [uid:d06dfeff-9d41-4bac-b812-cc16d4b79695]
+  route.openshift.io.v1/Route/canary  (openshift-ingress-canary)  [uid:31369802-e9ae-46cd-be58-29cf8f490aa1]
+  route.openshift.io.v1/Route/alertmanager-main  (openshift-monitoring)  [uid:34579a79-1c1c-49e0-9de2-38a2622da81d]
+  route.openshift.io.v1/Route/prometheus-k8s  (openshift-monitoring)  [uid:8da328f7-92fe-40dc-a4c8-cfaffdaa81ee]
+  route.openshift.io.v1/Route/prometheus-k8s-federate  (openshift-monitoring)  [uid:efbd5463-b3d6-4784-86aa-2adea2e21f5f]
+  route.openshift.io.v1/Route/thanos-querier  (openshift-monitoring)  [uid:ba30291f-9395-4a52-82e9-2838020f648b]
+  route.openshift.io.v1/Route/iam  (openshift-storage)  [uid:8b064757-3026-4ae5-97e2-36de7283f5b5]
+  route.openshift.io.v1/Route/noobaa-mgmt  (openshift-storage)  [uid:0e8e4be3-0e09-4f7f-be15-da1a82c3c42d]
+  route.openshift.io.v1/Route/s3  (openshift-storage)  [uid:d61d09a7-b3e8-40d1-925a-66f0028bde80]
+  route.openshift.io.v1/Route/sts  (openshift-storage)  [uid:b8fe3656-c93b-4068-8ced-8e23ae1b9ac8]
+  route.openshift.io.v1/Route/vectors  (openshift-storage)  [uid:f87fbeb3-b5a5-4fe9-89a5-2d4037f43e6e]
+
+EXPECTED PRESERVED (20)
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2  (openshift-cluster-observability-operator)
+    controller needed for operand cleanup
+  CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/alertmanagers.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/monitoringstacks.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/observabilityinstallers.observability.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/perses.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesdashboards.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesdatasources.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesglobaldatasources.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/podmonitors.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/probes.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheusagents.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheuses.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheusrules.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/scrapeconfigs.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/servicemonitors.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/thanosqueriers.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/thanosrulers.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/uiplugins.observability.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-cluster-observability-operator  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 3083/3083 probes succeeded
+INCOMPLETE SCOPES (20)
+  Pod/0107dab773dc68aaa13454c010f55d4bcacab91cc3e495a03c6f2a6675gk7pk/openshift-marketplace: Job 0107dab773dc68aaa13454c010f55d4bcacab91cc3e495a03c6f2a6675eb3a3 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/06b9f01328a4aea313daf68989176da244bdd44e1c428bb2d2a204f9129hw7n/openshift-marketplace: Job 06b9f01328a4aea313daf68989176da244bdd44e1c428bb2d2a204f912d1d20 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/127344d1966b306b0c3337c9fadbd9b2078cb49e11b0cb8b48eb5814de6t6tp/openshift-marketplace: Job 127344d1966b306b0c3337c9fadbd9b2078cb49e11b0cb8b48eb5814deb2cb3 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/1befc175f578090dfe9fbb3bc7a712ca75aaac1e4d72f30956c235053644qx8/openshift-marketplace: Job 1befc175f578090dfe9fbb3bc7a712ca75aaac1e4d72f30956c2350536819bf owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/35dd3ee1e32d14538fa5e8462fcf2eb18bbc8f7324aa423950eb20050bnsxfl/openshift-marketplace: Job 35dd3ee1e32d14538fa5e8462fcf2eb18bbc8f7324aa423950eb20050b58849 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/3acc551d7df0b0f75a9764c05e2bdd367c91cafe67c1139d787dac18e2m8nqb/openshift-marketplace: Job 3acc551d7df0b0f75a9764c05e2bdd367c91cafe67c1139d787dac18e2aaa48 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/45a3d59c369d57a8b65570d41cac48fb95b85acc3d4f9c21604cd8110edd2d2/openshift-marketplace: Job 45a3d59c369d57a8b65570d41cac48fb95b85acc3d4f9c21604cd8110e5b8f1 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/4c31c914b3652c0c6b313eb1f39b80961ba8afa9e977e463d8ae5595907nz4v/openshift-marketplace: Job 4c31c914b3652c0c6b313eb1f39b80961ba8afa9e977e463d8ae559590e8845 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/61b1ff68c7255ee5c5329fe19a5d96293a95788d9734a0a79829e8dc85gkv6g/openshift-marketplace: Job 61b1ff68c7255ee5c5329fe19a5d96293a95788d9734a0a79829e8dc859263b owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/759ea5f546b72b1d19a61316c2513312059d82b4033c5ee50840e98a9e59cdl/openshift-marketplace: Job 759ea5f546b72b1d19a61316c2513312059d82b4033c5ee50840e98a9ec8567 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/79772a2e07b5de6a34ce8853d407eac5da4b36f8a911f72117581a177656qcz/openshift-marketplace: Job 79772a2e07b5de6a34ce8853d407eac5da4b36f8a911f72117581a1776fe02d owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/a88bb13530f65106251a82fe1c6adeb509b67fc459afce60f5f778524dln7zg/openshift-marketplace: Job a88bb13530f65106251a82fe1c6adeb509b67fc459afce60f5f778524d0d7f8 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/ac50440630edb06357e8cf17ccd37c7934c6cd058be2c1d5b06ade53afnrrsg/openshift-marketplace: Job ac50440630edb06357e8cf17ccd37c7934c6cd058be2c1d5b06ade53af784ac owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/c492a38244df0aed6727c0211b91a150eb84ed5c757819eb6b6c3927b5srfqd/openshift-marketplace: Job c492a38244df0aed6727c0211b91a150eb84ed5c757819eb6b6c3927b5aef4b owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/c4959aeb960c8e20c88ac2de924a35b8221494bf772d0dcdd61893e644pz729/openshift-marketplace: Job c4959aeb960c8e20c88ac2de924a35b8221494bf772d0dcdd61893e644d5435 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/c5c5558f8b31684537f53ac7fb2629e00804e80eda8f64bcb7bb16ae3a6xf4z/openshift-marketplace: Job c5c5558f8b31684537f53ac7fb2629e00804e80eda8f64bcb7bb16ae3a066ec owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/ca6a74171a5059ae0f3deeea1554813ef2b732f96ad78d77d96f8e421b77cn9/openshift-marketplace: Job ca6a74171a5059ae0f3deeea1554813ef2b732f96ad78d77d96f8e421b301e7 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/d1ec5bb90dc165efff5ee8a50cd88d2aad3e5d4a28ed76d7a89461c8d1zz5qb/openshift-marketplace: Job d1ec5bb90dc165efff5ee8a50cd88d2aad3e5d4a28ed76d7a89461c8d168197 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/e70034182827c4366ef3b2c22d117e5eecab471600e299bf6e8a5fe4948j46l/openshift-marketplace: Job e70034182827c4366ef3b2c22d117e5eecab471600e299bf6e8a5fe4940c426 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+  Pod/fc45d78cb81048fa233b1aed31ef9b515f2a25befabc09645add0e36d8fmhjh/openshift-marketplace: Job fc45d78cb81048fa233b1aed31ef9b515f2a25befabc09645add0e36d89f264 owned by unsupported GVK /v1/ConfigMap — expected batch/v1/CronJob
+
+⚠ Residual audit incomplete — manual cleanup is not available.
+Error: Main teardown completed, but cleanup is incomplete: Residual audit incomplete

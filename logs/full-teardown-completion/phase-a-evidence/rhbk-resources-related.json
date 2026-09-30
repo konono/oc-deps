@@ -1,0 +1,4044 @@
+{
+  "operator_name": "rhbk-operator",
+  "csv_name": "rhbk-operator.v26.6.7-opr.1",
+  "install_namespace": "keycloak",
+  "subscription_name": "rhbk-operator",
+  "owned_crds": [
+    "keycloakrealmimports.k8s.keycloak.org",
+    "keycloaks.k8s.keycloak.org",
+    "keycloakrealmimports.k8s.keycloak.org",
+    "keycloaks.k8s.keycloak.org"
+  ],
+  "categories": [
+    {
+      "label": "OLM",
+      "resources": [
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "ClusterServiceVersion",
+            "namespace": "keycloak",
+            "name": "rhbk-operator.v26.6.7-opr.1",
+            "uid": "2234ef24-9984-4e98-90cf-d39578351f2f"
+          },
+          "relationship": "olm",
+          "evidence": "ClusterServiceVersion",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "operators.coreos.com",
+            "version": "v1alpha1",
+            "kind": "Subscription",
+            "namespace": "keycloak",
+            "name": "rhbk-operator",
+            "uid": "1c4d4a5a-7f0d-43e2-b4f0-b438fd8a9526"
+          },
+          "relationship": "olm",
+          "evidence": "Subscription",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "Controller",
+      "resources": [
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "keycloak",
+            "name": "rhbk-operator-847df79d67-zb68r",
+            "uid": "d3ffdbc4-ee49-4716-9252-51de2abcbdab"
+          },
+          "relationship": "selector-match",
+          "evidence": "Deployment selector match",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "ServiceAccount",
+            "namespace": "keycloak",
+            "name": "rhbk-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy serviceAccountName",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "Deployment",
+            "namespace": "keycloak",
+            "name": "rhbk-operator",
+            "uid": null
+          },
+          "relationship": "installStrategy",
+          "evidence": "CSV installStrategy.deployments",
+          "confidence": "Managed"
+        }
+      ]
+    },
+    {
+      "label": "CR Instances (owned CRDs)",
+      "resources": [
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "keycloak",
+            "name": "keycloak-0",
+            "uid": "0a9738dc-f17f-40c4-a139-304748de0eee"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "24362705-974c-4919-9feb-bd79ae34f611"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of StatefulSet/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Pod",
+            "namespace": "keycloak",
+            "name": "maas-realm-crz57",
+            "uid": "50103059-65fe-430a-b470-75a38beca525"
+          },
+          "source_id": {
+            "group": "batch",
+            "version": "v1",
+            "kind": "Job",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "e2046407-0996-4e39-bfde-3e6b97a09872"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Job/maas-realm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "keycloak",
+            "name": "keycloak-initial-admin",
+            "uid": "ce879f88-65e8-463f-b195-e87d3ab8b820"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "2c3585b5-9318-44d5-a3cb-860be590fed0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "keycloak",
+            "name": "keycloak-maas-realm",
+            "uid": "a89ebfb7-ed34-4516-a8d3-fae76b53fc76"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "KeycloakRealmImport",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "9b08fc08-c385-4734-9833-fd2a538f6ccb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of KeycloakRealmImport/maas-realm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Secret",
+            "namespace": "keycloak",
+            "name": "keycloak-tls",
+            "uid": "24c628cc-ef3b-44ea-b71a-1936b7984274"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-service",
+            "uid": "51325866-d2b3-4e46-8b3d-a8a8c4f6b65f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/keycloak-service",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-discovery",
+            "uid": "acca1f92-eb35-4a80-bb7b-d56248955108"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "2c3585b5-9318-44d5-a3cb-860be590fed0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-service",
+            "uid": "51325866-d2b3-4e46-8b3d-a8a8c4f6b65f"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "2c3585b5-9318-44d5-a3cb-860be590fed0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "keycloak",
+            "name": "keycloak-76467f6457",
+            "uid": "fcf98009-a82c-47d1-83dc-7196c94dc844"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "24362705-974c-4919-9feb-bd79ae34f611"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of StatefulSet/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "ControllerRevision",
+            "namespace": "keycloak",
+            "name": "keycloak-77f4bcb5b4",
+            "uid": "df19d3c7-f397-4f3b-8288-08be66fc35cb"
+          },
+          "source_id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "24362705-974c-4919-9feb-bd79ae34f611"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of StatefulSet/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "apps",
+            "version": "v1",
+            "kind": "StatefulSet",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "24362705-974c-4919-9feb-bd79ae34f611"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "2c3585b5-9318-44d5-a3cb-860be590fed0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "batch",
+            "version": "v1",
+            "kind": "Job",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "e2046407-0996-4e39-bfde-3e6b97a09872"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "KeycloakRealmImport",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "9b08fc08-c385-4734-9833-fd2a538f6ccb"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of KeycloakRealmImport/maas-realm",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "keycloak",
+            "name": "keycloak-discovery-xg4zj",
+            "uid": "cf35f9f5-a633-45f6-8417-762bdf1cfe57"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-discovery",
+            "uid": "acca1f92-eb35-4a80-bb7b-d56248955108"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/keycloak-discovery",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "discovery.k8s.io",
+            "version": "v1",
+            "kind": "EndpointSlice",
+            "namespace": "keycloak",
+            "name": "keycloak-service-rp2bb",
+            "uid": "a757a6db-d6e0-46cd-80be-f89532e66a4b"
+          },
+          "source_id": {
+            "group": "",
+            "version": "v1",
+            "kind": "Service",
+            "namespace": "keycloak",
+            "name": "keycloak-service",
+            "uid": "51325866-d2b3-4e46-8b3d-a8a8c4f6b65f"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Service/keycloak-service",
+          "confidence": "Managed"
+        },
+        {
+          "id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "2c3585b5-9318-44d5-a3cb-860be590fed0"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "KeycloakRealmImport",
+            "namespace": "keycloak",
+            "name": "maas-realm",
+            "uid": "9b08fc08-c385-4734-9833-fd2a538f6ccb"
+          },
+          "relationship": "owned-crd-instance",
+          "evidence": "CSV-owned CRD instance (no ownerRef to operator)",
+          "confidence": "Attributed"
+        },
+        {
+          "id": {
+            "group": "networking.k8s.io",
+            "version": "v1",
+            "kind": "NetworkPolicy",
+            "namespace": "keycloak",
+            "name": "keycloak-network-policy",
+            "uid": "68951ab0-3290-4d36-8061-6b15760738c3"
+          },
+          "source_id": {
+            "group": "k8s.keycloak.org",
+            "version": "v2beta1",
+            "kind": "Keycloak",
+            "namespace": "keycloak",
+            "name": "keycloak",
+            "uid": "2c3585b5-9318-44d5-a3cb-860be590fed0"
+          },
+          "relationship": "ownerRef",
+          "evidence": "ownerRef descendant of Keycloak/keycloak",
+          "confidence": "Managed"
+        }
+      ]
+    }
+  ],
+  "namespace_scope": [
+    {
+      "namespace": "keycloak",
+      "evidence": [
+        "InstallNamespace",
+        "OperatorGroupStatus",
+        {
+          "OwnedCrdInstance": {
+            "crd": "Keycloak"
+          }
+        },
+        {
+          "OwnedCrdInstance": {
+            "crd": "KeycloakRealmImport"
+          }
+        }
+      ]
+    }
+  ],
+  "scan_warning_count": 0,
+  "coverage": {
+    "total_queries": 276,
+    "success": 276,
+    "incomplete": 0,
+    "api_absent": 0,
+    "target_missing": 0,
+    "total_elapsed_ms": 206447
+  },
+  "incomplete_count": 0,
+  "coverage_ledger": {
+    "schema_version": 1,
+    "records": [
+      {
+        "gvr": "acme.cert-manager.io/v1/challenges",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 830,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "acme.cert-manager.io/v1/orders",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 645,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apiextensions.k8s.io/v1/customresourcedefinitions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 395,
+          "pages": 1
+        },
+        "elapsed_ms": 2249,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "app.k8s.io/v1beta1/applications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 848,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps.openshift.io/v1/deploymentconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 911,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/controllerrevisions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 1671,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/daemonsets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1399,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 849,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/deployments",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "Get",
+        "target_name": "rhbk-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 249,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/replicasets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 851,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "apps/v1/statefulsets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 1157,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/cronworkflows",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 678,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowartifactgctasks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1416,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workfloweventbindings",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 896,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflows",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 911,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtaskresults",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 895,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtasksets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1013,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "argoproj.io/v1alpha1/workflowtemplates",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1033,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorino.kuadrant.io/v1beta3/authconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1035,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "authorization.openshift.io/v1/rolebindingrestrictions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 699,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling.openshift.io/v1beta1/machineautoscalers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1155,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "autoscaling/v2/horizontalpodautoscalers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1039,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/cronjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1159,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "batch/v1/jobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 1163,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "build.openshift.io/v1/buildconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1155,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpoolradosnamespaces",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1423,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephblockpools",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1500,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbucketnotifications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephbuckettopics",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclients",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1220,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephclusters",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 660,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephcosidrivers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1220,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemmirrors",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1224,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystems",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1358,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephfilesystemsubvolumegroups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1341,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnfses",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1358,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephnvmeofgateways",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1359,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectrealms",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1362,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreaccounts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1382,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstores",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1382,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectstoreusers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1404,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzonegroups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 307,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephobjectzones",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 310,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ceph.rook.io/v1/cephrbdmirrors",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 310,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificaterequests",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 317,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/certificates",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 319,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cert-manager.io/v1/issuers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 319,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "cloudcredential.openshift.io/v1/credentialsrequests",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 432,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "config.openshift.io/v1/imagepolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 433,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "console.openshift.io/v1/odhquickstarts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 433,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "controlplane.operator.openshift.io/v1alpha1/podnetworkconnectivitychecks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 432,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "coordination.k8s.io/v1/leases",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 432,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/cephconnections",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 432,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofilemappings",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 433,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/clientprofiles",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 433,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/drivers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csi.ceph.io/v1/operatorconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/csiaddonsnodes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationcronjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/encryptionkeyrotationjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacecronjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "csiaddons.openshift.io/v1alpha1/reclaimspacejobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhapplications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "dashboard.opendatahub.io/v1/odhdocuments",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "datasciencepipelinesapplications.opendatahub.io/v1/datasciencepipelinesapplications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyapprovals",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeyrequests",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apikeys",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "devportal.kuadrant.io/v1alpha1/apiproducts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "discovery.k8s.io/v1/endpointslices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/trafficextensions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.istio.io/v1alpha1/wasmplugins",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/oidcpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/planpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 395,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "extensions.kuadrant.io/v1alpha1/telemetrypolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "feast.dev/v1/featurestores",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/backendtlspolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/grpcroutes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1/httproutes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "gateway.networking.k8s.io/v1beta1/referencegrants",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "groupsnapshot.storage.openshift.io/v1beta1/volumegroupsnapshots",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "helm.openshift.io/v1beta1/projecthelmchartrepositories",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreams",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagestreamtags",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "image.openshift.io/v1/imagetags",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.networking.x-k8s.io/v1alpha2/inferencepools",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 207,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "inference.opendatahub.io/v1alpha1/externalproviders",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediations",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.cluster.x-k8s.io/v1beta1/metal3remediationtemplates",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 383,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "infrastructure.opendatahub.io/v1/hardwareprofiles",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 378,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ingress.operator.openshift.io/v1/dnsrecords",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 395,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ipam.cluster.x-k8s.io/v1beta1/ipaddressclaims",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 383,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "jobset.x-k8s.io/v1alpha2/jobsets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 400,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1/network-attachment-definitions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 387,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.cni.cncf.io/v1alpha1/ipamclaims",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 383,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloakrealmimports",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloakrealmimports",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 384,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloaks",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.keycloak.org/v2beta1/keycloaks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 384,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressfirewalls",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 378,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressqoses",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/egressservices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 383,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "k8s.ovn.org/v1/userdefinednetworks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 387,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/authpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/dnspolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 387,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/ratelimitpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 385,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1/tlspolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 389,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/dnshealthcheckprobes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 204,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1alpha1/tokenratelimitpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 214,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kuadrant.io/v1beta1/kuadrants",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/jaxjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 214,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/mpijobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/notebooks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/paddlejobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/pytorchjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/tfjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1/xgboostjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/scheduledworkflows",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "kubeflow.org/v1beta1/viewers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "limitador.kuadrant.io/v1alpha1/limitadors",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferencemodelrewrites",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 210,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "llm-d.ai/v1alpha2/inferenceobjectives",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 431,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/aitenants",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 349,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/externalmodels",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 428,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasauthpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 428,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maasmodelrefs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maassubscriptions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/maastenantconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "maas.opendatahub.io/v1alpha1/tenants",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1/controlplanemachinesets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinehealthchecks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machines",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "machine.openshift.io/v1beta1/machinesets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/baremetalhosts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/bmceventsubscriptions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/dataimages",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/firmwareschemas",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hardwaredata",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwarecomponents",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 245,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostfirmwaresettings",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/hostupdatepolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metal3.io/v1alpha1/preprovisioningimages",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 246,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "metrics.k8s.io/v1beta1/pods",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 246,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "mlflow.kubeflow.org/v1/mlflowconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 243,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "modelregistry.opendatahub.io/v1beta1/modelregistries",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.coreos.com/v1beta1/alertmanagerconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 239,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertingrules",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 239,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.openshift.io/v1/alertrelabelconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/alertmanagers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/podmonitors",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/probes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 238,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/prometheuses",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/prometheusrules",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/servicemonitors",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1/thanosrulers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/monitoringstacks",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 238,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/prometheusagents",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 236,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/scrapeconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 237,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "monitoring.rhobs/v1alpha1/thanosqueriers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 223,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/egressrouters",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 223,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "network.operator.openshift.io/v1/operatorpkis",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 223,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/destinationrules",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 223,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/gateways",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 293,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/serviceentries",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 327,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/sidecars",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 414,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/virtualservices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 1014,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadentries",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 414,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1/workloadgroups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 410,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1alpha3/envoyfilters",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 414,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.istio.io/v1beta1/proxyconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 413,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/ingresses",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 414,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "networking.k8s.io/v1/networkpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturegroups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeaturerules",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 205,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.k8s-sigs.io/v1alpha1/nodefeatures",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nfd.openshift.io/v1/nodefeaturediscoveries",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "nim.opendatahub.io/v1/accounts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/backingstores",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/bucketclasses",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/namespacestores",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaaaccounts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "noobaa.io/v1alpha1/noobaas",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "objectbucket.io/v1alpha1/objectbucketclaims",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "observability.openshift.io/v1alpha1/observabilityinstallers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/ocsinitializations",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageautoscalers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusterpeers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/storageclusters",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1/tlsprofiles",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ocs.openshift.io/v1alpha1/storageconsumers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ogx.io/v1beta1/ogxservers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 202,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opendatahub.io/v1alpha/odhdashboardconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/instrumentations",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/opampbridges",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 195,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1alpha1/targetallocators",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "opentelemetry.io/v1beta1/opentelemetrycollectors",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.authorino.kuadrant.io/v1beta1/authorinos",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1/ingresscontrollers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 190,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operator.openshift.io/v1alpha1/istiocsrs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1/operatorgroups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 199,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/catalogsources",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "scope": "cluster",
+        "operation": "List",
+        "label_selector": "!olm.copiedFrom",
+        "outcome": {
+          "outcome": "Success",
+          "count": 29,
+          "pages": 1
+        },
+        "elapsed_ms": 2220,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/clusterserviceversions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 11,
+          "pages": 1
+        },
+        "elapsed_ms": 3211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/installplans",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 400,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v1alpha1/subscriptions",
+        "scope": "cluster",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 28,
+          "pages": 1
+        },
+        "elapsed_ms": 1251,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "operators.coreos.com/v2/operatorconditions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "packages.operators.coreos.com/v1/packagemanifests",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 617,
+          "pages": 1
+        },
+        "elapsed_ms": 90710,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/perses",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdashboards",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "perses.dev/v1alpha2/persesdatasources",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 194,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelines",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "pipelines.kubeflow.org/v2beta1/pipelineversions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 189,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "policy/v1/poddisruptionbudgets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/backups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/clusters",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/databases",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 187,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/failoverquorums",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 211,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/imagecatalogs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/poolers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/publications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/scheduledbackups",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "postgresql.cnpg.noobaa.io/v1/subscriptions",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "quota.openshift.io/v1/appliedclusterresourcequotas",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ramendr.openshift.io/v1alpha1/recipes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 186,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayclusters",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 181,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/raycronjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "ray.io/v1/rayservices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "rbac.authorization.k8s.io/v1/rolebindings",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 6,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "rbac.authorization.k8s.io/v1/roles",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 2,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "redhatcop.redhat.io/v1alpha1/groupsyncs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumegroupreplications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "replication.storage.openshift.io/v1alpha1/volumereplications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaims",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.k8s.io/v1/resourceclaimtemplates",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomaincliques",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "resource.nvidia.com/v1beta1/computedomains",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "route.openshift.io/v1/routes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 203,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/authorizationpolicies",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/peerauthentications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "security.istio.io/v1/requestauthentications",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/inferencegraphs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/servingruntimes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha1/trainedmodels",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceserviceconfigs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1alpha2/llminferenceservices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "serving.kserve.io/v1beta1/inferenceservices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "snapshot.storage.k8s.io/v1/volumesnapshots",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "storage.k8s.io/v1/csistoragecapacities",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "telemetry.istio.io/v1/telemetries",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templateinstances",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 192,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "template.openshift.io/v1/templates",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 196,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainingruntimes",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trainer.kubeflow.org/v1alpha1/trainjobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 188,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/evalhubs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1/trustyaiservices",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 193,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/guardrailsorchestrators",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/lmevaljobs",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 197,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "trustyai.opendatahub.io/v1alpha1/nemoguardrails",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 191,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/profiles",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "tuned.openshift.io/v1/tuneds",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/configmaps",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 5,
+          "pages": 1
+        },
+        "elapsed_ms": 1244,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/endpoints",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/limitranges",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 392,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/persistentvolumeclaims",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 629,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 1012,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/pods",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "label_selector": "name=rhbk-operator",
+        "outcome": {
+          "outcome": "Success",
+          "count": 1,
+          "pages": 1
+        },
+        "elapsed_ms": 198,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/podtemplates",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 660,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/replicationcontrollers",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 660,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/resourcequotas",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 699,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/secrets",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 8,
+          "pages": 1
+        },
+        "elapsed_ms": 1209,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/serviceaccounts",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 4,
+          "pages": 1
+        },
+        "elapsed_ms": 713,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "v1/services",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 3,
+          "pages": 1
+        },
+        "elapsed_ms": 713,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/ippools",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 200,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/nodeslicepools",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      },
+      {
+        "gvr": "whereabouts.cni.cncf.io/v1alpha1/overlappingrangeipreservations",
+        "namespace": "keycloak",
+        "scope": "namespaced",
+        "operation": "List",
+        "outcome": {
+          "outcome": "Success",
+          "count": 0,
+          "pages": 1
+        },
+        "elapsed_ms": 201,
+        "requirement": "Required"
+      }
+    ]
+  },
+  "query_planner": {
+    "total_demands": 282,
+    "unique_queries": 275,
+    "network_queries": 275,
+    "cache_hits": 7,
+    "completed": 275,
+    "incomplete": 0,
+    "retry_count": 2,
+    "total_elapsed_ms": 204198
+  }
+}

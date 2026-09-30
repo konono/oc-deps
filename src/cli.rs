@@ -494,6 +494,10 @@ pub enum TeardownAction {
         /// Skip live residual audit
         #[arg(long)]
         no_audit: bool,
+
+        /// Output format: tree, table, json
+        #[arg(short = 'o', long, value_enum, default_value = "tree")]
+        output: OutputFormat,
     },
 }
 

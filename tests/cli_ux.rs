@@ -73,3 +73,65 @@ fn redirected_offline_output_has_no_ansi() {
 
     fs::remove_dir_all(dir).expect("remove temp directory");
 }
+
+#[test]
+fn journal_output_flag_parses() {
+    // Verify that `teardown journal --run x -o json|table|tree` parses without error.
+    // The command fails at connection (no kubeconfig), but the CLI argument parsing succeeds.
+    for fmt in ["json", "table", "tree"] {
+        let out = run_offline(&["teardown", "journal", "--run", "nonexistent", "-o", fmt]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // Should fail with a connection/kubeconfig error, not a CLI parse error
+        assert!(
+            !stderr.contains("error: invalid value") && !stderr.contains("unrecognized subcommand"),
+            "teardown journal -o {} should parse; stderr: {}",
+            fmt,
+            stderr
+        );
+    }
+}
+
+#[test]
+fn full_teardown_config_parses() {
+    // Verify configs/full-teardown.json parses without error.
+    // DeleteResourceSpec has deny_unknown_fields, so extra fields would fail.
+    let config_str = std::fs::read_to_string("configs/full-teardown.json")
+        .expect("configs/full-teardown.json should exist");
+    let config: serde_json::Value =
+        serde_json::from_str(&config_str).expect("configs/full-teardown.json should be valid JSON");
+    assert!(
+        config.get("operators").is_some(),
+        "should have operators field"
+    );
+    // Verify each operator's delete_resources entries parse
+    for op in config["operators"].as_array().unwrap() {
+        if let Some(dr) = op.get("delete_resources") {
+            for entry in dr.as_array().unwrap() {
+                assert!(
+                    entry.get("group").is_some(),
+                    "delete_resources entry should have group: {}",
+                    entry
+                );
+                assert!(
+                    entry.get("kind").is_some(),
+                    "delete_resources entry should have kind: {}",
+                    entry
+                );
+                assert!(
+                    entry.get("name").is_some(),
+                    "delete_resources entry should have name: {}",
+                    entry
+                );
+                // deny_unknown_fields: verify no "reason" or other extra fields
+                let allowed = ["group", "kind", "namespace", "name"];
+                for (key, _) in entry.as_object().unwrap() {
+                    assert!(
+                        allowed.contains(&key.as_str()),
+                        "unexpected field {:?} in delete_resources (deny_unknown_fields would reject this)",
+                        key
+                    );
+                }
+            }
+        }
+    }
+}

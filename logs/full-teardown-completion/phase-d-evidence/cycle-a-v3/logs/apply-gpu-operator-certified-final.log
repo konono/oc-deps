@@ -1,0 +1,131 @@
+📄 Loaded execution plan from logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/gpu-operator-certified-final.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 21 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-gpu-operator-certified.v26.7.1-2026-09-29T18-49-30.871435289_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: nvidia-gpu-operator] elapsed 0s
+✅ Scanned 268 resource types in 15.3s
+   nvidia-gpu-operator — 122 resources
+   Scanned 1 namespace(s), 122 total resources
+   Found 85 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  92 candidate(s) for gpu-operator-certified.v26.7.1 (91 discovery + 1 plan)
+    92 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/gpu-operator-certified/20260929T185007Z-0004b83f-0 (92 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9df43e3278a81-4b83f.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/gpu-operator-certified  (ns: nvidia-gpu-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  ClusterPolicy/gpu-cluster-policy  (cluster-scoped)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/gpu-operator-certified.v26.7.1  (ns: nvidia-gpu-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/gpu-operator-certified  (ns: nvidia-gpu-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/53822513.nvidia.com  (ns: nvidia-gpu-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/nvidiadrivers.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gpuclusters.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/computedomains.resource.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/computedomaincliques.resource.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/clusterpolicies.nvidia.com  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/nvidia-gpu-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  4 deleted, 0 already gone, 0 failed
+
+Planned preserved: 7 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown Residual Audit: gpu-operator-certified.v26.7.1
+Session: run-18d9df43e3278a81-4b83f
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+UNATTRIBUTED RELATED RESOURCES (6)
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/authorino-operator.v1.4.3  (nvidia-gpu-operator)  [uid:a197b140-c0f8-4c01-9a15-62a7eed5df1d]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cert-manager-operator.v1.20.0  (nvidia-gpu-operator)  [uid:5e4bcdc7-4935-47f1-a367-cf83e6a81fe5]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cluster-observability-operator.v1.5.2  (nvidia-gpu-operator)  [uid:b26c142e-5c58-4ac8-999f-aa8936efdcdc]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/dns-operator.v1.4.2  (nvidia-gpu-operator)  [uid:34c693c9-9de1-4eb3-a634-06eeebed30bf]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/limitador-operator.v1.4.2  (nvidia-gpu-operator)  [uid:c154a2e9-6e19-463f-8fda-b62a7054b124]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (nvidia-gpu-operator)  [uid:f416cc7a-957e-4c94-b149-49455b41fdc3]
+
+EXPECTED PRESERVED (8)
+  ClusterServiceVersion/gpu-operator-certified.v26.7.1  (nvidia-gpu-operator)
+    controller needed for operand cleanup
+  Lease/53822513.nvidia.com  (nvidia-gpu-operator)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/nvidiadrivers.nvidia.com  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/gpuclusters.nvidia.com  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/computedomains.resource.nvidia.com  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/computedomaincliques.resource.nvidia.com  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/clusterpolicies.nvidia.com  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/nvidia-gpu-operator  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 21/21 probes succeeded
+INCOMPLETE SCOPES (2)
+  Pod/nvidia-driver-daemonset-9.8.20260908-0-85jhf/nvidia-gpu-operator: DaemonSet nvidia-driver-daemonset-9.8.20260908-0 not found in native workload scan — cannot verify identity
+  Pod/nvidia-operator-validator-8hn9h/nvidia-gpu-operator: DaemonSet nvidia-operator-validator not found in native workload scan — cannot verify identity
+
+⚠ Residual audit incomplete — manual cleanup is not available.
+Error: Main teardown completed, but cleanup is incomplete: Residual audit incomplete

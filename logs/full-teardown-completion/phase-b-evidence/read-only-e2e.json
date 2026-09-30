@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "issue": 46,
+    "phase": "B",
+    "commit": "f7602ffa",
+    "binary_sha256": "cde997803823cf16c26f4b9ec70c917e07981615aa0799e7b785d0d02538f8bd",
+    "timestamp": "2026-09-29",
+    "cluster_state": "15 operators deleted, 4 residual workloads present"
+  },
+  "read_only_e2e": {
+    "baseline_workloads": [
+      {
+        "kind": "StatefulSet",
+        "name": "postgres",
+        "namespace": "keycloak",
+        "status": "1/1"
+      },
+      {
+        "kind": "Deployment",
+        "name": "maas-postgres",
+        "namespace": "redhat-ods-applications",
+        "status": "1/1"
+      },
+      {
+        "kind": "StatefulSet",
+        "name": "ogx-postgres",
+        "namespace": "redhat-ods-applications",
+        "status": "1/1"
+      },
+      {
+        "kind": "Deployment",
+        "name": "model-catalog",
+        "namespace": "rhoai-model-registries",
+        "status": "0/1"
+      }
+    ],
+    "namespace_scope_verification": "group-sync-operator install namespace discovered. SpecNamespaceRef for rhoai-model-registries deferred to Phase D recovery.",
+    "tower_tests": "10 observe_residual_state tower tests pass including timeout/retry/URI assertions",
+    "remaining_operators": [
+      "group-sync-operator",
+      "ODF (openshift-storage)"
+    ],
+    "live_e2e_limitation": "rhods-operator absent \u2014 cannot generate new plan or verify SpecNamespaceRef for rhoai-model-registries until Phase D recovery"
+  }
+}

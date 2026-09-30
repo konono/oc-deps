@@ -1,0 +1,184 @@
+{
+  "collected_at": "2026-09-28T20:30:00Z",
+  "cluster_state": "post-cycle-b-15-operator-deleted",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "keycloak/statefulset/postgres": {
+    "identity": {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "namespace": "keycloak",
+      "name": "postgres",
+      "uid": "19610d1d-0ff0-40dc-8f10-4d30cdb0ebe4",
+      "creationTimestamp": "2026-09-28T19:08:23Z",
+      "ownerReferences": [],
+      "labels": {},
+      "annotations_filtered": {},
+      "finalizers": []
+    },
+    "spec_refs": {
+      "serviceAccount": null,
+      "pvcRefs": [
+        "data (template)"
+      ],
+      "selector": {
+        "matchLabels": {
+          "app": "keycloak-postgres"
+        }
+      }
+    },
+    "pods": [
+      {
+        "name": "postgres-0",
+        "uid": "14eaba62-3f48-4a4f-b261-8cee76e3c383",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "StatefulSet",
+            "name": "postgres",
+            "uid": "19610d1d-0ff0-40dc-8f10-4d30cdb0ebe4"
+          }
+        ],
+        "phase": "Running"
+      }
+    ]
+  },
+  "redhat-ods-applications/deployment/maas-postgres": {
+    "identity": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "redhat-ods-applications",
+      "name": "maas-postgres",
+      "uid": "d322fc82-865b-4c88-9c30-b6fb36285b14",
+      "creationTimestamp": "2026-09-26T00:14:06Z",
+      "ownerReferences": [],
+      "labels": {},
+      "annotations_filtered": {},
+      "finalizers": []
+    },
+    "spec_refs": {
+      "serviceAccount": null,
+      "pvcRefs": [
+        "maas-postgres-data"
+      ],
+      "selector": {
+        "matchLabels": {
+          "app": "maas-postgres"
+        }
+      }
+    },
+    "pods": [
+      {
+        "name": "maas-postgres-bd85bf4c9-gn6pp",
+        "uid": "f559acde-c8e1-4104-b0bd-bc9aee129de5",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "ReplicaSet",
+            "name": "maas-postgres-bd85bf4c9",
+            "uid": "e6d41b37-aa8b-4d89-9ff9-2e98556536d8"
+          }
+        ],
+        "phase": "Running"
+      }
+    ]
+  },
+  "redhat-ods-applications/statefulset/ogx-postgres": {
+    "identity": {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "namespace": "redhat-ods-applications",
+      "name": "ogx-postgres",
+      "uid": "8790ba28-3aed-4937-bc0f-3f3d0392fc27",
+      "creationTimestamp": "2026-09-26T00:27:43Z",
+      "ownerReferences": [],
+      "labels": {},
+      "annotations_filtered": {},
+      "finalizers": []
+    },
+    "spec_refs": {
+      "serviceAccount": null,
+      "pvcRefs": [
+        "data (template)"
+      ],
+      "selector": {
+        "matchLabels": {
+          "app": "ogx-postgres"
+        }
+      }
+    },
+    "pods": [
+      {
+        "name": "ogx-postgres-0",
+        "uid": "56aa95b5-b172-49c2-ba2e-22e638e36acb",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "StatefulSet",
+            "name": "ogx-postgres",
+            "uid": "8790ba28-3aed-4937-bc0f-3f3d0392fc27"
+          }
+        ],
+        "phase": "Running"
+      }
+    ]
+  },
+  "rhoai-model-registries/deployment/model-catalog": {
+    "identity": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "rhoai-model-registries",
+      "name": "model-catalog",
+      "uid": "e983d126-bc36-41f0-8a55-070b0df2a405",
+      "creationTimestamp": "2026-09-22T08:01:43Z",
+      "ownerReferences": [],
+      "labels": {
+        "app": "model-catalog",
+        "app.kubernetes.io/component": "model-catalog",
+        "app.kubernetes.io/created-by": "model-registry-operator",
+        "app.kubernetes.io/instance": "model-catalog",
+        "app.kubernetes.io/managed-by": "model-registry-operator",
+        "app.kubernetes.io/name": "model-catalog",
+        "app.kubernetes.io/part-of": "model-catalog",
+        "component": "model-catalog"
+      },
+      "annotations_filtered": {
+        "banzaicloud.com/last-applied": "UEsDBBQACAAIAAAAAAAAAAAAAAAAAAAAAAAIAAAAb3JpZ2luYWzMWOtv47gR/1cW/HiwIuth6wEEaLrZ3gLdvTOStP1w8IcRObKISCJLUr5zc/nfi5EcvyJnnS3aHhaLKOTMj8N5/GaYJwZa/h2NlaplOQOtrb8O2IQ9ylawnN2irtWmwdaxCWvQgQAHLH9iNRRYW/oCrVnOGiWw9jg4qNWKTWj16rEr0LTo0F5J5XPVaNUS0kXSBsGh8IrNTtzgSlpnNp7SaMApM6ooW+ug5XjRKQ20sPqeU1poLjtBg3GeKkdkz/vjecLO4NOy1dDfzlQKpHdktETLJsygVZ3huA9rEGfTMEwiQrYaOYXNoK4lB8vygFTWkmQ/S+uU2XyRjXQsn06YxRo5OSF/Yg04Xn15d9zPXOWN65OVzoDD1YblT88T5rDRNTjsrThIQmhb5cBJ1fYWKY2trWTp6FiD/+ykQeFZzslbSP7hlFLrkPzw/gT+vots3c1V60C2aCzLf3liYFb0wTyvltZhez296v/l6TSdsgnzXkCsp8FV1z5d2RdYQlc7b4iv9bc/rzbQ1GeVOotmmybfocf1d2jBCts3rNRoSmUaqlKvQQqLvfZtBRStAlteNWAevT7Iy96/DRAZ/cL84xIl529dvZwwbNe9a7dhWvz4+ef7BzZha6i7V3HztLJuZdCy58mByu3Nw82fb+4/vaj9xaiGomeRG3R/xc0dlvT7IxJhkIUFWPR6/fGiPTjo+eiov91/unvnMeTb9x6zuLm//8fPd7fvPEqDtb8qIy45bjlhsoFVz0nbyFwZFBUMdUg05StReSf8aiqssz/ZCsLZPIcwnSOPw3LKeZFkKcTTqJjGZZpCloQF52EQgwhCHkUzHkCBYTATaQZFhnGQBCmbsFqusUVrF0YVPVPIVjoJ9S3WsLlHrlphWR5NJ0yjkUrslmYT5ri+V/wRHelpZaiWK+e0B1oSWTjZoOrcTiXcU/SeCEhvqO5dsS96KKrpnfwedkm8C0IeGU3bP27tAFexnPkktPnX9oBDhAmzvMIe9fPDw4IMHb/z6JVHrvTSOXparKkJ2IFyG2UoPcLZ/GvvDyJXtMMu1x21mOm06UeEY1FiQOSdkW7zUbUOf+tvBnWtfl0YuZY1rvCT5VD3LM7yEmqLVNYaCllLJwdbhFGaCODmyxe2JNC1qrsGv6qu3bq8oc/F1mNneG+fzCN7VDXnQPYkeApxsPMGwBEfnkAc742DnPD+HuF045X6llV7Lj1N2WH1nMoJEe+UT9aflwSwb2d9tHHb1TwQwqC1++4Wx1HfAjptnUForimZc98PwqQXCfpi8Yc2YdRvGw9boZVsnfUo/a/TNE373VqtnLJOoDHXznTYL66vt81TtaVceaWs8dpHx33q5J4pgA+o/oHAvi+52nocjTvQc7Wl/1fcuJ2INnINDr1H3IxIEpFeyognVh1TYjGPg+lMzCIoojIRcZLMZ2ERlmHGs+k8mpcYJmGaBZxjEszDKUcQ5bQoQywijMJojBJLkHVn8KEyaCtVi54bRiinQqhddcA5g3375SPiuT/PPKNsazvO0doDK4LXfBTsKfbETW9SbRxHR1Rr9zpGOcVVzXL28HHR5/2pcpqmO+XTG5+qj7L3/9q/s//Ivf8Vun+bmbeVws7FlgrsNSWNVPB5hKG0iZiWg9c+Ho/eh/NkIVvfVlTZnIZJ/cEHrQfO/aHnhQ+HDOpfXNhDa3l5qnhc1fSMkqo9LvF0lqQZxhhkPIhEGc7jGDBLRcnFXBS8TGOYJgmfY8azBBLgSTCfQ1KKWRJkcViMU7pHl2bH4f3/9OELus9yqMM3QuKZISq7xmP9Hz6Mdyn/w++/f+ibwfsCdfgg6T14FKVgVoZFGiahKEIxD0QMQZHxNJpn0yIrIUnnJaa8SEOIkzAtswRFWERJFAQijXjCz/XOP1ycLm/5y1EzTdfe2J9Ue6eUYznFoRejB/LCKGqVJOU2mkDvupY46XaYYLaTollLjjeck3E/jT+3h5vsyL+Uq6+gCXf0nbIfjL4x+o1Ccf1NoJMBcAxmmPC+AfR6DByDepn3zoONTYTYaLe5lWbIr3ND4KjUaej3T8sx4p5sn5V9Cg6GfFUCWR6l8cveWFhPByH2fDYkb6ntqP+C3jD8kQlc11fd878DAAD//1BLBwhdEZATPgYAAAgVAABQSwECFAAUAAgACAAAAAAAXRGQEz4GAAAIFQAACAAAAAAAAAAAAAAAAAAAAAAAb3JpZ2luYWxQSwUGAAAAAAEAAQA2AAAAdAYAAAAA"
+      },
+      "finalizers": []
+    },
+    "spec_refs": {
+      "serviceAccount": "model-catalog",
+      "pvcRefs": [],
+      "selector": {
+        "matchLabels": {
+          "app": "model-catalog",
+          "app.kubernetes.io/name": "model-catalog",
+          "component": "model-catalog"
+        }
+      }
+    },
+    "pods": [
+      {
+        "name": "model-catalog-65df688969-bcj7m",
+        "uid": "ea6659ad-4465-4acd-979f-664d01f468b5",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "ReplicaSet",
+            "name": "model-catalog-65df688969",
+            "uid": "29b36c5d-d03e-4cce-a873-ff4cdec030ae"
+          }
+        ],
+        "phase": "Running"
+      }
+    ]
+  }
+}

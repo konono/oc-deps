@@ -1,0 +1,1257 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-29T17:19:30.602064426+00:00",
+  "targets": [
+    {
+      "package_name": "rhods-operator",
+      "install_namespace": "redhat-ods-operator",
+      "csv_name_pattern": "rhods-operator.3.5.1"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [
+    "maas.opendatahub.io/Config/-/default",
+    "MLflow/mlflow"
+  ],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "redhat-ods-operator",
+          "name": "rhods-operator",
+          "uid": "d8175cac-9854-4dad-ab6a-5ebc6b0c0d63",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "redhat-ods-operator",
+          "name": "rhods-operator.3.5.1",
+          "uid": "f94a3ecb-e279-4f7c-bbab-5aede545f985",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "datasciencecluster.opendatahub.io",
+          "kind": "DataScienceCluster",
+          "namespace": null,
+          "name": "default-dsc",
+          "uid": "fa97159f-1343-45a6-8989-174e41a84430",
+          "action": "DELETE"
+        },
+        {
+          "group": "dscinitialization.opendatahub.io",
+          "kind": "DSCInitialization",
+          "namespace": null,
+          "name": "default-dsci",
+          "uid": "03682b4b-5ea4-4172-b59e-e3bcd68b2e8c",
+          "action": "DELETE"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "Config",
+          "namespace": null,
+          "name": "default",
+          "uid": "b74610ef-6f96-4817-af59-2191dc672eca",
+          "action": "DELETE"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "DataSciencePipelines",
+          "namespace": null,
+          "name": "default-datasciencepipelines",
+          "uid": "23c16214-6fce-4827-bc0d-33f96e108714",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "ModelRegistry",
+          "namespace": null,
+          "name": "default-modelregistry",
+          "uid": "5982aa30-a9bf-493c-884e-ca7948d64273",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "Ray",
+          "namespace": null,
+          "name": "default-ray",
+          "uid": "c30162ef-c040-4226-b849-b8d575c05cf8",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "Trainer",
+          "namespace": null,
+          "name": "default-trainer",
+          "uid": "a74381d7-9b7b-43a0-9c78-3d9954372018",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "TrainingOperator",
+          "namespace": null,
+          "name": "default-trainingoperator",
+          "uid": "6497d729-0ffd-4894-812e-f9a67200e091",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "TrustyAI",
+          "namespace": null,
+          "name": "default-trustyai",
+          "uid": "b1eb2447-b46e-4a8f-85d1-9492ee371c44",
+          "action": "EXPECT"
+        },
+        {
+          "group": "infrastructure.opendatahub.io",
+          "kind": "HardwareProfile",
+          "namespace": "redhat-ods-applications",
+          "name": "default-profile",
+          "uid": "6e1a5f0f-74cd-4fb0-b698-21eab1e56ed4",
+          "action": "EXPECT"
+        },
+        {
+          "group": "services.platform.opendatahub.io",
+          "kind": "GatewayConfig",
+          "namespace": null,
+          "name": "default-gateway",
+          "uid": "1de66233-51ae-4e3c-93e6-55e21de06578",
+          "action": "EXPECT"
+        },
+        {
+          "group": "services.platform.opendatahub.io",
+          "kind": "Monitoring",
+          "namespace": null,
+          "name": "default-monitoring",
+          "uid": "25a9894a-5a30-4780-af62-89d507732bc4",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "AIGateway",
+          "namespace": null,
+          "name": "default-aigateway",
+          "uid": "31943c1a-38ff-49b6-b4ed-8ccd62633d26",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "Dashboard",
+          "namespace": null,
+          "name": "default-dashboard",
+          "uid": "17a2f650-70e7-4a79-a1f8-ec5551977deb",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "FeastOperator",
+          "namespace": null,
+          "name": "default-feastoperator",
+          "uid": "3dc9efce-4f4b-4423-b14c-4366d8f95a86",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "Kserve",
+          "namespace": null,
+          "name": "default-kserve",
+          "uid": "59addb4c-45a6-4cc4-84b4-2dd1282c9828",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "MLflowOperator",
+          "namespace": null,
+          "name": "default-mlflowoperator",
+          "uid": "d455d7e5-895f-4443-aacb-a8ac0f646065",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "OGX",
+          "namespace": null,
+          "name": "default-ogx",
+          "uid": "01794ead-8bf9-4473-9128-fea06d8e2f6a",
+          "action": "EXPECT"
+        },
+        {
+          "group": "components.platform.opendatahub.io",
+          "kind": "Workbenches",
+          "namespace": null,
+          "name": "default-workbenches",
+          "uid": "6aac395e-4ade-465b-8f79-a2e2badadf49",
+          "action": "EXPECT"
+        },
+        {
+          "group": "console.openshift.io",
+          "kind": "OdhQuickStart",
+          "namespace": "redhat-ods-applications",
+          "name": "create-aikit-notebook",
+          "uid": "15c35155-7b83-490a-a6df-b4a821112ecd",
+          "action": "EXPECT"
+        },
+        {
+          "group": "console.openshift.io",
+          "kind": "OdhQuickStart",
+          "namespace": "redhat-ods-applications",
+          "name": "create-jupyter-notebook",
+          "uid": "55354a2a-38af-44ef-9b60-ac0ea0ec0bfd",
+          "action": "EXPECT"
+        },
+        {
+          "group": "console.openshift.io",
+          "kind": "OdhQuickStart",
+          "namespace": "redhat-ods-applications",
+          "name": "deploy-python-model",
+          "uid": "ae0ac1f0-114c-473c-a475-2981535598b5",
+          "action": "EXPECT"
+        },
+        {
+          "group": "console.openshift.io",
+          "kind": "OdhQuickStart",
+          "namespace": "redhat-ods-applications",
+          "name": "openvino-inference-notebook",
+          "uid": "51f29ccb-08e3-4aaf-83fc-c380bb737e4b",
+          "action": "EXPECT"
+        },
+        {
+          "group": "console.openshift.io",
+          "kind": "OdhQuickStart",
+          "namespace": "redhat-ods-applications",
+          "name": "pachyderm-beginner-tutorial-notebook",
+          "uid": "154c9a6d-00dd-4207-8ef4-afa79f91c902",
+          "action": "EXPECT"
+        },
+        {
+          "group": "console.openshift.io",
+          "kind": "OdhQuickStart",
+          "namespace": "redhat-ods-applications",
+          "name": "using-starburst-enterprise",
+          "uid": "04f28202-acd1-459f-b3b5-33539579a7e5",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits",
+          "uid": "7fe3e207-8435-4416-82d3-d4c75f66f71e",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "aikit",
+          "uid": "ec4103de-8543-4b88-9c96-67a3c5545b99",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "elastic",
+          "uid": "c61e201b-efd7-4b00-896c-30ad1cef1698",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "jupyter",
+          "uid": "0d13914e-e7a7-4441-afe4-ac38ca97fb91",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "mlflow",
+          "uid": "e42a26e6-c922-48e1-bd38-2dcbfc29195a",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "nvidia-nim",
+          "uid": "b864eb9d-8655-4afd-9aef-97fc9b45471e",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "openvino",
+          "uid": "59a13742-c808-45fc-8230-a448af3cdc14",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "pachyderm",
+          "uid": "6cc6d8b9-db97-4755-9b4b-d5adce2b405a",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "pgvector",
+          "uid": "734d58b0-2b9e-4e28-b8c1-7fe9c3259544",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "rhoai",
+          "uid": "2b680ab3-7308-42f8-8c01-9f18b1436a51",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "starburstenterprise",
+          "uid": "242ce688-418a-4d16-bd3d-6066cd5ce129",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhApplication",
+          "namespace": "redhat-ods-applications",
+          "name": "watson-x-ai",
+          "uid": "5b12c52b-15cd-4e09-9b28-cea55584791a",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-a2a-tutorial",
+          "uid": "420d44e9-f251-48f2-8a45-46bb5e88ef8c",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-autogen-tutorial",
+          "uid": "51edeedd-ad78-4cce-ab35-12eb72e7a337",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-crewai-tutorial",
+          "uid": "72f475a5-6bf6-4e73-99e2-f092d9adf2e0",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-google-adk-tutorial",
+          "uid": "b393fc7a-7a09-4551-a95a-16e7c4e68172",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-hitl-tutorial",
+          "uid": "90cf0470-28f4-48eb-967b-4f14aea21260",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-langflow-tutorial",
+          "uid": "de9e4b27-eb5b-4a3e-82a6-5ced05cac120",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-langgraph-tutorial",
+          "uid": "87da3ddb-2e34-40f0-944a-1bbb3d8a179d",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-llamaindex-tutorial",
+          "uid": "e2abf6a6-4299-4c92-8dec-55b2784dc1ae",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-memory-tutorial",
+          "uid": "4cb6c9ef-417d-4029-84e1-784bde299ffb",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-rag-tutorial",
+          "uid": "88aef28f-2162-45d8-b9d1-791f96cd54d8",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "agentic-starter-kits-vanilla-python-tutorial",
+          "uid": "c12daca6-ea8c-4a49-8a9c-43a4f2867837",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "jupyter-install-python-packages",
+          "uid": "d5a1ba83-b9fb-4b5b-a096-fea5639192e2",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "jupyter-update-server-settings",
+          "uid": "99091682-2c29-4e91-adf5-b58c4ca3ad5e",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "jupyter-use-s3-bucket-data",
+          "uid": "528c3dd3-6577-4e46-9514-7b1b0372eb95",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "jupyter-view-installed-packages",
+          "uid": "96ccae1f-5a65-40f8-9a1c-8bac9c670065",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "openvino-ovms-serving",
+          "uid": "837f4890-20c6-41e0-ace1-8a376a42b643",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "pachyderm-beginner-tutorial",
+          "uid": "08550d4b-ac3b-4ad8-853e-e2594ca0a626",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "pachyderm-house-pricing-tutorial",
+          "uid": "bb74705a-750a-4f45-8d64-2f0e2856cb1e",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "rhoai-documentation",
+          "uid": "8bdef5fe-7f61-4547-a014-774c0121d6d9",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "rhoai-tutorial-fraud",
+          "uid": "e8c8d67f-d446-4458-b5dd-c6d69308aac8",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "starburst-enterprise-requirements",
+          "uid": "38dc25d0-df18-4deb-b293-ecd886bbaf8a",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "starburst-openshift-deployment",
+          "uid": "e09a9865-a28f-4de1-9700-e46faafccfae",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "starburst-openshift-overview",
+          "uid": "4cd08bbf-18ca-4f58-965a-aa9d9ca109e1",
+          "action": "EXPECT"
+        },
+        {
+          "group": "dashboard.opendatahub.io",
+          "kind": "OdhDocument",
+          "namespace": "redhat-ods-applications",
+          "name": "watson-x-use-case",
+          "uid": "25b9ca7b-3fc0-4af5-a016-cfa71c6cabb3",
+          "action": "EXPECT"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "AITenant",
+          "namespace": "ai-tenants",
+          "name": "models-as-a-service",
+          "uid": "8b1ad576-fe82-437c-ab3d-65786ea8e981",
+          "action": "EXPECT"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "MaasTenantConfig",
+          "namespace": "models-as-a-service",
+          "name": "default-tenant",
+          "uid": "e0cb6e9b-2bf1-48a1-a6a3-2f1d5bae2d72",
+          "action": "EXPECT"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "ClusterStorageContainer",
+          "namespace": null,
+          "name": "default",
+          "uid": "fa8e1368-cc56-406f-8444-32bd16552bf9",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "torch-distributed",
+          "uid": "2a1eac6e-af1f-41b0-a7fa-e0cf764d2255",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "torch-distributed-cpu",
+          "uid": "47c75876-6573-4014-9487-662b97b8dedc",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "torch-distributed-cpu-torch211-py312",
+          "uid": "182f5657-8d58-4079-abc5-734a7e88d8a4",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "torch-distributed-cuda130-torch211-py312",
+          "uid": "759e1a8e-9377-4380-a79b-a664caa7a116",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "torch-distributed-rocm",
+          "uid": "fcd689ef-aba2-48c9-828b-888085a62609",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "torch-distributed-rocm714-torch211-py312",
+          "uid": "63b58f56-b0d8-4507-b36e-d5af6fa372a7",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "training-hub",
+          "uid": "98fbb91e-d513-4ea4-a4c4-01ca43782318",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "training-hub-cpu",
+          "uid": "2d9c47ad-1f5c-43c8-8edf-22428b44a9e3",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "training-hub-rocm",
+          "uid": "8affb17f-8824-4c3f-90db-d0f829ec642b",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "training-hub-th09-cpu-torch211-py312",
+          "uid": "96f36fee-6c4c-48e7-8c10-87ef5d624aaf",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "training-hub-th09-cuda130-torch211-py312",
+          "uid": "35a7d6fc-2844-44be-8f0f-5302906cb984",
+          "action": "EXPECT"
+        },
+        {
+          "group": "trainer.kubeflow.org",
+          "kind": "ClusterTrainingRuntime",
+          "namespace": null,
+          "name": "training-hub-th09-rocm714-torch211-py312",
+          "uid": "43f49a9e-0e6a-4314-a5de-1644211cd944",
+          "action": "EXPECT"
+        },
+        {
+          "group": "infrastructure.opendatahub.io",
+          "kind": "HardwareProfile",
+          "namespace": "redhat-ods-applications",
+          "name": "nvidia-gpu-1",
+          "uid": "5866ca65-4026-4d72-ad47-16572a38751e",
+          "action": "DELETE"
+        },
+        {
+          "group": "services.platform.opendatahub.io",
+          "kind": "Auth",
+          "namespace": null,
+          "name": "auth",
+          "uid": "c7edfed8-9a50-4987-915e-78c9e762d660",
+          "action": "DELETE"
+        },
+        {
+          "group": "mlflow.opendatahub.io",
+          "kind": "MLflow",
+          "namespace": null,
+          "name": "mlflow",
+          "uid": "52805766-f6fa-4a8f-a844-4845b04980f0",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": [
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "MaaSAuthPolicy",
+          "namespace": "models-as-a-service",
+          "name": "admin-auth-policy",
+          "uid": "44abc60f-40c0-4293-b557-921fd36257ff",
+          "action": "DELETE"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "MaaSAuthPolicy",
+          "namespace": "models-as-a-service",
+          "name": "maas-qwen3-06b-users-auth-policy",
+          "uid": "bdecb970-4a0e-4c72-8779-bcd9029c35ca",
+          "action": "DELETE"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "MaaSSubscription",
+          "namespace": "models-as-a-service",
+          "name": "maas-admins-subscription",
+          "uid": "ba4200a7-62c8-4696-8f59-a934d88d7e34",
+          "action": "DELETE"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "MaaSSubscription",
+          "namespace": "models-as-a-service",
+          "name": "maas-qwen3-06b-users-subscription",
+          "uid": "ccd4fba5-8cd1-4989-ab5b-0424587b51f9",
+          "action": "DELETE"
+        },
+        {
+          "group": "maas.opendatahub.io",
+          "kind": "MaasTenantConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "default-tenant",
+          "uid": "2debb138-d89e-4e81-bbb8-5203dd85ab22",
+          "action": "DELETE"
+        },
+        {
+          "group": "ogx.io",
+          "kind": "OGXServer",
+          "namespace": "redhat-ods-applications",
+          "name": "ogx-server",
+          "uid": "08b20ec3-4273-4918-9bf3-b325253ea2ea",
+          "action": "DELETE"
+        },
+        {
+          "group": "opendatahub.io",
+          "kind": "OdhDashboardConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "odh-dashboard-config",
+          "uid": "ba250171-ea9f-466c-a80e-7d3dd5f293a8",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-decode-template",
+          "uid": "d042060c-92e3-4861-8e75-6c735df533bc",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-decode-worker-data-parallel",
+          "uid": "5a182f2e-0b56-4165-896f-0cabd7bde174",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-multi-node-pd-template-nvidia-cuda",
+          "uid": "2ac906a5-0e5d-4c17-b5ca-9d41040622c8",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-multi-node-template-nvidia-cuda",
+          "uid": "781be3bd-c5ed-4124-977c-6f9d4d49f11d",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-prefill-template",
+          "uid": "740d97dd-7884-48e5-b0fc-bd7bd416bcea",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-prefill-worker-data-parallel",
+          "uid": "0c793f1f-e46b-4b1b-b9d4-ff4b7e1b4cd0",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-router-route",
+          "uid": "e99a4127-c868-4271-93de-cd9604a925b9",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-scheduler",
+          "uid": "33229ed7-730b-414b-9c38-ee232891a9da",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-scheduler-latency-predictor",
+          "uid": "a611b44b-18dd-4640-a908-9d552563889a",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-single-node-pd-template-nvidia-cuda",
+          "uid": "9ec1fed0-0dcf-427d-bc35-b331fc3fc0a8",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-single-node-template-nvidia-cuda",
+          "uid": "ac811a02-1b01-4111-9fbb-d1b48e267fcc",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-template",
+          "uid": "ca9ddf72-2791-4557-8afb-2f02ff988ef2",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-template-amd-rocm",
+          "uid": "9f1c86a4-f276-4109-a93a-893f37d40f71",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-template-ibm-spyre-ppc64le",
+          "uid": "ca3afccd-776d-4658-8a7c-97c2f77d4853",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-template-ibm-spyre-s390x",
+          "uid": "b3588e0f-e3df-4d7f-a12e-df7ac4f9e12f",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-template-ibm-spyre-x86",
+          "uid": "416a9fd3-9d59-4950-b016-55dc92efe97c",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-template-intel-gaudi",
+          "uid": "918cfc5b-1021-46bb-8bf8-bb488bc90d40",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-tokenizer",
+          "uid": "1651f5c0-b943-43f4-93e2-4dd7186818a8",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-tracing",
+          "uid": "a4928e94-27a5-42af-8a17-020b61c0bb84",
+          "action": "DELETE"
+        },
+        {
+          "group": "serving.kserve.io",
+          "kind": "LLMInferenceServiceConfig",
+          "namespace": "redhat-ods-applications",
+          "name": "v3-5-1-kserve-config-llm-worker-data-parallel",
+          "uid": "76b69d5c-3fae-48a4-baeb-0b45de75ef19",
+          "action": "DELETE"
+        },
+        {
+          "group": "trustyai.opendatahub.io",
+          "kind": "NemoGuardrails",
+          "namespace": "redhat-ods-applications",
+          "name": "nemo-guardrails",
+          "uid": "bfe08c0d-095c-4c7d-be2a-d81f93f31539",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "redhat-ods-operator",
+          "name": "rhods-operator.3.5.1",
+          "uid": "f94a3ecb-e279-4f7c-bbab-5aede545f985",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "redhat-ods-operator",
+          "name": "rhods-operator",
+          "uid": "ba0a0318-d719-4940-aa32-3299d81457b0",
+          "action": "DELETE"
+        },
+        {
+          "group": "coordination.k8s.io",
+          "kind": "Lease",
+          "namespace": "redhat-ods-operator",
+          "name": "07ed84f7.opendatahub.io",
+          "uid": "3588a54d-d3cb-4d5a-a59a-57bc53c0ad44",
+          "action": "REVIEW"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Explicit cleanup",
+      "resources": [
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "redhat-ods-applications",
+          "name": "maas-postgres",
+          "uid": "c71dcc06-4e70-43a7-9fc8-237320570081",
+          "action": "DELETE"
+        },
+        {
+          "group": "apps",
+          "kind": "StatefulSet",
+          "namespace": "redhat-ods-applications",
+          "name": "ogx-postgres",
+          "uid": "f9060f89-dc0a-4ab3-ae03-f896f0ae6d68",
+          "action": "DELETE"
+        },
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "rhoai-model-registries",
+          "name": "model-catalog",
+          "uid": "6b1da06e-1b98-46c0-a17a-db57cd0f7df5",
+          "action": "DELETE"
+        },
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "openshift-ingress",
+          "name": "maas-default-gateway",
+          "uid": "9739a44f-e31c-44cd-bb98-e1e038bd42ca",
+          "action": "DELETE"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-ingress",
+          "name": "maas-gateway-options",
+          "uid": "0a4f5c32-948e-4b3c-92bd-c7ae56a0b2d2",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "auths.services.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "datascienceclusters.datasciencecluster.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "datasciencepipelines.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "dscinitializations.dscinitialization.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "featuretrackers.features.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "gatewayconfigs.services.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "hardwareprofiles.infrastructure.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "kueues.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "modelregistries.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "monitorings.services.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "platforms.config.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "rays.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "sparkoperators.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "trainers.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "trainingoperators.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "trustyais.components.platform.opendatahub.io",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 8,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "redhat-ods-operator",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ],
+  "explicit_deletes": [
+    {
+      "group": "apps",
+      "kind": "Deployment",
+      "namespace": "redhat-ods-applications",
+      "name": "maas-postgres",
+      "uid": "c71dcc06-4e70-43a7-9fc8-237320570081",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "autoscaling/HorizontalPodAutoscaler"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "apps",
+      "kind": "StatefulSet",
+      "namespace": "redhat-ods-applications",
+      "name": "ogx-postgres",
+      "uid": "f9060f89-dc0a-4ab3-ae03-f896f0ae6d68",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "autoscaling/HorizontalPodAutoscaler"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "apps",
+      "kind": "Deployment",
+      "namespace": "rhoai-model-registries",
+      "name": "model-catalog",
+      "uid": "6b1da06e-1b98-46c0-a17a-db57cd0f7df5",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "autoscaling/HorizontalPodAutoscaler"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "gateway.networking.k8s.io",
+      "kind": "Gateway",
+      "namespace": "openshift-ingress",
+      "name": "maas-default-gateway",
+      "uid": "9739a44f-e31c-44cd-bb98-e1e038bd42ca",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "redhat-ai-gateway-infra",
+          "name": "maas-api-route",
+          "uid": "dca8ee5b-3a13-42e3-ac74-d28e3fd45053",
+          "ref_field": "spec.parentRefs[0]",
+          "in_deletion_plan": true
+        }
+      ],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "gateway.networking.k8s.io/HTTPRoute",
+          "gateway.networking.k8s.io/GRPCRoute",
+          "gateway.networking.k8s.io/TCPRoute",
+          "gateway.networking.k8s.io/TLSRoute",
+          "gateway.networking.k8s.io/UDPRoute"
+        ],
+        "scan_complete": true
+      }
+    },
+    {
+      "group": "",
+      "kind": "ConfigMap",
+      "namespace": "openshift-ingress",
+      "name": "maas-gateway-options",
+      "uid": "0a4f5c32-948e-4b3c-92bd-c7ae56a0b2d2",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "openshift-ingress",
+          "name": "maas-default-gateway",
+          "uid": "9739a44f-e31c-44cd-bb98-e1e038bd42ca",
+          "ref_field": "spec.infrastructure.parametersRef",
+          "in_deletion_plan": true
+        }
+      ],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "apps/Deployment",
+          "apps/StatefulSet",
+          "apps/DaemonSet",
+          "apps/ReplicaSet",
+          "batch/Job",
+          "batch/CronJob",
+          "Pod",
+          "gateway.networking.k8s.io/Gateway"
+        ],
+        "scan_complete": true
+      }
+    }
+  ]
+}

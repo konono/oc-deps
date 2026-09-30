@@ -1,0 +1,188 @@
+{
+  "metadata": {
+    "issue": 46,
+    "phase": "D-readiness-v2",
+    "commit": "9145d22",
+    "binary_sha256": "b488909ad12df455d4d748eebbceb270848ea68c901e319c43b0781f11bf1b58",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "timestamp": "2026-09-29T09:10:00Z"
+  },
+  "baseline_metrics": {
+    "total_subscriptions": 28,
+    "target_subscriptions": 15,
+    "odf_group_sync_subscriptions": 13,
+    "total_csv_rows_all_namespaces": 1009,
+    "unique_csv_names": 29,
+    "dsci_ready": true,
+    "dsc_ready": true,
+    "terminating_namespaces": 0
+  },
+  "plans_15_of_15": {
+    "rhods-operator": {
+      "delete": 39,
+      "expect": 71,
+      "keep": 20,
+      "review": 1,
+      "exit": 0
+    },
+    "rhbk-operator": {
+      "delete": 5,
+      "expect": 0,
+      "keep": 4,
+      "review": 0,
+      "exit": 0
+    },
+    "leader-worker-set": {
+      "delete": 3,
+      "expect": 0,
+      "keep": 3,
+      "review": 1,
+      "exit": 0
+    },
+    "job-set": {
+      "delete": 4,
+      "expect": 0,
+      "keep": 3,
+      "review": 1,
+      "exit": 0
+    },
+    "kueue-operator": {
+      "delete": 3,
+      "expect": 0,
+      "keep": 3,
+      "review": 1,
+      "exit": 0
+    },
+    "servicemeshoperator3": {
+      "delete": 14,
+      "expect": 0,
+      "keep": 22,
+      "review": 1,
+      "exit": 0
+    },
+    "nfd": {
+      "delete": 5,
+      "expect": 0,
+      "keep": 8,
+      "review": 3,
+      "exit": 0
+    },
+    "gpu-operator-certified": {
+      "delete": 4,
+      "expect": 0,
+      "keep": 7,
+      "review": 1,
+      "exit": 0
+    },
+    "cert-manager-operator": {
+      "delete": 7,
+      "expect": 0,
+      "keep": 12,
+      "review": 2,
+      "exit": 0
+    },
+    "rhcl-operator": {
+      "delete": 6,
+      "expect": 0,
+      "keep": 16,
+      "review": 1,
+      "exit": 0
+    },
+    "authorino-operator": {
+      "delete": 19,
+      "expect": 0,
+      "keep": 5,
+      "review": 1,
+      "exit": 0
+    },
+    "dns-operator": {
+      "delete": 2,
+      "expect": 0,
+      "keep": 5,
+      "review": 2,
+      "exit": 0
+    },
+    "limitador-operator": {
+      "delete": 3,
+      "expect": 0,
+      "keep": 4,
+      "review": 2,
+      "exit": 0
+    },
+    "cluster-observability-operator": {
+      "delete": 12,
+      "expect": 4,
+      "keep": 20,
+      "review": 0,
+      "exit": 0
+    },
+    "opentelemetry-product": {
+      "delete": 3,
+      "expect": 0,
+      "keep": 6,
+      "review": 1,
+      "exit": 0
+    }
+  },
+  "explicit_target_plans": {
+    "rhods-operator-explicit": {
+      "delete": 42,
+      "expect": 73,
+      "keep": 18,
+      "review": 1,
+      "exit": 0
+    },
+    "rhbk-operator-explicit": {
+      "delete": 6,
+      "expect": 0,
+      "keep": 4,
+      "review": 0,
+      "exit": 0
+    }
+  },
+  "explicit_targets_4_of_4": [
+    {
+      "resource": "apps/v1/StatefulSet/keycloak/postgres",
+      "uid": "c093bb14-8ab7-4923-8214-6503d2cc871d",
+      "plan": "rhbk-operator-explicit",
+      "scan_complete": true,
+      "backup_path": "operator/rhbk-operator/20260929T090307Z-0003587f-0/resources/apps/v1/StatefulSet/keycloak/postgres--c093bb14-8ab7-4923-8214-6503d2cc871d",
+      "in_backup": true
+    },
+    {
+      "resource": "apps/v1/Deployment/redhat-ods-applications/maas-postgres",
+      "uid": "d322fc82-865b-4c88-9c30-b6fb36285b14",
+      "plan": "rhods-operator-explicit",
+      "scan_complete": true,
+      "backup_path": "operator/rhods-operator/20260929T090207Z-0003583b-0/resources/apps/v1/Deployment/redhat-ods-applications/maas-postgres--d322fc82-865b-4c88-9c30-b6fb36285b14",
+      "in_backup": true
+    },
+    {
+      "resource": "apps/v1/StatefulSet/redhat-ods-applications/ogx-postgres",
+      "uid": "8790ba28-3aed-4937-bc0f-3f3d0392fc27",
+      "plan": "rhods-operator-explicit",
+      "scan_complete": true,
+      "backup_path": "operator/rhods-operator/20260929T090207Z-0003583b-0/resources/apps/v1/StatefulSet/redhat-ods-applications/ogx-postgres--8790ba28-3aed-4937-bc0f-3f3d0392fc27",
+      "in_backup": true
+    },
+    {
+      "resource": "apps/v1/Deployment/rhoai-model-registries/model-catalog",
+      "uid": "e983d126-bc36-41f0-8a55-070b0df2a405",
+      "plan": "rhods-operator-explicit",
+      "scan_complete": true,
+      "backup_path": "operator/rhods-operator/20260929T090207Z-0003583b-0/resources/apps/v1/Deployment/rhoai-model-registries/model-catalog--e983d126-bc36-41f0-8a55-070b0df2a405",
+      "in_backup": true
+    }
+  ],
+  "backup_receipts": {
+    "rhods-operator": {
+      "root": "operator/rhods-operator/20260929T090207Z-0003583b-0",
+      "manifest_sha256": "ab54efde01fb08d3a7b09765b0a79c48630f30705458a6c87f4f7579b6c635a2"
+    },
+    "rhbk-operator": {
+      "root": "operator/rhbk-operator/20260929T090307Z-0003587f-0",
+      "manifest_sha256": "ca4aa2f0eacc38817008cda953e7c0265a3bfa68ef025d86f868a8ac4cd55964"
+    }
+  },
+  "dry_run_mutations": 0
+}

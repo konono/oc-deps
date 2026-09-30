@@ -18,7 +18,7 @@ use crate::teardown::planner::TeardownPlan;
 //  RunJournal — cluster-bound execution record
 // ──────────────────────────────────────────────────────────────
 
-pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 11;
+pub const RUN_JOURNAL_SCHEMA_VERSION: u32 = 12;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJournal {
@@ -256,6 +256,7 @@ pub enum RunState {
     ApplyCompleted,
     AuditingResiduals,
     InteractiveCleanup,
+    ExplicitCleanupBlocked,
     Paused,
     Finished,
     Failed,
@@ -310,12 +311,46 @@ pub struct AuditContext {
     /// None = not captured (old journal) → generation check returns Unknown.
     #[serde(default)]
     pub csv_baseline: Option<Vec<CsvBaselineEntry>>,
+    /// Namespace scope with provenance evidence from plan time.
+    /// Always Some for v12+. Pre-v12 journals are rejected by load_journal,
+    /// so a fresh teardown plan run is required after upgrade.
+    #[serde(default)]
+    pub namespace_scope: Option<Vec<NamespaceScopeEntry>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CsvBaselineEntry {
     pub name: String,
     pub uid: String,
+}
+
+/// A namespace in the audit scope with provenance evidence explaining why it was included.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NamespaceScopeEntry {
+    pub namespace: String,
+    pub evidence: Vec<NamespaceScopeEvidence>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NamespaceScopeEvidence {
+    InstallNamespace,
+    OperatorGroupTarget,
+    OperatorGroupStatus,
+    PlanActionNamespace,
+    OperatorGroupAllNamespaces,
+    OwnedCrdInstance {
+        crd: String,
+    },
+    SpecNamespaceRef {
+        source_kind: String,
+        source_name: String,
+        field: String,
+    },
+    LabelEvidence {
+        key: String,
+        value: String,
+    },
+    ExplicitCleanupTarget,
 }
 
 /// A GVR resolved during plan generation via API discovery.
@@ -350,6 +385,40 @@ pub struct ExecutionRecord {
     /// Authority-critical: v9+ required. No serde(default) — v8 journals
     /// cannot deserialize into RunJournal and are handled via raw JSON inspection.
     pub re_delete_records: Vec<ReDeleteRecord>,
+    /// Typed error from transient explicit cleanup guard failure.
+    /// Present only in ExplicitCleanupBlocked state. Cleared on resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explicit_cleanup_error: Option<ExplicitCleanupError>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExplicitCleanupError {
+    pub target: String,
+    pub error_kind: ExplicitCleanupErrorKind,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ExplicitCleanupErrorKind {
+    Timeout,
+    ServerError,
+    Forbidden,
+    IncompleteScan,
+    /// A v12 journal written by code predating `ExplicitCleanupBlocked` stopped
+    /// at the explicit-cleanup boundary.  The resume path may set this only
+    /// after the legacy journal passes the same structural authority checks as
+    /// a newly typed blocked run.
+    LegacyStateMigration,
+}
+
+/// Persist a terminal failure without destroying the executor's more precise
+/// retryable state.  Every caller that handles an `execute_plan` error must use
+/// this transition; otherwise a transient explicit-cleanup guard failure is
+/// immediately overwritten with `Failed` and cannot be resumed.
+pub fn mark_failed_preserving_retryable(journal: &mut RunJournal) {
+    if journal.state != RunState::ExplicitCleanupBlocked {
+        journal.state = RunState::Failed;
+    }
 }
 
 /// Durable record of re-delete authority for a recreated resource.
@@ -739,6 +808,7 @@ pub fn build_audit_context(
     plan: &TeardownPlan,
     operators: &[&crate::analyzers::olm::OperatorInstance],
     gk_map: &crate::kube::discovery::GroupKindMap,
+    candidate_namespaces: Option<Vec<crate::analyzers::namespace_scope::CandidateNamespace>>,
 ) -> AuditContext {
     let mut ctx = AuditContext::default();
 
@@ -867,7 +937,134 @@ pub fn build_audit_context(
     ctx.unresolved_gvks = Some(unresolved_gvks);
     ctx.owned_cr_gvrs = Some(owned_cr_gvrs);
     // csv_baseline is captured separately in create_run_journal (requires async client)
+
+    // Build namespace_scope from footprint_namespaces with provenance evidence.
+    // Install namespace and plan action namespaces are always included.
+    // External CandidateNamespace data (OperatorGroup, spec refs) is merged via
+    // enrich_namespace_scope_from_candidates after build.
+    let mut ns_entries: std::collections::HashMap<String, Vec<NamespaceScopeEvidence>> =
+        std::collections::HashMap::new();
+    for op in operators {
+        ns_entries
+            .entry(op.install_namespace.clone())
+            .or_default()
+            .push(NamespaceScopeEvidence::InstallNamespace);
+    }
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            let rid = match action {
+                crate::teardown::planner::Action::Delete { resource, .. }
+                | crate::teardown::planner::Action::ExpectGone { resource, .. }
+                | crate::teardown::planner::Action::WaitGone { resource }
+                | crate::teardown::planner::Action::Keep { resource, .. }
+                | crate::teardown::planner::Action::Review { resource, .. } => resource,
+            };
+            if let Some(ns) = &rid.namespace {
+                let entry = ns_entries.entry(ns.clone()).or_default();
+                if !entry.contains(&NamespaceScopeEvidence::PlanActionNamespace) {
+                    entry.push(NamespaceScopeEvidence::PlanActionNamespace);
+                }
+            }
+        }
+    }
+    for ed in &plan.explicit_deletes {
+        if let Some(ns) = &ed.namespace {
+            let entry = ns_entries.entry(ns.clone()).or_default();
+            if !entry.contains(&NamespaceScopeEvidence::ExplicitCleanupTarget) {
+                entry.push(NamespaceScopeEvidence::ExplicitCleanupTarget);
+            }
+        }
+    }
+    let mut scope_entries: Vec<NamespaceScopeEntry> = ns_entries
+        .into_iter()
+        .map(|(namespace, mut evidence)| {
+            evidence.sort();
+            NamespaceScopeEntry {
+                namespace,
+                evidence,
+            }
+        })
+        .collect();
+    scope_entries.sort_by(|a, b| a.namespace.cmp(&b.namespace));
+    ctx.namespace_scope = Some(scope_entries);
+
+    if let Some(candidates) = candidate_namespaces {
+        enrich_namespace_scope_from_candidates(&mut ctx, &candidates);
+    }
+
     ctx
+}
+
+/// Enrich namespace_scope with evidence from CandidateNamespace discovery results.
+/// Call after build_audit_context when namespace scope discovery data is available.
+pub fn enrich_namespace_scope_from_candidates(
+    ctx: &mut AuditContext,
+    candidates: &[crate::analyzers::namespace_scope::CandidateNamespace],
+) {
+    let scope = ctx.namespace_scope.get_or_insert_with(Vec::new);
+    for candidate in candidates {
+        let entry = if let Some(existing) = scope
+            .iter_mut()
+            .find(|e| e.namespace == candidate.namespace)
+        {
+            existing
+        } else {
+            scope.push(NamespaceScopeEntry {
+                namespace: candidate.namespace.clone(),
+                evidence: Vec::new(),
+            });
+            scope.last_mut().unwrap()
+        };
+        for ev in &candidate.evidence {
+            let converted = match ev {
+                crate::analyzers::namespace_scope::NamespaceEvidence::InstallNamespace => {
+                    NamespaceScopeEvidence::InstallNamespace
+                }
+                crate::analyzers::namespace_scope::NamespaceEvidence::OperatorGroupTarget => {
+                    NamespaceScopeEvidence::OperatorGroupTarget
+                }
+                crate::analyzers::namespace_scope::NamespaceEvidence::OperatorGroupStatus => {
+                    NamespaceScopeEvidence::OperatorGroupStatus
+                }
+                crate::analyzers::namespace_scope::NamespaceEvidence::OwnedCrdInstance { crd } => {
+                    NamespaceScopeEvidence::OwnedCrdInstance { crd: crd.clone() }
+                }
+                crate::analyzers::namespace_scope::NamespaceEvidence::SpecNamespaceRef {
+                    source_kind,
+                    source_name,
+                    field,
+                    ..
+                } => NamespaceScopeEvidence::SpecNamespaceRef {
+                    source_kind: source_kind.clone(),
+                    source_name: source_name.clone(),
+                    field: field.clone(),
+                },
+                crate::analyzers::namespace_scope::NamespaceEvidence::LabelEvidence {
+                    key,
+                    value,
+                } => NamespaceScopeEvidence::LabelEvidence {
+                    key: key.clone(),
+                    value: value.clone(),
+                },
+                crate::analyzers::namespace_scope::NamespaceEvidence::PlanActionNamespace => {
+                    NamespaceScopeEvidence::PlanActionNamespace
+                }
+                crate::analyzers::namespace_scope::NamespaceEvidence::OperatorGroupAllNamespaces => {
+                    NamespaceScopeEvidence::OperatorGroupAllNamespaces
+                }
+                crate::analyzers::namespace_scope::NamespaceEvidence::ExplicitCleanupTarget => {
+                    NamespaceScopeEvidence::ExplicitCleanupTarget
+                }
+            };
+            if !entry.evidence.contains(&converted) {
+                entry.evidence.push(converted);
+            }
+        }
+        entry.evidence.sort();
+        // Also add to footprint_namespaces so audit scan covers this namespace
+        ctx.footprint_namespaces.insert(candidate.namespace.clone());
+    }
+    scope.sort_by(|a, b| a.namespace.cmp(&b.namespace));
 }
 
 #[cfg(test)]
@@ -973,8 +1170,8 @@ mod tests {
     // Deleted: test_v5_journal_cleanup_decisions_preserved (old schema migration test)
     // Deleted: test_v5_journal_no_mutation_authority (old schema migration test)
 
-    /// Create a valid v11 journal JSON for field-removal tests.
-    fn make_v11_journal_json() -> serde_json::Value {
+    /// Create a valid v12 journal JSON for field-removal tests.
+    fn make_v12_journal_json() -> serde_json::Value {
         use crate::kube::resource::ResourceId;
         let csv_rid = ResourceId {
             group: "operators.coreos.com".to_string(),
@@ -985,8 +1182,8 @@ mod tests {
             uid: Some("uid-csv".to_string()),
         };
         let j = RunJournal {
-            run_id: "test-v11".to_string(),
-            schema_version: 11,
+            run_id: "test-v12".to_string(),
+            schema_version: 12,
             oc_deps_version: "0.1.0".to_string(),
             journal_revision: 1,
             cluster_identity: crate::teardown::plan::ClusterIdentity {
@@ -1047,12 +1244,12 @@ mod tests {
     }
 
     #[test]
-    fn v11_missing_re_delete_records_rejected() {
-        let dir = std::env::temp_dir().join(format!("v11-test-{}", std::process::id()));
+    fn v12_missing_re_delete_records_rejected() {
+        let dir = std::env::temp_dir().join(format!("v12-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let mut json = make_v11_journal_json();
+        let mut json = make_v12_journal_json();
         json.pointer_mut("/execution")
             .unwrap()
             .as_object_mut()
@@ -1063,28 +1260,28 @@ mod tests {
         let result = load_journal(&path);
         assert!(
             result.is_err(),
-            "v11 journal without re_delete_records must fail parse"
+            "v12 journal without re_delete_records must fail parse"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn v11_missing_finalizer_fields_rejected() {
-        let dir = std::env::temp_dir().join(format!("v11-fin-test-{}", std::process::id()));
+    fn v12_missing_finalizer_fields_rejected() {
+        let dir = std::env::temp_dir().join(format!("v12-fin-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let mut json = make_v11_journal_json();
+        let mut json = make_v12_journal_json();
         json.as_object_mut()
             .unwrap()
             .remove("finalizer_recovery_approved");
         write_json_to_file(&json, &path);
         assert!(
             load_journal(&path).is_err(),
-            "v11 without finalizer_recovery_approved must fail"
+            "v12 without finalizer_recovery_approved must fail"
         );
 
-        let mut json2 = make_v11_journal_json();
+        let mut json2 = make_v12_journal_json();
         json2
             .as_object_mut()
             .unwrap()
@@ -1092,7 +1289,7 @@ mod tests {
         write_json_to_file(&json2, &path);
         assert!(
             load_journal(&path).is_err(),
-            "v11 without finalizer_recoveries must fail"
+            "v12 without finalizer_recoveries must fail"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1104,12 +1301,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let mut json = make_v11_journal_json();
-        json["schema_version"] = serde_json::json!(10);
+        let mut json = make_v12_journal_json();
+        json["schema_version"] = serde_json::json!(11);
         write_json_to_file(&json, &path);
 
         let result = load_journal(&path);
-        assert!(result.is_err(), "v10 journal must be rejected");
+        assert!(result.is_err(), "v11 journal must be rejected");
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("Unsupported journal schema version"),
@@ -1120,15 +1317,15 @@ mod tests {
     }
 
     #[test]
-    fn v11_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("v11-rt-{}", std::process::id()));
+    fn v12_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("v12-rt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("journal.json");
 
-        let json = make_v11_journal_json();
+        let json = make_v12_journal_json();
         write_json_to_file(&json, &path);
         let j = load_journal(&path).unwrap();
-        assert_eq!(j.schema_version, 11);
+        assert_eq!(j.schema_version, 12);
         assert!(j.execution.re_delete_records.is_empty());
         assert!(!j.finalizer_recovery_approved);
         let _ = std::fs::remove_dir_all(&dir);

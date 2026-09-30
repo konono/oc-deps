@@ -1,5 +1,5 @@
 {
-  "description": "Full operator teardown — CLAUDE.md Full test order (RHOAI → Keycloak → dependencies)",
+  "description": "Full operator teardown \u2014 CLAUDE.md Full test order (RHOAI \u2192 Keycloak \u2192 dependencies)",
   "defaults": {
     "approve_delete": {
       "scopes": [
@@ -20,12 +20,48 @@
         ]
       },
       "delete_resources": [
-        {"group": "gateway.networking.k8s.io", "kind": "Gateway", "namespace": "openshift-ingress", "name": "maas-default-gateway"},
-        {"group": "", "kind": "ConfigMap", "namespace": "openshift-ingress", "name": "maas-gateway-options"}
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "openshift-ingress",
+          "name": "maas-default-gateway"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-ingress",
+          "name": "maas-gateway-options"
+        },
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "redhat-ods-applications",
+          "name": "maas-postgres"
+        },
+        {
+          "group": "apps",
+          "kind": "StatefulSet",
+          "namespace": "redhat-ods-applications",
+          "name": "ogx-postgres"
+        },
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "rhoai-model-registries",
+          "name": "model-catalog"
+        }
       ]
     },
     {
-      "name": "rhbk-operator"
+      "name": "rhbk-operator",
+      "delete_resources": [
+        {
+          "group": "apps",
+          "kind": "StatefulSet",
+          "namespace": "keycloak",
+          "name": "postgres"
+        }
+      ]
     },
     {
       "name": "leader-worker-set"
@@ -51,10 +87,30 @@
     {
       "name": "rhcl-operator",
       "delete_resources": [
-        {"group": "console.openshift.io", "kind": "ConsolePlugin", "namespace": null, "name": "kuadrant-console-plugin"},
-        {"group": "apps", "kind": "Deployment", "namespace": "openshift-rhcl", "name": "kuadrant-console-plugin"},
-        {"group": "", "kind": "Service", "namespace": "openshift-rhcl", "name": "kuadrant-console-plugin"},
-        {"group": "", "kind": "ConfigMap", "namespace": "openshift-rhcl", "name": "kuadrant-console-nginx-conf"}
+        {
+          "group": "console.openshift.io",
+          "kind": "ConsolePlugin",
+          "namespace": null,
+          "name": "kuadrant-console-plugin"
+        },
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin"
+        },
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-plugin"
+        },
+        {
+          "group": "",
+          "kind": "ConfigMap",
+          "namespace": "openshift-rhcl",
+          "name": "kuadrant-console-nginx-conf"
+        }
       ]
     },
     {

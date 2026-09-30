@@ -1,0 +1,80 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/limitador-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/limitador-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-limitador-operator.v1.4.2-2026-09-29T17-44-00.080179759_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+INFO: Rejected namespace candidate "redhat-ai-gateway-infra/maas-api-route" (invalid DNS label: contains '/')
+  Source: Limitador/limitador field=limits[0].namespace
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 269 resource types in 15.3s
+   openshift-rhcl — 143 resources
+   Scanned 1 namespace(s), 143 total resources
+   Found 7 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  15 candidate(s) for limitador-operator.v1.4.2 (15 discovery + 0 plan)
+    15 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/limitador-operator/20260929T174419Z-00047bb3-0 (15 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE Limitador/limitador  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/3745a16e.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/limitador-operator-manager-config  (ns: openshift-rhcl)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/limitadors.limitador.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 4 KEEP, 2 REVIEW
+exit=0

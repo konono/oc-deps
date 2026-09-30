@@ -1,0 +1,170 @@
+{
+  "schema_version": 2,
+  "cluster_identity": {
+    "api_server": "https://api.sno-disconnected.sandbox3768.opentlc.com:6443/",
+    "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e"
+  },
+  "created_at": "2026-09-29T17:20:32.831971752+00:00",
+  "targets": [
+    {
+      "package_name": "rhbk-operator",
+      "install_namespace": "keycloak",
+      "csv_name_pattern": "rhbk-operator.v26.6.7-opr.1"
+    }
+  ],
+  "prune_crds": false,
+  "approve_scopes": [
+    "root",
+    "independent",
+    "label-only",
+    "operator-group"
+  ],
+  "approve_resources": [],
+  "keep_resources": [],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Freeze OLM",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "Subscription",
+          "namespace": "keycloak",
+          "name": "rhbk-operator",
+          "uid": "909796b7-31e9-4669-93c0-d57b0264e753",
+          "action": "DELETE"
+        },
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "keycloak",
+          "name": "rhbk-operator.v26.6.7-opr.1",
+          "uid": "9774dbc8-0023-48ba-b763-cc82946c7861",
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Trigger operand cleanup",
+      "resources": [
+        {
+          "group": "k8s.keycloak.org",
+          "kind": "Keycloak",
+          "namespace": "keycloak",
+          "name": "keycloak",
+          "uid": "44b43bc9-c1f4-4541-96c1-227a769f4a3a",
+          "action": "DELETE"
+        },
+        {
+          "group": "k8s.keycloak.org",
+          "kind": "KeycloakRealmImport",
+          "namespace": "keycloak",
+          "name": "maas-realm",
+          "uid": "b06c8f03-6c68-4e58-8ce4-ca2fbdc52620",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Remaining cleanup",
+      "resources": []
+    },
+    {
+      "phase": 4,
+      "name": "Remove Operator controllers",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "ClusterServiceVersion",
+          "namespace": "keycloak",
+          "name": "rhbk-operator.v26.6.7-opr.1",
+          "uid": "9774dbc8-0023-48ba-b763-cc82946c7861",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Namespace cleanup",
+      "resources": [
+        {
+          "group": "operators.coreos.com",
+          "kind": "OperatorGroup",
+          "namespace": "keycloak",
+          "name": "rhbk-operator",
+          "uid": "422c03e0-75ea-47eb-a649-d5a2694c7851",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Explicit cleanup",
+      "resources": [
+        {
+          "group": "apps",
+          "kind": "StatefulSet",
+          "namespace": "keycloak",
+          "name": "postgres",
+          "uid": "a1556a15-0571-4a8d-8b08-262824ab4de3",
+          "action": "DELETE"
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "APIs",
+      "resources": [
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "keycloakrealmimports.k8s.keycloak.org",
+          "uid": null,
+          "action": "KEEP"
+        },
+        {
+          "group": "apiextensions.k8s.io",
+          "kind": "CustomResourceDefinition",
+          "namespace": null,
+          "name": "keycloaks.k8s.keycloak.org",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    },
+    {
+      "phase": 8,
+      "name": "Namespaces",
+      "resources": [
+        {
+          "group": "",
+          "kind": "Namespace",
+          "namespace": null,
+          "name": "keycloak",
+          "uid": null,
+          "action": "KEEP"
+        }
+      ]
+    }
+  ],
+  "explicit_deletes": [
+    {
+      "group": "apps",
+      "kind": "StatefulSet",
+      "namespace": "keycloak",
+      "name": "postgres",
+      "uid": "a1556a15-0571-4a8d-8b08-262824ab4de3",
+      "reason": "config explicit",
+      "inbound_refs_at_plan": [],
+      "ref_scan_coverage": {
+        "kinds_scanned": [
+          "autoscaling/HorizontalPodAutoscaler"
+        ],
+        "scan_complete": true
+      }
+    }
+  ]
+}

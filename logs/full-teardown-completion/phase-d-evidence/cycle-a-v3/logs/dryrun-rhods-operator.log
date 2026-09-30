@@ -1,0 +1,355 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhods-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/rhods-operator.json
+🔍 Discovering API resources...
+   Discovery: 35.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 13 direct instances
+🔍 Discovering related CRD instances...
+ 71 CRDs, 94 instances
+  62 linked, 32 unlinked (independent REVIEW)
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-rhods-operator.3.5.1-2026-09-29T17-30-25.637456285_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 3 pods
+🔍 Discovering CR instances...
+ found 13 instances
+🔍 Discovering related CRDs...
+ found 94 related instances
+🔍 Discovering namespace scope...
+
+ found 7 candidate namespaces
+🔍 Scanning 7 additional namespace(s)...
+[namespace 1/7: redhat-ods-operator] elapsed 0s
+✅ Scanned 269 resource types in 26.1s
+   redhat-ods-operator — 46 resources
+[namespace 2/7: rhods-notebooks] elapsed 26s
+✅ Scanned 269 resource types in 19.7s
+   rhods-notebooks — 25 resources
+[namespace 3/7: ai-tenants] elapsed 45s
+✅ Scanned 269 resource types in 45.1s
+   ai-tenants — 26 resources
+[namespace 4/7: models-as-a-service] elapsed 90s
+✅ Scanned 269 resource types in 13.2s
+   models-as-a-service — 32 resources
+[namespace 5/7: rhoai-model-registries] elapsed 104s
+✅ Scanned 269 resource types in 21.8s
+   rhoai-model-registries — 54 resources
+[namespace 6/7: redhat-ods-monitoring] elapsed 125s
+✅ Scanned 269 resource types in 24.7s
+   redhat-ods-monitoring — 28 resources
+[namespace 7/7: redhat-ods-applications] elapsed 150s
+✅ Scanned 269 resource types in 18.7s
+   redhat-ods-applications — 679 resources
+   Scanned 7 namespace(s), 890 total resources
+   Found 210 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  329 candidate(s) for rhods-operator.3.5.1 (324 discovery + 5 plan)
+    329 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/rhods-operator/20260929T173449Z-000476a2-0 (329 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/rhods-operator  (ns: redhat-ods-operator)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/rhods-operator.3.5.1  (ns: redhat-ods-operator)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE DataScienceCluster/default-dsc  (cluster-scoped)
+             root CR approved via --approve-scope root
+  DRY-DELETE DSCInitialization/default-dsci  (cluster-scoped)
+             root CR approved via --approve-scope root
+  DRY-DELETE Config/default  (cluster-scoped)
+             label-related root CR explicitly approved for deletion
+  DRY-DELETE HardwareProfile/nvidia-gpu-1  (ns: redhat-ods-applications)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE Auth/auth  (cluster-scoped)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE MLflow/mlflow  (cluster-scoped)
+             label-related CR explicitly approved for deletion
+  DRY-EXPECT DataSciencePipelines/default-datasciencepipelines  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ModelRegistry/default-modelregistry  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT Ray/default-ray  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT Trainer/default-trainer  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT TrainingOperator/default-trainingoperator  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT TrustyAI/default-trustyai  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT HardwareProfile/default-profile  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT GatewayConfig/default-gateway  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT Monitoring/default-monitoring  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT AIGateway/default-aigateway  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT Dashboard/default-dashboard  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT FeastOperator/default-feastoperator  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT Kserve/default-kserve  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT MLflowOperator/default-mlflowoperator  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OGX/default-ogx  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT Workbenches/default-workbenches  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhQuickStart/create-aikit-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhQuickStart/create-jupyter-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhQuickStart/deploy-python-model  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhQuickStart/openvino-inference-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhQuickStart/pachyderm-beginner-tutorial-notebook  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhQuickStart/using-starburst-enterprise  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/agentic-starter-kits  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/aikit  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/elastic  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/jupyter  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/mlflow  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/nvidia-nim  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/openvino  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/pachyderm  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/pgvector  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/rhoai  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/starburstenterprise  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhApplication/watson-x-ai  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-a2a-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-autogen-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-crewai-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-google-adk-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-hitl-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-langflow-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-langgraph-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-llamaindex-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-memory-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-rag-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/agentic-starter-kits-vanilla-python-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/jupyter-install-python-packages  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/jupyter-update-server-settings  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/jupyter-use-s3-bucket-data  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/jupyter-view-installed-packages  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/openvino-ovms-serving  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/pachyderm-beginner-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/pachyderm-house-pricing-tutorial  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/rhoai-documentation  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/rhoai-tutorial-fraud  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/starburst-enterprise-requirements  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/starburst-openshift-deployment  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/starburst-openshift-overview  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT OdhDocument/watson-x-use-case  (ns: redhat-ods-applications)
+             managed descendant; controller expected to remove
+  DRY-EXPECT AITenant/models-as-a-service  (ns: ai-tenants)
+             managed descendant; controller expected to remove
+  DRY-EXPECT MaasTenantConfig/default-tenant  (ns: models-as-a-service)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterStorageContainer/default  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/torch-distributed  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/torch-distributed-cpu  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/torch-distributed-cpu-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/torch-distributed-cuda130-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/torch-distributed-rocm  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/torch-distributed-rocm714-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/training-hub  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/training-hub-cpu  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/training-hub-rocm  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/training-hub-th09-cpu-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/training-hub-th09-cuda130-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+  DRY-EXPECT ClusterTrainingRuntime/training-hub-th09-rocm714-torch211-py312  (cluster-scoped)
+             managed descendant; controller expected to remove
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  DRY-DELETE MaaSAuthPolicy/admin-auth-policy  (ns: models-as-a-service)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE MaaSAuthPolicy/maas-qwen3-06b-users-auth-policy  (ns: models-as-a-service)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE MaaSSubscription/maas-admins-subscription  (ns: models-as-a-service)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE MaaSSubscription/maas-qwen3-06b-users-subscription  (ns: models-as-a-service)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE MaasTenantConfig/default-tenant  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE OGXServer/ogx-server  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE OdhDashboardConfig/odh-dashboard-config  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-template  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-decode-worker-data-parallel  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-pd-template-nvidia-cuda  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-multi-node-template-nvidia-cuda  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-template  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-prefill-worker-data-parallel  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-router-route  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-scheduler-latency-predictor  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-pd-template-nvidia-cuda  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-single-node-template-nvidia-cuda  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-amd-rocm  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-ppc64le  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-s390x  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-ibm-spyre-x86  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-template-intel-gaudi  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tokenizer  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-tracing  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE LLMInferenceServiceConfig/v3-5-1-kserve-config-llm-worker-data-parallel  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+  DRY-DELETE NemoGuardrails/nemo-guardrails  (ns: redhat-ods-applications)
+             label-related CR approved via --approve-scope label-only
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/rhods-operator.3.5.1  (ns: redhat-ods-operator)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/rhods-operator  (ns: redhat-ods-operator)
+             operator group approved via --approve-scope operator-group
+  REVIEW   Lease/07ed84f7.opendatahub.io  (ns: redhat-ods-operator)
+             leader election lease (holder references operator deployment)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DRY-DELETE Deployment/maas-postgres  (ns: redhat-ods-applications)
+             config explicit
+  DRY-DELETE StatefulSet/ogx-postgres  (ns: redhat-ods-applications)
+             config explicit
+  DRY-DELETE Deployment/model-catalog  (ns: rhoai-model-registries)
+             config explicit
+  DRY-DELETE Gateway/maas-default-gateway  (ns: openshift-ingress)
+             config explicit
+  DRY-DELETE ConfigMap/maas-gateway-options  (ns: openshift-ingress)
+             config explicit
+
+  BARRIER (skipped in dry-run)
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/auths.services.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/datascienceclusters.datasciencecluster.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/datasciencepipelines.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/dscinitializations.dscinitialization.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/featuretrackers.features.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/gatewayconfigs.services.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/hardwareprofiles.infrastructure.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/kueues.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/modelregistries.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/monitorings.services.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/platforms.config.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/rays.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/sparkoperators.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trainers.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trainingoperators.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trustyais.components.platform.opendatahub.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/redhat-ods-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 18 KEEP, 1 REVIEW
+exit=0

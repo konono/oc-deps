@@ -1,0 +1,119 @@
+{
+  "StatefulSet/postgres@keycloak": {
+    "apiVersion": "apps/v1",
+    "kind": "StatefulSet",
+    "namespace": "keycloak",
+    "name": "postgres",
+    "uid": "7b3f7715-4262-4c39-b02c-9c605763626f",
+    "creationTimestamp": "2026-09-28T20:54:01Z",
+    "ownerReferences": [],
+    "labels_all": {},
+    "labels_relationship": {},
+    "annotations_relationship": {},
+    "finalizers": [],
+    "serviceAccountName": "",
+    "pvcReferences": [
+      "data"
+    ],
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "keycloak-postgres"
+      }
+    }
+  },
+  "Deployment/maas-postgres@redhat-ods-applications": {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "redhat-ods-applications",
+    "name": "maas-postgres",
+    "uid": "d322fc82-865b-4c88-9c30-b6fb36285b14",
+    "creationTimestamp": "2026-09-26T00:14:06Z",
+    "ownerReferences": [],
+    "labels_all": {},
+    "labels_relationship": {},
+    "annotations_relationship": {},
+    "finalizers": [],
+    "serviceAccountName": "",
+    "pvcReferences": [
+      "maas-postgres-data"
+    ],
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "maas-postgres"
+      }
+    }
+  },
+  "StatefulSet/ogx-postgres@redhat-ods-applications": {
+    "apiVersion": "apps/v1",
+    "kind": "StatefulSet",
+    "namespace": "redhat-ods-applications",
+    "name": "ogx-postgres",
+    "uid": "8790ba28-3aed-4937-bc0f-3f3d0392fc27",
+    "creationTimestamp": "2026-09-26T00:27:43Z",
+    "ownerReferences": [],
+    "labels_all": {},
+    "labels_relationship": {},
+    "annotations_relationship": {},
+    "finalizers": [],
+    "serviceAccountName": "",
+    "pvcReferences": [
+      "data"
+    ],
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "ogx-postgres"
+      }
+    }
+  },
+  "Deployment/model-catalog@rhoai-model-registries": {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "rhoai-model-registries",
+    "name": "model-catalog",
+    "uid": "e983d126-bc36-41f0-8a55-070b0df2a405",
+    "creationTimestamp": "2026-09-22T08:01:43Z",
+    "ownerReferences": [
+      {
+        "apiVersion": "components.platform.opendatahub.io/v1alpha1",
+        "kind": "ModelRegistry",
+        "name": "default-modelregistry",
+        "uid": "efe6316e-5fec-4708-8520-ad40cba464f4"
+      }
+    ],
+    "labels_all": {
+      "app": "model-catalog",
+      "app.kubernetes.io/component": "model-catalog",
+      "app.kubernetes.io/created-by": "model-registry-operator",
+      "app.kubernetes.io/instance": "model-catalog",
+      "app.kubernetes.io/managed-by": "model-registry-operator",
+      "app.kubernetes.io/name": "model-catalog",
+      "app.kubernetes.io/part-of": "model-catalog",
+      "component": "model-catalog"
+    },
+    "labels_relationship": {
+      "app": "model-catalog",
+      "app.kubernetes.io/component": "model-catalog",
+      "app.kubernetes.io/created-by": "model-registry-operator",
+      "app.kubernetes.io/instance": "model-catalog",
+      "app.kubernetes.io/managed-by": "model-registry-operator",
+      "app.kubernetes.io/name": "model-catalog",
+      "app.kubernetes.io/part-of": "model-catalog",
+      "component": "model-catalog"
+    },
+    "annotations_relationship": {},
+    "finalizers": [],
+    "serviceAccountName": "model-catalog",
+    "pvcReferences": [],
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "model-catalog",
+        "app.kubernetes.io/name": "model-catalog",
+        "component": "model-catalog"
+      }
+    }
+  }
+}

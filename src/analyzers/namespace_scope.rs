@@ -107,6 +107,9 @@ pub enum NamespaceEvidence {
         validation: NamespaceValidation,
         source: NamespaceSource,
     },
+    PlanActionNamespace,
+    OperatorGroupAllNamespaces,
+    ExplicitCleanupTarget,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

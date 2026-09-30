@@ -1,0 +1,137 @@
+[
+  {
+    "operator": "authorino-operator",
+    "run_id": "20260928T215821Z-0009ce05-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 5,
+    "total": 5,
+    "resource_set_sha256": "ce662b2834d51bb4d079c9c0015e6ac9c5997bb7934873a168d2a4affa17c91a",
+    "created_at": "2026-09-28 21:58:21.138606+00:00"
+  },
+  {
+    "operator": "cluster-observability-operator",
+    "run_id": "20260928T220050Z-0009cf16-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 15,
+    "total": 15,
+    "resource_set_sha256": "0dbcd64d8a3fb099f704ee57193f4230dd2980032f6b793f2d8b6a297d0fe455",
+    "created_at": "2026-09-28 22:00:50.120398+00:00"
+  },
+  {
+    "operator": "dns-operator",
+    "run_id": "20260928T215909Z-0009ce43-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 5,
+    "total": 5,
+    "resource_set_sha256": "5cd50e83adc79eb37a323383b1969342693706bf2f59307514c26e85b9c6690f",
+    "created_at": "2026-09-28 21:59:09.934446+00:00"
+  },
+  {
+    "operator": "gpu-operator-certified",
+    "run_id": "20260928T215230Z-0009cced-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 91,
+    "total": 91,
+    "resource_set_sha256": "7a3c481648847b8852f1aea57e5a299f9f5469b17a54e8bf1c35b2fa143991d4",
+    "created_at": "2026-09-28 21:52:30.782468+00:00"
+  },
+  {
+    "operator": "job-set",
+    "run_id": "20260928T214745Z-0009cba5-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 25,
+    "total": 25,
+    "resource_set_sha256": "435d88136f5da460b8e96b2298187bb97dfa995003027e7141e13263bcb605b2",
+    "created_at": "2026-09-28 21:47:45.890087+00:00"
+  },
+  {
+    "operator": "kueue-operator",
+    "run_id": "20260928T214836Z-0009cbea-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 6,
+    "total": 6,
+    "resource_set_sha256": "3a851a73e6f5ba5dbae1445a98996bad2da5e243a7a16e3fd01b8fb4677d3a4c",
+    "created_at": "2026-09-28 21:48:36.515698+00:00"
+  },
+  {
+    "operator": "leader-worker-set",
+    "run_id": "20260928T214605Z-0009cb1c-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 5,
+    "total": 5,
+    "resource_set_sha256": "5256ceb74a25c78bec28d22b89ccbd40c1b3ea891400896054907293b51454fb",
+    "created_at": "2026-09-28 21:46:05.542869+00:00"
+  },
+  {
+    "operator": "limitador-operator",
+    "run_id": "20260928T215954Z-0009ce81-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 5,
+    "total": 5,
+    "resource_set_sha256": "c60a6bb5e8bb7e096a63a30a9a64417bb8d87c8f948a491543c2917592bdd9c2",
+    "created_at": "2026-09-28 21:59:54.646241+00:00"
+  },
+  {
+    "operator": "nfd",
+    "run_id": "20260928T215051Z-0009cc68-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 19,
+    "total": 19,
+    "resource_set_sha256": "c644d4268666031754d6d2abbfb90bc05aa9ab9c971f03bccec4a1ff17c9141b",
+    "created_at": "2026-09-28 21:50:51.179123+00:00"
+  },
+  {
+    "operator": "openshift-cert-manager-operator",
+    "run_id": "20260928T215335Z-0009cd30-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 6,
+    "total": 6,
+    "resource_set_sha256": "ad37304f415fd26d806cd7f5855ac8739ffc89f3b6b0439f0478e882a5be3dd7",
+    "created_at": "2026-09-28 21:53:35.443056+00:00"
+  },
+  {
+    "operator": "opentelemetry-product",
+    "run_id": "20260928T220143Z-0009cf4a-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 8,
+    "total": 8,
+    "resource_set_sha256": "ea52904097d81247e997092ca4fc96b20e368567c4b38fe4f9dd769ea040f7dc",
+    "created_at": "2026-09-28 22:01:43.036666+00:00"
+  },
+  {
+    "operator": "rhbk-operator",
+    "run_id": "20260928T214517Z-0009cada-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 21,
+    "total": 21,
+    "resource_set_sha256": "da035ee3e35815cdeac468394be07d8956f3c5fb9e705593efcb3602cbe629e2",
+    "created_at": "2026-09-28 21:45:17.095576+00:00"
+  },
+  {
+    "operator": "rhcl-operator",
+    "run_id": "20260928T215707Z-0009cdbe-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 34,
+    "total": 34,
+    "resource_set_sha256": "7ea8d955b8eff7a4e34ec9a2200dd12eb0474f1c29d8742c8ca67be14a226ca2",
+    "created_at": "2026-09-28 21:57:07.540124+00:00"
+  },
+  {
+    "operator": "rhods-operator",
+    "run_id": "20260928T213805Z-0009c99f-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 324,
+    "total": 324,
+    "resource_set_sha256": "d3bbb9725c17cf713313a771b7e16a93ffdc42243dd77f6645e1ca8368129e5c",
+    "created_at": "2026-09-28 21:38:06.004065+00:00"
+  },
+  {
+    "operator": "servicemeshoperator3",
+    "run_id": "20260928T214937Z-0009cc33-0",
+    "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+    "captured": 5,
+    "total": 5,
+    "resource_set_sha256": "1e940b626fbf24fb1c10118cf58d519a67836099cf549dd2f39b8cda08eadc5b",
+    "created_at": "2026-09-28 21:49:37.350786+00:00"
+  }
+]

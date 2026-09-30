@@ -1,0 +1,157 @@
+{
+  "metadata": {
+    "issue": 46,
+    "base_commit": "8501f80",
+    "phase": "A",
+    "timestamp": "2026-09-28T21:00:00Z",
+    "description": "Ground truth for 4 residual top-level workloads. Each observation is point-in-time: deleted_state is post-Cycle-B (operators absent), recovered_state is post-Ansible-recovery (operators present)."
+  },
+  "residuals": [
+    {
+      "kind": "StatefulSet",
+      "name": "postgres",
+      "namespace": "keycloak",
+      "relevant_operator": "rhbk-operator",
+      "gap_type": "attribution",
+      "gap_explanation": "In keycloak namespace (rhbk-operator footprint via plan actions), scanned and found, but no ownerRef/label evidence links it to rhbk-operator → classified UNATTRIBUTED",
+      "deleted_state_observation": {
+        "uid": "19610d1d-0ff0-40dc-8f10-4d30cdb0ebe4",
+        "owner_refs": [],
+        "labels": {},
+        "in_residual_scope": true,
+        "reported": true,
+        "residual_classification": "UNATTRIBUTED"
+      },
+      "recovered_state_observation": {
+        "uid": "7b3f7715-4262-4c39-b02c-9c605763626f",
+        "owner_refs": [],
+        "labels": {},
+        "operator_resources_visible": false,
+        "note": "UID changed: keycloak postgres was deleted+PVC cleaned for recovery (stale credentials). Ansible recreated fresh. No ownerRef in either state."
+      },
+      "plan_membership": {
+        "in_rhoai_plan": false,
+        "in_rhbk_plan": false,
+        "action_count": 0
+      },
+      "intended_action": "UNDECIDED",
+      "notes": "Created by Ansible, not by rhbk-operator. No ownerRef in any observed state. Ansible deploys it as a standalone postgres for Keycloak."
+    },
+    {
+      "kind": "Deployment",
+      "name": "maas-postgres",
+      "namespace": "redhat-ods-applications",
+      "relevant_operator": "rhods-operator",
+      "gap_type": "attribution",
+      "gap_explanation": "In redhat-ods-applications namespace (rhods-operator footprint via plan actions), scanned and found, but no ownerRef/label evidence links it to rhods-operator → classified UNATTRIBUTED",
+      "deleted_state_observation": {
+        "uid": "d322fc82-865b-4c88-9c30-b6fb36285b14",
+        "owner_refs": [],
+        "labels": {},
+        "in_residual_scope": true,
+        "reported": true,
+        "residual_classification": "UNATTRIBUTED"
+      },
+      "recovered_state_observation": {
+        "uid": "d322fc82-865b-4c88-9c30-b6fb36285b14",
+        "owner_refs": [],
+        "labels": {},
+        "operator_resources_visible": false,
+        "note": "Same UID across states. No ownerRef in either state."
+      },
+      "plan_membership": {
+        "in_rhoai_plan": false,
+        "in_rhbk_plan": false,
+        "action_count": 0
+      },
+      "intended_action": "UNDECIDED",
+      "notes": "Created by Ansible, not by rhods-operator. No ownerRef in any observed state. Ansible deploys it as a standalone postgres for MaaS."
+    },
+    {
+      "kind": "StatefulSet",
+      "name": "ogx-postgres",
+      "namespace": "redhat-ods-applications",
+      "relevant_operator": "rhods-operator",
+      "gap_type": "attribution",
+      "gap_explanation": "In redhat-ods-applications namespace (rhods-operator footprint via plan actions), scanned and found, but no ownerRef/label evidence links it to rhods-operator → classified UNATTRIBUTED",
+      "deleted_state_observation": {
+        "uid": "8790ba28-3aed-4937-bc0f-3f3d0392fc27",
+        "owner_refs": [],
+        "labels": {},
+        "in_residual_scope": true,
+        "reported": true,
+        "residual_classification": "UNATTRIBUTED"
+      },
+      "recovered_state_observation": {
+        "uid": "8790ba28-3aed-4937-bc0f-3f3d0392fc27",
+        "owner_refs": [],
+        "labels": {},
+        "operator_resources_visible": false,
+        "note": "Same UID across states. No ownerRef in either state."
+      },
+      "plan_membership": {
+        "in_rhoai_plan": false,
+        "in_rhbk_plan": false,
+        "action_count": 0
+      },
+      "intended_action": "UNDECIDED",
+      "notes": "Created by Ansible, not by rhods-operator. No ownerRef in any observed state. Ansible deploys it as a standalone postgres for OGX."
+    },
+    {
+      "kind": "Deployment",
+      "name": "model-catalog",
+      "namespace": "rhoai-model-registries",
+      "relevant_operator": "rhods-operator",
+      "gap_type": "inventory",
+      "gap_explanation": "rhoai-model-registries namespace not in any operator's footprint_namespaces (built from install_namespace + plan action namespaces at journal.rs:738-774). Post-delete, ownerRef is absent (mechanism not captured). audit.rs:823 iterates footprint_namespaces only → namespace never scanned → never reported.",
+      "deleted_state_observation": {
+        "uid": "e983d126-bc36-41f0-8a55-070b0df2a405",
+        "owner_refs": [],
+        "labels": {"app.kubernetes.io/managed-by": "model-registry-operator", "app.kubernetes.io/created-by": "model-registry-operator", "app.kubernetes.io/part-of": "model-catalog"},
+        "in_residual_scope": false,
+        "reported": false,
+        "residual_classification": null,
+        "note": "ownerRef absent after teardown; present after recovery. The mechanism that removed it was not captured."
+      },
+      "recovered_state_observation": {
+        "uid": "e983d126-bc36-41f0-8a55-070b0df2a405",
+        "owner_refs": [{"apiVersion": "components.platform.opendatahub.io/v1alpha1", "kind": "ModelRegistry", "name": "default-modelregistry", "uid": "efe6316e-5fec-4708-8520-ad40cba464f4"}],
+        "labels": {"app.kubernetes.io/managed-by": "model-registry-operator", "app.kubernetes.io/created-by": "model-registry-operator", "app.kubernetes.io/part-of": "model-catalog"},
+        "operator_resources_visible": true,
+        "note": "Same UID. ownerRef present after recovery, absent after teardown. The mechanism that removed/re-added it was not captured."
+      },
+      "plan_membership": {
+        "in_rhoai_plan": false,
+        "in_rhbk_plan": false,
+        "action_count": 0
+      },
+      "intended_action": "UNDECIDED",
+      "notes": "Created by model-registry-operator (RHOAI sub-component) in cross-namespace pattern. ownerRef to ModelRegistry observed after recovery but absent after teardown; removal/re-addition mechanism not captured. DSC spec.components.modelregistry.registriesNamespace = rhoai-model-registries provides the namespace provenance link."
+    }
+  ],
+  "plan_action_counts": {
+    "rhoai_plan": {"total": 129, "DELETE": 37, "EXPECT": 73, "KEEP": 18, "REVIEW": 1},
+    "rhbk_plan": {"total": 9, "DELETE": 5, "KEEP": 4},
+    "four_identity_matches": 0,
+    "four_identity_search": [
+      {"identity": "StatefulSet/postgres@keycloak", "in_rhoai_plan": false, "in_rhbk_plan": false},
+      {"identity": "Deployment/maas-postgres@redhat-ods-applications", "in_rhoai_plan": false, "in_rhbk_plan": false},
+      {"identity": "StatefulSet/ogx-postgres@redhat-ods-applications", "in_rhoai_plan": false, "in_rhbk_plan": false},
+      {"identity": "Deployment/model-catalog@rhoai-model-registries", "in_rhoai_plan": false, "in_rhbk_plan": false}
+    ]
+  },
+  "production_path_analysis": {
+    "footprint_namespaces_source": "journal.rs:738-774 build_audit_context()",
+    "footprint_sources": [
+      "operator install_namespace (line 747-748)",
+      "plan action resource namespaces (line 772-773)"
+    ],
+    "missing_sources": [
+      "OperatorGroup spec.targetNamespaces",
+      "Operator CR spec namespace references (e.g., DSC modelregistry.registriesNamespace)",
+      "Cross-namespace operand deployment namespaces"
+    ],
+    "residual_scan_entry": "audit.rs:823 for ns in &ctx.footprint_namespaces",
+    "coverage_message": "audit.rs:1494-1496 'Residuals in namespaces outside this footprint are not covered.'"
+  }
+}

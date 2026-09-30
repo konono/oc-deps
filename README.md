@@ -531,7 +531,7 @@ oc-deps teardown plan rhods-operator \
 
 **Syntax:** `group/Kind/ns/name` or `Kind/ns/name` (core group) or `Kind/-/name` (cluster-scoped).
 
-**Supported target kinds:** Gateway, ConfigMap, Service, ConsolePlugin, Deployment.
+**Supported target kinds:** Gateway, ConfigMap, Service, ConsolePlugin, Deployment, StatefulSet.
 **Forbidden kinds:** Namespace, PersistentVolume, PersistentVolumeClaim, CustomResourceDefinition, APIService.
 
 **Safety guarantees:**
@@ -551,6 +551,7 @@ oc-deps teardown plan rhods-operator \
 | Service | ConsolePlugin (backend), HTTPRoute/GRPCRoute/TCPRoute/TLSRoute/UDPRoute (backendRefs), Ingress (defaultBackend, rules), Route (spec.to, alternateBackends) |
 | ConsolePlugin | Console (spec.plugins) |
 | Deployment | HorizontalPodAutoscaler (scaleTargetRef) |
+| StatefulSet | HorizontalPodAutoscaler (scaleTargetRef) |
 
 The Explicit cleanup phase executes after controller removal and before API/namespace phases, ensuring controllers are gone before their residual resources are cleaned up.
 

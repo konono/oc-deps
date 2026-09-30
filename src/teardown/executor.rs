@@ -24,6 +24,150 @@ use crate::teardown::watch::{WatchManager, WatchWaitResult};
 const DEFAULT_CONCURRENCY: usize = 16;
 
 #[derive(Debug)]
+pub enum ExplicitGuardOutcome {
+    Passed,
+    TransientFailure(crate::teardown::journal::ExplicitCleanupError),
+    HardFailure(String),
+}
+
+impl ExplicitGuardOutcome {
+    pub fn from_scan_warning(
+        w: &crate::kube::resource::ScanWarning,
+        target_label: &str,
+    ) -> ExplicitGuardOutcome {
+        use crate::kube::resource::ScanWarning;
+        use crate::teardown::journal::{ExplicitCleanupError, ExplicitCleanupErrorKind};
+        match w {
+            ScanWarning::Timeout { .. } => {
+                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                    target: target_label.to_string(),
+                    error_kind: ExplicitCleanupErrorKind::Timeout,
+                    message: w.to_string(),
+                })
+            }
+            ScanWarning::ServerError { .. } => {
+                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                    target: target_label.to_string(),
+                    error_kind: ExplicitCleanupErrorKind::ServerError,
+                    message: w.to_string(),
+                })
+            }
+            ScanWarning::Forbidden { .. } => {
+                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                    target: target_label.to_string(),
+                    error_kind: ExplicitCleanupErrorKind::Forbidden,
+                    message: w.to_string(),
+                })
+            }
+            ScanWarning::RateLimited { .. } => {
+                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                    target: target_label.to_string(),
+                    error_kind: ExplicitCleanupErrorKind::ServerError,
+                    message: w.to_string(),
+                })
+            }
+            _ => ExplicitGuardOutcome::HardFailure(format!(
+                "Explicit cleanup: failed to GET {}: {}",
+                target_label, w
+            )),
+        }
+    }
+}
+
+fn explicit_phase_resource<'a>(
+    plan: &'a TeardownPlan,
+    target: &crate::teardown::plan::ExplicitDeleteTarget,
+) -> std::result::Result<&'a ResourceId, String> {
+    let matches: Vec<&ResourceId> = plan
+        .phases
+        .iter()
+        .filter(|p| p.name == crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME)
+        .flat_map(|p| &p.actions)
+        .filter_map(|action| match action {
+            Action::Delete { resource, .. }
+                if resource.group == target.group
+                    && resource.kind == target.kind
+                    && resource.namespace == target.namespace
+                    && resource.name == target.name
+                    && resource.uid.as_deref() == Some(target.uid.as_str()) =>
+            {
+                Some(resource)
+            }
+            _ => None,
+        })
+        .collect();
+    if matches.len() != 1 {
+        return Err(format!(
+            "Explicit cleanup authority for {}/{} matched {} phase actions, expected exactly one",
+            target.kind,
+            target.name,
+            matches.len()
+        ));
+    }
+    let resource = matches[0];
+    if resource.version.trim().is_empty() {
+        return Err(format!(
+            "Explicit cleanup authority for {}/{} has no API version",
+            target.kind, target.name
+        ));
+    }
+    Ok(resource)
+}
+
+fn validate_explicit_live_identity(
+    expected: &ResourceId,
+    object: &DynamicObject,
+) -> std::result::Result<(), String> {
+    let types = object
+        .types
+        .as_ref()
+        .ok_or_else(|| "live object has no TypeMeta".to_string())?;
+    let expected_api_version = if expected.group.is_empty() {
+        expected.version.clone()
+    } else {
+        format!("{}/{}", expected.group, expected.version)
+    };
+    if types.api_version != expected_api_version {
+        return Err(format!(
+            "apiVersion drift — plan={}, live={}",
+            expected_api_version, types.api_version
+        ));
+    }
+    if types.kind != expected.kind {
+        return Err(format!(
+            "kind drift — plan={}, live={}",
+            expected.kind, types.kind
+        ));
+    }
+    if object.metadata.name.as_deref() != Some(expected.name.as_str()) {
+        return Err(format!(
+            "name drift — plan={}, live={}",
+            expected.name,
+            object.metadata.name.as_deref().unwrap_or("<missing>")
+        ));
+    }
+    if object.metadata.namespace != expected.namespace {
+        return Err(format!(
+            "namespace drift — plan={:?}, live={:?}",
+            expected.namespace, object.metadata.namespace
+        ));
+    }
+    let expected_uid = expected
+        .uid
+        .as_deref()
+        .filter(|uid| !uid.is_empty())
+        .ok_or_else(|| "plan identity has no UID".to_string())?;
+    if object.metadata.uid.as_deref() != Some(expected_uid) {
+        return Err(format!(
+            "UID drift — plan={}, live={}",
+            expected_uid,
+            object.metadata.uid.as_deref().unwrap_or("<missing>")
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
 enum DeleteResult {
     /// DELETE accepted by API server (202/200). Not yet Gone — needs barrier confirmation.
     Accepted,
@@ -458,96 +602,157 @@ pub async fn execute_plan_with_store(
                 }
                 c
             };
+            let mut guard_outcome = ExplicitGuardOutcome::Passed;
             for target in &plan.explicit_deletes {
-                let gk = (target.group.clone(), target.kind.clone());
-                let Some(info) = gk_map.get(&gk) else {
-                    anyhow::bail!(
-                        "Explicit cleanup: {}/{} not found in API discovery",
-                        target.kind,
-                        target.name
-                    );
+                let target_label = format!("{}/{}", target.kind, target.name);
+                let target_rid = match explicit_phase_resource(plan, target) {
+                    Ok(resource) => resource.clone(),
+                    Err(reason) => {
+                        guard_outcome = ExplicitGuardOutcome::HardFailure(reason);
+                        break;
+                    }
+                };
+                let gvk_key = (
+                    target_rid.group.clone(),
+                    target_rid.version.clone(),
+                    target_rid.kind.clone(),
+                );
+                let Some(info) = gvk_map.get(&gvk_key) else {
+                    guard_outcome = ExplicitGuardOutcome::HardFailure(format!(
+                        "Explicit cleanup: exact GVK {}/{}/{} for {} not found in API discovery",
+                        target_rid.group, target_rid.version, target_rid.kind, target_label
+                    ));
+                    break;
                 };
                 let gvk = ::kube::api::GroupVersionKind {
-                    group: info.group.clone(),
-                    version: info.version.clone(),
-                    kind: target.kind.clone(),
+                    group: target_rid.group.clone(),
+                    version: target_rid.version.clone(),
+                    kind: target_rid.kind.clone(),
                 };
                 let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
                 let api: ::kube::api::Api<::kube::api::DynamicObject> =
-                    if let Some(ref ns) = target.namespace {
+                    if let Some(ref ns) = target_rid.namespace {
                         ::kube::api::Api::namespaced_with(client.clone(), ns, &ar)
+                    } else if info.namespaced {
+                        guard_outcome = ExplicitGuardOutcome::HardFailure(format!(
+                            "Explicit cleanup: namespaced target {} has no namespace",
+                            target_label
+                        ));
+                        break;
                     } else {
                         ::kube::api::Api::all_with(client.clone(), &ar)
                     };
                 match crate::kube::scanner::get_with_retry(
                     &api,
                     &target.name,
-                    &info.group,
-                    &info.version,
+                    &target_rid.group,
+                    &target_rid.version,
                     &info.plural,
                 )
                 .await
                 {
                     Ok(obj) => {
-                        let live_uid = obj.metadata.uid.as_deref().unwrap_or("");
-                        if live_uid != target.uid {
-                            anyhow::bail!(
-                                "Explicit cleanup: {}/{} UID drift — plan={}, live={}",
-                                target.kind,
-                                target.name,
-                                target.uid,
-                                live_uid
-                            );
+                        if let Err(reason) = validate_explicit_live_identity(&target_rid, &obj) {
+                            guard_outcome = ExplicitGuardOutcome::HardFailure(format!(
+                                "Explicit cleanup: {} identity mismatch: {}",
+                                target_label, reason
+                            ));
+                            break;
                         }
                     }
                     Err(w) if w.is_not_found() => {
-                        eprintln!("  ✅ {}/{} already gone", target.kind, target.name);
+                        eprintln!("  ✅ {} already gone", target_label);
                         continue;
                     }
                     Err(w) => {
-                        anyhow::bail!(
-                            "Explicit cleanup: failed to GET {}/{}: {}",
-                            target.kind,
-                            target.name,
-                            w
-                        );
+                        guard_outcome = ExplicitGuardOutcome::from_scan_warning(&w, &target_label);
+                        break;
                     }
                 }
-                // Ref scan runs in both real apply and dry-run (read-only safety check)
+                // Ref scan: read-only safety check
                 {
-                    let target_rid = crate::kube::resource::ResourceId {
-                        group: target.group.clone(),
-                        version: info.version.clone(),
-                        kind: target.kind.clone(),
-                        namespace: target.namespace.clone(),
-                        name: target.name.clone(),
-                        uid: Some(target.uid.clone()),
-                    };
-                    let scan = ref_guard::check_inbound_refs(client, &target_rid, &closure, gk_map)
-                        .await?;
-                    if !scan.blockers.is_empty() {
-                        let blocker_list: Vec<String> = scan
-                            .blockers
-                            .iter()
-                            .map(|b| format!("{}/{}", b.resource.kind, b.resource.name))
-                            .collect();
-                        anyhow::bail!(
-                            "Explicit cleanup: {}/{} has new outside-plan references: {}",
-                            target.kind,
-                            target.name,
-                            blocker_list.join(", ")
-                        );
-                    }
-                    if !scan.coverage.scan_complete {
-                        anyhow::bail!(
-                            "Explicit cleanup: ref scan for {}/{} failed at apply time",
-                            target.kind,
-                            target.name
-                        );
+                    match ref_guard::check_inbound_refs(client, &target_rid, &closure, gk_map).await
+                    {
+                        Ok(scan) => {
+                            if !scan.blockers.is_empty() {
+                                let blocker_list: Vec<String> = scan
+                                    .blockers
+                                    .iter()
+                                    .map(|b| format!("{}/{}", b.resource.kind, b.resource.name))
+                                    .collect();
+                                guard_outcome = ExplicitGuardOutcome::HardFailure(format!(
+                                    "Explicit cleanup: {} has new outside-plan references: {}",
+                                    target_label,
+                                    blocker_list.join(", ")
+                                ));
+                                break;
+                            }
+                            if !scan.coverage.scan_complete {
+                                use crate::teardown::journal::{
+                                    ExplicitCleanupError, ExplicitCleanupErrorKind,
+                                };
+                                guard_outcome =
+                                    ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                                        target: target_label.clone(),
+                                        error_kind: ExplicitCleanupErrorKind::IncompleteScan,
+                                        message: format!(
+                                            "ref scan for {} incomplete at apply time",
+                                            target_label
+                                        ),
+                                    });
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            use crate::teardown::journal::{
+                                ExplicitCleanupError, ExplicitCleanupErrorKind,
+                            };
+                            let msg = e.to_string();
+                            let kind = if msg.contains("timeout") {
+                                ExplicitCleanupErrorKind::Timeout
+                            } else {
+                                ExplicitCleanupErrorKind::IncompleteScan
+                            };
+                            guard_outcome =
+                                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                                    target: target_label.clone(),
+                                    error_kind: kind,
+                                    message: msg,
+                                });
+                            break;
+                        }
                     }
                 }
             }
-            eprintln!("  ✅ All explicit targets validated");
+            match guard_outcome {
+                ExplicitGuardOutcome::Passed => {
+                    eprintln!("  ✅ All explicit targets validated");
+                }
+                ExplicitGuardOutcome::TransientFailure(ref err) => {
+                    eprintln!(
+                        "  ⚠ Explicit cleanup guard transient failure: {:?} — {}",
+                        err.error_kind, err.message
+                    );
+                    if let Some(j) = journal {
+                        let cleanup_err = err.clone();
+                        j.update(|jrnl| {
+                            jrnl.state = crate::teardown::journal::RunState::ExplicitCleanupBlocked;
+                            jrnl.execution.explicit_cleanup_error = Some(cleanup_err);
+                        })
+                        .await
+                        .context("Failed to persist ExplicitCleanupBlocked state to journal")?;
+                    }
+                    bail!(
+                        "Explicit cleanup blocked (retryable): {:?} — {}. \
+                         Use `teardown resume` to retry.",
+                        err.error_kind,
+                        err.message
+                    );
+                }
+                ExplicitGuardOutcome::HardFailure(reason) => {
+                    bail!("{}", reason);
+                }
+            }
         }
 
         // Pre-controller guard: if THIS phase deletes a CSV, check all REVIEW
@@ -3782,13 +3987,14 @@ pub async fn execute_residual_cleanup_with_progress(
     // Step 1: Verify generation Absent
     let j = journal_store.read().await;
     let gen_state =
-        audit::check_operator_generation(client, &j.operator, &j.audit_context.csv_baseline).await;
+        audit::check_operator_generation_fresh(client, &j.operator, &j.audit_context.csv_baseline)
+            .await;
     if !matches!(gen_state, audit::OperatorGenerationState::Absent) {
         bail!("Operator generation is not Absent — residual cleanup blocked");
     }
 
     // Step 2: Fresh complete audit
-    let fresh_audit = audit::run_residual_audit(client, &j)
+    let fresh_audit = audit::run_observed_audit(client, &j)
         .await
         .context("Fresh audit failed before cleanup")?;
     let fresh_status = audit::residual_status_from_audit(&fresh_audit);
@@ -3849,7 +4055,7 @@ pub async fn execute_residual_cleanup_with_progress(
         // not add authority beyond the batch audit plus exact live GET.
         {
             let post_permit_j = journal_store.read().await;
-            let post_permit_gen = audit::check_operator_generation(
+            let post_permit_gen = audit::check_operator_generation_fresh(
                 client,
                 &post_permit_j.operator,
                 &post_permit_j.audit_context.csv_baseline,
@@ -4233,7 +4439,7 @@ pub async fn execute_residual_cleanup_with_progress(
 
     // Step 5: Re-audit after all cleanups
     let post_j = journal_store.read().await;
-    let post_gen = audit::check_operator_generation(
+    let post_gen = audit::check_operator_generation_fresh(
         client,
         &post_j.operator,
         &post_j.audit_context.csv_baseline,
@@ -4253,7 +4459,7 @@ pub async fn execute_residual_cleanup_with_progress(
         );
     }
 
-    match audit::run_residual_audit(client, &post_j).await {
+    match audit::run_post_mutation_audit(client, &post_j).await {
         Ok(new_audit) => {
             let new_status = audit::residual_status_from_audit(&new_audit);
             journal_store
@@ -4803,8 +5009,8 @@ mod tests {
     fn residual_cleanup_schema_gate_rejects_old_schema() {
         let current = crate::teardown::journal::RUN_JOURNAL_SCHEMA_VERSION;
         assert_eq!(
-            current, 11,
-            "Schema version must be 11 for cleanup gate to work correctly"
+            current, 12,
+            "Schema version must be 12 for cleanup gate to work correctly"
         );
     }
 
@@ -8056,6 +8262,9 @@ mod tests {
                 succeeded_probes: 1,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
         assert!(auto_cleanup_candidates(&audit, &[]).is_empty());
 
@@ -8097,6 +8306,9 @@ mod tests {
                 succeeded_probes: 0,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
 
         let decisions = vec![SavedDecision {
@@ -8136,6 +8348,9 @@ mod tests {
                 succeeded_probes: 0,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
 
         let decisions = vec![SavedDecision {
@@ -8195,6 +8410,9 @@ mod tests {
                 succeeded_probes: 1,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
 
         let decisions = vec![SavedDecision {
@@ -8254,6 +8472,9 @@ mod tests {
                 succeeded_probes: 1,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
 
         let decisions = vec![SavedDecision {
@@ -8310,6 +8531,9 @@ mod tests {
                 succeeded_probes: 1,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
 
         let decisions = vec![SavedDecision {
@@ -8372,6 +8596,9 @@ mod tests {
                 succeeded_probes: 1,
             },
             scan_errors: vec![],
+            target_operators_absent: false,
+            residual_workloads: Vec::new(),
+            incomplete_scopes: Vec::new(),
         };
 
         let same_decision = SavedDecision {
@@ -8631,7 +8858,15 @@ mod tests {
         let (plan, gk, list_count) = make_explicit_cleanup_plan(inject_referrer);
         let list_cnt = list_count.clone();
         let km = std::collections::HashMap::new();
-        let gvk_map = std::collections::HashMap::new();
+        let gvk_map = gk
+            .iter()
+            .map(|((group, kind), info)| {
+                (
+                    (group.clone(), info.version.clone(), kind.clone()),
+                    info.clone(),
+                )
+            })
+            .collect();
         let gvr_map = std::collections::HashMap::new();
 
         let (mock_service, handle) =
@@ -8758,5 +8993,199 @@ mod tests {
         if let Err(e) = &result {
             panic!("No referrer + dry-run must succeed: {}", e);
         }
+    }
+
+    #[test]
+    fn explicit_live_identity_requires_full_gvk_namespace_name_and_uid() {
+        let expected = ResourceId {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+            namespace: Some("ns-a".to_string()),
+            name: "target".to_string(),
+            uid: Some("uid-1".to_string()),
+        };
+        let make = |api_version: &str,
+                    kind: &str,
+                    namespace: Option<&str>,
+                    name: &str,
+                    uid: Option<&str>| {
+            serde_json::from_value::<DynamicObject>(serde_json::json!({
+                "apiVersion": api_version,
+                "kind": kind,
+                "metadata": {
+                    "namespace": namespace,
+                    "name": name,
+                    "uid": uid,
+                }
+            }))
+            .unwrap()
+        };
+
+        assert!(
+            validate_explicit_live_identity(
+                &expected,
+                &make(
+                    "apps/v1",
+                    "Deployment",
+                    Some("ns-a"),
+                    "target",
+                    Some("uid-1")
+                )
+            )
+            .is_ok()
+        );
+        for bad in [
+            make(
+                "other.io/v1",
+                "Deployment",
+                Some("ns-a"),
+                "target",
+                Some("uid-1"),
+            ),
+            make(
+                "apps/v2",
+                "Deployment",
+                Some("ns-a"),
+                "target",
+                Some("uid-1"),
+            ),
+            make(
+                "apps/v1",
+                "StatefulSet",
+                Some("ns-a"),
+                "target",
+                Some("uid-1"),
+            ),
+            make(
+                "apps/v1",
+                "Deployment",
+                Some("ns-b"),
+                "target",
+                Some("uid-1"),
+            ),
+            make(
+                "apps/v1",
+                "Deployment",
+                Some("ns-a"),
+                "other",
+                Some("uid-1"),
+            ),
+            make(
+                "apps/v1",
+                "Deployment",
+                Some("ns-a"),
+                "target",
+                Some("uid-2"),
+            ),
+            make("apps/v1", "Deployment", Some("ns-a"), "target", None),
+        ] {
+            assert!(validate_explicit_live_identity(&expected, &bad).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_cleanup_incomplete_ref_scan_persists_retryable_before_delete() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (plan, gk, _) = make_explicit_cleanup_plan(false);
+        let gvk_map = gk
+            .iter()
+            .map(|((group, kind), info)| {
+                (
+                    (group.clone(), info.version.clone(), kind.clone()),
+                    info.clone(),
+                )
+            })
+            .collect();
+        let km = std::collections::HashMap::new();
+        let gvr_map = std::collections::HashMap::new();
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let delete_count = deletes.clone();
+
+        let (mock_service, handle) =
+            tower_test::mock::pair::<http::Request<Body>, http::Response<Body>>();
+        let spawned = tokio::spawn(async move {
+            let mut handle = std::pin::pin!(handle);
+            while let Some((req, send)) = handle.next_request().await {
+                let path = req.uri().path().to_string();
+                let method = req.method().clone();
+                if method == http::Method::DELETE {
+                    delete_count.fetch_add(1, Ordering::SeqCst);
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "Status", "status": "Success"
+                    })));
+                } else if method == http::Method::GET
+                    && path == "/api/v1/namespaces/test-ns/configmaps/target-cm"
+                {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "ConfigMap",
+                        "metadata": {"name": "target-cm", "namespace": "test-ns", "uid": "cm-uid-1"}
+                    })));
+                } else if method == http::Method::GET && path == "/apis/apps/v1/deployments" {
+                    // Required referrer LIST.  403 is terminal for this query and
+                    // must block before any target DELETE.
+                    send.send_response(forbidden_response());
+                } else if method == http::Method::GET {
+                    send.send_response(json_response(serde_json::json!({
+                        "apiVersion": "v1", "kind": "List", "metadata": {}, "items": []
+                    })));
+                } else {
+                    panic!("unexpected request: {} {}", method, req.uri());
+                }
+            }
+        });
+
+        let journal = make_test_journal_store();
+        journal
+            .update(|j| {
+                j.plan_snapshot = plan.clone();
+                j.execution.phases_total = plan.phases.len();
+                j.execution.phases_completed = 0;
+                j.state = crate::teardown::journal::RunState::Applying;
+            })
+            .await
+            .unwrap();
+
+        let client = Client::new(mock_service, "test-ns");
+        let result = execute_plan_with_store(
+            &client,
+            &plan,
+            &km,
+            &gk,
+            &gvk_map,
+            &gvr_map,
+            false,
+            true,
+            Some(&journal),
+            None,
+            0,
+            true,
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "guard failure mutated target"
+        );
+        let saved = journal.read().await;
+        assert_eq!(
+            saved.state,
+            crate::teardown::journal::RunState::ExplicitCleanupBlocked
+        );
+        assert_eq!(saved.execution.phases_completed, 0);
+        assert!(saved.execution.deleted.is_empty());
+        assert!(matches!(
+            saved.execution.explicit_cleanup_error,
+            Some(crate::teardown::journal::ExplicitCleanupError {
+                error_kind: crate::teardown::journal::ExplicitCleanupErrorKind::IncompleteScan,
+                ..
+            })
+        ));
+
+        drop(client);
+        spawned.abort();
     }
 }

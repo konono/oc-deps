@@ -1,0 +1,119 @@
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/job-set.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 25 operators
+🔍 Discovering CR instances...
+ found 1 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-jobset-operator.v1.0.1-2026-09-29T18-18-33.802943964_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 1 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-jobset] elapsed 0s
+✅ Scanned 269 resource types in 27.5s
+   openshift-jobset — 58 resources
+   Scanned 1 namespace(s), 58 total resources
+   Found 19 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  26 candidate(s) for jobset-operator.v1.0.1 (25 discovery + 1 plan)
+    26 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/job-set/20260929T181909Z-00048274-0 (26 resources)
+
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18d9dd944655a86d-48274.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+Phase 0  Freeze OLM
+  DELETED  Subscription/job-set  (ns: openshift-jobset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/jobset-operator.v1.0.1  (ns: openshift-jobset)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  JobSetOperator/cluster  (cluster-scoped)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/jobset-operator.v1.0.1  (ns: openshift-jobset)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/job-set  (ns: openshift-jobset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/openshift-jobset-operator-lock  (ns: openshift-jobset)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/jobsetoperators.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-jobset  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  4 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+
+🔍 Running post-apply residual audit...
+
+Teardown Residual Audit: jobset-operator.v1.0.1
+Session: run-18d9dd944655a86d-48274
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+UNATTRIBUTED RELATED RESOURCES (8)
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/authorino-operator.v1.4.3  (openshift-jobset)  [uid:3b691a9a-4886-45cf-85c5-5aca786a4cb0]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cert-manager-operator.v1.20.0  (openshift-jobset)  [uid:ef5127b7-75d3-4000-a1a7-ed44f25c9014]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/cluster-observability-operator.v1.5.2  (openshift-jobset)  [uid:8a76c7d9-76f7-47ea-8fc4-363078b72be9]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/dns-operator.v1.4.2  (openshift-jobset)  [uid:ba46b497-f69c-40dc-a1d9-70a75bc0356c]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/kueue-operator.v1.4.2  (openshift-jobset)  [uid:1b4a15e4-5aa4-4485-b6bf-92a3eec4a778]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/limitador-operator.v1.4.2  (openshift-jobset)  [uid:718447cb-33d6-4d25-a7f1-750f77075934]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (openshift-jobset)  [uid:bc894b49-52ab-4fc5-91d4-25c2d6afd165]
+  operators.coreos.com.v1alpha1/ClusterServiceVersion/servicemeshoperator3.v3.4.2  (openshift-jobset)  [uid:d86fb92c-a516-4c26-873d-a724c0b94b59]
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/jobset-operator.v1.0.1  (openshift-jobset)
+    controller needed for operand cleanup
+  Lease/openshift-jobset-operator-lock  (openshift-jobset)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/jobsetoperators.operator.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-jobset  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 17/17 probes succeeded
+
+📋 8 residual(s) observed.
+  Use 'teardown journal' to review.
+exit=0

@@ -1,0 +1,96 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  servicemeshoperator3.v3.4.2 (ns: openshift-servicemesh) (Subscription/servicemeshoperator3@openshift-servicemesh)
+
+Preflight
+  ✓ Subscription resolved (servicemeshoperator3.v3.4.2) — Subscription/servicemeshoperator3 found — will be deleted in Phase 0
+  ✓ CSV health (servicemeshoperator3.v3.4.2) — phase=Succeeded
+  ✓ Controller available (servicemeshoperator3.v3.4.2) — servicemesh-operator3: Available (1)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/servicemeshoperator3  (ns: openshift-servicemesh)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/servicemeshoperator3.v3.4.2  (ns: openshift-servicemesh)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/servicemeshoperator3  (ns: openshift-servicemesh)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/sail-operator-lock  (ns: openshift-servicemesh)
+         leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/trafficextensions.extensions.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/wasmplugins.extensions.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/destinationrules.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/envoyfilters.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/gateways.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/proxyconfigs.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/serviceentries.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/sidecars.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/virtualservices.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/workloadentries.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/workloadgroups.networking.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/ztunnels.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/authorizationpolicies.security.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/peerauthentications.security.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/requestauthentications.security.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/telemetries.telemetry.istio.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiocnis.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiorevisions.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istiorevisiontags.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/istios.sailoperator.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-servicemesh  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  20 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 3 DELETE, 0 EXPECT-GONE, 22 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-servicemeshoperator3.v3.4.2-2026-09-29T18-26-54.083758762_00-00.json
+📄 Execution plan saved to /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/servicemeshoperator3.json
+
+⏱ Discovery: 35.2s, OLM: 1.6s, Plan: 3.1s, Total: 40.1s

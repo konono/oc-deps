@@ -1,0 +1,87 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/authorino-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/authorino-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 5 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-authorino-operator.v1.4.3-2026-09-29T17-43-15.126475044_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 5 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-rhcl] elapsed 0s
+✅ Scanned 269 resource types in 14.0s
+   openshift-rhcl — 143 resources
+   Scanned 1 namespace(s), 143 total resources
+   Found 17 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 2 resources
+  29 candidate(s) for authorino-operator.v1.4.3 (29 discovery + 0 plan)
+    29 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: /tmp/cycle-a-v3-backup/operator/authorino-operator/20260929T174337Z-00047b34-0 (29 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/authorino-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/authorino-operator.v1.4.3  (ns: openshift-rhcl)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE AuthConfig/002268263f8bb03204567714a8f374dbaf67e0353162e6d450af43df8900c427  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE AuthConfig/32c5926417ce74d07104e03d2afed39d36dfb3e0cd65e94a5f8f1e7b85163a98  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE AuthConfig/77d78fccf2af9dd49c04b2afd9490521a51584cb63af0ecef56e9bae12d430c1  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE AuthConfig/9a9b0d8c5f8335cb2f5af8be2bef8c1a7ef8846ba736ea4a7135bd4b966f4f63  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE Authorino/authorino  (ns: openshift-rhcl)
+             independent CR approved via --approve-scope independent
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/authorino-operator.v1.4.3  (ns: openshift-rhcl)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  KEEP     OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+             other operators remain in namespace
+  REVIEW   Lease/aac3a15d.authorino.kuadrant.io  (ns: openshift-rhcl)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/authconfigs.authorino.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/authorinos.operator.authorino.kuadrant.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-rhcl  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 5 KEEP, 1 REVIEW
+exit=0

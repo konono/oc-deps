@@ -1,0 +1,104 @@
+# /tmp/oc-deps-issue46-impl/target/release/oc-deps teardown apply /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/cert-manager-operator.json -y --dry-run --backup-dir /tmp/cycle-a-v3-backup
+📄 Loaded execution plan from /tmp/oc-deps-issue46-impl/logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/cert-manager-operator.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 29 operators
+🔍 Discovering CR instances...
+ found 4 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+📄 Plan saved to /tmp/oc-deps-plans/teardown-cert-manager-operator.v1.20.0-2026-09-29T17-42-29.360547884_00-00.json
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 4 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-jobset] elapsed 0s
+✅ Scanned 269 resource types in 13.2s
+   openshift-jobset — 60 resources
+[namespace 2/2: cert-manager-operator] elapsed 13s
+✅ Scanned 269 resource types in 20.8s
+   cert-manager-operator — 40 resources
+   Scanned 2 namespace(s), 100 total resources
+🔍 Running targeted adapters... found 0 resources
+  10 candidate(s) for cert-manager-operator.v1.20.0 (9 discovery + 1 plan)
+    10 captured, 0 absent
+  Backup: /tmp/cycle-a-v3-backup/operator/openshift-cert-manager-operator/20260929T174308Z-00047aea-0 (10 resources)
+── DRY RUN ──
+
+
+Phase 0  Freeze OLM
+  DRY-DELETE Subscription/openshift-cert-manager-operator  (ns: cert-manager-operator)
+             freeze OLM to prevent re-install
+  KEEP     ClusterServiceVersion/cert-manager-operator.v1.20.0  (ns: cert-manager-operator)
+             controller needed for operand cleanup
+
+  BARRIER (skipped in dry-run)
+
+Phase 1  Trigger operand cleanup
+  DRY-DELETE Certificate/jobset-metrics-cert  (ns: openshift-jobset)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE Certificate/jobset-serving-cert  (ns: openshift-jobset)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE Issuer/jobset-selfsigned-issuer  (ns: openshift-jobset)
+             independent CR approved via --approve-scope independent
+  DRY-DELETE CertManager/cluster  (cluster-scoped)
+             independent CR approved via --approve-scope independent
+
+  BARRIER (skipped in dry-run)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DRY-DELETE ClusterServiceVersion/cert-manager-operator.v1.20.0  (ns: cert-manager-operator)
+             operator controller no longer needed
+
+  BARRIER (skipped in dry-run)
+
+Phase 4  Namespace cleanup
+  DRY-DELETE OperatorGroup/openshift-cert-manager-operator  (ns: cert-manager-operator)
+             operator group approved via --approve-scope operator-group
+  REVIEW   Lease/cert-manager-operator-lock  (ns: cert-manager-operator)
+             leader election lease (holder references operator deployment)
+  REVIEW   ConfigMap/cert-manager-operator-trusted-ca-bundle  (ns: cert-manager-operator)
+             operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/bundles.trust.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/certificaterequests.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/certificates.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/certmanagers.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/challenges.acme.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/clusterissuers.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/issuers.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/istiocsrs.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/orders.acme.cert-manager.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/trustmanagers.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/cert-manager-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  0 deleted, 0 already gone, 0 failed
+
+Planned preserved: 12 KEEP, 2 REVIEW
+exit=0

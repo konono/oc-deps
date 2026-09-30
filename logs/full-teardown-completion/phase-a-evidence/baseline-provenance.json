@@ -1,0 +1,18 @@
+{
+  "issue": 46,
+  "base_commit": "8501f80",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "recovery_tags": [
+    "deps",
+    "platform,workload,integration --skip-tags llm",
+    "mlflow"
+  ],
+  "recovery_exit_codes": [0, 0, 0],
+  "recovery_notes": "keycloak postgres StatefulSet+PVC+CR+Secrets deleted before second platform run due to Invalid user credentials error (stale DB from Cycle B residual)",
+  "verify_result": "20/21 passed, 1 failed (LLMInferenceService qwen3-06b — --skip-tags llm, expected)",
+  "node_count": 1,
+  "node_name": "ip-10-0-23-226.us-east-2.compute.internal",
+  "node_version": "v1.35.6",
+  "target_operator_count": 15,
+  "timestamp": "2026-09-28T20:30:00Z"
+}
