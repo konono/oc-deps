@@ -2367,4 +2367,88 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ── require_completed tests ──
+
+    fn make_outcome(state: RunState, cleanup_failure: Option<&str>) -> WorkflowOutcome {
+        WorkflowOutcome {
+            final_state: state,
+            result: ExecutionResult {
+                phases_completed: 5,
+                phases_total: 7,
+                deleted: vec![],
+                already_gone: vec![],
+                failed: vec![],
+                barrier_timeout: None,
+                kept: vec![],
+                reviewed: vec![],
+            },
+            cleanup_failure: cleanup_failure.map(String::from),
+        }
+    }
+
+    #[test]
+    fn require_completed_ok_for_apply_completed_no_failure() {
+        let o = make_outcome(RunState::ApplyCompleted, None);
+        assert!(require_completed(&o, false).is_ok());
+    }
+
+    #[test]
+    fn require_completed_err_for_paused() {
+        let o = make_outcome(RunState::Paused, None);
+        let err = require_completed(&o, false).unwrap_err();
+        assert!(
+            err.to_string().contains("paused"),
+            "Paused → Err mentioning paused, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn require_completed_err_for_failed() {
+        let o = make_outcome(RunState::Failed, None);
+        assert!(require_completed(&o, false).is_err());
+    }
+
+    #[test]
+    fn require_completed_err_for_cleanup_failure() {
+        let o = make_outcome(RunState::ApplyCompleted, Some("residual incomplete"));
+        let err = require_completed(&o, false).unwrap_err();
+        assert!(
+            err.to_string().contains("residual incomplete"),
+            "cleanup_failure → Err with reason, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn require_completed_dry_run_always_ok() {
+        let o_paused = make_outcome(RunState::Paused, None);
+        assert!(
+            require_completed(&o_paused, true).is_ok(),
+            "dry-run Paused → Ok"
+        );
+
+        let o_failed = make_outcome(RunState::Failed, Some("error"));
+        assert!(
+            require_completed(&o_failed, true).is_ok(),
+            "dry-run Failed+cleanup → Ok"
+        );
+    }
+
+    // ── shared gate cancellation test ──
+
+    #[tokio::test]
+    async fn shared_gate_closed_blocks_second_entry() {
+        let gate = Arc::new(MutationGate::new(4));
+
+        // Entry 1: gate open → would proceed (simulated)
+        assert!(gate.is_open(), "gate must be open for first entry");
+
+        // Simulate Ctrl-C between entries
+        gate.close_and_drain().await;
+
+        // Entry 2: gate closed → must not proceed
+        assert!(!gate.is_open(), "gate must be closed for second entry");
+    }
 }
