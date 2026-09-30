@@ -1,0 +1,84 @@
+{
+  "type": "phase-1-architecture-inventory",
+  "issue": 49,
+  "base_commit": "ad93e096eb05502a33281f3501eab001b834f544",
+  "base_commit_short": "ad93e09",
+  "base_description": "Merge pull request #50 (Issue #46 full-teardown-residual-completion)",
+  "date": "2026-09-30",
+  "deliverables": {
+    "cli_contracts": {
+      "file": "cli-contracts.md",
+      "sha256": "dcf757a13fca97f0c36c9facae89183bbada410c679fc096bc6079639aa82538",
+      "description": "CLI parse/help contracts for plan/apply/resume/batch and --tui/--script/--non-interactive"
+    },
+    "plan_semantic_tuples": {
+      "file": "plan-semantic-tuples.json",
+      "sha256": "d4e93882c14deaf8096a7d876a08e1c27bc43342de00debbcfb8fc72fd4369df",
+      "description": "Nonempty semantic plan tuples for all 15 operators from accepted Issue #46 Cycle A artifacts",
+      "operators": 15,
+      "total_resources": 330,
+      "source": "logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/"
+    },
+    "plan_semantic_tuples_readable": {
+      "file": "plan-semantic-tuples.md",
+      "sha256": "ceb46695ff595fe3369e43e8de032a78c5f07b5ca4afbc933d85fe24f12d5cef",
+      "description": "Human-readable plan tuple summary with counts and sample entries"
+    },
+    "schema_contracts": {
+      "file": "schema-contracts.md",
+      "sha256": "d02b5139ec1f6b08c0070885284c36ec48834079523b3697192743a7eecaa27d",
+      "description": "Journal v12 schema, backup receipt schema, resume classification, batch behavior, output format contracts"
+    },
+    "callsite_inventory": {
+      "file": "callsite-inventory.md",
+      "sha256": "3d560bd684e7434a955bd1d557648de297dd049ea8d0f326a6822de2a432b281",
+      "description": "Production call sites: execute_plan (3), prepare_backup_gate (2), journal mutations (~12), audit (4+4), std::process::Command (3), TUI safety logic"
+    },
+    "test_inventory": {
+      "file": "test-inventory.md",
+      "sha256": "49a1df8385b4a4dc61d58ee8589b245875b6d86b982ede19ce2a3294ab3fc98c",
+      "description": "127 main.rs tests + 1,234 module tests + 6 integration tests mapped to safety contracts"
+    },
+    "workflow_api_proposal": {
+      "file": "workflow-api-proposal.md",
+      "sha256": "d3bab765a7e4c1f5e6330d4791a6005bd4b91bdeede5b156ec44296b8675185e",
+      "description": "Proposed run_teardown_workflow API with ApplyStart::Fresh/Resume, ApplyOptions, state diagram"
+    }
+  },
+  "contract_tests_added": {
+    "file": "src/cli.rs",
+    "tests": [
+      "phase1_apply_accepts_tui_flag",
+      "phase1_apply_accepts_script_flag",
+      "phase1_apply_accepts_non_interactive_flag",
+      "phase1_apply_surviving_options_parse",
+      "phase1_resume_options_parse",
+      "phase1_batch_options_parse"
+    ],
+    "count": 6
+  },
+  "gates": {
+    "fmt": "pass",
+    "clippy": "pass (0 warnings)",
+    "test": "pass (1375 total: 1369 lib + 5 cli_ux + 1 corpus_replay)",
+    "release_build": "pass",
+    "corpus_replay": "pass",
+    "credential_scan": "pass (no secrets in artifacts)"
+  },
+  "nonempty_counts": {
+    "operators": 15,
+    "plan_resources": 330,
+    "execute_plan_sites": 3,
+    "prepare_backup_gate_sites": 2,
+    "journal_mutation_sites": 12,
+    "std_process_command_sites": 3,
+    "existing_tests": 1375,
+    "new_contract_tests": 6
+  },
+  "limitations": [
+    "No live E2E in Phase 1 — cluster is in deleted state from Issue #46",
+    "Plan tuples extracted from Phase D Cycle A artifacts (commit range adfce1c..ad93e09), not live cluster",
+    "Test inventory counts may differ slightly from agent report due to nested module counting",
+    "Workflow API proposal is design-only — no production code changes for Phase 3 yet"
+  ]
+}
