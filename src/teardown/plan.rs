@@ -967,6 +967,80 @@ pub struct PlannedPreserved {
     pub metadata: Option<ReviewMetadata>,
 }
 
+// ──────────────────────────────────────────────────────────────
+//  DeleteResourceSpec — CLI/config explicit delete specification
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteResourceSpec {
+    pub group: String,
+    pub kind: String,
+    pub namespace: Option<String>,
+    pub name: String,
+}
+
+impl DeleteResourceSpec {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.kind.trim().is_empty() || self.kind != self.kind.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid kind {:?} (empty or whitespace)",
+                self.kind
+            );
+        }
+        if self.name.trim().is_empty() || self.name != self.name.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid name {:?} (empty or whitespace)",
+                self.name
+            );
+        }
+        if self.group != self.group.trim() {
+            anyhow::bail!(
+                "delete_resources: invalid group {:?} (whitespace)",
+                self.group
+            );
+        }
+        const FORBIDDEN: &[&str] = &[
+            "Namespace",
+            "PersistentVolume",
+            "PersistentVolumeClaim",
+            "CustomResourceDefinition",
+            "APIService",
+        ];
+        if FORBIDDEN.contains(&self.kind.as_str()) {
+            anyhow::bail!(
+                "delete_resources: kind {} is forbidden (use --prune-crds for CRDs)",
+                self.kind
+            );
+        }
+        Ok(())
+    }
+
+    pub fn parse_cli_arg(s: &str) -> anyhow::Result<Self> {
+        let parts: Vec<&str> = s.split('/').collect();
+        let (group, kind, ns_str, name) = match parts.len() {
+            3 => ("", parts[0], parts[1], parts[2]),
+            4 => (parts[0], parts[1], parts[2], parts[3]),
+            _ => anyhow::bail!(
+                "Invalid delete-resource spec '{}': expected Kind/ns/name or group/Kind/ns/name",
+                s
+            ),
+        };
+        let namespace = if ns_str == "-" {
+            None
+        } else {
+            Some(ns_str.to_string())
+        };
+        let spec = Self {
+            group: group.to_string(),
+            kind: kind.to_string(),
+            namespace,
+            name: name.to_string(),
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+}
 #[cfg(test)]
 #[allow(clippy::cloned_ref_to_slice_refs)]
 mod tests {

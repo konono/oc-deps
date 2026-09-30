@@ -1,30 +1,40 @@
 {
   "phase": 5,
   "base": "5388510",
-  "description": "Module split: commands/teardown.rs + mod.rs → 9 responsibility-scoped modules",
+  "description": "Module split + dependency inversion + dead code removal",
   "modules": {
-    "main.rs": {"loc": 50, "responsibility": "entry point, calls commands::run()"},
+    "main.rs": {"loc": 42, "responsibility": "entry point, no re-exports"},
     "commands/mod.rs": {"loc": 316, "responsibility": "client init + dispatch only"},
-    "commands/teardown.rs": {"loc": 4576, "responsibility": "ApplySet, batch, journal, resume, provenance, handle_teardown"},
+    "commands/teardown.rs": {"loc": 2390, "responsibility": "ApplySet config, batch, print_run_journal, handle_teardown"},
     "commands/network.rs": {"loc": 1638, "responsibility": "network formatters, print_network_tree, handle_network"},
-    "commands/map.rs": {"loc": 1043, "responsibility": "namespace filters, cluster-wide map, validate_map_args, handle_map"},
+    "commands/map.rs": {"loc": 1043, "responsibility": "namespace filters, cluster-wide map, handle_map"},
     "commands/snapshot.rs": {"loc": 442, "responsibility": "snapshot audit/diff/create handlers"},
-    "commands/tree.rs": {"loc": 238, "responsibility": "tree display, show_fields_to_tree_opts, handle_tree"},
+    "commands/tree.rs": {"loc": 238, "responsibility": "tree display helpers, handle_tree"},
     "commands/operator.rs": {"loc": 191, "responsibility": "operator resources/list/owner handlers"},
     "commands/trace.rs": {"loc": 333, "responsibility": "trace handler"},
     "commands/graph.rs": {"loc": 50, "responsibility": "evidence graph handler"},
-    "commands/backup.rs": {"loc": 158, "responsibility": "operator/namespace backup handler"}
+    "commands/backup.rs": {"loc": 158, "responsibility": "backup handler"}
+  },
+  "dependency_direction": {
+    "root_reexports": 0,
+    "commands_dead_code_allow": 0,
+    "workflow_root_bridge": 0,
+    "moved_to_plan": ["DeleteResourceSpec"],
+    "moved_to_planner": ["build_deletion_closure_from_teardown_plan", "resolve_explicit_delete_targets", "should_refresh_discovery", "inject_explicit_phase_into_teardown_plan", "build_execution_plan_from_teardown"],
+    "moved_to_journal": ["discover_audit_scope", "create_run_journal", "build_operator_identity_snapshot", "fetch_observed_identities"],
+    "moved_to_workflow": ["ExplicitCleanupResumeMode", "explicit_cleanup_resume_mode", "operator_snapshot_matches_entry", "find_pending_explicit_cleanup_journal", "select_pending_explicit_cleanup_journal", "ResumeStage", "classify_resume_stage"]
   },
   "tests": {
     "before": 1347,
-    "after": 1347,
-    "deleted": 0,
-    "moved": "network_paths_to_json tests remain in teardown::basis_drift_tests with cross-module import"
+    "after": 1314,
+    "deleted_count": 33,
+    "deleted_reason": "dead production code fossils removed",
+    "safety_contracts_lost": 0
   },
   "gates": {
     "cargo_fmt": "pass",
     "cargo_clippy": "pass",
-    "cargo_test": "1347 pass",
+    "cargo_test": "1314 pass (1308+5+1)",
     "cargo_build_release": "pass",
     "corpus_replay": "pass",
     "plan_golden": "15/343/10",

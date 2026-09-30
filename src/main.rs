@@ -34,14 +34,6 @@ mod output;
 mod teardown;
 mod terminal_output;
 
-// Targeted re-exports for workflow.rs
-pub(crate) use commands::teardown::{
-    DeleteResourceSpec, ExplicitCleanupResumeMode, ResumeStage, build_execution_plan_from_teardown,
-    classify_resume_stage, create_run_journal, discover_audit_scope, explicit_cleanup_resume_mode,
-    inject_explicit_phase_into_teardown_plan, resolve_explicit_delete_targets,
-    should_refresh_discovery,
-};
-
 use clap::Parser;
 
 #[tokio::main]

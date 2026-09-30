@@ -1177,8 +1177,10 @@ pub async fn apply_execution_plan(
     use crate::teardown::plan::ApprovalScopeValue;
     use crate::teardown::planner::DecisionPolicy;
 
-    let no_cache =
-        crate::should_refresh_discovery(params.refresh_discovery, exec_plan.explicit_deletes.len());
+    let no_cache = super::planner::should_refresh_discovery(
+        params.refresh_discovery,
+        exec_plan.explicit_deletes.len(),
+    );
 
     // P0: Validate cluster identity
     let current_cluster_identity = journal::fetch_cluster_identity(client).await?;
@@ -1313,7 +1315,7 @@ pub async fn apply_execution_plan(
                 ApprovalScopeValue::OperatorGroup => crate::cli::ApprovalScope::OperatorGroup,
             })
             .collect();
-        let fresh_exec = crate::build_execution_plan_from_teardown(
+        let fresh_exec = super::planner::build_execution_plan_from_teardown(
             &plan,
             &target_operators,
             &current_cluster_identity,
@@ -1337,10 +1339,10 @@ pub async fn apply_execution_plan(
     // Explicit target injection
     let mut plan = plan;
     if !exec_plan.explicit_deletes.is_empty() {
-        let fresh_specs: Vec<crate::DeleteResourceSpec> = exec_plan
+        let fresh_specs: Vec<super::plan::DeleteResourceSpec> = exec_plan
             .explicit_deletes
             .iter()
-            .map(|t| crate::DeleteResourceSpec {
+            .map(|t| super::plan::DeleteResourceSpec {
                 group: t.group.clone(),
                 kind: t.kind.clone(),
                 namespace: t.namespace.clone(),
@@ -1348,7 +1350,8 @@ pub async fn apply_execution_plan(
             })
             .collect();
         let fresh_targets =
-            crate::resolve_explicit_delete_targets(client, &fresh_specs, &plan, &gk_map).await?;
+            super::planner::resolve_explicit_delete_targets(client, &fresh_specs, &plan, &gk_map)
+                .await?;
         if let Err(drift_errors) = crate::teardown::plan::validate_explicit_targets_authority(
             &exec_plan.explicit_deletes,
             &fresh_targets,
@@ -1359,7 +1362,11 @@ pub async fn apply_execution_plan(
             }
             bail!("{} explicit target authority error(s)", drift_errors.len());
         }
-        crate::inject_explicit_phase_into_teardown_plan(&mut plan, &fresh_targets, &gk_map)?;
+        super::planner::inject_explicit_phase_into_teardown_plan(
+            &mut plan,
+            &fresh_targets,
+            &gk_map,
+        )?;
     }
 
     // Backup gate
@@ -1382,10 +1389,15 @@ pub async fn apply_execution_plan(
 
     // Journal
     let journal_store: Option<std::sync::Arc<JournalStore>> = if !params.dry_run {
-        let audit_ns =
-            crate::discover_audit_scope(client, target_operators[0], &kind_map, &gvr_map, &gk_map)
-                .await?;
-        let store = crate::create_run_journal(
+        let audit_ns = journal::discover_audit_scope(
+            client,
+            target_operators[0],
+            &kind_map,
+            &gvr_map,
+            &gk_map,
+        )
+        .await?;
+        let store = journal::create_run_journal(
             client,
             &plan,
             &target_operators,
@@ -1431,7 +1443,7 @@ pub struct GeneratePlanParams<'a> {
     pub operator_name: &'a str,
     pub approve_delete: &'a [String],
     pub preserve: &'a [String],
-    pub delete_resources: &'a [crate::DeleteResourceSpec],
+    pub delete_resources: &'a [super::plan::DeleteResourceSpec],
     pub refresh_discovery: bool,
 }
 
@@ -1446,7 +1458,8 @@ pub async fn generate_execution_plan_for_operator(
     let explicit_specs = params.delete_resources.to_vec();
     validate_delete_resource_specs(&explicit_specs)?;
 
-    let no_cache = crate::should_refresh_discovery(params.refresh_discovery, explicit_specs.len());
+    let no_cache =
+        super::planner::should_refresh_discovery(params.refresh_discovery, explicit_specs.len());
     eprintln!("🔍 Discovering API resources...");
     let (kind_map, gvr_map, gk_map, gvk_map) =
         crate::kube::discovery::build_kind_lookup_cached(client, config, no_cache).await?;
@@ -1478,9 +1491,14 @@ pub async fn generate_execution_plan_for_operator(
 
     let mut plan = plan;
     let explicit_targets = if !explicit_specs.is_empty() {
-        let targets =
-            crate::resolve_explicit_delete_targets(client, &explicit_specs, &plan, &gk_map).await?;
-        crate::inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
+        let targets = super::planner::resolve_explicit_delete_targets(
+            client,
+            &explicit_specs,
+            &plan,
+            &gk_map,
+        )
+        .await?;
+        super::planner::inject_explicit_phase_into_teardown_plan(&mut plan, &targets, &gk_map)?;
         targets
     } else {
         Vec::new()
@@ -1509,7 +1527,7 @@ pub async fn generate_execution_plan_for_operator(
         })
         .cloned()
         .collect();
-    let mut exec_plan = crate::build_execution_plan_from_teardown(
+    let mut exec_plan = super::planner::build_execution_plan_from_teardown(
         &plan,
         &target_operators,
         &cluster_identity,
@@ -1565,7 +1583,7 @@ pub async fn resume_from_journal(
             }
         }
         RunState::Finished => bail!("Run {} already finished", j.run_id),
-        RunState::Failed => match crate::explicit_cleanup_resume_mode(&j) {
+        RunState::Failed => match explicit_cleanup_resume_mode(&j) {
             Ok(_) => {}
             Err(reason) => bail!(
                 "Run {} has failed and is not eligible for retry: {}",
@@ -1587,7 +1605,7 @@ pub async fn resume_from_journal(
         | RunState::ExplicitCleanupBlocked
         | RunState::ApplyCompleted => {}
         RunState::Finished => bail!("Run finished after lock"),
-        RunState::Failed => match crate::explicit_cleanup_resume_mode(&j) {
+        RunState::Failed => match explicit_cleanup_resume_mode(&j) {
             Ok(_) => {}
             Err(reason) => bail!("Run failed after lock: {}", reason),
         },
@@ -1616,8 +1634,8 @@ pub async fn resume_from_journal(
     }
 
     // Legacy migration
-    let explicit_resume_mode = crate::explicit_cleanup_resume_mode(&j).ok();
-    if explicit_resume_mode == Some(crate::ExplicitCleanupResumeMode::LegacyFailed) {
+    let explicit_resume_mode = explicit_cleanup_resume_mode(&j).ok();
+    if explicit_resume_mode == Some(ExplicitCleanupResumeMode::LegacyFailed) {
         store
             .update(|journal| {
                 journal.state = RunState::ExplicitCleanupBlocked;
@@ -1633,7 +1651,7 @@ pub async fn resume_from_journal(
         j = store.read().await;
         eprintln!("  ✅ Migrated legacy Failed journal to ExplicitCleanupBlocked");
     }
-    let is_explicit_cleanup_resume = crate::explicit_cleanup_resume_mode(&j).is_ok();
+    let is_explicit_cleanup_resume = explicit_cleanup_resume_mode(&j).is_ok();
     no_cache |= is_explicit_cleanup_resume;
 
     eprintln!(
@@ -1843,7 +1861,7 @@ pub async fn resume_from_journal(
     let j = store.read().await;
 
     let resume_stage =
-        crate::classify_resume_stage(&j).map_err(|e| anyhow::anyhow!("Cannot resume: {}", e))?;
+        classify_resume_stage(&j).map_err(|e| anyhow::anyhow!("Cannot resume: {}", e))?;
     let main_complete = j.execution.phases_completed == j.execution.phases_total;
     let paused_from_residual =
         j.state == RunState::Paused && main_complete && j.last_residual_audit.is_some();
@@ -1857,7 +1875,7 @@ pub async fn resume_from_journal(
         gvr_map: &_gvr_map,
     };
 
-    if resume_stage == crate::ResumeStage::Cleanup {
+    if resume_stage == ResumeStage::Cleanup {
         return run_teardown_workflow(
             &workflow_ctx,
             Some(&store),
@@ -1891,7 +1909,9 @@ pub async fn resume_from_journal(
 
 /// Shared validation for delete-resource specs: per-spec validation + duplicate rejection.
 /// Used by both CLI plan and batch generate_execution_plan_for_operator.
-pub fn validate_delete_resource_specs(specs: &[crate::DeleteResourceSpec]) -> anyhow::Result<()> {
+pub fn validate_delete_resource_specs(
+    specs: &[super::plan::DeleteResourceSpec],
+) -> anyhow::Result<()> {
     for spec in specs {
         spec.validate()?;
     }
@@ -2094,9 +2114,368 @@ where
     outcomes
 }
 
+// ── Functions moved from commands/teardown.rs (P0-1 dependency direction fix) ──
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExplicitCleanupResumeMode {
+    TypedBlocked,
+    LegacyFailed,
+}
+
+type ExplicitCleanupKey = (String, String, Option<String>, String, String);
+
+pub fn explicit_cleanup_resume_mode(
+    run: &journal::RunJournal,
+) -> Result<ExplicitCleanupResumeMode, String> {
+    use super::planner::Action;
+    use journal::{FinalizerRecoveryResult, ReDeleteResult, RunState};
+
+    let mode = match run.state {
+        RunState::ExplicitCleanupBlocked => ExplicitCleanupResumeMode::TypedBlocked,
+        RunState::Failed => ExplicitCleanupResumeMode::LegacyFailed,
+        ref other => {
+            return Err(format!(
+                "state {:?} is not an explicit-cleanup retry state",
+                other
+            ));
+        }
+    };
+
+    if run.schema_version != journal::RUN_JOURNAL_SCHEMA_VERSION {
+        return Err(format!(
+            "journal schema v{} does not match current v{}",
+            run.schema_version,
+            journal::RUN_JOURNAL_SCHEMA_VERSION
+        ));
+    }
+    if run.execution.phases_total != run.plan_snapshot.phases.len() {
+        return Err(format!(
+            "phase count mismatch: journal={} plan={}",
+            run.execution.phases_total,
+            run.plan_snapshot.phases.len()
+        ));
+    }
+    if !run.plan_snapshot.blockers.is_empty() {
+        return Err("saved plan contains blockers".to_string());
+    }
+
+    let explicit_phase_indices: Vec<usize> = run
+        .plan_snapshot
+        .phases
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| (p.name == super::plan::EXPLICIT_CLEANUP_PHASE_NAME).then_some(i))
+        .collect();
+    if explicit_phase_indices.len() != 1 {
+        return Err(format!(
+            "expected exactly one Explicit cleanup phase, found {}",
+            explicit_phase_indices.len()
+        ));
+    }
+    let explicit_phase_index = explicit_phase_indices[0];
+    if run.execution.phases_completed != explicit_phase_index {
+        return Err(format!(
+            "phases_completed {} does not point to Explicit cleanup phase {}",
+            run.execution.phases_completed, explicit_phase_index
+        ));
+    }
+    if run.plan_snapshot.explicit_deletes.is_empty() {
+        return Err("saved plan has no explicit_deletes".to_string());
+    }
+
+    let mut metadata_keys: Vec<ExplicitCleanupKey> = Vec::new();
+    for target in &run.plan_snapshot.explicit_deletes {
+        if target.kind.trim().is_empty()
+            || target.name.trim().is_empty()
+            || target.uid.trim().is_empty()
+            || target
+                .namespace
+                .as_ref()
+                .is_some_and(|ns| ns.trim().is_empty())
+            || !target.ref_scan_coverage.scan_complete
+        {
+            return Err(format!(
+                "invalid explicit target {}/{} (empty identity/UID or incomplete plan-time scan)",
+                target.kind, target.name
+            ));
+        }
+        metadata_keys.push((
+            target.group.clone(),
+            target.kind.clone(),
+            target.namespace.clone(),
+            target.name.clone(),
+            target.uid.clone(),
+        ));
+    }
+
+    let mut action_keys: Vec<ExplicitCleanupKey> = Vec::new();
+    for action in &run.plan_snapshot.phases[explicit_phase_index].actions {
+        let Action::Delete { resource, .. } = action else {
+            return Err("Explicit cleanup phase contains a non-DELETE action".to_string());
+        };
+        let uid = resource
+            .uid
+            .as_ref()
+            .filter(|uid| !uid.trim().is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Explicit cleanup action {}/{} has no bound UID",
+                    resource.kind, resource.name
+                )
+            })?;
+        if resource.version.trim().is_empty() {
+            return Err(format!(
+                "Explicit cleanup action {}/{} has no API version",
+                resource.kind, resource.name
+            ));
+        }
+        action_keys.push((
+            resource.group.clone(),
+            resource.kind.clone(),
+            resource.namespace.clone(),
+            resource.name.clone(),
+            uid.clone(),
+        ));
+    }
+    metadata_keys.sort();
+    action_keys.sort();
+    if metadata_keys.windows(2).any(|w| w[0] == w[1])
+        || action_keys.windows(2).any(|w| w[0] == w[1])
+    {
+        return Err("duplicate explicit cleanup identity in saved authority".to_string());
+    }
+    if metadata_keys != action_keys {
+        return Err("explicit_deletes do not match Explicit cleanup actions 1:1".to_string());
+    }
+
+    if run.execution.barrier_timeout.is_some() || !run.execution.failed.is_empty() {
+        return Err("journal contains a failed action or barrier timeout".to_string());
+    }
+    let has_explicit_outcome = run
+        .execution
+        .deleted
+        .iter()
+        .chain(run.execution.already_gone.iter())
+        .any(|r| {
+            r.uid.as_ref().is_some_and(|uid| {
+                metadata_keys
+                    .iter()
+                    .any(|(_, _, _, _, target_uid)| target_uid == uid)
+            })
+        });
+    if has_explicit_outcome {
+        return Err("journal already contains an explicit cleanup mutation outcome".to_string());
+    }
+    if !run.cleanup_decisions.is_empty() {
+        return Err(
+            "residual cleanup decisions exist before Explicit cleanup completed".to_string(),
+        );
+    }
+    if run
+        .finalizer_recoveries
+        .iter()
+        .any(|r| matches!(r.result, FinalizerRecoveryResult::PatchRequested))
+    {
+        return Err("unresolved finalizer recovery outcome".to_string());
+    }
+    if run.execution.re_delete_records.iter().any(|r| {
+        matches!(
+            r.result,
+            ReDeleteResult::Authorized
+                | ReDeleteResult::Accepted
+                | ReDeleteResult::UnknownOutcome(_)
+        )
+    }) {
+        return Err("unresolved re-delete outcome".to_string());
+    }
+
+    match mode {
+        ExplicitCleanupResumeMode::TypedBlocked => {
+            if run.execution.explicit_cleanup_error.is_none() {
+                return Err("typed blocked state has no typed cleanup error".to_string());
+            }
+        }
+        ExplicitCleanupResumeMode::LegacyFailed => {
+            if run.execution.explicit_cleanup_error.is_some() {
+                return Err(
+                    "legacy Failed journal unexpectedly has a typed cleanup error".to_string(),
+                );
+            }
+            if run.backup_receipts.is_empty() {
+                return Err("legacy Failed migration requires a backup receipt".to_string());
+            }
+        }
+    }
+
+    Ok(mode)
+}
+
+pub fn operator_snapshot_matches_entry(
+    run: &journal::RunJournal,
+    operator_entry_name: &str,
+) -> bool {
+    let csv = &run.operator.csv_name;
+    let pkg = match &run.operator.generation_identity {
+        super::plan::OperatorGenerationIdentity::OlmPackage { package_name, .. } => {
+            package_name.as_str()
+        }
+        _ => "",
+    };
+    csv.starts_with(&format!("{}.", operator_entry_name))
+        || csv.starts_with(&format!("{}.v", operator_entry_name))
+        || pkg == operator_entry_name
+        || csv == operator_entry_name
+}
+
+pub fn find_pending_explicit_cleanup_journal(
+    cluster_id: &super::plan::ClusterIdentity,
+    operator_entry_name: &str,
+) -> anyhow::Result<Option<String>> {
+    let runs = journal::list_runs(cluster_id)?;
+    select_pending_explicit_cleanup_journal(&runs, operator_entry_name).map_err(anyhow::Error::msg)
+}
+
+pub fn select_pending_explicit_cleanup_journal(
+    runs: &[journal::RunJournal],
+    operator_entry_name: &str,
+) -> Result<Option<String>, String> {
+    let Some(latest) = runs
+        .iter()
+        .filter(|run| operator_snapshot_matches_entry(run, operator_entry_name))
+        .max_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.run_id.cmp(&b.run_id))
+        })
+    else {
+        return Ok(None);
+    };
+
+    if matches!(
+        latest.state,
+        journal::RunState::ExplicitCleanupBlocked | journal::RunState::Failed
+    ) && !latest.plan_snapshot.explicit_deletes.is_empty()
+    {
+        explicit_cleanup_resume_mode(latest).map_err(|reason| {
+            format!(
+                "Latest run {} for {} has pending explicit cleanup but is not safely resumable: {}",
+                latest.run_id, operator_entry_name, reason
+            )
+        })?;
+        return Ok(Some(latest.run_id.clone()));
+    }
+
+    Ok(None)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ResumeStage {
+    Cleanup,
+    MainExecution,
+}
+
+pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, String> {
+    // Block resume if any finalizer recovery is in PatchRequested state (crash between
+    // intent record and outcome record — commit outcome unknown without live verification)
+    let unresolved_patch = j
+        .finalizer_recoveries
+        .iter()
+        .any(|r| matches!(r.result, journal::FinalizerRecoveryResult::PatchRequested));
+    if unresolved_patch {
+        return Err(
+            "Journal contains unresolved PatchRequested finalizer recovery record(s). \
+             Crash occurred between intent and outcome — manual verification required before resume."
+                .to_string(),
+        );
+    }
+
+    // Block resume if any re-delete record is not terminal (Gone/Failed).
+    // MVP: re-delete crash recovery requires fresh plan. Stale authority not reused.
+    let has_unresolved_redelete = j.execution.re_delete_records.iter().any(|r| {
+        matches!(
+            r.result,
+            journal::ReDeleteResult::Authorized
+                | journal::ReDeleteResult::Accepted
+                | journal::ReDeleteResult::UnknownOutcome(_)
+        )
+    });
+    if has_unresolved_redelete {
+        return Err(
+            "Journal contains unresolved re-delete record(s) (Authorized/Accepted/Unknown). \
+             Re-delete crash recovery requires a fresh teardown plan."
+                .to_string(),
+        );
+    }
+
+    let main_complete = j.execution.phases_completed == j.execution.phases_total;
+
+    let has_pending_cleanup =
+        !j.cleanup_decisions.is_empty() && j.cleanup_decisions.iter().any(|d| d.is_pending());
+
+    let paused_from_residual =
+        j.state == journal::RunState::Paused && main_complete && j.last_residual_audit.is_some();
+
+    // ApplyCompleted → re-enter Residual (with or without prior audit)
+    let apply_completed_reentry = j.state == journal::RunState::ApplyCompleted && main_complete;
+
+    // Inconsistent: cleanup decisions exist but main not complete
+    if !j.cleanup_decisions.is_empty() && !main_complete {
+        return Err(format!(
+            "Journal inconsistent: {} cleanup decisions but only {}/{} phases complete",
+            j.cleanup_decisions.len(),
+            j.execution.phases_completed,
+            j.execution.phases_total,
+        ));
+    }
+    // Inconsistent: InteractiveCleanup but main not complete
+    if j.state == journal::RunState::InteractiveCleanup && !main_complete {
+        return Err(format!(
+            "Journal inconsistent: InteractiveCleanup state but only {}/{} phases complete",
+            j.execution.phases_completed, j.execution.phases_total,
+        ));
+    }
+    // Inconsistent: ApplyCompleted but main not complete
+    if j.state == journal::RunState::ApplyCompleted && !main_complete {
+        return Err(format!(
+            "Journal inconsistent: ApplyCompleted but only {}/{} phases complete",
+            j.execution.phases_completed, j.execution.phases_total,
+        ));
+    }
+
+    // Prepared → user quit Plan Review without pressing Start. No mutation occurred.
+    if j.state == journal::RunState::Prepared {
+        return Err(
+            "Journal is in Prepared state — Plan Review was not completed. \
+             Create a new teardown plan."
+                .to_string(),
+        );
+    }
+
+    // Typed and narrowly proven legacy explicit-cleanup failures both resume
+    // through the saved main plan at the exact Explicit cleanup boundary.
+    if matches!(
+        j.state,
+        journal::RunState::ExplicitCleanupBlocked | journal::RunState::Failed
+    ) {
+        explicit_cleanup_resume_mode(j)?;
+        return Ok(ResumeStage::MainExecution);
+    }
+
+    if (j.state == journal::RunState::InteractiveCleanup && main_complete)
+        || (j.state == journal::RunState::Paused && main_complete && has_pending_cleanup)
+        || paused_from_residual
+        || apply_completed_reentry
+    {
+        Ok(ResumeStage::Cleanup)
+    } else {
+        Ok(ResumeStage::MainExecution)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::teardown::plan::DeleteResourceSpec;
 
     #[test]
     fn determine_final_state_paused_when_gate_closed() {
@@ -2971,13 +3350,13 @@ mod tests {
     #[test]
     fn batch_duplicate_explicit_target_rejected() {
         let specs = vec![
-            crate::DeleteResourceSpec {
+            DeleteResourceSpec {
                 group: "test.io".to_string(),
                 kind: "Widget".to_string(),
                 namespace: Some("ns".to_string()),
                 name: "w1".to_string(),
             },
-            crate::DeleteResourceSpec {
+            DeleteResourceSpec {
                 group: "test.io".to_string(),
                 kind: "Widget".to_string(),
                 namespace: Some("ns".to_string()),
@@ -2997,13 +3376,13 @@ mod tests {
     #[test]
     fn validate_delete_resource_specs_accepts_unique() {
         let specs = vec![
-            crate::DeleteResourceSpec {
+            DeleteResourceSpec {
                 group: "test.io".to_string(),
                 kind: "Widget".to_string(),
                 namespace: Some("ns".to_string()),
                 name: "w1".to_string(),
             },
-            crate::DeleteResourceSpec {
+            DeleteResourceSpec {
                 group: "test.io".to_string(),
                 kind: "Widget".to_string(),
                 namespace: Some("ns".to_string()),

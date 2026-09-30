@@ -4668,6 +4668,343 @@ fn print_plan_json(plan: &TeardownPlan) {
     println!("{}", serde_json::to_string_pretty(plan).unwrap_or_default());
 }
 
+// ── Functions moved from commands/teardown.rs (P0-1 dependency direction fix) ──
+
+pub fn build_deletion_closure_from_teardown_plan(
+    plan: &TeardownPlan,
+) -> crate::teardown::ref_guard::DeletionClosureWithUid {
+    use crate::teardown::ref_guard::{DeletionClosureWithUid, deletion_key};
+    use Action;
+    let mut closure = DeletionClosureWithUid::new();
+    for phase in &plan.phases {
+        for action in &phase.actions {
+            let rid = match action {
+                Action::Delete { resource, .. } | Action::ExpectGone { resource, .. } => resource,
+                _ => continue,
+            };
+            let key = deletion_key(&rid.group, &rid.kind, rid.namespace.as_deref(), &rid.name);
+            if let Some(uid) = &rid.uid {
+                closure.insert(key, uid.clone());
+            }
+        }
+    }
+    closure
+}
+
+pub async fn resolve_explicit_delete_targets(
+    client: &::kube::Client,
+    specs: &[crate::teardown::plan::DeleteResourceSpec],
+    plan: &TeardownPlan,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<Vec<crate::teardown::plan::ExplicitDeleteTarget>> {
+    use crate::teardown::ref_guard;
+    use ::kube::api::{Api, DynamicObject};
+
+    // Pass 1: GET all explicit targets to capture UIDs
+    struct ResolvedSpec {
+        spec: crate::teardown::plan::DeleteResourceSpec,
+        uid: String,
+        version: String,
+    }
+    let mut resolved = Vec::new();
+    for spec in specs {
+        let gk = (spec.group.clone(), spec.kind.clone());
+        let Some(info) = gk_map.get(&gk) else {
+            bail!(
+                "delete-resource: {}/{} not found in API discovery (group={:?})",
+                spec.kind,
+                spec.name,
+                spec.group
+            );
+        };
+
+        if info.namespaced && spec.namespace.is_none() {
+            bail!(
+                "delete-resource: {}/{} is namespaced but no namespace specified",
+                spec.kind,
+                spec.name
+            );
+        }
+        if !info.namespaced && spec.namespace.is_some() {
+            bail!(
+                "delete-resource: {}/{} is cluster-scoped but namespace {:?} specified",
+                spec.kind,
+                spec.name,
+                spec.namespace
+            );
+        }
+
+        let gvk = ::kube::api::GroupVersionKind {
+            group: info.group.clone(),
+            version: info.version.clone(),
+            kind: spec.kind.clone(),
+        };
+        let ar = ::kube::api::ApiResource::from_gvk_with_plural(&gvk, &info.plural);
+
+        let api: Api<DynamicObject> = if let Some(ref ns) = spec.namespace {
+            Api::namespaced_with(client.clone(), ns, &ar)
+        } else {
+            Api::all_with(client.clone(), &ar)
+        };
+
+        let obj = match crate::kube::scanner::get_with_retry(
+            &api,
+            &spec.name,
+            &info.group,
+            &info.version,
+            &info.plural,
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err(w) if w.is_not_found() => {
+                bail!(
+                    "delete-resource: {}/{} not found in cluster",
+                    spec.kind,
+                    spec.name
+                );
+            }
+            Err(w) => {
+                bail!(
+                    "delete-resource: failed to GET {}/{}: {}",
+                    spec.kind,
+                    spec.name,
+                    w
+                );
+            }
+        };
+
+        let uid = obj
+            .metadata
+            .uid
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!("delete-resource: {}/{} has no UID", spec.kind, spec.name)
+            })?
+            .to_string();
+
+        resolved.push(ResolvedSpec {
+            spec: spec.clone(),
+            uid,
+            version: info.version.clone(),
+        });
+    }
+
+    // Pass 2: Build closure with bound UIDs, then run ref guard
+    let mut deletion_closure = build_deletion_closure_from_teardown_plan(plan);
+    for r in &resolved {
+        let key = ref_guard::deletion_key(
+            &r.spec.group,
+            &r.spec.kind,
+            r.spec.namespace.as_deref(),
+            &r.spec.name,
+        );
+        deletion_closure.insert(key, r.uid.clone());
+    }
+
+    let mut targets = Vec::new();
+    for r in &resolved {
+        let target_rid = crate::kube::resource::ResourceId {
+            group: r.spec.group.clone(),
+            version: r.version.clone(),
+            kind: r.spec.kind.clone(),
+            namespace: r.spec.namespace.clone(),
+            name: r.spec.name.clone(),
+            uid: Some(r.uid.clone()),
+        };
+
+        let scan =
+            ref_guard::check_inbound_refs(client, &target_rid, &deletion_closure, gk_map).await?;
+
+        if !scan.blockers.is_empty() {
+            let blocker_list: Vec<String> = scan
+                .blockers
+                .iter()
+                .map(|b| format!("{}/{}({})", b.resource.kind, b.resource.name, b.ref_field))
+                .collect();
+            bail!(
+                "delete-resource: {}/{} is referenced by {} resource(s) outside the deletion plan: {}. \
+                 Cannot safely delete a shared resource.",
+                r.spec.kind,
+                r.spec.name,
+                scan.blockers.len(),
+                blocker_list.join(", ")
+            );
+        }
+
+        if !scan.coverage.scan_complete {
+            bail!(
+                "delete-resource: inbound reference scan for {}/{} is incomplete — cannot verify safety",
+                r.spec.kind,
+                r.spec.name
+            );
+        }
+
+        let inbound_refs = ref_guard::to_inbound_ref_identities(&scan);
+
+        targets.push(crate::teardown::plan::ExplicitDeleteTarget {
+            group: r.spec.group.clone(),
+            kind: r.spec.kind.clone(),
+            namespace: r.spec.namespace.clone(),
+            name: r.spec.name.clone(),
+            uid: r.uid.clone(),
+            reason: "config explicit".to_string(),
+            inbound_refs_at_plan: inbound_refs,
+            ref_scan_coverage: scan.coverage,
+        });
+    }
+
+    Ok(targets)
+}
+
+pub fn should_refresh_discovery(user_requested: bool, explicit_target_count: usize) -> bool {
+    user_requested || explicit_target_count > 0
+}
+
+pub fn inject_explicit_phase_into_teardown_plan(
+    plan: &mut TeardownPlan,
+    explicit_deletes: &[crate::teardown::plan::ExplicitDeleteTarget],
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> anyhow::Result<()> {
+    use {Action, Barrier, PlanPhase};
+    if explicit_deletes.is_empty() {
+        return Ok(());
+    }
+    let mut actions: Vec<Action> = Vec::with_capacity(explicit_deletes.len());
+    for t in explicit_deletes {
+        let version = gk_map
+            .get(&(t.group.clone(), t.kind.clone()))
+            .map(|info| info.version.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Explicit target {}/{} not found in API discovery — cannot determine version",
+                    t.kind,
+                    t.name
+                )
+            })?;
+        actions.push(Action::Delete {
+            resource: crate::kube::resource::ResourceId {
+                group: t.group.clone(),
+                version,
+                kind: t.kind.clone(),
+                namespace: t.namespace.clone(),
+                name: t.name.clone(),
+                uid: Some(t.uid.clone()),
+            },
+            reason: t.reason.clone(),
+        });
+    }
+
+    // Insert before the last 2 phases (CRDs preserve + Namespace preserve)
+    let insert_idx = if plan.phases.len() >= 2 {
+        plan.phases.len() - 2
+    } else {
+        plan.phases.len()
+    };
+
+    plan.phases.insert(
+        insert_idx,
+        PlanPhase {
+            name: crate::teardown::plan::EXPLICIT_CLEANUP_PHASE_NAME.to_string(),
+            description: "Explicit resource cleanup (config-specified)".to_string(),
+            actions,
+            barrier: Some(Barrier {
+                description: "Wait for explicit targets to be fully removed".to_string(),
+                conditions: explicit_deletes
+                    .iter()
+                    .map(|t| format!("{}/{} gone", t.kind, t.name))
+                    .collect(),
+            }),
+        },
+    );
+    plan.explicit_deletes = explicit_deletes.to_vec();
+    Ok(())
+}
+
+pub fn build_execution_plan_from_teardown(
+    plan: &TeardownPlan,
+    target_operators: &[&crate::analyzers::olm::OperatorInstance],
+    cluster_identity: &crate::teardown::plan::ClusterIdentity,
+    prune_crds: bool,
+    approve_scope: &[crate::cli::ApprovalScope],
+    approve_resource: &[String],
+    keep_resource: &[String],
+) -> anyhow::Result<crate::teardown::plan::ExecutionPlan> {
+    use crate::teardown::plan::{
+        ApprovalScopeValue, EXECUTION_PLAN_SCHEMA_VERSION, ExecutionAction, ExecutionPhase,
+        ExecutionResource,
+    };
+    use Action;
+
+    let mut exec_targets: Vec<crate::teardown::plan::SavedOperatorTarget> = Vec::new();
+    for op in target_operators {
+        let pkg =
+            crate::teardown::plan::validate_package_name(op.package_name.as_deref(), &op.csv.name)?;
+        exec_targets.push(crate::teardown::plan::SavedOperatorTarget {
+            package_name: pkg,
+            install_namespace: op.install_namespace.clone(),
+            csv_name_pattern: op.csv.name.clone(),
+        });
+    }
+
+    let exec_phases: Vec<ExecutionPhase> = plan
+        .phases
+        .iter()
+        .enumerate()
+        .map(|(i, phase)| {
+            let resources = phase
+                .actions
+                .iter()
+                .map(|action| {
+                    let (rid, act) = match action {
+                        Action::Delete { resource, .. } => (resource, ExecutionAction::Delete),
+                        Action::ExpectGone { resource, .. } => (resource, ExecutionAction::Expect),
+                        Action::WaitGone { resource } => (resource, ExecutionAction::Wait),
+                        Action::Keep { resource, .. } => (resource, ExecutionAction::Keep),
+                        Action::Review { resource, .. } => (resource, ExecutionAction::Review),
+                    };
+                    ExecutionResource {
+                        group: rid.group.clone(),
+                        kind: rid.kind.clone(),
+                        namespace: rid.namespace.clone(),
+                        name: rid.name.clone(),
+                        uid: rid.uid.clone(),
+                        action: act,
+                    }
+                })
+                .collect();
+            ExecutionPhase {
+                phase: (i + 1) as u32,
+                name: phase.name.clone(),
+                resources,
+            }
+        })
+        .collect();
+
+    let scopes: Vec<ApprovalScopeValue> = approve_scope
+        .iter()
+        .map(|s| match s {
+            crate::cli::ApprovalScope::Root => ApprovalScopeValue::Root,
+            crate::cli::ApprovalScope::Independent => ApprovalScopeValue::Independent,
+            crate::cli::ApprovalScope::LabelOnly => ApprovalScopeValue::LabelOnly,
+            crate::cli::ApprovalScope::OperatorGroup => ApprovalScopeValue::OperatorGroup,
+        })
+        .collect();
+
+    Ok(crate::teardown::plan::ExecutionPlan {
+        schema_version: EXECUTION_PLAN_SCHEMA_VERSION,
+        cluster_identity: cluster_identity.clone(),
+        created_at: plan.snapshot_taken_at.clone(),
+        targets: exec_targets,
+        prune_crds,
+        approve_scopes: scopes,
+        approve_resources: approve_resource.to_vec(),
+        keep_resources: keep_resource.to_vec(),
+        phases: exec_phases,
+        explicit_deletes: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

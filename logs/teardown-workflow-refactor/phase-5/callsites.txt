@@ -1,0 +1,13 @@
+# Mutation callsites and dependency direction
+
+## Mutation service production callsites (execute_plan)
+src/teardown/journal.rs:417:/// retryable state.  Every caller that handles an `execute_plan` error must use
+src/teardown/workflow.rs:131:    let exec_result = executor::execute_plan(
+src/teardown/executor.rs:339:pub async fn execute_plan(
+
+## Dependency direction: workflow.rs → core (no commands bridge)
+Root re-exports in main.rs: 0
+crate:: bridge refs in workflow.rs: 0
+0
+crate:: bridge refs in ref_guard.rs: 0
+0

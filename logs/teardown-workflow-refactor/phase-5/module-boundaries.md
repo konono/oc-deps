@@ -1,18 +1,19 @@
 # Phase 5 Module Boundaries
 
-## Before
-- `main.rs` (50 LOC) → `commands::run()`
-- `commands/mod.rs` (1528 LOC) — inline handlers for all commands + dispatch
-- `commands/teardown.rs` (7239 LOC) — teardown + network + backup + map helpers + tests
+## Before (f7826cd)
+- `main.rs` (50 LOC) — entry point + targeted re-exports for workflow.rs
+- `commands/mod.rs` (316 LOC) — dispatch
+- `commands/teardown.rs` (4576 LOC) — mixed: ApplySet, batch, journal helpers, resume, provenance, network tests, dead code
+- Core modules (workflow.rs, ref_guard.rs) depended on commands layer via crate:: root re-exports
 
 ## After
 | Module | LOC | Responsibility |
 |--------|-----|---------------|
-| `main.rs` | 50 | Entry point |
+| `main.rs` | 42 | Entry point only, zero re-exports |
 | `commands/mod.rs` | 316 | Client init + validation + dispatch |
-| `commands/teardown.rs` | 4576 | ApplySet, batch, journal, resume, provenance, handle_teardown |
-| `commands/network.rs` | 1638 | Network formatters, print_network_tree, handle_network |
-| `commands/map.rs` | 1043 | Namespace filters, cluster-wide map, validate_map_args, handle_map |
+| `commands/teardown.rs` | 2390 | ApplySet config, batch, print_run_journal, handle_teardown |
+| `commands/network.rs` | 1638 | Network formatters, print_network_tree, handle_network, tests |
+| `commands/map.rs` | 1043 | Namespace filters, cluster-wide map, handle_map, tests |
 | `commands/snapshot.rs` | 442 | Snapshot audit/diff/create handlers |
 | `commands/tree.rs` | 238 | Tree display helpers, handle_tree |
 | `commands/operator.rs` | 191 | Operator resources/list/owner handlers |
@@ -20,8 +21,14 @@
 | `commands/graph.rs` | 50 | Evidence graph handler |
 | `commands/backup.rs` | 158 | Backup handler |
 
-## Key decisions
-- `#[allow(clippy::too_many_arguments)]` on handler functions — CLI dispatch pattern, args come directly from clap destructuring
-- `build_residual_evidence` kept with `#[allow(dead_code)]` — was dead in original, likely future use
-- Network-related tests in `basis_drift_tests` kept in teardown.rs with cross-module import rather than splitting the test module
-- `filter_namespaces` and `MAX_NAMESPACE_CONCURRENCY` placed in map.rs, referenced by snapshot.rs via `super::map::`
+## Dependency direction fix (P0-1)
+Core modules no longer depend on commands layer:
+- `teardown::plan` ← `DeleteResourceSpec`
+- `teardown::planner` ← plan construction helpers
+- `teardown::journal` ← audit scope, journal creation, identity snapshot
+- `teardown::workflow` ← resume classification, explicit cleanup mode
+
+`workflow.rs` and `ref_guard.rs` now import from `super::plan::`, `super::planner::`, `journal::` — no `crate::` root bridge.
+
+## Dead code removed (P1-2)
+33 tests and their production fossils removed. Zero `#[allow(dead_code)]` in commands/.
