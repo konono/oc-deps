@@ -2484,21 +2484,24 @@ async fn main() -> Result<()> {
 
                     let present_count = classified
                         .iter()
-                        .filter(|(_, k)| {
-                            matches!(k, crate::teardown::workflow::BatchEntryKind::PlanAndApply)
+                        .filter(|e| {
+                            matches!(
+                                e.kind,
+                                crate::teardown::workflow::BatchEntryKind::PlanAndApply
+                            )
                         })
                         .count();
                     let skip_count = classified
                         .iter()
-                        .filter(|(_, k)| {
-                            matches!(k, crate::teardown::workflow::BatchEntryKind::Skip)
+                        .filter(|e| {
+                            matches!(e.kind, crate::teardown::workflow::BatchEntryKind::Skip)
                         })
                         .count();
                     let resume_count = classified
                         .iter()
-                        .filter(|(_, k)| {
+                        .filter(|e| {
                             matches!(
-                                k,
+                                e.kind,
                                 crate::teardown::workflow::BatchEntryKind::PendingResume { .. }
                                     | crate::teardown::workflow::BatchEntryKind::DryRunResume { .. }
                             )
@@ -2535,13 +2538,12 @@ async fn main() -> Result<()> {
                     }
 
                     let entry_count = entries.len();
-                    let entry_names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
 
                     let effective_defaults = &defaults;
                     let results = crate::teardown::workflow::run_batch_entries(
                         &classified,
                         &batch_gate,
-                        |op_name| {
+                        |source_index, op_name| {
                             let op_name = op_name.to_string();
                             let client = &client;
                             let config = &config;
@@ -2549,11 +2551,8 @@ async fn main() -> Result<()> {
                             let defaults = effective_defaults;
                             let backup_dir_ref = backup_dir.as_deref();
                             let batch_gate = &batch_gate;
-                            let entry_names_ref = &entry_names;
                             async move {
-                                let entry_idx = entry_names_ref.iter().position(|n| n == &op_name)
-                                    .ok_or_else(|| anyhow::anyhow!("Entry not found: {}", op_name))?;
-                                let entry = &entries[entry_idx];
+                                let entry = &entries[source_index];
                                 let options = entry.effective_options(defaults);
                                 eprintln!(
                                     "\n{}\n  {} {}\n{}",
@@ -2567,7 +2566,7 @@ async fn main() -> Result<()> {
                                     approve_delete: &options.approve_delete,
                                     preserve: &options.preserve,
                                     delete_resources: &options.delete_resources,
-                                    refresh_discovery: apply_set_child_bypasses_cache(no_cache, entry_idx),
+                                    refresh_discovery: apply_set_child_bypasses_cache(no_cache, source_index),
                                 };
                                 let exec_plan = crate::teardown::workflow::generate_execution_plan_for_operator(
                                     client, config, &gen_params,
@@ -7662,12 +7661,12 @@ mod basis_drift_tests {
         )];
         let classified = classify_batch_entries(&entries, true, true).unwrap();
         assert!(
-            matches!(&classified[0].1, BatchEntryKind::DryRunResume { run_id } if run_id == "run-123"),
+            matches!(&classified[0].kind, BatchEntryKind::DryRunResume { run_id } if run_id == "run-123"),
             "dry_run pending resume → DryRunResume"
         );
         let classified_live = classify_batch_entries(&entries, true, false).unwrap();
         assert!(
-            matches!(&classified_live[0].1, BatchEntryKind::PendingResume { run_id } if run_id == "run-123"),
+            matches!(&classified_live[0].kind, BatchEntryKind::PendingResume { run_id } if run_id == "run-123"),
             "non-dry_run pending resume → PendingResume"
         );
     }

@@ -1944,43 +1944,62 @@ pub enum BaselineObservation {
     PendingResume { run_id: String },
 }
 
+/// A classified batch entry with its original config index preserved.
+#[derive(Clone, Debug)]
+pub struct ClassifiedBatchEntry {
+    pub source_index: usize,
+    pub name: String,
+    pub kind: BatchEntryKind,
+}
+
 /// Classify batch entries into typed kinds. Returns Err if any operator
 /// is missing and skip_missing is false (baseline gate failure).
+/// Preserves source_index so runners use the correct config entry.
 pub fn classify_batch_entries(
     entries: &[(String, BaselineObservation)],
     skip_missing: bool,
     dry_run: bool,
-) -> anyhow::Result<Vec<(String, BatchEntryKind)>> {
+) -> anyhow::Result<Vec<ClassifiedBatchEntry>> {
     let mut missing: Vec<String> = Vec::new();
     let mut classified = Vec::new();
 
-    for (name, obs) in entries {
+    for (i, (name, obs)) in entries.iter().enumerate() {
         match obs {
             BaselineObservation::Present => {
-                classified.push((name.clone(), BatchEntryKind::PlanAndApply));
+                classified.push(ClassifiedBatchEntry {
+                    source_index: i,
+                    name: name.clone(),
+                    kind: BatchEntryKind::PlanAndApply,
+                });
             }
             BaselineObservation::Missing => {
                 if skip_missing {
-                    classified.push((name.clone(), BatchEntryKind::Skip));
+                    classified.push(ClassifiedBatchEntry {
+                        source_index: i,
+                        name: name.clone(),
+                        kind: BatchEntryKind::Skip,
+                    });
                 } else {
                     missing.push(name.clone());
                 }
             }
             BaselineObservation::PendingResume { run_id } => {
                 if dry_run {
-                    classified.push((
-                        name.clone(),
-                        BatchEntryKind::DryRunResume {
+                    classified.push(ClassifiedBatchEntry {
+                        source_index: i,
+                        name: name.clone(),
+                        kind: BatchEntryKind::DryRunResume {
                             run_id: run_id.clone(),
                         },
-                    ));
+                    });
                 } else {
-                    classified.push((
-                        name.clone(),
-                        BatchEntryKind::PendingResume {
+                    classified.push(ClassifiedBatchEntry {
+                        source_index: i,
+                        name: name.clone(),
+                        kind: BatchEntryKind::PendingResume {
                             run_id: run_id.clone(),
                         },
-                    ));
+                    });
                 }
             }
         }
@@ -1999,29 +2018,32 @@ pub fn classify_batch_entries(
 }
 
 /// Production batch entry loop. Both main.rs and tests call this.
+/// plan_apply_runner receives (source_index, name) so the caller can look up
+/// the correct config entry by index, not by name search.
 pub async fn run_batch_entries<PlanApplyFn, PlanApplyFut, ResumeFn, ResumeFut>(
-    entries: &[(String, BatchEntryKind)],
+    entries: &[ClassifiedBatchEntry],
     gate: &Arc<MutationGate>,
     mut plan_apply_runner: PlanApplyFn,
     mut resume_runner: ResumeFn,
 ) -> Vec<(String, BatchOutcome)>
 where
-    PlanApplyFn: FnMut(&str) -> PlanApplyFut,
+    PlanApplyFn: FnMut(usize, &str) -> PlanApplyFut,
     PlanApplyFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
     ResumeFn: FnMut(&str) -> ResumeFut,
     ResumeFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
 {
     let mut outcomes = Vec::new();
 
-    for (i, (name, kind)) in entries.iter().enumerate() {
+    for (i, entry) in entries.iter().enumerate() {
+        let name = &entry.name;
         if !gate.is_open() {
-            for (n, _) in entries.iter().skip(i) {
-                outcomes.push((n.clone(), BatchOutcome::NotRun));
+            for e in entries.iter().skip(i) {
+                outcomes.push((e.name.clone(), BatchOutcome::NotRun));
             }
             break;
         }
 
-        match kind {
+        match &entry.kind {
             BatchEntryKind::Skip => {
                 outcomes.push((name.clone(), BatchOutcome::Skipped));
             }
@@ -2039,26 +2061,28 @@ where
                     Err(e) => {
                         eprintln!("\n⛔ {} failed: {:#}", name, e);
                         outcomes.push((name.clone(), BatchOutcome::Failed(1)));
-                        for (n, _) in entries.iter().skip(i + 1) {
-                            outcomes.push((n.clone(), BatchOutcome::NotRun));
+                        for e in entries.iter().skip(i + 1) {
+                            outcomes.push((e.name.clone(), BatchOutcome::NotRun));
                         }
                         break;
                     }
                 }
             }
             BatchEntryKind::PlanAndApply => {
-                match plan_apply_runner(name).await.and_then(|o| {
-                    require_completed(&o)?;
-                    Ok(o)
-                }) {
+                match plan_apply_runner(entry.source_index, name)
+                    .await
+                    .and_then(|o| {
+                        require_completed(&o)?;
+                        Ok(o)
+                    }) {
                     Ok(_) => {
                         outcomes.push((name.clone(), BatchOutcome::Succeeded));
                     }
                     Err(e) => {
                         eprintln!("\n⛔ {} failed: {:#}", name, e);
                         outcomes.push((name.clone(), BatchOutcome::Failed(1)));
-                        for (n, _) in entries.iter().skip(i + 1) {
-                            outcomes.push((n.clone(), BatchOutcome::NotRun));
+                        for e in entries.iter().skip(i + 1) {
+                            outcomes.push((e.name.clone(), BatchOutcome::NotRun));
                         }
                         break;
                     }
@@ -2654,13 +2678,21 @@ mod tests {
         let gate = Arc::new(MutationGate::new(4));
         let mut plan_count = 0usize;
         let entries = vec![
-            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
-            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-b".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
         ];
         let result = run_batch_entries(
             &entries,
             &gate,
-            |_name| {
+            |_idx, _name| {
                 plan_count += 1;
                 async { Ok(ok_outcome()) }
             },
@@ -2677,13 +2709,21 @@ mod tests {
         let gate = Arc::new(MutationGate::new(4));
         let mut runner_count = 0usize;
         let entries = vec![
-            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
-            ("op-missing".to_string(), BatchEntryKind::Skip),
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-missing".to_string(),
+                kind: BatchEntryKind::Skip,
+            },
         ];
         let result = run_batch_entries(
             &entries,
             &gate,
-            |_| {
+            |_, _| {
                 runner_count += 1;
                 async { Ok(ok_outcome()) }
             },
@@ -2709,9 +2749,6 @@ mod tests {
         );
         let err = classify_result.unwrap_err().to_string();
         assert!(err.contains("op-missing"), "error names missing operator");
-
-        // Production contract: if classify returns Err, run_batch_entries is never called.
-        // Runner invocations = 0, mutations = 0.
     }
 
     #[tokio::test]
@@ -2719,14 +2756,26 @@ mod tests {
         let gate = Arc::new(MutationGate::new(4));
         let mut call_count = 0usize;
         let entries = vec![
-            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
-            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
-            ("op-c".to_string(), BatchEntryKind::PlanAndApply),
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-b".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 2,
+                name: "op-c".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
         ];
         let result = run_batch_entries(
             &entries,
             &gate,
-            |name| {
+            |_idx, name| {
                 call_count += 1;
                 let fail = name == "op-b";
                 async move {
@@ -2751,13 +2800,21 @@ mod tests {
     async fn batch_paused_outcome_is_failure() {
         let gate = Arc::new(MutationGate::new(4));
         let entries = vec![
-            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
-            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-b".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
         ];
         let result = run_batch_entries(
             &entries,
             &gate,
-            |_| async { Ok(paused_outcome()) },
+            |_, _| async { Ok(paused_outcome()) },
             |_| async { Ok(ok_outcome()) },
         )
         .await;
@@ -2770,16 +2827,17 @@ mod tests {
         let gate = Arc::new(MutationGate::new(4));
         let mut apply_count = 0usize;
         let mut resume_count = 0usize;
-        let entries = vec![(
-            "op-a".to_string(),
-            BatchEntryKind::PendingResume {
+        let entries = vec![ClassifiedBatchEntry {
+            source_index: 0,
+            name: "op-a".to_string(),
+            kind: BatchEntryKind::PendingResume {
                 run_id: "run-123".to_string(),
             },
-        )];
+        }];
         let result = run_batch_entries(
             &entries,
             &gate,
-            |_| {
+            |_, _| {
                 apply_count += 1;
                 async { Ok(ok_outcome()) }
             },
@@ -2801,13 +2859,21 @@ mod tests {
         let gate_clone = gate.clone();
         let mut call_count = 0usize;
         let entries = vec![
-            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
-            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-b".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
         ];
         let result = run_batch_entries(
             &entries,
             &gate,
-            |_| {
+            |_, _| {
                 call_count += 1;
                 let g = gate_clone.clone();
                 async move {
@@ -2825,6 +2891,81 @@ mod tests {
             BatchOutcome::NotRun,
             "second not run (gate closed)"
         );
+    }
+
+    #[tokio::test]
+    async fn batch_same_name_entries_use_distinct_source_index() {
+        let gate = Arc::new(MutationGate::new(4));
+        let mut received_indices = Vec::new();
+        let entries = vec![
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |idx, _name| {
+                received_indices.push(idx);
+                async { Ok(ok_outcome()) }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(
+            received_indices,
+            vec![0, 1],
+            "runner receives distinct source indices 0 and 1"
+        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].1, BatchOutcome::Succeeded);
+        assert_eq!(result[1].1, BatchOutcome::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn batch_skip_preserves_source_index() {
+        let gate = Arc::new(MutationGate::new(4));
+        let mut received_indices = Vec::new();
+        let entries = vec![
+            ClassifiedBatchEntry {
+                source_index: 0,
+                name: "op-a".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+            ClassifiedBatchEntry {
+                source_index: 1,
+                name: "op-skip".to_string(),
+                kind: BatchEntryKind::Skip,
+            },
+            ClassifiedBatchEntry {
+                source_index: 2,
+                name: "op-c".to_string(),
+                kind: BatchEntryKind::PlanAndApply,
+            },
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |idx, _name| {
+                received_indices.push(idx);
+                async { Ok(ok_outcome()) }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(
+            received_indices,
+            vec![0, 2],
+            "skip does not shift source indices"
+        );
+        assert_eq!(result[1].1, BatchOutcome::Skipped);
     }
 
     #[test]
@@ -2896,8 +3037,10 @@ mod tests {
         ];
         let classified = classify_batch_entries(&entries, true, false).unwrap();
         assert_eq!(classified.len(), 2);
-        assert!(matches!(classified[0].1, BatchEntryKind::PlanAndApply));
-        assert!(matches!(classified[1].1, BatchEntryKind::Skip));
+        assert!(matches!(classified[0].kind, BatchEntryKind::PlanAndApply));
+        assert_eq!(classified[0].source_index, 0);
+        assert!(matches!(classified[1].kind, BatchEntryKind::Skip));
+        assert_eq!(classified[1].source_index, 1);
     }
 
     #[test]
@@ -2909,10 +3052,14 @@ mod tests {
             },
         )];
         let dry = classify_batch_entries(&entries, true, true).unwrap();
-        assert!(matches!(&dry[0].1, BatchEntryKind::DryRunResume { run_id } if run_id == "run-1"));
+        assert!(
+            matches!(&dry[0].kind, BatchEntryKind::DryRunResume { run_id } if run_id == "run-1")
+        );
+        assert_eq!(dry[0].source_index, 0);
         let live = classify_batch_entries(&entries, true, false).unwrap();
         assert!(
-            matches!(&live[0].1, BatchEntryKind::PendingResume { run_id } if run_id == "run-1")
+            matches!(&live[0].kind, BatchEntryKind::PendingResume { run_id } if run_id == "run-1")
         );
+        assert_eq!(live[0].source_index, 0);
     }
 }
