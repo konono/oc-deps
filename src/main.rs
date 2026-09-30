@@ -2423,12 +2423,9 @@ async fn main() -> Result<()> {
                         build_kind_lookup_cached(&client, &config, true).await?;
                     let all_operators = discover_operators(&client, &kind_map).await?;
                     let cluster_id = journal::fetch_cluster_identity(&client).await?;
-                    let mut baseline_missing: Vec<String> = Vec::new();
-                    let mut skip_indices: std::collections::HashSet<usize> =
-                        std::collections::HashSet::new();
-                    let mut pending_resume_map: std::collections::HashMap<usize, String> =
-                        std::collections::HashMap::new();
-                    for (idx, entry) in entries.iter().enumerate() {
+                    use crate::teardown::workflow::BaselineObservation;
+                    let mut observations: Vec<(String, BaselineObservation)> = Vec::new();
+                    for entry in &entries {
                         let found = all_operators
                             .iter()
                             .find(|op| operator_matches_entry(op, &entry.name));
@@ -2443,59 +2440,85 @@ async fn main() -> Result<()> {
                                     "  {} {} — {} ({})",
                                     icon, entry.name, op.csv.name, op.csv_phase
                                 );
+                                observations
+                                    .push((entry.name.clone(), BaselineObservation::Present));
                             }
                             None => {
-                                if skip_missing {
-                                    // Check for pending explicit cleanup journal
-                                    let pending_run = find_pending_explicit_cleanup_journal(
-                                        &cluster_id,
-                                        &entry.name,
-                                    )?;
-                                    if let Some(ref run_id) = pending_run {
-                                        eprintln!(
-                                            "  🔄 {} — absent but has pending explicit cleanup ({})",
-                                            entry.name, run_id
-                                        );
-                                        pending_resume_map.insert(idx, run_id.clone());
-                                    } else {
-                                        eprintln!("  ⏭ {} — not found, will skip", entry.name);
-                                        skip_indices.insert(idx);
-                                    }
+                                let pending_run = find_pending_explicit_cleanup_journal(
+                                    &cluster_id,
+                                    &entry.name,
+                                )?;
+                                if let Some(ref run_id) = pending_run {
+                                    eprintln!(
+                                        "  🔄 {} — absent but has pending explicit cleanup ({})",
+                                        entry.name, run_id
+                                    );
+                                    observations.push((
+                                        entry.name.clone(),
+                                        BaselineObservation::PendingResume {
+                                            run_id: run_id.clone(),
+                                        },
+                                    ));
+                                } else if skip_missing {
+                                    eprintln!("  ⏭ {} — not found, will skip", entry.name);
+                                    observations
+                                        .push((entry.name.clone(), BaselineObservation::Missing));
                                 } else {
-                                    baseline_missing.push(entry.name.clone());
                                     eprintln!("  ⛔ {} — NOT FOUND", entry.name);
+                                    observations
+                                        .push((entry.name.clone(), BaselineObservation::Missing));
                                 }
                             }
                         }
                     }
-                    if !baseline_missing.is_empty() {
-                        bail!(
-                            "Baseline gate failed: {} operator(s) not found: {}. \
-                             Use --skip-missing to skip absent operators.",
-                            baseline_missing.len(),
-                            baseline_missing.join(", ")
-                        );
-                    }
-                    let present_count =
-                        entries.len() - skip_indices.len() - pending_resume_map.len();
-                    let mut baseline_note = String::new();
-                    if !skip_indices.is_empty() {
-                        baseline_note.push_str(&format!(", {} skipped", skip_indices.len()));
-                    }
-                    if !pending_resume_map.is_empty() {
-                        baseline_note
-                            .push_str(&format!(", {} pending resume", pending_resume_map.len()));
-                    }
-                    eprintln!(
-                        "✅ Baseline: {}/{} operators present{}\n",
-                        present_count,
-                        entries.len(),
-                        baseline_note,
-                    );
-
                     if no_cache {
                         eprintln!("🔄 API discovery: refresh once, then reuse within this batch\n");
                     }
+
+                    // Classify entries — baseline gate enforced inside classify
+                    let classified = crate::teardown::workflow::classify_batch_entries(
+                        &observations,
+                        skip_missing,
+                        dry_run,
+                    )?;
+
+                    let present_count = classified
+                        .iter()
+                        .filter(|(_, k)| {
+                            matches!(k, crate::teardown::workflow::BatchEntryKind::PlanAndApply)
+                        })
+                        .count();
+                    let skip_count = classified
+                        .iter()
+                        .filter(|(_, k)| {
+                            matches!(k, crate::teardown::workflow::BatchEntryKind::Skip)
+                        })
+                        .count();
+                    let resume_count = classified
+                        .iter()
+                        .filter(|(_, k)| {
+                            matches!(
+                                k,
+                                crate::teardown::workflow::BatchEntryKind::PendingResume { .. }
+                                    | crate::teardown::workflow::BatchEntryKind::DryRunResume { .. }
+                            )
+                        })
+                        .count();
+                    eprintln!(
+                        "✅ Baseline: {}/{} operators present{}{}\n",
+                        present_count,
+                        entries.len(),
+                        if skip_count > 0 {
+                            format!(", {} skipped", skip_count)
+                        } else {
+                            String::new()
+                        },
+                        if resume_count > 0 {
+                            format!(", {} pending resume", resume_count)
+                        } else {
+                            String::new()
+                        },
+                    );
 
                     // Shared gate for entire batch — Ctrl-C stops all remaining entries
                     let batch_gate = std::sync::Arc::new(MutationGate::new(16));
@@ -2511,15 +2534,8 @@ async fn main() -> Result<()> {
                         });
                     }
 
-                    // Classify entries and run production batch loop
                     let entry_count = entries.len();
                     let entry_names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
-                    let classified = crate::teardown::workflow::classify_batch_entries(
-                        &entry_names,
-                        &skip_indices,
-                        &pending_resume_map,
-                        dry_run,
-                    );
 
                     let effective_defaults = &defaults;
                     let results = crate::teardown::workflow::run_batch_entries(
@@ -7635,17 +7651,21 @@ mod basis_drift_tests {
 
     #[test]
     fn batch_dry_run_classifies_pending_as_dry_run_resume() {
-        use crate::teardown::workflow::{BatchEntryKind, classify_batch_entries};
-        let names = vec!["op-a".to_string()];
-        let skip = std::collections::HashSet::new();
-        let mut pending = std::collections::HashMap::new();
-        pending.insert(0, "run-123".to_string());
-        let classified = classify_batch_entries(&names, &skip, &pending, true);
+        use crate::teardown::workflow::{
+            BaselineObservation, BatchEntryKind, classify_batch_entries,
+        };
+        let entries = vec![(
+            "op-a".to_string(),
+            BaselineObservation::PendingResume {
+                run_id: "run-123".to_string(),
+            },
+        )];
+        let classified = classify_batch_entries(&entries, true, true).unwrap();
         assert!(
             matches!(&classified[0].1, BatchEntryKind::DryRunResume { run_id } if run_id == "run-123"),
             "dry_run pending resume → DryRunResume"
         );
-        let classified_live = classify_batch_entries(&names, &skip, &pending, false);
+        let classified_live = classify_batch_entries(&entries, true, false).unwrap();
         assert!(
             matches!(&classified_live[0].1, BatchEntryKind::PendingResume { run_id } if run_id == "run-123"),
             "non-dry_run pending resume → PendingResume"

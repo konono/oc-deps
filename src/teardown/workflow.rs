@@ -1936,39 +1936,66 @@ pub enum BatchEntryKind {
 }
 
 /// Classify batch entries from baseline gate results.
+/// Per-entry baseline observation from operator discovery.
+#[derive(Clone, Debug)]
+pub enum BaselineObservation {
+    Present,
+    Missing,
+    PendingResume { run_id: String },
+}
+
+/// Classify batch entries into typed kinds. Returns Err if any operator
+/// is missing and skip_missing is false (baseline gate failure).
 pub fn classify_batch_entries(
-    entry_names: &[String],
-    skip_indices: &std::collections::HashSet<usize>,
-    pending_resume_map: &std::collections::HashMap<usize, String>,
+    entries: &[(String, BaselineObservation)],
+    skip_missing: bool,
     dry_run: bool,
-) -> Vec<(String, BatchEntryKind)> {
-    entry_names
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            if skip_indices.contains(&i) {
-                (name.clone(), BatchEntryKind::Skip)
-            } else if let Some(run_id) = pending_resume_map.get(&i) {
+) -> anyhow::Result<Vec<(String, BatchEntryKind)>> {
+    let mut missing: Vec<String> = Vec::new();
+    let mut classified = Vec::new();
+
+    for (name, obs) in entries {
+        match obs {
+            BaselineObservation::Present => {
+                classified.push((name.clone(), BatchEntryKind::PlanAndApply));
+            }
+            BaselineObservation::Missing => {
+                if skip_missing {
+                    classified.push((name.clone(), BatchEntryKind::Skip));
+                } else {
+                    missing.push(name.clone());
+                }
+            }
+            BaselineObservation::PendingResume { run_id } => {
                 if dry_run {
-                    (
+                    classified.push((
                         name.clone(),
                         BatchEntryKind::DryRunResume {
                             run_id: run_id.clone(),
                         },
-                    )
+                    ));
                 } else {
-                    (
+                    classified.push((
                         name.clone(),
                         BatchEntryKind::PendingResume {
                             run_id: run_id.clone(),
                         },
-                    )
+                    ));
                 }
-            } else {
-                (name.clone(), BatchEntryKind::PlanAndApply)
             }
-        })
-        .collect()
+        }
+    }
+
+    if !missing.is_empty() {
+        bail!(
+            "Baseline gate failed: {} operator(s) not found: {}. \
+             Use --skip-missing to skip absent operators.",
+            missing.len(),
+            missing.join(", ")
+        );
+    }
+
+    Ok(classified)
 }
 
 /// Production batch entry loop. Both main.rs and tests call this.
@@ -2009,7 +2036,8 @@ where
                     Ok(_) => {
                         outcomes.push((name.clone(), BatchOutcome::Succeeded));
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        eprintln!("\n⛔ {} failed: {:#}", name, e);
                         outcomes.push((name.clone(), BatchOutcome::Failed(1)));
                         for (n, _) in entries.iter().skip(i + 1) {
                             outcomes.push((n.clone(), BatchOutcome::NotRun));
@@ -2026,7 +2054,8 @@ where
                     Ok(_) => {
                         outcomes.push((name.clone(), BatchOutcome::Succeeded));
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        eprintln!("\n⛔ {} failed: {:#}", name, e);
                         outcomes.push((name.clone(), BatchOutcome::Failed(1)));
                         for (n, _) in entries.iter().skip(i + 1) {
                             outcomes.push((n.clone(), BatchOutcome::NotRun));
@@ -2669,25 +2698,20 @@ mod tests {
 
     #[tokio::test]
     async fn batch_missing_without_skip_baseline_error() {
-        // When skip_missing is false, the baseline gate rejects missing operators
-        // BEFORE any batch entries are processed. So the entry list is empty
-        // (main.rs bails before calling run_batch_entries).
-        // This test verifies that an empty entry list produces empty outcomes.
-        let gate = Arc::new(MutationGate::new(4));
-        let mut runner_count = 0usize;
-        let entries: Vec<(String, BatchEntryKind)> = vec![];
-        let result = run_batch_entries(
-            &entries,
-            &gate,
-            |_| {
-                runner_count += 1;
-                async { Ok(ok_outcome()) }
-            },
-            |_| async { Ok(ok_outcome()) },
-        )
-        .await;
-        assert_eq!(result.len(), 0, "no entries → no outcomes");
-        assert_eq!(runner_count, 0, "no runner invocations");
+        let entries = vec![
+            ("op-a".to_string(), BaselineObservation::Present),
+            ("op-missing".to_string(), BaselineObservation::Missing),
+        ];
+        let classify_result = classify_batch_entries(&entries, false, false);
+        assert!(
+            classify_result.is_err(),
+            "missing + skip_missing=false → Err before run_batch_entries"
+        );
+        let err = classify_result.unwrap_err().to_string();
+        assert!(err.contains("op-missing"), "error names missing operator");
+
+        // Production contract: if classify returns Err, run_batch_entries is never called.
+        // Runner invocations = 0, mutations = 0.
     }
 
     #[tokio::test]
@@ -2849,17 +2873,46 @@ mod tests {
     }
 
     #[test]
-    fn classify_batch_entries_missing_without_skip() {
-        let names = vec!["op-a".to_string(), "op-b".to_string()];
-        let mut skip = std::collections::HashSet::new();
-        // Simulate: without skip_missing, missing operators cause
-        // baseline to bail BEFORE classification. With skip_missing,
-        // they appear in skip_indices.
-        skip.insert(1);
-        let pending = std::collections::HashMap::new();
-        let classified = classify_batch_entries(&names, &skip, &pending, false);
+    fn classify_missing_without_skip_returns_err() {
+        let entries = vec![
+            ("op-a".to_string(), BaselineObservation::Present),
+            ("op-b".to_string(), BaselineObservation::Missing),
+        ];
+        let result = classify_batch_entries(&entries, false, false);
+        assert!(result.is_err(), "missing + skip_missing=false → Err");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("op-b"),
+            "error must name the missing operator, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn classify_missing_with_skip_returns_skip() {
+        let entries = vec![
+            ("op-a".to_string(), BaselineObservation::Present),
+            ("op-b".to_string(), BaselineObservation::Missing),
+        ];
+        let classified = classify_batch_entries(&entries, true, false).unwrap();
         assert_eq!(classified.len(), 2);
         assert!(matches!(classified[0].1, BatchEntryKind::PlanAndApply));
         assert!(matches!(classified[1].1, BatchEntryKind::Skip));
+    }
+
+    #[test]
+    fn classify_pending_resume_dry_run() {
+        let entries = vec![(
+            "op-a".to_string(),
+            BaselineObservation::PendingResume {
+                run_id: "run-1".to_string(),
+            },
+        )];
+        let dry = classify_batch_entries(&entries, true, true).unwrap();
+        assert!(matches!(&dry[0].1, BatchEntryKind::DryRunResume { run_id } if run_id == "run-1"));
+        let live = classify_batch_entries(&entries, true, false).unwrap();
+        assert!(
+            matches!(&live[0].1, BatchEntryKind::PendingResume { run_id } if run_id == "run-1")
+        );
     }
 }
