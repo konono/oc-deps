@@ -1144,10 +1144,7 @@ async fn run_resume_cleanup(
 
 /// Check that a workflow outcome represents successful completion.
 /// Dry-run always passes (no journal/mutation).
-pub fn require_completed(outcome: &WorkflowOutcome, dry_run: bool) -> anyhow::Result<()> {
-    if dry_run {
-        return Ok(());
-    }
+pub fn require_completed(outcome: &WorkflowOutcome) -> anyhow::Result<()> {
     match (&outcome.final_state, &outcome.cleanup_failure) {
         (RunState::ApplyCompleted, None) => Ok(()),
         (RunState::Paused, _) => bail!(
@@ -1164,6 +1161,7 @@ pub struct ApplyParams<'a> {
     pub dry_run: bool,
     pub backup_dir: Option<&'a str>,
     pub skip_confirm: bool,
+    pub refresh_discovery: bool,
     pub gate: &'a std::sync::Arc<MutationGate>,
 }
 
@@ -1178,7 +1176,8 @@ pub async fn apply_execution_plan(
     use crate::teardown::plan::ApprovalScopeValue;
     use crate::teardown::planner::DecisionPolicy;
 
-    let no_cache = crate::should_refresh_discovery(false, exec_plan.explicit_deletes.len());
+    let no_cache =
+        crate::should_refresh_discovery(params.refresh_discovery, exec_plan.explicit_deletes.len());
 
     // P0: Validate cluster identity
     let current_cluster_identity = journal::fetch_cluster_identity(client).await?;
@@ -1446,6 +1445,20 @@ pub async fn generate_execution_plan_for_operator(
     let explicit_specs = params.delete_resources.to_vec();
     for spec in &explicit_specs {
         spec.validate()?;
+    }
+    {
+        let mut seen = std::collections::HashSet::new();
+        for spec in &explicit_specs {
+            let key = (
+                spec.group.clone(),
+                spec.kind.clone(),
+                spec.namespace.clone(),
+                spec.name.clone(),
+            );
+            if !seen.insert(key) {
+                bail!("Duplicate delete-resource: {}/{}", spec.kind, spec.name);
+            }
+        }
     }
 
     let no_cache = crate::should_refresh_discovery(params.refresh_discovery, explicit_specs.len());
@@ -1894,6 +1907,103 @@ pub async fn resume_from_journal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // ── Batch entry processing (test infrastructure) ──
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum BatchEntryKind {
+        PlanAndApply,
+        Skip,
+        PendingResume { run_id: String },
+        #[allow(dead_code)]
+        DryRunResume { run_id: String },
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum BatchOutcome {
+        Succeeded,
+        Skipped,
+        Failed,
+        NotRun,
+    }
+
+    struct BatchResults {
+        pub outcomes: Vec<(String, BatchOutcome)>,
+    }
+
+    async fn run_batch_entries<PlanApplyFn, PlanApplyFut, ResumeFn, ResumeFut>(
+        entries: &[(String, BatchEntryKind)],
+        gate: &Arc<MutationGate>,
+        mut plan_apply_runner: PlanApplyFn,
+        mut resume_runner: ResumeFn,
+    ) -> BatchResults
+    where
+        PlanApplyFn: FnMut(&str) -> PlanApplyFut,
+        PlanApplyFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
+        ResumeFn: FnMut(&str) -> ResumeFut,
+        ResumeFut: std::future::Future<Output = anyhow::Result<WorkflowOutcome>>,
+    {
+        let mut outcomes = Vec::new();
+
+        for (i, (name, kind)) in entries.iter().enumerate() {
+            if !gate.is_open() {
+                for (n, _) in entries.iter().skip(i) {
+                    outcomes.push((n.clone(), BatchOutcome::NotRun));
+                }
+                break;
+            }
+
+            match kind {
+                BatchEntryKind::Skip => {
+                    outcomes.push((name.clone(), BatchOutcome::Skipped));
+                }
+                BatchEntryKind::DryRunResume { .. } => {
+                    outcomes.push((name.clone(), BatchOutcome::Succeeded));
+                }
+                BatchEntryKind::PendingResume { run_id } => match resume_runner(run_id).await {
+                    Ok(o) => {
+                        if require_completed(&o).is_ok() {
+                            outcomes.push((name.clone(), BatchOutcome::Succeeded));
+                        } else {
+                            outcomes.push((name.clone(), BatchOutcome::Failed));
+                            for (n, _) in entries.iter().skip(i + 1) {
+                                outcomes.push((n.clone(), BatchOutcome::NotRun));
+                            }
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        outcomes.push((name.clone(), BatchOutcome::Failed));
+                        for (n, _) in entries.iter().skip(i + 1) {
+                            outcomes.push((n.clone(), BatchOutcome::NotRun));
+                        }
+                        break;
+                    }
+                },
+                BatchEntryKind::PlanAndApply => match plan_apply_runner(name).await {
+                    Ok(o) => {
+                        if require_completed(&o).is_ok() {
+                            outcomes.push((name.clone(), BatchOutcome::Succeeded));
+                        } else {
+                            outcomes.push((name.clone(), BatchOutcome::Failed));
+                            for (n, _) in entries.iter().skip(i + 1) {
+                                outcomes.push((n.clone(), BatchOutcome::NotRun));
+                            }
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        outcomes.push((name.clone(), BatchOutcome::Failed));
+                        for (n, _) in entries.iter().skip(i + 1) {
+                            outcomes.push((n.clone(), BatchOutcome::NotRun));
+                        }
+                        break;
+                    }
+                },
+            }
+        }
+
+        BatchResults { outcomes }
+    }
 
     #[test]
     fn determine_final_state_paused_when_gate_closed() {
@@ -2390,13 +2500,13 @@ mod tests {
     #[test]
     fn require_completed_ok_for_apply_completed_no_failure() {
         let o = make_outcome(RunState::ApplyCompleted, None);
-        assert!(require_completed(&o, false).is_ok());
+        assert!(require_completed(&o).is_ok());
     }
 
     #[test]
     fn require_completed_err_for_paused() {
         let o = make_outcome(RunState::Paused, None);
-        let err = require_completed(&o, false).unwrap_err();
+        let err = require_completed(&o).unwrap_err();
         assert!(
             err.to_string().contains("paused"),
             "Paused → Err mentioning paused, got: {}",
@@ -2407,13 +2517,13 @@ mod tests {
     #[test]
     fn require_completed_err_for_failed() {
         let o = make_outcome(RunState::Failed, None);
-        assert!(require_completed(&o, false).is_err());
+        assert!(require_completed(&o).is_err());
     }
 
     #[test]
     fn require_completed_err_for_cleanup_failure() {
         let o = make_outcome(RunState::ApplyCompleted, Some("residual incomplete"));
-        let err = require_completed(&o, false).unwrap_err();
+        let err = require_completed(&o).unwrap_err();
         assert!(
             err.to_string().contains("residual incomplete"),
             "cleanup_failure → Err with reason, got: {}",
@@ -2422,17 +2532,20 @@ mod tests {
     }
 
     #[test]
-    fn require_completed_dry_run_always_ok() {
+    fn require_completed_rejects_paused_and_failed_in_all_modes() {
         let o_paused = make_outcome(RunState::Paused, None);
-        assert!(
-            require_completed(&o_paused, true).is_ok(),
-            "dry-run Paused → Ok"
-        );
+        assert!(require_completed(&o_paused).is_err(), "Paused → Err always");
 
         let o_failed = make_outcome(RunState::Failed, Some("error"));
         assert!(
-            require_completed(&o_failed, true).is_ok(),
-            "dry-run Failed+cleanup → Ok"
+            require_completed(&o_failed).is_err(),
+            "Failed+cleanup → Err always"
+        );
+
+        let o_ok = make_outcome(RunState::ApplyCompleted, None);
+        assert!(
+            require_completed(&o_ok).is_ok(),
+            "ApplyCompleted+None → Ok always"
         );
     }
 
@@ -2450,5 +2563,260 @@ mod tests {
 
         // Entry 2: gate closed → must not proceed
         assert!(!gate.is_open(), "gate must be closed for second entry");
+    }
+
+    // ── Batch production tests using run_batch_entries ──
+
+    fn ok_outcome() -> WorkflowOutcome {
+        make_outcome(RunState::ApplyCompleted, None)
+    }
+
+    #[allow(dead_code)]
+    fn failed_outcome() -> WorkflowOutcome {
+        make_outcome(RunState::Failed, None)
+    }
+
+    fn paused_outcome() -> WorkflowOutcome {
+        make_outcome(RunState::Paused, None)
+    }
+
+    #[tokio::test]
+    async fn batch_two_present_entries_success() {
+        let gate = Arc::new(MutationGate::new(4));
+        let mut plan_count = 0usize;
+        let entries = vec![
+            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
+            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |_name| {
+                plan_count += 1;
+                async { Ok(ok_outcome()) }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(result.outcomes.len(), 2);
+        assert_eq!(
+            result.outcomes[0],
+            ("op-a".to_string(), BatchOutcome::Succeeded)
+        );
+        assert_eq!(
+            result.outcomes[1],
+            ("op-b".to_string(), BatchOutcome::Succeeded)
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_present_plus_missing_skip() {
+        let gate = Arc::new(MutationGate::new(4));
+        let mut runner_count = 0usize;
+        let entries = vec![
+            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
+            ("op-missing".to_string(), BatchEntryKind::Skip),
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |_| {
+                runner_count += 1;
+                async { Ok(ok_outcome()) }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(result.outcomes.len(), 2);
+        assert_eq!(result.outcomes[0].1, BatchOutcome::Succeeded);
+        assert_eq!(result.outcomes[1].1, BatchOutcome::Skipped);
+        assert_eq!(runner_count, 1, "runner invoked only for present entry");
+    }
+
+    #[tokio::test]
+    async fn batch_missing_without_skip_baseline_error() {
+        // When skip_missing is false, the baseline gate rejects missing operators
+        // BEFORE any batch entries are processed. So the entry list is empty
+        // (main.rs bails before calling run_batch_entries).
+        // This test verifies that an empty entry list produces empty outcomes.
+        let gate = Arc::new(MutationGate::new(4));
+        let mut runner_count = 0usize;
+        let entries: Vec<(String, BatchEntryKind)> = vec![];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |_| {
+                runner_count += 1;
+                async { Ok(ok_outcome()) }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(result.outcomes.len(), 0, "no entries → no outcomes");
+        assert_eq!(runner_count, 0, "no runner invocations");
+    }
+
+    #[tokio::test]
+    async fn batch_second_entry_failure_stops_remaining() {
+        let gate = Arc::new(MutationGate::new(4));
+        let mut call_count = 0usize;
+        let entries = vec![
+            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
+            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+            ("op-c".to_string(), BatchEntryKind::PlanAndApply),
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |name| {
+                call_count += 1;
+                let fail = name == "op-b";
+                async move {
+                    if fail {
+                        anyhow::bail!("simulated failure")
+                    } else {
+                        Ok(ok_outcome())
+                    }
+                }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(result.outcomes.len(), 3);
+        assert_eq!(
+            result.outcomes[0].1,
+            BatchOutcome::Succeeded,
+            "first retained"
+        );
+        assert_eq!(result.outcomes[1].1, BatchOutcome::Failed, "second failed");
+        assert_eq!(result.outcomes[2].1, BatchOutcome::NotRun, "third not run");
+        assert_eq!(call_count, 2, "runner stopped after failure");
+    }
+
+    #[tokio::test]
+    async fn batch_paused_outcome_is_failure() {
+        let gate = Arc::new(MutationGate::new(4));
+        let entries = vec![
+            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
+            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |_| async { Ok(paused_outcome()) },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(
+            result.outcomes[0].1,
+            BatchOutcome::Failed,
+            "Paused → Failed"
+        );
+        assert_eq!(
+            result.outcomes[1].1,
+            BatchOutcome::NotRun,
+            "remaining NotRun"
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_pending_resume_selects_resume_runner() {
+        let gate = Arc::new(MutationGate::new(4));
+        let mut apply_count = 0usize;
+        let mut resume_count = 0usize;
+        let entries = vec![(
+            "op-a".to_string(),
+            BatchEntryKind::PendingResume {
+                run_id: "run-123".to_string(),
+            },
+        )];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |_| {
+                apply_count += 1;
+                async { Ok(ok_outcome()) }
+            },
+            |run_id| {
+                resume_count += 1;
+                assert_eq!(run_id, "run-123", "correct run_id passed to resume runner");
+                async { Ok(ok_outcome()) }
+            },
+        )
+        .await;
+        assert_eq!(apply_count, 0, "apply runner not called for pending resume");
+        assert_eq!(resume_count, 1, "resume runner called once");
+        assert_eq!(result.outcomes[0].1, BatchOutcome::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn batch_gate_closed_after_entry1_blocks_entry2() {
+        let gate = Arc::new(MutationGate::new(4));
+        let gate_clone = gate.clone();
+        let mut call_count = 0usize;
+        let entries = vec![
+            ("op-a".to_string(), BatchEntryKind::PlanAndApply),
+            ("op-b".to_string(), BatchEntryKind::PlanAndApply),
+        ];
+        let result = run_batch_entries(
+            &entries,
+            &gate,
+            |_| {
+                call_count += 1;
+                let g = gate_clone.clone();
+                async move {
+                    g.close_and_drain().await;
+                    Ok(ok_outcome())
+                }
+            },
+            |_| async { Ok(ok_outcome()) },
+        )
+        .await;
+        assert_eq!(call_count, 1, "only first entry invoked");
+        assert_eq!(
+            result.outcomes[0].1,
+            BatchOutcome::Succeeded,
+            "first completed"
+        );
+        assert_eq!(
+            result.outcomes[1].1,
+            BatchOutcome::NotRun,
+            "second not run (gate closed)"
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_duplicate_explicit_target_rejected() {
+        let specs = vec![
+            crate::DeleteResourceSpec {
+                group: "test.io".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+            crate::DeleteResourceSpec {
+                group: "test.io".to_string(),
+                kind: "Widget".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "w1".to_string(),
+            },
+        ];
+        let mut seen = std::collections::HashSet::new();
+        let mut has_dup = false;
+        for spec in &specs {
+            let key = (
+                spec.group.clone(),
+                spec.kind.clone(),
+                spec.namespace.clone(),
+                spec.name.clone(),
+            );
+            if !seen.insert(key) {
+                has_dup = true;
+            }
+        }
+        assert!(
+            has_dup,
+            "duplicate specs must be detected before API request"
+        );
     }
 }

@@ -2126,7 +2126,7 @@ async fn main() -> Result<()> {
                 }
                 TeardownAction::Apply {
                     plan: plan_file,
-                    refresh_discovery: _,
+                    refresh_discovery,
                     dry_run,
                     yes,
                     backup_dir,
@@ -2153,6 +2153,7 @@ async fn main() -> Result<()> {
                         dry_run,
                         backup_dir: backup_dir.as_deref(),
                         skip_confirm: yes,
+                        refresh_discovery,
                         gate: &gate,
                     };
                     let outcome = crate::teardown::workflow::apply_execution_plan(
@@ -2162,7 +2163,7 @@ async fn main() -> Result<()> {
                         &apply_params,
                     )
                     .await?;
-                    crate::teardown::workflow::require_completed(&outcome, dry_run)?;
+                    crate::teardown::workflow::require_completed(&outcome)?;
                 }
                 TeardownAction::Status {
                     operators: operator_queries,
@@ -2398,7 +2399,7 @@ async fn main() -> Result<()> {
                         refresh_discovery,
                     )
                     .await?;
-                    crate::teardown::workflow::require_completed(&outcome, false)?;
+                    crate::teardown::workflow::require_completed(&outcome)?;
                 }
                 TeardownAction::Batch {
                     config: config_path,
@@ -2602,7 +2603,7 @@ async fn main() -> Result<()> {
                             )
                             .await
                             .and_then(|o| {
-                                crate::teardown::workflow::require_completed(&o, false)?;
+                                crate::teardown::workflow::require_completed(&o)?;
                                 Ok(o)
                             }) {
                                 Ok(_outcome) => {
@@ -2683,6 +2684,7 @@ async fn main() -> Result<()> {
                             dry_run,
                             backup_dir: backup_dir.as_deref(),
                             skip_confirm: true,
+                            refresh_discovery: false,
                             gate: &batch_gate,
                         };
                         match crate::teardown::workflow::apply_execution_plan(
@@ -2693,7 +2695,7 @@ async fn main() -> Result<()> {
                         )
                         .await
                         .and_then(|o| {
-                            crate::teardown::workflow::require_completed(&o, dry_run)?;
+                            crate::teardown::workflow::require_completed(&o)?;
                             Ok(o)
                         }) {
                             Ok(_outcome) => {
