@@ -1,43 +1,22 @@
-#![allow(unused_imports, dead_code)]
 //! Extracted helper functions, network formatters, and tests.
 //! Re-exported from main.rs via `pub(crate) use`.
 
-use crate::analyzers::inspect::{
-    inspect_operator_with_options_ledger, print_inspection as print_inspection_top,
-};
 use crate::analyzers::namespace_scope::discover_operator_namespaces_opts;
-use crate::analyzers::olm::{
-    WhoManagesInput, compute_operator_dependencies, discover_operators, discover_operators_full,
-    print_operators, print_who_manages, who_manages, who_manages_opts,
-};
+use crate::analyzers::olm::{discover_operators, discover_operators_full};
 use crate::analyzers::selector::{
     build_network_inventory, build_service_network_path, evaluate_network_postures,
-    find_network_paths, get_service_selected_pods,
+    find_network_paths,
 };
-use crate::analyzers::trace::{print_trace, trace_resource};
-use crate::cli::{
-    Args, Command, Direction, OperatorAction, OutputFormat, Scope, ShowField, SnapshotAction,
-    TeardownAction,
-};
+use crate::cli::{OutputFormat, ShowField, TeardownAction};
 use crate::graph::evidence::build_evidence_graph;
-use crate::graph::tree::{
-    TreeNode, apply_filters, build_child_tree, build_full_tree, build_namespace_map,
-};
-use crate::kube::discovery::{
-    build_kind_lookup_cached, load_config_and_client, resolve_kind_with_group,
-};
+use crate::graph::tree::{TreeNode, apply_filters, build_namespace_map};
+use crate::kube::discovery::{build_kind_lookup_cached, resolve_kind_with_group};
 use crate::kube::resource::format_scan_warnings;
-use crate::kube::scanner::{
-    find_parents_only, resolve_missing_parents, scan_namespace, scan_namespace_with_extra_apis,
-};
-use crate::kube::snapshot::{
-    build_snapshot, diff_snapshots, load_snapshot, print_diff_table, print_diff_tree, save_snapshot,
-};
-use crate::output::json::{print_chain_json, print_json, tree_to_json};
-use crate::output::table::{print_chain_table, print_table};
-use crate::output::tree::{
-    TreeDisplayOpts, count_nodes, format_container_resources, print_chain_tree, print_tree,
-};
+use crate::kube::scanner::{resolve_missing_parents, scan_namespace_with_extra_apis};
+use crate::kube::snapshot::build_snapshot;
+use crate::output::json::{print_json, tree_to_json};
+use crate::output::table::print_table;
+use crate::output::tree::{TreeDisplayOpts, count_nodes, format_container_resources, print_tree};
 use crate::teardown::explain::explain_resource;
 use crate::teardown::journal::{
     self, ExecutionRecord, JournalStore, ResidualStatus, RunJournal, RunState,
@@ -49,7 +28,6 @@ use crate::teardown::planner::{
 };
 use crate::teardown::progress::{check_plan_status, print_plan_status};
 use anyhow::{Context, Result, bail};
-use clap::{CommandFactory, Parser};
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -121,6 +99,7 @@ impl DeleteResourceSpec {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn to_cli_arg(&self) -> String {
         let ns = self.namespace.as_deref().unwrap_or("-");
         if self.group.is_empty() {
@@ -3139,6 +3118,7 @@ pub(crate) async fn fetch_observed_identities(
 /// - arbitrary ownerRef without target match → insufficient
 ///
 /// Re-classify fresh provenance from a live GET result using UID-based identity.
+#[allow(dead_code)]
 pub fn classify_fresh_provenance(
     obj: &::kube::api::DynamicObject,
     audit_ctx: &crate::teardown::journal::AuditContext,
@@ -3208,6 +3188,7 @@ pub fn classify_fresh_provenance(
 /// For RelatedLabelOnly resources (Unknown provenance from CRD-based discovery),
 /// performs a fresh GET on the governing CRD to verify the label still links to
 /// the target operator's part-of set.
+#[allow(dead_code)]
 pub async fn revalidate_review_basis(
     client: &::kube::Client,
     obj: &::kube::api::DynamicObject,
@@ -3228,6 +3209,7 @@ pub async fn revalidate_review_basis(
     .await
 }
 
+#[allow(dead_code)]
 pub async fn revalidate_review_basis_cached(
     client: &::kube::Client,
     obj: &::kube::api::DynamicObject,
@@ -3249,6 +3231,7 @@ pub async fn revalidate_review_basis_cached(
     .await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn revalidate_review_basis_inner(
     client: &::kube::Client,
     obj: &::kube::api::DynamicObject,
@@ -3530,10 +3513,12 @@ pub fn classify_resume_stage(j: &journal::RunJournal) -> Result<ResumeStage, Str
     }
 }
 
+#[allow(dead_code)]
 pub fn resume_has_blocking_hard_failure(j: &journal::RunJournal) -> bool {
     j.cleanup_decisions.iter().any(|d| d.is_hard_failed())
 }
 
+#[allow(dead_code)]
 pub fn can_finish_run(j: &journal::RunJournal) -> Result<(), String> {
     if !matches!(
         j.state,
@@ -4899,6 +4884,8 @@ pub(crate) async fn handle_backup(
 #[cfg(test)]
 mod cluster_wide_map_tests {
     use super::*;
+    use crate::cli::{Args, Command};
+    use clap::Parser;
     use std::collections::HashMap;
 
     #[test]

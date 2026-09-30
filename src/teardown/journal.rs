@@ -231,6 +231,7 @@ impl CleanupDecision {
     }
 
     /// Failed or unconfirmed: includes hard failures, unconfirmed DELETEs, and unknown outcomes.
+    #[allow(dead_code)]
     pub fn is_failed(&self) -> bool {
         matches!(
             self.result,
@@ -241,6 +242,7 @@ impl CleanupDecision {
     }
 
     /// Terminal success: resource confirmed Gone
+    #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         matches!(
             self.result,
