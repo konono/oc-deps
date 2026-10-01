@@ -1,0 +1,60 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  leader-worker-set.v1.0.1 (ns: openshift-leaderworkerset) (Subscription/leader-worker-set@openshift-leaderworkerset)
+
+Preflight
+  ✓ Subscription resolved (leader-worker-set.v1.0.1) — Subscription/leader-worker-set found — will be deleted in Phase 0
+  ✓ CSV health (leader-worker-set.v1.0.1) — phase=Succeeded
+  ✓ Controller available (leader-worker-set.v1.0.1) — openshift-lws-operator: Available (1)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/leader-worker-set  (ns: openshift-leaderworkerset)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/leader-worker-set  (ns: openshift-leaderworkerset)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/openshift-lws-operator-lock  (ns: openshift-leaderworkerset)
+         leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-leaderworkerset  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 3 DELETE, 0 EXPECT-GONE, 3 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-leader-worker-set.v1.0.1-2026-10-01T11-20-33.494529295_00-00.json
+📄 Execution plan saved to /tmp/leader-worker-set-plan.json
+
+⏱ Discovery: 35.4s, OLM: 2.0s, Plan: 2.4s, Total: 40.0s
+PLAN=0
