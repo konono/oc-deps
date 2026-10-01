@@ -796,8 +796,16 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
     // Owner is a supported workload type deleted as a side effect (not in plan),
     // but the dependent Pod is actively terminating and has positive target evidence.
     let is_supported_owner = matches!(
-        missing.kind.as_str(),
-        "DaemonSet" | "Deployment" | "StatefulSet" | "ReplicaSet" | "Job"
+        (
+            missing.group.as_str(),
+            missing.version.as_str(),
+            missing.kind.as_str()
+        ),
+        (
+            "apps",
+            "v1",
+            "DaemonSet" | "Deployment" | "StatefulSet" | "ReplicaSet"
+        ) | ("batch", "v1", "Job")
     );
     is_supported_owner
         && error.dependent_uid.as_ref().is_some_and(|u| !u.is_empty())
@@ -8953,6 +8961,54 @@ mod tests {
         assert!(
             is_transient_scan_error(&err, &deleted),
             "exact deleted-parent match (path 1) must still work"
+        );
+    }
+
+    #[test]
+    fn custom_group_daemonset_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/custom-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet custom-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "custom.io".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "custom-ds".to_string(),
+                uid: Some("ds-uid-custom".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: true,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "custom.io/v1/DaemonSet must not be treated as supported workload"
+        );
+    }
+
+    #[test]
+    fn wrong_version_daemonset_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/v2-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet v2-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v2".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "v2-ds".to_string(),
+                uid: Some("ds-uid-v2".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: true,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "apps/v2/DaemonSet must not be treated as supported workload"
         );
     }
 
