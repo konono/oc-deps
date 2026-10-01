@@ -42,7 +42,7 @@ pub type DeletionClosureWithUid = HashMap<DeletionKey, String>;
 #[cfg(test)]
 pub fn build_deletion_closure_with_uid(
     phases: &[crate::teardown::plan::ExecutionPhase],
-    explicit_targets: &[crate::DeleteResourceSpec],
+    explicit_targets: &[super::plan::DeleteResourceSpec],
 ) -> DeletionClosureWithUid {
     use crate::teardown::plan::ExecutionAction;
     let mut closure = DeletionClosureWithUid::new();
@@ -991,7 +991,7 @@ pub async fn check_inbound_refs(
 #[cfg(test)]
 pub fn build_deletion_closure(
     phases: &[crate::teardown::plan::ExecutionPhase],
-    explicit_targets: &[crate::DeleteResourceSpec],
+    explicit_targets: &[super::plan::DeleteResourceSpec],
 ) -> HashSet<DeletionKey> {
     let uid_closure = build_deletion_closure_with_uid(phases, explicit_targets);
     uid_closure.into_keys().collect()

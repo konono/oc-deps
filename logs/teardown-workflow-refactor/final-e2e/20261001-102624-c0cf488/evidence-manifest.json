@@ -1,0 +1,613 @@
+{
+  "tested_code_commit": "c0cf488991042638c7798ac0e1b9c875e68b2d76",
+  "evidence_commit": "containing git commit",
+  "binary_sha256": "1cffdfb962fe31d3ef40ce05a719941e2d3825cd51ae8735d006d8ddf01410a0",
+  "config_sha256": "ea2219376b24a7b1c09952ab3cc245d2f1f494736c8606712a94af4845a7d2e3",
+  "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "pr_net": {
+    "base": "ad93e09",
+    "main_rs": {
+      "before": 11786,
+      "after": 42
+    },
+    "tests": {
+      "before": 1369,
+      "after": 1337
+    }
+  },
+  "cycle_a": {
+    "result": "15/15 exit=0",
+    "journals": [
+      {
+        "run_id": "run-18da6143a654935f-ca638",
+        "operator": "rhods-operator.3.5.1",
+        "state": "ApplyCompleted",
+        "phases": "8/8",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/rhods-operator/20261001T103217Z-000ca638-0",
+          "manifest_sha256": "7c462cc77735c5ea2b26d7945c71d2c983d3a3a16a5dfc770212340ae7c97a09",
+          "tree_sha256": "b0021b515aace164665d5e34891e650ca568b3d8097e8be697ddffe7bbbabe08",
+          "resource_set_sha256": "c95fe0e2263222b39f00e4e91b643c37aba2baf43d81afd3f5540f157a1240f8",
+          "resource_count": 329,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da61ffc0b7a70e-ca6e3",
+        "operator": "rhbk-operator.v26.6.7-opr.1",
+        "state": "ApplyCompleted",
+        "phases": "8/8",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/rhbk-operator/20261001T104551Z-000ca6e3-0",
+          "manifest_sha256": "c4c8a42785f3c47eae0b4faf7d199845951a7889fc4175989e73afc84c4b2690",
+          "tree_sha256": "2a201d2a16a779895f130f7f7adcc399f747a86ab4b63a75b3541c97e782082e",
+          "resource_set_sha256": "faaf78a333f7ebec277de50bd84ebb4ba2bf0b84b3044220e7cc2e2d936739e3",
+          "resource_count": 23,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6223a761605a-ca76f",
+        "operator": "rhcl-operator.v1.4.3",
+        "state": "ApplyCompleted",
+        "phases": "8/8",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/rhcl-operator/20261001T104824Z-000ca76f-0",
+          "manifest_sha256": "fb25ce3893f96f3a57a6bc551b76398b4a1fdfe1c0069f50667af276a603e241",
+          "tree_sha256": "3826fea41b78da0123c52b06c5b5412b6850ea2a927b1841187627fedc0f2f6e",
+          "resource_set_sha256": "109679b4cb93ae40a2ba2d55ba5e96473d2c22c9124273921b372b70d833eb9c",
+          "resource_count": 38,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da62c1ad7c8b7b-ca821",
+        "operator": "authorino-operator.v1.4.3",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/authorino-operator/20261001T105942Z-000ca821-0",
+          "manifest_sha256": "f460ca3b98e12cc109103dcd08694b9a03a5e0739c74653b58e8da515aeb3d87",
+          "tree_sha256": "319092c63a0b2778b018f2159e4abcf8a10d589e435b17a10380aedf0d984359",
+          "resource_set_sha256": "92290a655bc4510193b3868fdfda50a27e5690a5ad753580dc5b428b08ac6134",
+          "resource_count": 5,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da632c02889dd0-ca88c",
+        "operator": "dns-operator.v1.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/dns-operator/20261001T110720Z-000ca88c-0",
+          "manifest_sha256": "58fc01db417080b6da2447ff98d267f1e41140f23928ce358957d79599fa3709",
+          "tree_sha256": "950a7dfe2d76810414ce94f51bcf5c972808b8eea085795fe2193d281ad8bac7",
+          "resource_set_sha256": "21d973f54f4c08688bb089d499bb388e18d7c00a84d91103cbeff39c82c2db05",
+          "resource_count": 5,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da638efb387dc9-ca91a",
+        "operator": "limitador-operator.v1.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/limitador-operator/20261001T111425Z-000ca91a-0",
+          "manifest_sha256": "df6e2c1e2c50e7f857cafbf096ce761096271690d8ce6c733f9311ff0935675d",
+          "tree_sha256": "5ba9184609144b86434eeaffe1a996541ee4a8c45600d420c4eb51833a26bbf1",
+          "resource_set_sha256": "8f52618b0f3651156c68df276be9fcd36181a1047eecf72ecd01a12f5b38be27",
+          "resource_count": 6,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da63ea780a1e68-ca9a6",
+        "operator": "leader-worker-set.v1.0.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/leader-worker-set/20261001T112057Z-000ca9a6-0",
+          "manifest_sha256": "e18ca46856213dd8ae243adc8a959467b716d5636e7ef9051fb053c27eba8de5",
+          "tree_sha256": "ab8e9bf1fa179402660f2fae6d6ed8d061a29b5397f91ec2938f33b41fda2e5f",
+          "resource_set_sha256": "fcaeab0db5b36b781ea9c0afd307032779c0e229bc68eed8eb88aeeed5a8ea37",
+          "resource_count": 6,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da63fd74f82e8c-caa0e",
+        "operator": "jobset-operator.v1.0.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/job-set/20261001T112219Z-000caa0e-0",
+          "manifest_sha256": "e4617f64110c5c63dd0fc79769c6e3f6216a94904d3c60debc07f8194f9c5f16",
+          "tree_sha256": "01a38563dad7eea776b5dfdcf02a840b563db7f859119d61f5394d1d487d6fd0",
+          "resource_set_sha256": "f0ebc1e0571b0fd01a5ef7005f6a12d2ae24db9065c74e9ccb7d9eeee187dfd7",
+          "resource_count": 26,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da640f5db62007-caa77",
+        "operator": "kueue-operator.v1.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/kueue-operator/20261001T112335Z-000caa77-0",
+          "manifest_sha256": "751ddedf2a1a7c25d57a2e2b46a8786480fdd5874a6e37c1187c75ab8054bbe0",
+          "tree_sha256": "971bce3c778d769278489a4387fd8c41df0b7be64ca06c473f1784360719fbd2",
+          "resource_set_sha256": "91c821082deb5963692456414e29ed383c595037eda5f07d8e6cdc000241ae4c",
+          "resource_count": 7,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6469068ba333-cab05",
+        "operator": "servicemeshoperator3.v3.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/servicemeshoperator3/20261001T113001Z-000cab05-0",
+          "manifest_sha256": "9a8cc85362ff941d8d39bb7fe204539a7aef1e3a36f2a36a90c75d1a3e552011",
+          "tree_sha256": "0e58cf204f7f657305f86f4d1911a243ed292891bbc81066c210c957823cfd0e",
+          "resource_set_sha256": "408d91a79c61b8289de2ae49436ae6cb542d73363f5e8cb63d76a3ec23805afd",
+          "resource_count": 6,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da64fe5eeb91ce-cab90",
+        "operator": "nfd.4.22.0-202609212027",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/nfd/20261001T114041Z-000cab90-0",
+          "manifest_sha256": "2c741502f29952bd18c4db78b0405887451cc372b7752a26b1be6e412a5544bd",
+          "tree_sha256": "2ce7c54eb2d026c2426ddae14c64c0a34614bcef77d426efa8f0462b9405a710",
+          "resource_set_sha256": "f36c89897d84a28987a153802d68b21bf327a56bd876a1cb82d9d0f17cf48f4b",
+          "resource_count": 20,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6517f5f4b635-cabf8",
+        "operator": "gpu-operator-certified.v26.7.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/gpu-operator-certified/20261001T114233Z-000cabf8-0",
+          "manifest_sha256": "fdaa3c3dca5a370a30ed771e5fada478b4c30e303ff03c4e9b8e58b4d104f3fb",
+          "tree_sha256": "02a819a0f253a9f11deb52d192e59f54fbbef051b1aaa7f23981bcd51c46f938",
+          "resource_set_sha256": "d788892ae1be7732d5b012d0d323135a165c46c101cbc7374a8d1b870d382e06",
+          "resource_count": 92,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da652fd12db4c1-cac61",
+        "operator": "cert-manager-operator.v1.20.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/openshift-cert-manager-operator/20261001T114414Z-000cac61-0",
+          "manifest_sha256": "8f69106ad68648b42884550736b09aec2d92a8a3c0591f72fb5ba26d86d4b0b8",
+          "tree_sha256": "6dbcb2a66faccb5162e7a4d26b3f2f7feee0bc751aa8fbb7313ef4e9b1c50391",
+          "resource_set_sha256": "c9d6c8469b65a6f9574fe57d9dabc34caa0d235473b2c3cdf6a6ea50cade4692",
+          "resource_count": 7,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da666b2268bc33-cad2e",
+        "operator": "cluster-observability-operator.v1.5.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/cluster-observability-operator/20261001T120647Z-000cad2e-0",
+          "manifest_sha256": "7725257d90d2c840cde8b6507b9e4bbee6496460391ffd897bc2f70155cabc91",
+          "tree_sha256": "e522fa592c6c9f43139c838921175626b323292b528adb15d3a8f8ec10cfd799",
+          "resource_set_sha256": "7164b4b49102200d4501c7ce08fa95b9b85473052d2cc21ed7a0f54bf0d5bd6e",
+          "resource_count": 42,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da670bf1cff6d1-cadbc",
+        "operator": "opentelemetry-operator.v0.158.0-2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/opentelemetry-product/20261001T121820Z-000cadbc-0",
+          "manifest_sha256": "34631b01ce129ba2998452c3738dae854d19f98e079b05207d8e8699bacad1bf",
+          "tree_sha256": "8a6c4957a984a19422e3049c5db3db8cc2b9761c0521df10bc40ab2baaed038e",
+          "resource_set_sha256": "915fd5d8d7ef6fbf5c318be410d7d03563df308ae2c370a7455cec30fae3f1fd",
+          "resource_count": 9,
+          "contains_secret_data": false
+        }
+      }
+    ]
+  },
+  "cycle_b": {
+    "result": "15/15 batch exit=0",
+    "journals": [
+      {
+        "run_id": "run-18da6a2fb8dccf92-cec76",
+        "operator": "rhods-operator.3.5.1",
+        "state": "ApplyCompleted",
+        "phases": "8/8",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/rhods-operator/20261001T131547Z-000cec76-0",
+          "manifest_sha256": "93bc29a52838644bd9bed5c4c2ce7c570d37ed414fc36608a21d37cdb44ff6bf",
+          "tree_sha256": "598f8d829773bad2b3b2ebc4c6e94bdf5214a0405f42dd74820224f88231aca0",
+          "resource_set_sha256": "a265a8e9fc270096dafb358d405171db105800cf2919fc358c19937d1a443383",
+          "resource_count": 329,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6af27d58b576-cec76",
+        "operator": "rhbk-operator.v26.6.7-opr.1",
+        "state": "ApplyCompleted",
+        "phases": "8/8",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/rhbk-operator/20261001T132949Z-000cec76-2",
+          "manifest_sha256": "0dc9d63d5d70c5519b2c16fe96c48b049a3e8b352c63482c6265b1596ce225e8",
+          "tree_sha256": "f5853e8c2209ce52e55415ee4bf238cee91881e7cf6421c1b873645678483f49",
+          "resource_set_sha256": "9bcce5d5d6105249dbb862fc053d757ca747bb87bda52456e5f7f64a201c81ec",
+          "resource_count": 23,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6aff38d981eb-cec76",
+        "operator": "leader-worker-set.v1.0.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/leader-worker-set/20261001T133043Z-000cec76-4",
+          "manifest_sha256": "68dce639d5aaec3352e24d1c92802d4460be49cced45873a83c8a0a0cdcaf5f8",
+          "tree_sha256": "880feef9c94b62e7e48f07ddde2e3255c30564725447745746ae7da6eb088a99",
+          "resource_set_sha256": "a5f81bc692d5e87840ebd208329139e69103686ea5eacc57034287c3295e95b8",
+          "resource_count": 6,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6b0e5c8b8506-cec76",
+        "operator": "jobset-operator.v1.0.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/job-set/20261001T133147Z-000cec76-6",
+          "manifest_sha256": "ca2bca9abd54dbcc4e33b0f9ad1ca7cb38e4b0062c55eaeedecde05623e349c4",
+          "tree_sha256": "80f28113f03fc5f50d33d0f1e36c7785ac27976961211626a8e78cd0a82d8be4",
+          "resource_set_sha256": "8fccc4a9c036d8ed8fb6ec87cef4272ad35c4c05604aae09341fb8e212764ce0",
+          "resource_count": 26,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6b1a617fafad-cec76",
+        "operator": "kueue-operator.v1.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/kueue-operator/20261001T133240Z-000cec76-8",
+          "manifest_sha256": "d1981d0c4bd75716038d4970363c0731a9c866434752a643389aee812e4f5a0d",
+          "tree_sha256": "933acd9e05547144351d8da17919efe0360899da80431e49e47a6c002b926c43",
+          "resource_set_sha256": "90554924847dade5703840da123a9a54ace73bc5aff59ec136c702c6e2c50cf5",
+          "resource_count": 7,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6b7636dca493-cec76",
+        "operator": "servicemeshoperator3.v3.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/servicemeshoperator3/20261001T133914Z-000cec76-10",
+          "manifest_sha256": "44cceff99acff533e97c4bbd6b9e6a28c339dbd9c7955012b27e541b3bd5b6a6",
+          "tree_sha256": "22d206af8302df7275b01a7ba870381b3e4a79632968f37bb6645d91eaa97c8c",
+          "resource_set_sha256": "41cab2609d4e65d6efdd76cd216587265c32e8eb290cef6fb9f780c7efc84d33",
+          "resource_count": 6,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6c0c4b7e166c-cec76",
+        "operator": "nfd.4.22.0-202609212027",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/nfd/20261001T134957Z-000cec76-12",
+          "manifest_sha256": "d4685d40d266352ebb22e610011c6e8fb5d0ec99cd179814bfaeb75deb6869d6",
+          "tree_sha256": "dccf2e9742bbf9fdc40d1dce3988e8d1fc796e0e9ea1ab1a3ffa9a0fc1b8ce98",
+          "resource_set_sha256": "7eb2af258d6486494287ff6fa06ecb64cb75b0a4e4077df33a0acb921d76236b",
+          "resource_count": 20,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6c1dd968ee43-cec76",
+        "operator": "gpu-operator-certified.v26.7.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/gpu-operator-certified/20261001T135114Z-000cec76-14",
+          "manifest_sha256": "e89e1a69783adf651416113e7e26f1ae2ffde00da967945344fd46f254cfbe9b",
+          "tree_sha256": "b136c8f6a5be35306c9d7d732c79423b4c6f92e47c5d70863031de3f19e9f171",
+          "resource_set_sha256": "577dbfc2674d4d2d4eb294d3936e0b0958a36a362e042c32d11d25c1abf33179",
+          "resource_count": 92,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6c30b6b4d326-cec76",
+        "operator": "cert-manager-operator.v1.20.1",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/openshift-cert-manager-operator/20261001T135234Z-000cec76-16",
+          "manifest_sha256": "e5b44c491c7e95788ca18594a814dd78eb316dd3184567170d5a210d36c48f0b",
+          "tree_sha256": "2210b231add24686e04ebd834967ab43489c9911640c104e47e09be94ce3fb94",
+          "resource_set_sha256": "8772d194914ce254400723783c153693a28d578899112e672e426c4f6c2e8e36",
+          "resource_count": 7,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6d894463b9ce-cec76",
+        "operator": "rhcl-operator.v1.4.3",
+        "state": "ApplyCompleted",
+        "phases": "8/8",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/rhcl-operator/20261001T141715Z-000cec76-18",
+          "manifest_sha256": "47a4437f15e288080a9fb2b318cbedca1ab1d15b4e774ed640c2e8b9bd4a6bd5",
+          "tree_sha256": "5aba079a26ca5069ccf89421b5a7b19e3f4046c15cfba4fbd0efa99b55360441",
+          "resource_set_sha256": "d3db844f44308a2ef1942f39447d2740a0551ac67cd4d00142a8e5d660b170ad",
+          "resource_count": 38,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6e141c64aed4-cec76",
+        "operator": "authorino-operator.v1.4.3",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/authorino-operator/20261001T142710Z-000cec76-20",
+          "manifest_sha256": "79b50bae896f696c1ec4190a6d36c7bea29f3208af2e89a4c1f628a1f1874cbd",
+          "tree_sha256": "d1137c0f2b55fa6f299f5680e02496f314d0c81a3f925b8afc44e86782d6e2e0",
+          "resource_set_sha256": "4dfdb4f3ebb74137a859777c8bbf1ce366cf175d31176143e8d63d8075669edb",
+          "resource_count": 5,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6e6ac8aff4bb-cec76",
+        "operator": "dns-operator.v1.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/dns-operator/20261001T143323Z-000cec76-22",
+          "manifest_sha256": "df9fdfa202183c168e70aca8e327350139a7f8ce04676275e28a57944615ce89",
+          "tree_sha256": "b61984aaa570dc749c28a67fda2ad9923aa4f235f8610fcb6f8c50807b1736f4",
+          "resource_set_sha256": "60e85b9fb64edda642d338d5c8888397ca0a86958475d403f86252f62f585587",
+          "resource_count": 5,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6ec3d6791137-cec76",
+        "operator": "limitador-operator.v1.4.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/limitador-operator/20261001T143945Z-000cec76-24",
+          "manifest_sha256": "839c3ead70aabe1b597a13c60aa9ada8cfc44a0c3c692343136c18dbc8a61d3d",
+          "tree_sha256": "74cf14fa5367b4c33788dd8981952995e80be2334c0fb2d6f3edf58ea20c1277",
+          "resource_set_sha256": "9d4fd805af4edebcbca846e1e1ff48b14e47048d0ce18b3b52797d3c50638bf9",
+          "resource_count": 6,
+          "contains_secret_data": false
+        }
+      },
+      {
+        "run_id": "run-18da6f19343f0db8-cec76",
+        "operator": "cluster-observability-operator.v1.5.2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/cluster-observability-operator/20261001T144551Z-000cec76-26",
+          "manifest_sha256": "f35a1c1a9efbe9593b86502a992be4b31004837844b12c5a2bec4ad0499616f9",
+          "tree_sha256": "5d88a13e0886d06c219176a16ad21f27bebeadea9d535cc651fdac32ddb4cc9e",
+          "resource_set_sha256": "ab19ea0a0e992993656a41e4dcbad469932c6f59e312662c19b198024bda4f21",
+          "resource_count": 42,
+          "contains_secret_data": true
+        }
+      },
+      {
+        "run_id": "run-18da6fb1996677fc-cec76",
+        "operator": "opentelemetry-operator.v0.158.0-2",
+        "state": "ApplyCompleted",
+        "phases": "7/7",
+        "failed": 0,
+        "scan_errors": 0,
+        "incomplete_scopes": 0,
+        "backup_receipt_count": 1,
+        "backup_receipt": {
+          "root": "logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-b/operator/opentelemetry-product/20261001T145647Z-000cec76-28",
+          "manifest_sha256": "4418927920899851ee4782802df3bbd59adf3a74bf8ebb00def4a740d464398d",
+          "tree_sha256": "5bfff1d97f6f49c85fe3890c75bfffda5459ad96e4465a0a9335d58beb12fee0",
+          "resource_set_sha256": "e66b42539ae7bde3a6111963cbc3abd8ac4f007a35776ae135f76764ae7226ae",
+          "resource_count": 9,
+          "contains_secret_data": false
+        }
+      }
+    ]
+  },
+  "post_state": {
+    "target_subs": 0,
+    "remaining": "group-sync + 12 ODF",
+    "explicit_absent": 10,
+    "nfd_sccs_absent": 2,
+    "authorino_crbs_absent": 2,
+    "node_ready": true,
+    "terminating": 0,
+    "pv": 7,
+    "pvc": 8
+  },
+  "log_sha256": {
+    "provenance.yaml": "6e8bf8af2de3d3ee0c20d28fed8532f2e288c391061411b238039ada149cbef4",
+    "cycle-a/rhods-operator-plan.log": "a2380d7ae2d1daef21cedc2a0ca7ee6a6c8cacb0d35956d74b6ae8cf4521305d",
+    "cycle-a/rhods-operator-apply.log": "15316f6469798d638226260f9f17050d20a2f4f66cd849d621c2ecb1f77edcf9",
+    "cycle-a/rhbk-operator-plan.log": "be1fb934855162e5588f87f793e37d74c9646098f2db6d5227b762125b5c24a6",
+    "cycle-a/rhbk-operator-apply.log": "648a3dadbb39a46eedad0833b6229e3657cedb119cacce0af9f9c3f6ec661e26",
+    "cycle-a/rhcl-operator-plan.log": "01dd2a0c87dee17e1ab06ee59f0f62f105995ab47c72bafcea433bb9a18963c6",
+    "cycle-a/rhcl-operator-apply.log": "77868112b036166fd28990110490cb1d351f53b1c80fcb1377400a1d76d37402",
+    "cycle-a/authorino-operator-plan.log": "13fc4c4e76db25bf0746ff3bb998884d697a7e86ee3e83ea7ba0ac7f211e3b5c",
+    "cycle-a/authorino-operator-apply.log": "5ff52c1d1c1687bb3111be3429b3d767657910d56b3da8fa1b9eb714b6effefa",
+    "cycle-a/dns-operator-plan.log": "ad78a40d20440b00139ff1a85e05e96ca92fc4a98e8bed38f1ebb6e0435917f2",
+    "cycle-a/dns-operator-apply.log": "5eb0e7d10cd4b5c8a180169f4c2af360bab6e2827f83b4ee38fb0aedc1bfa08c",
+    "cycle-a/limitador-operator-plan.log": "e98109cd1e3f8686cbd16534116d0405a8b83c825d8ae42f1bd76c95c3018d30",
+    "cycle-a/limitador-operator-apply.log": "51640f95d806e465b4986fe148ccfb76e5a16756ccd2ce53256d16c762a1c24f",
+    "cycle-a/leader-worker-set-plan.log": "037f7efcb3fa8208edbcb9dca2f40fb8d141dde235571e4c8eae9823699bbf66",
+    "cycle-a/leader-worker-set-apply.log": "8b9c2234880e4ff919efaada59a915fe9aab88ea0936b10758ba90de60841612",
+    "cycle-a/job-set-plan.log": "fc21817c957576ac06b16258fb5f9081631ef348a09c040465a59c9ab9477b24",
+    "cycle-a/job-set-apply.log": "69ecbbffc3a14169a25e69490124f054ce9dc990747af54d9a43ada5422c1557",
+    "cycle-a/kueue-operator-plan.log": "f7818763b8f29f4f05a81927637ab8fe861a4b5bc7ebfe108b067e6125acdaf5",
+    "cycle-a/kueue-operator-apply.log": "f91d83f8916625bd3f46c6e5e5ffa4e984aba4148b08561d7e1786f145807d85",
+    "cycle-a/servicemeshoperator3-plan.log": "d84b2772b7634d38510c4b08549b65f8bf46c5093d5c7d09d2dadb01fd7ebb88",
+    "cycle-a/servicemeshoperator3-apply.log": "bacb0663727d4ca126c5065688c0f9bf94211a955d159e717ccf28f78ccc69e0",
+    "cycle-a/nfd-plan.log": "860207410f36f487bde87a477833093d4ddb5ba3a1f25f1c051c994e7b42bdba",
+    "cycle-a/nfd-apply.log": "bca863f43004947c3a0d6478f76cd5e280f032d939f6ee0228edf3eadaea875d",
+    "cycle-a/gpu-operator-certified-plan.log": "32ddba186b334b28ccb296c9b6674fcc35caff126e8ede841cdd4e873c95e848",
+    "cycle-a/gpu-operator-certified-apply.log": "38465b77e52e879773806294f3f55186e8b68007528bf6477e760b2fccf7bfe1",
+    "cycle-a/openshift-cert-manager-operator-plan.log": "7702ba54c416c0c1a71c31bc11c552b5d33492f108a1dd1b682038660c9ffafe",
+    "cycle-a/openshift-cert-manager-operator-apply.log": "4effbed8633bd109a34502c60eae8bd4c12209bbdb5afc3701906c330a57a8c8",
+    "cycle-a/cluster-observability-operator-plan.log": "f0a5c61ae06c11af84ba8e4707f8f8769044048110ae2d25fb3d1bccc8608a22",
+    "cycle-a/cluster-observability-operator-apply.log": "97e7d0e2273b43b94f8f187744c14f53aad6b0915b7b42df991cb63866af35a6",
+    "cycle-a/opentelemetry-product-plan.log": "395781ec0b0cabb3cdc33bd42dcf4b685f87f8f2391c7ea3973025b1f821356e",
+    "cycle-a/opentelemetry-product-apply.log": "7f7649b06affcb2e498d645db6151982a990308ddf096e2fad813e7c0bb4ec75",
+    "cycle-b/batch.log": "095593217932a9cacbf561ffb0fe8b83e31e87e7061e0df6e7c791ab9ca9fe7b"
+  }
+}

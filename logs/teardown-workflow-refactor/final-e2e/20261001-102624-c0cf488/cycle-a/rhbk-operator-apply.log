@@ -1,0 +1,122 @@
+📄 Loaded execution plan from /tmp/rhbk-operator-plan.json
+🔍 Discovering API resources...
+   Discovery: 33.2s
+🔍 Discovering operators... found 28 operators
+🔍 Discovering CR instances...
+ found 2 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 2 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: keycloak] elapsed 0s
+✅ Scanned 269 resource types in 10.8s
+   keycloak — 64 resources
+   Scanned 1 namespace(s), 64 total resources
+   Found 14 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  23 candidate(s) for rhbk-operator.v26.6.7-opr.1 (21 discovery + 2 plan)
+    23 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/rhbk-operator/20261001T104551Z-000ca6e3-0 (23 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18da61ffc0b7a70e-ca6e3.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+
+⚠ This will DELETE 6 resources (0 expected to auto-remove) across 8 phases.
+
+  Targets: rhbk-operator.v26.6.7-opr.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 2 DELETE
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE
+  Phase 5: 1 DELETE
+  Phase 6: 2 KEEP
+  Phase 7: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/rhbk-operator  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  KeycloakRealmImport/maas-realm  (ns: keycloak)
+  DELETED  Keycloak/keycloak  (ns: keycloak)
+  ⏳ wave 1: 2/2 Gone (0s)
+
+  ⏳ 2/2 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/rhbk-operator  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+Phase 5  Explicit cleanup
+  🔒 Revalidating explicit targets...
+  ✅ All explicit targets validated
+  DELETED  StatefulSet/postgres  (ns: keycloak)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 6  APIs
+  KEEP     CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 7  Namespaces
+  KEEP     Namespace/keycloak  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 8/8 phases completed
+  6 deleted, 0 already gone, 0 failed
+
+Planned preserved: 4 KEEP, 0 REVIEW
+
+🔍 Running post-execution residual audit...
+
+Teardown Residual Audit: rhbk-operator.v26.6.7-opr.1
+Session: run-18da61ffc0b7a70e-ca6e3
+Target operator absent: yes
+Execution: ApplyCompleted (8/8 phases)
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/rhbk-operator.v26.6.7-opr.1  (keycloak)
+    controller needed for operand cleanup
+  CustomResourceDefinition/keycloakrealmimports.k8s.keycloak.org  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/keycloaks.k8s.keycloak.org  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/keycloak  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 22/22 probes succeeded
+APPLY=0

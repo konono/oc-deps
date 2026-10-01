@@ -1,0 +1,191 @@
+📄 Loaded execution plan from /tmp/cluster-observability-operator-plan.json
+🔍 Discovering API resources...
+   (cached, 464 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 16 operators
+🔍 Discovering CR instances...
+ found 9 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 5 pods
+🔍 Discovering CR instances...
+ found 9 instances
+🔍 Discovering related CRDs... found 0 related instances
+🔍 Discovering namespace scope...
+ found 2 candidate namespaces
+🔍 Scanning 2 additional namespace(s)...
+[namespace 1/2: openshift-cluster-observability-operator] elapsed 0s
+✅ Scanned 268 resource types in 15.4s
+   openshift-cluster-observability-operator — 96 resources
+[namespace 2/2: redhat-ods-monitoring] elapsed 15s
+✅ Scanned 268 resource types in 18.4s
+   redhat-ods-monitoring — 16 resources
+   Scanned 2 namespace(s), 112 total resources
+   Found 17 ownerRef descendants in scanned namespaces
+🔍 Running targeted adapters... found 0 resources
+  42 candidate(s) for cluster-observability-operator.v1.5.2 (41 discovery + 1 plan)
+    42 captured, 0 absent
+  ⚠ Backup contains Secret data (file mode 0600). Do not commit to version control.
+  Backup: logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/cluster-observability-operator/20261001T120647Z-000cad2e-0 (42 resources)
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18da666b2268bc33-cad2e.json
+⚠ Preflight warnings — 1 check(s):
+  Provenance
+  REVIEW resources remain preserved unless explicitly approved for DELETE.
+
+⚠ This will DELETE 8 resources (4 expected to auto-remove) across 7 phases.
+
+  Targets: cluster-observability-operator.v1.5.2
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 1: 5 DELETE, 4 EXPECT
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE
+  Phase 5: 18 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/cluster-observability-operator  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/cluster-observability-operator.v1.5.2  (ns: openshift-cluster-observability-operator)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  DELETED  ScrapeConfig/maas-limitador  (ns: redhat-ods-monitoring)
+  DELETED  PersesDashboard/maas-gateway-gpu-resources  (ns: openshift-cluster-observability-operator)
+  DELETED  UIPlugin/monitoring  (cluster-scoped)
+  DELETED  PersesGlobalDatasource/thanos-querier-datasource  (cluster-scoped)
+  DELETED  PersesDashboard/maas-gateway-performance  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 5/5 Gone (0s)
+  EXPECT   Perses/perses  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+  EXPECT   PersesDashboard/accelerators-dashboard  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+  EXPECT   PersesDashboard/apm-dashboard  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+  EXPECT   PersesDatasource/accelerators-thanos-querier-datasource  (ns: openshift-cluster-observability-operator)
+             managed descendant; controller expected to remove
+
+  ⏳ 9/9 Gone, 0 Deleting, 0 FinalizerBlocked(0s)  ⏳ 9/9 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/cluster-observability-operator.v1.5.2  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(1s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/cluster-observability-operator  (ns: openshift-cluster-observability-operator)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/alertmanagers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/monitoringstacks.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/observabilityinstallers.observability.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/perses.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesdashboards.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesdatasources.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/persesglobaldatasources.perses.dev  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/podmonitors.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/probes.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheusagents.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheuses.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/prometheusrules.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/scrapeconfigs.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/servicemonitors.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/thanosqueriers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/thanosrulers.monitoring.rhobs  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+  KEEP     CustomResourceDefinition/uiplugins.observability.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-cluster-observability-operator  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  8 deleted, 0 already gone, 0 failed
+
+Planned preserved: 20 KEEP, 0 REVIEW
+
+🔍 Running post-execution residual audit...
+
+Teardown Residual Audit: cluster-observability-operator.v1.5.2
+Session: run-18da666b2268bc33-cad2e
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+EXPECTED PRESERVED (20)
+  ClusterServiceVersion/cluster-observability-operator.v1.5.2  (openshift-cluster-observability-operator)
+    controller needed for operand cleanup
+  CustomResourceDefinition/alertmanagerconfigs.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/alertmanagers.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/monitoringstacks.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/observabilityinstallers.observability.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/perses.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesdashboards.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesdatasources.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/persesglobaldatasources.perses.dev  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/podmonitors.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/probes.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheusagents.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheuses.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/prometheusrules.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/scrapeconfigs.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/servicemonitors.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/thanosqueriers.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/thanosrulers.monitoring.rhobs  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  CustomResourceDefinition/uiplugins.observability.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-cluster-observability-operator  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 3083/3083 probes succeeded
+APPLY=0

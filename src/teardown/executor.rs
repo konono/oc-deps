@@ -66,6 +66,13 @@ impl ExplicitGuardOutcome {
                     message: w.to_string(),
                 })
             }
+            ScanWarning::Transport { .. } => {
+                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                    target: target_label.to_string(),
+                    error_kind: ExplicitCleanupErrorKind::Transport,
+                    message: w.to_string(),
+                })
+            }
             _ => ExplicitGuardOutcome::HardFailure(format!(
                 "Explicit cleanup: failed to GET {}: {}",
                 target_label, w
@@ -2961,6 +2968,7 @@ async fn count_live_api_service_instances(
     LiveCount::Zero
 }
 
+#[cfg(test)]
 pub fn create_runtime_store() -> (Arc<RuntimeStateStore>, Arc<EventNotifier>) {
     let notifier = Arc::new(EventNotifier::new());
     let store = Arc::new(RuntimeStateStore::new(
@@ -3619,6 +3627,7 @@ impl std::fmt::Display for GateClosedError {
 
 impl std::error::Error for GateClosedError {}
 
+#[cfg(test)]
 pub fn is_gate_closed_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<GateClosedError>().is_some()
 }
@@ -3714,6 +3723,7 @@ pub fn auto_cleanup_candidates(
 /// Returns ResourceIds with current UIDs for cleanup, or errors.
 /// Compares saved evidence signatures (labels, managers, service accounts) against
 /// current ResidualEvidence. ExplicitUnattributed → error. Basis empty/weakened → error.
+#[allow(dead_code)]
 pub fn validate_saved_residual_decisions(
     saved_decisions: &[crate::teardown::plan::SavedDecision],
     audit: &crate::teardown::audit::ResidualAudit,
@@ -3821,6 +3831,7 @@ pub fn validate_saved_residual_decisions(
     }
 }
 
+#[allow(dead_code)]
 fn check_residual_evidence_drift(
     saved_basis: &crate::teardown::plan::DecisionBasis,
     current: &crate::teardown::audit::ResidualEvidence,
@@ -3879,7 +3890,7 @@ pub struct ResidualCleanupResult {
     pub post_audit: Option<crate::teardown::audit::ResidualAudit>,
 }
 
-/// Progress update from residual cleanup — for TUI rendering.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum CleanupProgress {
     Validating {

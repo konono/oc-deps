@@ -2,8 +2,30 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
+
 use crate::kube::resource::ResourceId;
 use crate::teardown::events::EventNotifier;
+use crate::teardown::journal::{JournalStore, RunState};
+use crate::teardown::permit::MutationGate;
+
+/// If the gate is closed (Ctrl-C / pause), durably persist RunState::Paused.
+/// Returns true if paused.
+pub async fn persist_paused_if_closed(
+    store: &JournalStore,
+    gate: &MutationGate,
+) -> anyhow::Result<bool> {
+    if !gate.is_open() {
+        store
+            .update(|j| {
+                j.state = RunState::Paused;
+            })
+            .await
+            .context("Failed to persist Paused on signal")?;
+        return Ok(true);
+    }
+    Ok(false)
+}
 
 // ──────────────────────────────────────────────────────────────
 //  Resource runtime state
@@ -48,6 +70,7 @@ impl std::fmt::Display for ResourceRuntimeState {
 //  Runtime entry — per-resource tracking
 // ──────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct RuntimeEntry {
     pub resource: ResourceId,
@@ -1318,5 +1341,118 @@ mod tests {
             ),
             "ExpectingGone→FinalizerBlocked IS meaningful (first observation of deletion)"
         );
+    }
+
+    #[tokio::test]
+    async fn persist_paused_if_closed_with_gate() {
+        use crate::teardown::journal::*;
+        use crate::teardown::permit::MutationGate;
+        use crate::teardown::plan::*;
+        use crate::teardown::planner::*;
+
+        let j = RunJournal {
+            run_id: "test-pause".to_string(),
+            schema_version: RUN_JOURNAL_SCHEMA_VERSION,
+            oc_deps_version: "test".to_string(),
+            journal_revision: 0,
+            cluster_identity: ClusterIdentity {
+                api_server: "https://test:6443".to_string(),
+                kube_system_uid: "test-uid".to_string(),
+            },
+            operator: OperatorIdentitySnapshot {
+                generation_identity: OperatorGenerationIdentity::Unverifiable {
+                    reason: "test".to_string(),
+                },
+                operator_id: crate::analyzers::olm::OperatorId {
+                    namespace: "ns".to_string(),
+                    csv_name: "test.v1".to_string(),
+                },
+                csv_name: "test.v1".to_string(),
+                csv: ObservedResourceIdentity {
+                    resource: crate::kube::resource::ResourceId {
+                        group: "operators.coreos.com".to_string(),
+                        version: "v1alpha1".to_string(),
+                        kind: "ClusterServiceVersion".to_string(),
+                        namespace: Some("ns".to_string()),
+                        name: "test.v1".to_string(),
+                        uid: Some("csv-uid".to_string()),
+                    },
+                    uid: "csv-uid".to_string(),
+                },
+                subscriptions: vec![],
+                controller_deployments: vec![],
+                service_accounts: vec![],
+                owned_crds: vec![],
+                required_crds: vec![],
+            },
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            state: RunState::Applying,
+            residual_status: ResidualStatus::NotAudited,
+            audit_revision: 0,
+            audit_context: AuditContext::default(),
+            plan_snapshot: TeardownPlan {
+                targets: vec![],
+                preflight: Preflight { checks: vec![] },
+                phases: vec![],
+                blockers: vec![],
+                warnings: vec![],
+                snapshot_taken_at: "2026-01-01T00:00:00Z".to_string(),
+                dependency_edges: vec![],
+                operator_inventory: vec![],
+                explicit_decisions: vec![],
+                explicit_deletes: vec![],
+            },
+            execution: ExecutionRecord::default(),
+            last_residual_audit: None,
+            cleanup_decisions: vec![],
+            finalizer_recovery_approved: true,
+            finalizer_recoveries: vec![],
+            backup_receipts: vec![],
+        };
+
+        let dir = std::env::temp_dir().join(format!(
+            "oc-deps-test-pause-runtime-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("journal.json");
+        crate::teardown::journal::atomic_write_json_pub(&path, &j).unwrap();
+
+        let store = JournalStore::new_with_lock(j, path.clone()).unwrap();
+        let gate = MutationGate::new(4);
+
+        // Gate open → not paused, no state change
+        let paused = super::persist_paused_if_closed(&store, &gate)
+            .await
+            .unwrap();
+        assert!(!paused, "open gate must not trigger pause");
+        let j_check = load_journal(&path).unwrap();
+        assert_eq!(
+            j_check.state,
+            RunState::Applying,
+            "state unchanged when gate open"
+        );
+
+        // Close gate → paused + journal durably written
+        gate.close_and_drain().await;
+        let paused = super::persist_paused_if_closed(&store, &gate)
+            .await
+            .unwrap();
+        assert!(paused, "closed gate must trigger pause");
+
+        // Verify durable state on disk
+        let j_disk = load_journal(&path).unwrap();
+        assert_eq!(
+            j_disk.state,
+            RunState::Paused,
+            "journal on disk must be Paused after gate-closed persist"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

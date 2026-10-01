@@ -391,21 +391,9 @@ pub enum TeardownAction {
         #[arg(long)]
         dry_run: bool,
 
-        /// Non-interactive mode
-        #[arg(long)]
-        non_interactive: bool,
-
         /// Skip confirmation prompt (auto-approve execution)
         #[arg(short = 'y', long = "yes")]
         yes: bool,
-
-        /// Headless script mode
-        #[arg(long, value_name = "PATH")]
-        script: Option<String>,
-
-        /// Enable TUI mode
-        #[arg(long)]
-        tui: bool,
 
         /// Save pre-delete backup to this directory root before executing
         #[arg(long, value_name = "DIR", value_parser = non_empty_path)]
@@ -1734,6 +1722,148 @@ mod tests {
                 action: TeardownAction::Batch { backup_dir, .. },
             } => {
                 assert!(backup_dir.is_none());
+            }
+            _ => panic!("Expected teardown batch"),
+        }
+    }
+
+    // === Phase 1 contract tests: freeze current CLI surface ===
+    // These tests document the options that Phase 2 will remove (--tui, --script, --non-interactive)
+    // and verify that the options that will survive continue to parse correctly.
+
+    #[test]
+    fn phase2_apply_rejects_tui_flag() {
+        let args = Args::try_parse_from(["oc-deps", "teardown", "apply", "plan.json", "--tui"]);
+        assert!(
+            args.is_err(),
+            "--tui must be rejected after Phase 2 removal"
+        );
+    }
+
+    #[test]
+    fn phase2_apply_rejects_script_flag() {
+        let args = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "plan.json",
+            "--script",
+            "/tmp/cmds.json",
+        ]);
+        assert!(
+            args.is_err(),
+            "--script must be rejected after Phase 2 removal"
+        );
+    }
+
+    #[test]
+    fn phase2_apply_rejects_non_interactive_flag() {
+        let args = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "plan.json",
+            "--non-interactive",
+        ]);
+        assert!(
+            args.is_err(),
+            "--non-interactive must be rejected after Phase 2 removal"
+        );
+    }
+
+    #[test]
+    fn phase1_apply_surviving_options_parse() {
+        let args = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "apply",
+            "plan.json",
+            "-y",
+            "--dry-run",
+            "--backup-dir",
+            "/tmp/backups",
+            "--refresh-discovery",
+        ]);
+        assert!(args.is_ok(), "surviving apply options must parse");
+        match args.unwrap().command {
+            Command::Teardown {
+                action:
+                    TeardownAction::Apply {
+                        yes,
+                        dry_run,
+                        backup_dir,
+                        refresh_discovery,
+                        ..
+                    },
+            } => {
+                assert!(yes);
+                assert!(dry_run);
+                assert_eq!(backup_dir.as_deref(), Some("/tmp/backups"));
+                assert!(refresh_discovery);
+            }
+            _ => panic!("Expected teardown apply"),
+        }
+    }
+
+    #[test]
+    fn phase1_resume_options_parse() {
+        let args = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "resume",
+            "my-operator",
+            "--run",
+            "run-123",
+            "--refresh-discovery",
+        ]);
+        assert!(args.is_ok(), "resume options must parse");
+        match args.unwrap().command {
+            Command::Teardown {
+                action:
+                    TeardownAction::Resume {
+                        operator,
+                        run,
+                        refresh_discovery,
+                    },
+            } => {
+                assert_eq!(operator.as_deref(), Some("my-operator"));
+                assert_eq!(run.as_deref(), Some("run-123"));
+                assert!(refresh_discovery);
+            }
+            _ => panic!("Expected teardown resume"),
+        }
+    }
+
+    #[test]
+    fn phase1_batch_options_parse() {
+        let args = Args::try_parse_from([
+            "oc-deps",
+            "teardown",
+            "batch",
+            "config.json",
+            "--dry-run",
+            "--skip-missing",
+            "--backup-dir",
+            "/tmp/b",
+            "--refresh-discovery",
+        ]);
+        assert!(args.is_ok(), "batch options must parse");
+        match args.unwrap().command {
+            Command::Teardown {
+                action:
+                    TeardownAction::Batch {
+                        config,
+                        dry_run,
+                        skip_missing,
+                        backup_dir,
+                        refresh_discovery,
+                    },
+            } => {
+                assert_eq!(config, "config.json");
+                assert!(dry_run);
+                assert!(skip_missing);
+                assert_eq!(backup_dir.as_deref(), Some("/tmp/b"));
+                assert!(refresh_discovery);
             }
             _ => panic!("Expected teardown batch"),
         }

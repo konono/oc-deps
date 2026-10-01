@@ -231,6 +231,7 @@ impl CleanupDecision {
     }
 
     /// Failed or unconfirmed: includes hard failures, unconfirmed DELETEs, and unknown outcomes.
+    #[allow(dead_code)]
     pub fn is_failed(&self) -> bool {
         matches!(
             self.result,
@@ -241,6 +242,7 @@ impl CleanupDecision {
     }
 
     /// Terminal success: resource confirmed Gone
+    #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         matches!(
             self.result,
@@ -402,6 +404,7 @@ pub struct ExplicitCleanupError {
 pub enum ExplicitCleanupErrorKind {
     Timeout,
     ServerError,
+    Transport,
     Forbidden,
     IncompleteScan,
     /// A v12 journal written by code predating `ExplicitCleanupBlocked` stopped
@@ -1065,6 +1068,452 @@ pub fn enrich_namespace_scope_from_candidates(
         ctx.footprint_namespaces.insert(candidate.namespace.clone());
     }
     scope.sort_by(|a, b| a.namespace.cmp(&b.namespace));
+}
+
+// ── Functions moved from commands/teardown.rs (P0-1 dependency direction fix) ──
+
+/// Discover namespace scope for a single target operator.
+/// Must run before journal creation so the journal captures provenance.
+/// Fails closed: discovery scan failures abort the teardown.
+pub async fn discover_audit_scope(
+    client: &::kube::Client,
+    target_operator: &crate::analyzers::olm::OperatorInstance,
+    kind_map: &crate::kube::discovery::KindMap,
+    gvr_map: &crate::kube::discovery::GvrMap,
+    gk_map: &crate::kube::discovery::GroupKindMap,
+) -> Result<Vec<crate::analyzers::namespace_scope::CandidateNamespace>> {
+    use crate::analyzers::namespace_scope::{CandidateNamespace, NamespaceEvidence};
+    use crate::kube::planner::QueryPlanner;
+    use crate::kube::scanner::DEFAULT_API_CONCURRENCY;
+
+    let scope_planner = QueryPlanner::new(Some(std::sync::Arc::new(tokio::sync::Semaphore::new(
+        DEFAULT_API_CONCURRENCY,
+    ))));
+
+    let scope_result = crate::analyzers::namespace_scope::discover_operator_namespaces_opts(
+        client,
+        target_operator,
+        kind_map,
+        gvr_map,
+        gk_map,
+        None,
+        None,
+        Some(scope_planner.clone()),
+    )
+    .await
+    .context("Namespace scope discovery failed for audit context")?;
+    if !scope_result.scan_failures.is_empty() {
+        let msgs: Vec<String> = scope_result
+            .scan_failures
+            .iter()
+            .map(|w| format!("{:?}", w))
+            .collect();
+        bail!(
+            "Namespace scope discovery had {} scan failure(s) — audit scope incomplete, aborting: {}",
+            msgs.len(),
+            msgs.join("; ")
+        );
+    }
+    let mut candidates = scope_result.candidates;
+    if scope_result.is_all_namespaces {
+        let ns_items = scope_planner
+            .list_all(
+                client,
+                "",
+                "v1",
+                "namespaces",
+                None,
+                crate::kube::resource::QueryRequirement::Required,
+            )
+            .await
+            .map_err(|w| anyhow::anyhow!("Failed to LIST Namespaces: {:?}", w))?;
+        // Validate every Namespace identity — fail closed on missing/invalid
+        for obj in ns_items.iter() {
+            let raw = obj.metadata.name.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "AllNamespaces LIST returned Namespace without metadata.name — fail closed"
+                )
+            })?;
+            if raw.is_empty() || !crate::analyzers::namespace_scope::is_valid_k8s_namespace(raw) {
+                bail!(
+                    "AllNamespaces LIST returned invalid namespace name {:?} — fail closed",
+                    raw
+                );
+            }
+            let ns_name = raw.to_string();
+
+            if let Some(existing) = candidates.iter_mut().find(|c| c.namespace == ns_name) {
+                if !existing
+                    .evidence
+                    .iter()
+                    .any(|e| matches!(e, NamespaceEvidence::OperatorGroupAllNamespaces))
+                {
+                    existing
+                        .evidence
+                        .push(NamespaceEvidence::OperatorGroupAllNamespaces);
+                }
+            } else {
+                candidates.push(CandidateNamespace {
+                    namespace: ns_name,
+                    evidence: vec![NamespaceEvidence::OperatorGroupAllNamespaces],
+                });
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+pub async fn create_run_journal(
+    client: &::kube::Client,
+    plan: &crate::teardown::planner::TeardownPlan,
+    target_operators: &[&crate::analyzers::olm::OperatorInstance],
+    gk_map: &crate::kube::discovery::GroupKindMap,
+    _finalizer_recovery_approved: bool,
+    backup_receipts: Vec<crate::teardown::backup::BackupReceipt>,
+    candidate_namespaces: Option<Vec<crate::analyzers::namespace_scope::CandidateNamespace>>,
+) -> Result<JournalStore> {
+    if target_operators.len() > 1 {
+        bail!(
+            "Run journal currently supports single-operator teardown. \
+             Use separate teardown commands for each operator."
+        );
+    }
+
+    let cluster_id = fetch_cluster_identity(client).await?;
+    let run_id = generate_run_id();
+
+    let operator_snapshot = build_operator_identity_snapshot(client, target_operators)
+        .await
+        .context("Failed to build operator identity snapshot for journal")?;
+
+    let first_op = target_operators[0];
+    let mut audit_context =
+        build_audit_context(plan, target_operators, gk_map, candidate_namespaces);
+
+    // Capture CSV baseline: all CSVs in install namespace at plan time (name → uid).
+    // Used by generation check to detect new CSVs not present before teardown.
+    {
+        use ::kube::api::{Api, ApiResource, DynamicObject, ListParams};
+        use ::kube::core::GroupVersion;
+
+        let csv_gvk =
+            GroupVersion::gv("operators.coreos.com", "v1alpha1").with_kind("ClusterServiceVersion");
+        let csv_ar = ApiResource::from_gvk_with_plural(&csv_gvk, "clusterserviceversions");
+        let csv_api: Api<DynamicObject> =
+            Api::namespaced_with(client.clone(), &first_op.install_namespace, &csv_ar);
+
+        audit_context.csv_baseline = match csv_api.list(&ListParams::default()).await {
+            Ok(list) => {
+                let mut baseline_entries = Vec::new();
+                for csv in &list.items {
+                    let name = csv.metadata.name.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "CSV in install namespace has no name — cannot build baseline"
+                        )
+                    })?;
+                    let uid = csv.metadata.uid.clone().ok_or_else(|| {
+                        anyhow::anyhow!("CSV '{}' has no UID — cannot build baseline", name)
+                    })?;
+                    baseline_entries.push(CsvBaselineEntry { name, uid });
+                }
+                Some(baseline_entries)
+            }
+            Err(e) => {
+                bail!(
+                    "Failed to capture CSV baseline for generation safety: {}. \
+                     Cannot proceed without baseline.",
+                    e
+                );
+            }
+        };
+    }
+
+    let journal = RunJournal {
+        run_id: run_id.clone(),
+        schema_version: RUN_JOURNAL_SCHEMA_VERSION,
+        oc_deps_version: env!("CARGO_PKG_VERSION").to_string(),
+        journal_revision: 0,
+        cluster_identity: cluster_id.clone(),
+        operator: operator_snapshot,
+        created_at: chrono_now_iso(),
+        updated_at: chrono_now_iso(),
+        state: RunState::Prepared,
+        residual_status: ResidualStatus::NotAudited,
+        audit_revision: 0,
+        audit_context,
+        plan_snapshot: plan.clone(),
+        execution: ExecutionRecord {
+            phases_total: plan.phases.len(),
+            ..Default::default()
+        },
+        last_residual_audit: None,
+        cleanup_decisions: Vec::new(),
+        finalizer_recovery_approved: true,
+        finalizer_recoveries: Vec::new(),
+        backup_receipts,
+    };
+
+    let path = run_path(&cluster_id, &run_id)?;
+    atomic_write_json_pub(&path, &journal)?;
+
+    JournalStore::new_with_lock(journal, path)
+}
+
+/// Build a fresh OperatorIdentitySnapshot with live UIDs from the cluster.
+/// Used for basis drift validation before journal creation.
+pub async fn build_operator_identity_snapshot(
+    client: &::kube::Client,
+    target_operators: &[&crate::analyzers::olm::OperatorInstance],
+) -> Result<crate::teardown::plan::OperatorIdentitySnapshot> {
+    use crate::teardown::plan::{
+        ObservedResourceIdentity, OperatorGenerationIdentity, OperatorIdentitySnapshot,
+    };
+
+    let first_op = target_operators[0];
+    let op_id = crate::analyzers::olm::OperatorId {
+        namespace: first_op.install_namespace.clone(),
+        csv_name: first_op.csv.name.clone(),
+    };
+
+    // Fail-closed: Subscription exists but package name unknown/empty
+    if first_op.subscription.is_some() {
+        match &first_op.package_name {
+            None => {
+                bail!(
+                    "Subscription exists but package name is unknown — \
+                     cannot establish semantic identity for safe teardown."
+                );
+            }
+            Some(pkg) if pkg.trim().is_empty() => {
+                bail!(
+                    "Subscription exists but package name is empty — \
+                     cannot establish semantic identity for safe teardown."
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let generation_identity = match &first_op.package_name {
+        Some(name) if !name.trim().is_empty() => OperatorGenerationIdentity::OlmPackage {
+            package_name: name.clone(),
+            install_namespace: first_op.install_namespace.clone(),
+        },
+        _ => OperatorGenerationIdentity::Unverifiable {
+            reason: "No subscription or empty package name".to_string(),
+        },
+    };
+
+    let csv_observed = {
+        let fresh = fetch_observed_identities(
+            client,
+            std::slice::from_ref(&first_op.csv.name),
+            "ClusterServiceVersion",
+            "operators.coreos.com/v1alpha1",
+            &first_op.install_namespace,
+        )
+        .await?;
+        let obs = fresh
+            .into_iter()
+            .next()
+            .context("CSV not found during identity snapshot")?;
+        // Verify discovery UID is present and matches fresh UID
+        let discovery_uid = first_op.csv.uid.as_deref().unwrap_or("");
+        if discovery_uid.is_empty() {
+            bail!(
+                "CSV {} has no UID from discovery — cannot verify identity for safe teardown",
+                first_op.csv.name
+            );
+        }
+        if obs.uid != discovery_uid {
+            bail!(
+                "CSV {} UID changed between discovery ({}) and snapshot ({}) — \
+                 operator may have been recreated. Re-run 'teardown plan'.",
+                first_op.csv.name,
+                discovery_uid,
+                obs.uid
+            );
+        }
+        obs
+    };
+
+    let controller_deployments = fetch_observed_identities(
+        client,
+        &first_op.deployments,
+        "Deployment",
+        "apps/v1",
+        &first_op.install_namespace,
+    )
+    .await?;
+
+    let service_accounts = fetch_observed_identities(
+        client,
+        &first_op.service_accounts,
+        "ServiceAccount",
+        "v1",
+        &first_op.install_namespace,
+    )
+    .await?;
+
+    let sub_observed: Vec<ObservedResourceIdentity> = if let Some(sub) = &first_op.subscription {
+        let fresh = fetch_observed_identities(
+            client,
+            std::slice::from_ref(&sub.name),
+            "Subscription",
+            "operators.coreos.com/v1alpha1",
+            sub.namespace
+                .as_deref()
+                .unwrap_or(&first_op.install_namespace),
+        )
+        .await?;
+        if fresh.is_empty() {
+            bail!(
+                "Subscription {} was observed during discovery but is now absent — \
+                 cannot establish reliable generation identity",
+                sub.name
+            );
+        }
+        // Verify discovery UID is present and matches fresh UID
+        let discovery_uid = sub.uid.as_deref().unwrap_or("");
+        if discovery_uid.is_empty() {
+            bail!(
+                "Subscription {} has no UID from discovery — cannot verify identity",
+                sub.name
+            );
+        }
+        if let Some(obs) = fresh.first()
+            && obs.uid != discovery_uid
+        {
+            bail!(
+                "Subscription {} UID changed between discovery ({}) and snapshot ({}) — \
+                     operator may have been recreated. Re-run 'teardown plan'.",
+                sub.name,
+                discovery_uid,
+                obs.uid
+            );
+        }
+        // Verify spec.name matches expected package
+        if let Some(ref expected_package) = first_op.package_name {
+            let sub_gvk = ::kube::core::GroupVersion::gv("operators.coreos.com", "v1alpha1")
+                .with_kind("Subscription");
+            let sub_ar = ::kube::api::ApiResource::from_gvk_with_plural(&sub_gvk, "subscriptions");
+            let sub_api: ::kube::api::Api<::kube::api::DynamicObject> =
+                ::kube::api::Api::namespaced_with(
+                    client.clone(),
+                    sub.namespace
+                        .as_deref()
+                        .unwrap_or(&first_op.install_namespace),
+                    &sub_ar,
+                );
+            match sub_api.get(&sub.name).await {
+                Ok(live_sub) => {
+                    let live_spec_name = live_sub
+                        .data
+                        .get("spec")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
+                    if live_spec_name != expected_package.as_str() {
+                        bail!(
+                            "Subscription {} spec.name changed from '{}' to '{}' — \
+                             semantic identity drift. Re-run 'teardown plan'.",
+                            sub.name,
+                            expected_package,
+                            live_spec_name
+                        );
+                    }
+                }
+                Err(::kube::Error::Api(ref api_err)) if api_err.code == 404 => {
+                    // Subscription already deleted (previous teardown or manual).
+                    // This is safe — operator is frozen.
+                }
+                Err(e) => {
+                    bail!("Cannot verify Subscription {} spec.name: {}", sub.name, e);
+                }
+            }
+        }
+        fresh
+    } else {
+        Vec::new()
+    };
+
+    Ok(OperatorIdentitySnapshot {
+        generation_identity,
+        operator_id: op_id,
+        csv_name: first_op.csv.name.clone(),
+        csv: csv_observed,
+        subscriptions: sub_observed,
+        controller_deployments,
+        service_accounts,
+        owned_crds: first_op.owned_crds.clone(),
+        required_crds: first_op.required_crds.clone(),
+    })
+}
+
+/// Fetch observed identities with UIDs for pre-execution snapshot.
+/// 404 = resource absent (OK, skip). Any other error = fail-closed (abort journal creation).
+pub async fn fetch_observed_identities(
+    client: &::kube::Client,
+    names: &[String],
+    kind: &str,
+    api_version: &str,
+    namespace: &str,
+) -> Result<Vec<crate::teardown::plan::ObservedResourceIdentity>> {
+    use crate::teardown::plan::ObservedResourceIdentity;
+    use ::kube::api::{Api, ApiResource, DynamicObject};
+    use ::kube::core::GroupVersion;
+
+    let (group, version) = if api_version.contains('/') {
+        let parts: Vec<&str> = api_version.splitn(2, '/').collect();
+        (parts[0].to_string(), parts[1].to_string())
+    } else {
+        (String::new(), api_version.to_string())
+    };
+
+    let gvk = GroupVersion::gv(&group, &version).with_kind(kind);
+    let plural = format!("{}s", kind.to_lowercase());
+    let ar = ApiResource::from_gvk_with_plural(&gvk, &plural);
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+
+    let mut results = Vec::new();
+    for name in names {
+        match api.get(name).await {
+            Ok(obj) => {
+                let rid = crate::kube::resource::ResourceId {
+                    group: group.clone(),
+                    version: version.clone(),
+                    kind: kind.to_string(),
+                    namespace: Some(namespace.to_string()),
+                    name: name.clone(),
+                    uid: obj.metadata.uid.clone(),
+                };
+                if let Some(observed) = ObservedResourceIdentity::from_resource_id(&rid) {
+                    results.push(observed);
+                } else {
+                    bail!(
+                        "Identity snapshot failed: {}/{} in {} has no UID",
+                        kind,
+                        name,
+                        namespace
+                    );
+                }
+            }
+            Err(::kube::Error::Api(ref resp)) if resp.code == 404 => {
+                // Resource genuinely absent — skip (not an error)
+            }
+            Err(e) => {
+                bail!(
+                    "Identity snapshot failed: cannot GET {}/{} in {}: {} \
+                     (403/timeout/API errors are not safe to ignore)",
+                    kind,
+                    name,
+                    namespace,
+                    e
+                );
+            }
+        }
+    }
+    Ok(results)
 }
 
 #[cfg(test)]

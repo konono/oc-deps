@@ -32,6 +32,11 @@ pub enum ScanWarning {
     NotFound {
         gvr: String,
     },
+    Transport {
+        gvr: String,
+        message: String,
+        retries: usize,
+    },
     Other {
         gvr: String,
         message: String,
@@ -67,6 +72,11 @@ impl ScanWarning {
                     message: resp.message.clone(),
                 },
             },
+            kube::Error::Service(_) | kube::Error::HyperError(_) => ScanWarning::Transport {
+                gvr,
+                message: err.to_string(),
+                retries: 0,
+            },
             _ => {
                 let msg = err.to_string();
                 if msg.contains("timed out") || msg.contains("timeout") {
@@ -88,6 +98,7 @@ impl ScanWarning {
             ScanWarning::Timeout { .. }
                 | ScanWarning::RateLimited { .. }
                 | ScanWarning::ServerError { .. }
+                | ScanWarning::Transport { .. }
         )
     }
 
@@ -100,6 +111,7 @@ impl ScanWarning {
             ScanWarning::Timeout { retries, .. } => *retries = count,
             ScanWarning::RateLimited { retries, .. } => *retries = count,
             ScanWarning::ServerError { retries, .. } => *retries = count,
+            ScanWarning::Transport { retries, .. } => *retries = count,
             _ => {}
         }
     }
@@ -141,6 +153,13 @@ impl fmt::Display for ScanWarning {
                     write!(f, "{} ({} Server Error, retried {}x)", gvr, status, retries)
                 } else {
                     write!(f, "{} ({} Server Error)", gvr, status)
+                }
+            }
+            ScanWarning::Transport { gvr, retries, .. } => {
+                if *retries > 0 {
+                    write!(f, "{} (transport error, retried {}x)", gvr, retries)
+                } else {
+                    write!(f, "{} (transport error)", gvr)
                 }
             }
             ScanWarning::Other { gvr, message } => write!(f, "{} ({})", gvr, message),
@@ -256,6 +275,7 @@ pub enum QueryOutcome {
     Timeout { retries: usize },
     RateLimited { retries: usize },
     ServerError { status: u16, retries: usize },
+    Transport { retries: usize },
     ListUnsupported,
     TargetMissing,
     Unknown { message: String },
@@ -270,6 +290,7 @@ impl QueryOutcome {
                 | QueryOutcome::Timeout { .. }
                 | QueryOutcome::RateLimited { .. }
                 | QueryOutcome::ServerError { .. }
+                | QueryOutcome::Transport { .. }
                 | QueryOutcome::Unknown { .. }
         )
     }
@@ -291,6 +312,7 @@ impl QueryOutcome {
                     | QueryOutcome::Timeout { .. }
                     | QueryOutcome::RateLimited { .. }
                     | QueryOutcome::ServerError { .. }
+                    | QueryOutcome::Transport { .. }
                     | QueryOutcome::Unknown { .. }
             ),
         }
@@ -465,6 +487,9 @@ pub fn format_coverage_summary(ledger: &CoverageLedger, verbose: bool) {
                 QueryOutcome::ServerError { status, retries } => {
                     format!("{} Server Error (retries: {})", status, retries)
                 }
+                QueryOutcome::Transport { retries } => {
+                    format!("Transport error (retries: {})", retries)
+                }
                 QueryOutcome::ListUnsupported => "LIST unsupported".to_string(),
                 QueryOutcome::TargetMissing => "Target missing (404)".to_string(),
                 QueryOutcome::Unknown { message } => format!("Unknown ({})", message),
@@ -532,6 +557,7 @@ pub fn scan_warning_to_outcome(w: &ScanWarning) -> QueryOutcome {
             status: *status,
             retries: *retries,
         },
+        ScanWarning::Transport { retries, .. } => QueryOutcome::Transport { retries: *retries },
         ScanWarning::Other { message, .. } => QueryOutcome::Unknown {
             message: message.clone(),
         },
@@ -2047,6 +2073,72 @@ mod tests {
             message: "unknown error".into(),
         };
         assert!(!w.is_retryable());
+    }
+
+    #[test]
+    fn transport_warning_is_retryable() {
+        let mut w = ScanWarning::Transport {
+            gvr: "apps/v1/deployments".into(),
+            message: "ServiceError: client error (Connect)".into(),
+            retries: 0,
+        };
+        assert!(w.is_retryable());
+        w.set_retries(3);
+        match &w {
+            ScanWarning::Transport { retries, .. } => assert_eq!(*retries, 3),
+            _ => panic!("expected Transport"),
+        }
+        assert!(format!("{}", w).contains("retried 3x"));
+    }
+
+    #[test]
+    fn transport_warning_maps_to_retryable_outcome() {
+        let w = ScanWarning::Transport {
+            gvr: "v1/pods".into(),
+            message: "connection reset".into(),
+            retries: 2,
+        };
+        let outcome = scan_warning_to_outcome(&w);
+        assert!(matches!(outcome, QueryOutcome::Transport { retries: 2 }));
+        assert!(outcome.is_failure());
+    }
+
+    #[test]
+    fn transport_outcome_is_incomplete_for_required() {
+        let o = QueryOutcome::Transport { retries: 3 };
+        assert!(o.is_incomplete(&QueryRequirement::Required));
+        assert!(o.is_incomplete(&QueryRequirement::Optional));
+    }
+
+    #[test]
+    fn forbidden_remains_nonretryable() {
+        let w = ScanWarning::Forbidden {
+            gvr: "v1/secrets".into(),
+            status: 403,
+        };
+        assert!(!w.is_retryable());
+        let outcome = scan_warning_to_outcome(&w);
+        assert!(matches!(outcome, QueryOutcome::Forbidden { status: 403 }));
+    }
+
+    #[test]
+    fn service_error_classified_as_transport() {
+        let kube_err = kube::Error::Service(Box::new(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        )));
+        let w = ScanWarning::from_kube_error(
+            &kube_err,
+            "operators.coreos.com",
+            "v1alpha1",
+            "subscriptions",
+        );
+        assert!(
+            matches!(w, ScanWarning::Transport { .. }),
+            "kube::Error::Service should map to Transport, got {:?}",
+            w
+        );
+        assert!(w.is_retryable());
     }
 
     // ── extract_pod_template tests ──

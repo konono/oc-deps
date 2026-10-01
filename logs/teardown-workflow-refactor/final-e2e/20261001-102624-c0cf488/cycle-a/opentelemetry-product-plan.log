@@ -1,0 +1,65 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 15 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  opentelemetry-operator.v0.158.0-2 (ns: openshift-opentelemetry-operator) (Subscription/opentelemetry-product@openshift-opentelemetry-operator)
+
+Preflight
+  ✓ Subscription resolved (opentelemetry-operator.v0.158.0-2) — Subscription/opentelemetry-product found — will be deleted in Phase 0
+  ✓ CSV health (opentelemetry-operator.v0.158.0-2) — phase=Succeeded
+  ✓ Controller available (opentelemetry-operator.v0.158.0-2) — opentelemetry-operator-controller-manager: Available (1); opentelemetry-operator-webhook: Available (2)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/opentelemetry-product  (ns: openshift-opentelemetry-operator)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ns: openshift-opentelemetry-operator)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/opentelemetry-operator.v0.158.0-2  (ns: openshift-opentelemetry-operator)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/opentelemetry-product  (ns: openshift-opentelemetry-operator)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/9f7554c3.opentelemetry.io  (ns: openshift-opentelemetry-operator)
+         leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/instrumentations.opentelemetry.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/opampbridges.opentelemetry.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/opentelemetrycollectors.opentelemetry.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+  KEEP   CustomResourceDefinition/targetallocators.opentelemetry.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-opentelemetry-operator  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  4 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 3 DELETE, 0 EXPECT-GONE, 6 KEEP, 1 REVIEW
+  0 blockers, 1 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-opentelemetry-operator.v0.158.0-2-2026-10-01T12-17-46.106310857_00-00.json
+📄 Execution plan saved to /tmp/opentelemetry-product-plan.json
+
+⏱ Discovery: 34.4s, OLM: 1.2s, Plan: 3.9s, Total: 39.8s
+PLAN=0

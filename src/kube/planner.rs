@@ -1226,6 +1226,110 @@ mod tests {
         assert_eq!(request_count.load(Ordering::SeqCst), 2);
     }
 
+    // Test: Transport error retries then succeeds
+    #[tokio::test]
+    async fn transport_error_retries_then_succeeds() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let svc = tower::service_fn(move |_req: http::Request<kube::client::Body>| {
+            let call = rc.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if call < 2 {
+                    Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "connection refused",
+                    ))
+                        as Box<dyn std::error::Error + Send + Sync>)
+                } else {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "kind": "SubscriptionList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": []
+                    }))
+                    .unwrap();
+                    Ok(http::Response::builder()
+                        .status(200)
+                        .body(kube::client::Body::from(body))
+                        .unwrap())
+                }
+            }
+        });
+
+        let client = Client::new(svc, "test-ns");
+        let planner = QueryPlanner::new(None);
+
+        let result = planner
+            .list_all(
+                &client,
+                "operators.coreos.com",
+                "v1alpha1",
+                "subscriptions",
+                Some("openshift-rhcl"),
+                crate::kube::resource::QueryRequirement::Required,
+            )
+            .await;
+
+        assert!(result.is_ok(), "should succeed after retries: {:?}", result);
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            3,
+            "2 transport failures + 1 success = 3 requests"
+        );
+
+        let metrics = planner.metrics().await;
+        assert_eq!(metrics.retry_count, 2, "3 requests = 2 retries");
+    }
+
+    // Test: Transport error exhausted (all 3 fail)
+    #[tokio::test]
+    async fn transport_error_exhausted() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+
+        let svc = tower::service_fn(move |_req: http::Request<kube::client::Body>| {
+            rc.fetch_add(1, Ordering::SeqCst);
+            async move {
+                Err::<http::Response<kube::client::Body>, _>(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "connection refused",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            }
+        });
+
+        let client = Client::new(svc, "test-ns");
+        let planner = QueryPlanner::new(None);
+
+        let result = planner
+            .list_all(
+                &client,
+                "operators.coreos.com",
+                "v1alpha1",
+                "subscriptions",
+                Some("openshift-rhcl"),
+                crate::kube::resource::QueryRequirement::Required,
+            )
+            .await;
+
+        assert!(result.is_err());
+        let warning = result.unwrap_err();
+        assert!(
+            matches!(
+                warning,
+                crate::kube::resource::ScanWarning::Transport { retries: 2, .. }
+            ),
+            "expected Transport with retries=2, got {:?}",
+            warning
+        );
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            3,
+            "initial + 2 retries = 3 requests"
+        );
+    }
+
     // Test 8: Paginated list
     #[tokio::test]
     async fn paginated_list_collects_all_pages() {

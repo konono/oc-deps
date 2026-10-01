@@ -1,0 +1,61 @@
+🔍 Discovering API resources...
+🔍 Discovering operators... found 24 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances... 0 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+Targets
+  limitador-operator.v1.4.2 (ns: openshift-rhcl) (Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace@openshift-rhcl)
+
+Preflight
+  ✓ Subscription resolved (limitador-operator.v1.4.2) — Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace found — will be deleted in Phase 0
+  ✓ CSV health (limitador-operator.v1.4.2) — phase=Succeeded
+  ✓ Controller available (limitador-operator.v1.4.2) — limitador-operator-controller-manager: Available (1)
+
+Phase 0  Freeze OLM
+  DELETE Subscription/limitador-operator-stable-redhat-operators-openshift-marketplace  (ns: openshift-rhcl)
+         freeze OLM to prevent re-install
+  KEEP   ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+         controller needed for operand cleanup
+
+  BARRIER Subscriptions deleted, controllers verified available
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETE ClusterServiceVersion/limitador-operator.v1.4.2  (ns: openshift-rhcl)
+         operator controller no longer needed
+
+  BARRIER Layer 0 CSVs deleted
+
+Phase 4  Namespace cleanup
+  DELETE OperatorGroup/rhcl-operator  (ns: openshift-rhcl)
+         operator group approved via --approve-scope operator-group
+  REVIEW Lease/3745a16e.kuadrant.io  (ns: openshift-rhcl)
+         leader election lease (holder references operator deployment)
+  REVIEW ConfigMap/limitador-operator-manager-config  (ns: openshift-rhcl)
+         operator-related ConfigMap — verify before deleting
+
+Phase 5  APIs
+  KEEP   CustomResourceDefinition/limitadors.limitador.kuadrant.io  (cluster-scoped)
+         eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP   Namespace/openshift-rhcl  (cluster-scoped)
+         namespace cleanup requires manual verification
+
+Warnings
+  1 CRDs eligible for removal but kept by default (use --prune-crds)
+
+Summary: 3 DELETE, 0 EXPECT-GONE, 3 KEEP, 2 REVIEW
+  0 blockers, 1 warnings
+📄 Plan saved to /tmp/oc-deps-plans/teardown-limitador-operator.v1.4.2-2026-10-01T11-14-07.140505653_00-00.json
+📄 Execution plan saved to /tmp/limitador-operator-plan.json
+
+⏱ Discovery: 35.1s, OLM: 2.1s, Plan: 1.6s, Total: 39.0s
+PLAN=0

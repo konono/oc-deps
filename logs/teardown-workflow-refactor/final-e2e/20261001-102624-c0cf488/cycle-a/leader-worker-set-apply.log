@@ -1,0 +1,107 @@
+📄 Loaded execution plan from /tmp/leader-worker-set-plan.json
+🔍 Discovering API resources...
+   (cached, 465 types)
+   Discovery: 0.0s
+🔍 Discovering operators... found 23 operators
+🔍 Discovering CR instances...
+ found 0 direct instances
+🔍 Discovering related CRD instances...
+ 3 CRDs, 0 instances
+🔍 Running preflight checks... done
+🔍 Discovering namespace resources... done
+✅ Execution plan validated — no drift detected
+
+📦 Backup: capturing pre-delete resource state via operator discovery...
+🔍 Discovering controller pods... found 1 pods
+🔍 Discovering CR instances...
+ found 0 instances
+🔍 Discovering related CRDs...
+ found 0 related instances
+🔍 Discovering namespace scope...
+
+ found 1 candidate namespaces
+🔍 Scanning 1 additional namespace(s)...
+[namespace 1/1: openshift-leaderworkerset] elapsed 0s
+✅ Scanned 269 resource types in 12.9s
+   openshift-leaderworkerset — 31 resources
+   Scanned 1 namespace(s), 31 total resources
+🔍 Running targeted adapters... found 0 resources
+  6 candidate(s) for leader-worker-set.v1.0.1 (5 discovery + 1 plan)
+    6 captured, 0 absent
+  Backup: logs/teardown-workflow-refactor/final-e2e/20261001-102624-c0cf488/cycle-a/operator/leader-worker-set/20261001T112057Z-000ca9a6-0 (6 resources)
+
+
+📓 Run journal: /home/agent/.local/state/oc-deps/clusters/73072fbb-5d55-4ad1-a239-256da1ebea4e/runs/run-18da63ea780a1e68-ca9a6.json
+⚠ Plan has 1 REVIEW item(s) with uncertain provenance; all remain preserved.
+
+⚠ This will DELETE 3 resources (0 expected to auto-remove) across 7 phases.
+
+  Targets: leader-worker-set.v1.0.1
+
+  Phase 0: 1 DELETE, 1 KEEP
+  Phase 3: 1 DELETE
+  Phase 4: 1 DELETE, 1 REVIEW
+  Phase 5: 1 KEEP
+  Phase 6: 1 KEEP
+
+Proceed? [y/N] 
+Phase 0  Freeze OLM
+  DELETED  Subscription/leader-worker-set  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  KEEP     ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+             controller needed for operand cleanup
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 1  Trigger operand cleanup
+  (none)
+
+Phase 2  Remaining cleanup
+  (none)
+
+Phase 3  Remove Operator controllers
+  DELETED  ClusterServiceVersion/leader-worker-set.v1.0.1  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+
+  ⏳ 1/1 Gone, 0 Deleting, 0 FinalizerBlocked(0s)
+  ✅ Barrier passed
+
+Phase 4  Namespace cleanup
+  DELETED  OperatorGroup/leader-worker-set  (ns: openshift-leaderworkerset)
+  ⏳ wave 1: 1/1 Gone (0s)
+  REVIEW   Lease/openshift-lws-operator-lock  (ns: openshift-leaderworkerset)
+             leader election lease (holder references operator deployment)
+
+Phase 5  APIs
+  KEEP     CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster-scoped)
+             eligible for prune (use --prune-crds to remove)
+
+Phase 6  Namespaces
+  KEEP     Namespace/openshift-leaderworkerset  (cluster-scoped)
+             namespace cleanup requires manual verification
+
+Execution Summary: 7/7 phases completed
+  3 deleted, 0 already gone, 0 failed
+
+Planned preserved: 3 KEEP, 1 REVIEW
+
+🔍 Running post-execution residual audit...
+
+Teardown Residual Audit: leader-worker-set.v1.0.1
+Session: run-18da63ea780a1e68-ca9a6
+Target operator absent: yes
+Execution: ApplyCompleted (7/7 phases)
+
+EXPECTED PRESERVED (4)
+  ClusterServiceVersion/leader-worker-set.v1.0.1  (openshift-leaderworkerset)
+    controller needed for operand cleanup
+  Lease/openshift-lws-operator-lock  (openshift-leaderworkerset)
+    leader election lease (holder references operator deployment)
+  CustomResourceDefinition/leaderworkersetoperators.operator.openshift.io  (cluster)
+    eligible for prune (use --prune-crds to remove)
+  Namespace/openshift-leaderworkerset  (cluster)
+    namespace cleanup requires manual verification
+
+Audit coverage: 16/16 probes succeeded
+APPLY=0

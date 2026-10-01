@@ -607,13 +607,21 @@ pub struct AuditCoverage {
     pub succeeded_probes: usize,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AuditScanError {
     pub resource_type: String,
     pub namespace: String,
     pub error: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missing_owner_ref: Option<Box<ResourceId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependent_uid: Option<String>,
+    #[serde(default)]
+    pub dependent_is_terminating: bool,
+    #[serde(default)]
+    pub dependent_has_target_evidence: bool,
+    #[serde(default)]
+    pub dependent_has_strong_namespace_evidence: bool,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -769,7 +777,9 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
     let Some(missing_uid) = missing.uid.as_deref().filter(|u| !u.is_empty()) else {
         return false;
     };
-    deleted_resources.iter().any(|d| {
+
+    // Path 1: Exact deleted-parent match (owner was explicitly deleted by the plan)
+    let exact_match = deleted_resources.iter().any(|d| {
         let Some(del_uid) = d.uid.as_deref().filter(|u| !u.is_empty()) else {
             return false;
         };
@@ -779,7 +789,37 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
             && d.group == missing.group
             && d.version == missing.version
             && del_uid == missing_uid
-    })
+    });
+    if exact_match {
+        return true;
+    }
+
+    // Path 2: Orphaned dependent in operator footprint — retry eligible
+    // Supported owner GVK + nonempty owner UID + owner namespace matches error namespace
+    // + nonempty dependent Pod UID + (positive target evidence OR strong namespace evidence).
+    // Authorizes bounded re-observation only; persistence to deadline = AuditIncomplete.
+    let is_supported_owner = matches!(
+        (
+            missing.group.as_str(),
+            missing.version.as_str(),
+            missing.kind.as_str()
+        ),
+        (
+            "apps",
+            "v1",
+            "DaemonSet" | "Deployment" | "StatefulSet" | "ReplicaSet"
+        ) | ("batch", "v1", "Job")
+    );
+    let owner_ns_matches = missing
+        .namespace
+        .as_deref()
+        .is_some_and(|ns| ns == error.namespace);
+    let has_evidence =
+        error.dependent_has_target_evidence || error.dependent_has_strong_namespace_evidence;
+    is_supported_owner
+        && owner_ns_matches
+        && error.dependent_uid.as_ref().is_some_and(|u| !u.is_empty())
+        && has_evidence
 }
 
 /// Core settling loop: retry transient post-delete blockers, fail immediately on persistent errors.
@@ -1093,6 +1133,7 @@ pub async fn run_residual_audit(
                                     .unwrap_or_else(|| "cluster".to_string()),
                                 error: e,
                                 missing_owner_ref: None,
+                                ..Default::default()
                             });
                         }
                     }
@@ -1122,6 +1163,7 @@ pub async fn run_residual_audit(
                                     .unwrap_or_else(|| "cluster".to_string()),
                                 error: e,
                                 missing_owner_ref: None,
+                                ..Default::default()
                             });
                         }
                     }
@@ -1213,6 +1255,7 @@ pub async fn run_residual_audit(
                                     error: "RelatedLabelOnly resource present but has no UID"
                                         .to_string(),
                                     missing_owner_ref: None,
+                                    ..Default::default()
                                 });
                             }
                         }
@@ -1229,6 +1272,7 @@ pub async fn run_residual_audit(
                                 .unwrap_or_else(|| "cluster".to_string()),
                             error: err,
                             missing_owner_ref: None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -1311,6 +1355,7 @@ pub async fn run_residual_audit(
                                     namespace: ns.clone(),
                                     error: "Object without metadata.name".to_string(),
                                     missing_owner_ref: None,
+                                    ..Default::default()
                                 });
                                 continue;
                             }
@@ -1323,6 +1368,7 @@ pub async fn run_residual_audit(
                                     namespace: ns.clone(),
                                     error: err,
                                     missing_owner_ref: None,
+                                    ..Default::default()
                                 });
                                 continue;
                             }
@@ -1367,6 +1413,7 @@ pub async fn run_residual_audit(
                                             target.kind, name
                                         ),
                                         missing_owner_ref: None,
+                                        ..Default::default()
                                     });
                                     ResidualClassification::Unattributed
                                 }
@@ -1379,6 +1426,7 @@ pub async fn run_residual_audit(
                                             target.kind, name
                                         ),
                                         missing_owner_ref: None,
+                                        ..Default::default()
                                     });
                                     ResidualClassification::Unattributed
                                 }
@@ -1457,6 +1505,7 @@ pub async fn run_residual_audit(
                             Residual CRs beyond plan resources are not covered."
                         .to_string(),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
             }
         }
@@ -1493,6 +1542,7 @@ pub async fn run_residual_audit(
                                 crd_name
                             ),
                             missing_owner_ref: None,
+                            ..Default::default()
                         });
                         continue;
                     }
@@ -1568,6 +1618,7 @@ pub async fn run_residual_audit(
                             Cannot verify owned CRD coverage completeness."
                         .to_string(),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
             }
         }
@@ -1582,6 +1633,7 @@ pub async fn run_residual_audit(
                         crd_name
                     ),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
             }
         }
@@ -1598,6 +1650,7 @@ pub async fn run_residual_audit(
                         Cannot verify exact-GET probe coverage."
                     .to_string(),
                 missing_owner_ref: None,
+                ..Default::default()
             });
         }
         Some(unresolved) => {
@@ -1611,6 +1664,7 @@ pub async fn run_residual_audit(
                         g, v, k
                     ),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
             }
         }
@@ -1723,6 +1777,7 @@ pub async fn run_residual_audit(
                                 namespace: ns.clone(),
                                 error: err,
                                 missing_owner_ref: None,
+                                ..Default::default()
                             });
                             continue;
                         }
@@ -1767,6 +1822,7 @@ pub async fn run_residual_audit(
                         controllers.len()
                     ),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
                 continue;
             }
@@ -1784,6 +1840,7 @@ pub async fn run_residual_audit(
                         owner_refs.len()
                     ),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
                 continue;
             };
@@ -1805,6 +1862,7 @@ pub async fn run_residual_audit(
                                     namespace: ns.clone(),
                                     error: reason,
                                     missing_owner_ref: None,
+                                    ..Default::default()
                                 });
                                 continue;
                             }
@@ -1815,16 +1873,21 @@ pub async fn run_residual_audit(
                         missing_ref,
                     } => {
                         let evidence = classify_evidence(pod, ctx, &target_uids);
-                        if !has_positive_target_evidence(&evidence)
-                            && is_broad_only_namespace(ctx, ns)
-                        {
+                        let has_evidence = has_positive_target_evidence(&evidence);
+                        if !has_evidence && is_broad_only_namespace(ctx, ns) {
                             continue;
                         }
+                        let strong_ns =
+                            evidence.namespace_affinity && !is_broad_only_namespace(ctx, ns);
                         audit.scan_errors.push(AuditScanError {
                             resource_type: format!("Pod/{}", pod_name),
                             namespace: ns.clone(),
                             error: reason,
                             missing_owner_ref: missing_ref.map(Box::new),
+                            dependent_uid: pod.metadata.uid.clone(),
+                            dependent_is_terminating: pod.metadata.deletion_timestamp.is_some(),
+                            dependent_has_target_evidence: has_evidence,
+                            dependent_has_strong_namespace_evidence: strong_ns,
                         });
                         continue;
                     }
@@ -1992,6 +2055,7 @@ fn normalize_jobs_to_cronjobs(
                                 namespace: job_ns.clone(),
                                 error: reason,
                                 missing_owner_ref: None,
+                                ..Default::default()
                             });
                             workload_map.remove(&job_key);
                         }
@@ -2016,6 +2080,7 @@ fn normalize_jobs_to_cronjobs(
                                 namespace: job_ns.clone(),
                                 error: format!("Job→CronJob identity verification failed: {}", err),
                                 missing_owner_ref: None,
+                                ..Default::default()
                             });
                             workload_map.remove(&job_key);
                             continue;
@@ -2028,6 +2093,7 @@ fn normalize_jobs_to_cronjobs(
                                     namespace: job_ns.clone(),
                                     error: err,
                                     missing_owner_ref: None,
+                                    ..Default::default()
                                 });
                                 workload_map.remove(&job_key);
                                 continue;
@@ -2130,6 +2196,7 @@ fn normalize_jobs_to_cronjobs(
                                 name: cj_ref.name.clone(),
                                 uid: Some(cj_ref.uid.clone()),
                             })),
+                            ..Default::default()
                         });
                         workload_map.remove(&job_key);
                     }
@@ -2141,6 +2208,7 @@ fn normalize_jobs_to_cronjobs(
                     namespace: job_ns,
                     error: err,
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
                 workload_map.remove(&job_key);
             }
@@ -2201,6 +2269,7 @@ async fn audit_list(
                                 expected_api_version, kind, t.api_version, t.kind
                             ),
                             missing_owner_ref: None,
+                            ..Default::default()
                         });
                     }
                     Some(_) => {}
@@ -2225,6 +2294,7 @@ async fn audit_list(
                 namespace: namespace.unwrap_or("cluster").to_string(),
                 error: format!("{:?}", warning),
                 missing_owner_ref: None,
+                ..Default::default()
             })
         }
     }
@@ -2878,6 +2948,7 @@ fn classify_list_results(
                     namespace: namespace.to_string(),
                     error: "Object found without metadata.name — identity unknown".to_string(),
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
                 continue;
             }
@@ -2891,6 +2962,7 @@ fn classify_list_results(
                     namespace: namespace.to_string(),
                     error: err,
                     missing_owner_ref: None,
+                    ..Default::default()
                 });
                 continue;
             }
@@ -3838,6 +3910,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "403 Forbidden".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         });
         assert!(matches!(
             residual_status_from_audit(&audit),
@@ -4218,6 +4291,7 @@ mod tests {
                 namespace: "(all)".to_string(),
                 error: "Journal lacks plan GVK resolution metadata.".to_string(),
                 missing_owner_ref: None,
+                ..Default::default()
             }],
             target_operators_absent: false,
             residual_workloads: Vec::new(),
@@ -4383,6 +4457,7 @@ mod tests {
                 namespace: "(all)".to_string(),
                 error: "CRD pruned, UID verification not implemented".to_string(),
                 missing_owner_ref: None,
+                ..Default::default()
             }],
             target_operators_absent: false,
             residual_workloads: Vec::new(),
@@ -5300,6 +5375,7 @@ mod tests {
                 namespace: "ns-a".to_string(),
                 error: "403 Forbidden".to_string(),
                 missing_owner_ref: None,
+                ..Default::default()
             }],
             ..empty_audit()
         };
@@ -5568,6 +5644,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "403 Forbidden".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         });
         assert!(matches!(
             residual_status_from_audit(&audit),
@@ -5583,6 +5660,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "request timeout after 30s".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         });
         assert!(matches!(
             residual_status_from_audit(&audit),
@@ -5598,6 +5676,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "500 Internal Server Error".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         });
         assert!(matches!(
             residual_status_from_audit(&audit),
@@ -5816,6 +5895,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "503 Service Unavailable".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         });
         assert!(matches!(
             residual_status_from_audit(&audit),
@@ -6051,12 +6131,14 @@ mod tests {
                 namespace: "ns-b".to_string(),
                 error: "403 Forbidden".to_string(),
                 missing_owner_ref: None,
+                ..Default::default()
             },
             AuditScanError {
                 resource_type: "Deployment".to_string(),
                 namespace: "ns-a".to_string(),
                 error: "timeout".to_string(),
                 missing_owner_ref: None,
+                ..Default::default()
             },
         ];
         errors.sort_by(|a, b| {
@@ -8444,6 +8526,7 @@ mod tests {
                 name: "my-daemonset".to_string(),
                 uid: Some("uid-1".to_string()),
             })),
+            ..Default::default()
         };
         assert!(is_transient_scan_error(&err, &deleted));
     }
@@ -8469,6 +8552,7 @@ mod tests {
                 name: "my-daemonset".to_string(),
                 uid: Some("uid-1".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8497,6 +8581,7 @@ mod tests {
                 name: "my-daemonset".to_string(),
                 uid: Some("uid-1".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8525,6 +8610,7 @@ mod tests {
                 name: "my-daemonset".to_string(),
                 uid: Some("uid-wrong".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8553,6 +8639,7 @@ mod tests {
                 name: "my-daemonset".to_string(),
                 uid: Some("uid-1".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8574,6 +8661,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "some error".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8602,6 +8690,7 @@ mod tests {
                 name: "my-ds".to_string(),
                 uid: None,
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8630,6 +8719,7 @@ mod tests {
                 name: "my-ds".to_string(),
                 uid: Some("".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8652,6 +8742,7 @@ mod tests {
                 name: "my-ds".to_string(),
                 uid: Some("uid-1".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8674,6 +8765,7 @@ mod tests {
                 name: "my-ds".to_string(),
                 uid: Some("uid-1".to_string()),
             })),
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &deleted),
@@ -8688,6 +8780,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "Forbidden: 403".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(!is_transient_scan_error(&err, &[]));
     }
@@ -8699,6 +8792,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "request timeout after 30s".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(!is_transient_scan_error(&err, &[]));
     }
@@ -8710,6 +8804,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "ambiguous multi-owner fail closed".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(!is_transient_scan_error(&err, &[]));
     }
@@ -8721,6 +8816,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "LIST item TypeMeta mismatch: expected batch/v1/CronJob".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(!is_transient_scan_error(&err, &[]));
     }
@@ -8732,6 +8828,7 @@ mod tests {
             namespace: "ns".to_string(),
             error: "some completely unknown error".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(!is_transient_scan_error(&err, &[]));
     }
@@ -8744,10 +8841,292 @@ mod tests {
             namespace: "ns".to_string(),
             error: "resource has deletionTimestamp set".to_string(),
             missing_owner_ref: None,
+            ..Default::default()
         };
         assert!(
             !is_transient_scan_error(&err, &[]),
             "deletionTimestamp without name match is persistent"
+        );
+    }
+
+    // ── Terminating-dependent transient tests ──
+
+    #[test]
+    fn terminating_target_evidenced_pod_settles() {
+        let err = AuditScanError {
+            resource_type: "Pod/gpu-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet nvidia-ds not found in native workload scan".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "nvidia-ds".to_string(),
+                uid: Some("ds-uid-99".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            is_transient_scan_error(&err, &[]),
+            "terminating pod with target evidence and supported owner should be transient"
+        );
+    }
+
+    #[test]
+    fn non_terminating_orphan_with_evidence_is_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/gpu-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet nvidia-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "nvidia-ds".to_string(),
+                uid: Some("ds-uid-99".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            is_transient_scan_error(&err, &[]),
+            "orphan pod with UID + evidence + supported GVK is retry-eligible"
+        );
+    }
+
+    #[test]
+    fn missing_pod_uid_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/gpu-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet nvidia-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "nvidia-ds".to_string(),
+                uid: Some("ds-uid-99".to_string()),
+            })),
+            dependent_uid: None,
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "pod without UID must not be transient"
+        );
+    }
+
+    #[test]
+    fn no_evidence_pod_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/gpu-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet nvidia-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "nvidia-ds".to_string(),
+                uid: Some("ds-uid-99".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "pod without target evidence must not be transient"
+        );
+    }
+
+    #[test]
+    fn exact_deleted_parent_still_works() {
+        let deleted = vec![make_rid(
+            "apps",
+            "DaemonSet",
+            Some("ns"),
+            "my-ds",
+            Some("uid-1"),
+        )];
+        let err = AuditScanError {
+            resource_type: "Pod/my-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet my-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "my-ds".to_string(),
+                uid: Some("uid-1".to_string()),
+            })),
+            ..Default::default()
+        };
+        assert!(
+            is_transient_scan_error(&err, &deleted),
+            "exact deleted-parent match (path 1) must still work"
+        );
+    }
+
+    #[test]
+    fn custom_group_daemonset_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/custom-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet custom-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "custom.io".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "custom-ds".to_string(),
+                uid: Some("ds-uid-custom".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "custom.io/v1/DaemonSet must not be treated as supported workload"
+        );
+    }
+
+    #[test]
+    fn wrong_version_daemonset_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/v2-pod".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet v2-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v2".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "v2-ds".to_string(),
+                uid: Some("ds-uid-v2".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: true,
+            dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "apps/v2/DaemonSet must not be treated as supported workload"
+        );
+    }
+
+    #[test]
+    fn strong_namespace_orphan_is_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/nvidia-dcgm-exporter-abc".to_string(),
+            namespace: "nvidia-gpu-operator".to_string(),
+            error: "DaemonSet nvidia-dcgm-exporter not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("nvidia-gpu-operator".to_string()),
+                name: "nvidia-dcgm-exporter".to_string(),
+                uid: Some("ds-uid-1".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: true,
+        };
+        assert!(
+            is_transient_scan_error(&err, &[]),
+            "orphan in strong footprint namespace is retry-eligible"
+        );
+    }
+
+    #[test]
+    fn broad_only_namespace_orphan_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/some-pod".to_string(),
+            namespace: "default".to_string(),
+            error: "DaemonSet some-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("default".to_string()),
+                name: "some-ds".to_string(),
+                uid: Some("ds-uid-2".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-2".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "broad-only namespace orphan without evidence must not be transient"
+        );
+    }
+
+    #[test]
+    fn owner_namespace_mismatch_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/orphan".to_string(),
+            namespace: "ns-a".to_string(),
+            error: "DaemonSet ds-x not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns-b".to_string()),
+                name: "ds-x".to_string(),
+                uid: Some("ds-uid-3".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-3".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: true,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "owner namespace mismatch must not be transient even with namespace evidence"
+        );
+    }
+
+    #[test]
+    fn no_namespace_no_evidence_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/orphan".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet ds-y not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "ds-y".to_string(),
+                uid: Some("ds-uid-4".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-4".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "no evidence at all must not be transient"
         );
     }
 
@@ -8780,6 +9159,7 @@ mod tests {
                 rid.kind, rid.name
             ),
             missing_owner_ref: Some(Box::new(rid.clone())),
+            ..Default::default()
         }
     }
 
@@ -8852,6 +9232,7 @@ mod tests {
                         namespace: "ns".to_string(),
                         error: "Forbidden: 403".to_string(),
                         missing_owner_ref: None,
+                        ..Default::default()
                     });
                     Ok(AuditObservation {
                         generation: OperatorGenerationState::Absent,
@@ -8890,6 +9271,7 @@ mod tests {
                         namespace: "ns".to_string(),
                         error: "Internal Server Error: 500".to_string(),
                         missing_owner_ref: None,
+                        ..Default::default()
                     });
                     Ok(AuditObservation {
                         generation: OperatorGenerationState::Absent,
@@ -9014,6 +9396,7 @@ mod tests {
                             name: "my-ds".to_string(),
                             uid: Some("uid-1".to_string()),
                         })),
+                        ..Default::default()
                     });
                     Ok(AuditObservation {
                         generation: OperatorGenerationState::Absent,
@@ -9149,6 +9532,199 @@ mod tests {
         );
     }
 
+    // ── Tower test: terminating GPU pod settle ──
+
+    #[tokio::test(start_paused = true)]
+    async fn settle_loop_resolves_orphaned_gpu_pods() {
+        use std::pin::pin;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // No deleted resources in the plan — DaemonSets were side-effect deletions
+        let mut journal = make_tower_journal();
+        // Populate csv_names so label evidence matching works
+        journal
+            .audit_context
+            .csv_names
+            .insert("test-pkg.v1".to_string());
+
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let rc = request_count.clone();
+        let poll_number = std::sync::Arc::new(AtomicUsize::new(0));
+        let pn = poll_number.clone();
+
+        let (mock_service, handle) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let client = kube::Client::new(mock_service, "default");
+
+        let spawned = tokio::spawn(async move {
+            let mut handle = pin!(handle);
+            let mut seen_sub_list_count = 0usize;
+            while let Some((req, send)) = handle.next_request().await {
+                rc.fetch_add(1, Ordering::SeqCst);
+                let path = req.uri().path().to_string();
+
+                if path == SUB_LIST {
+                    seen_sub_list_count += 1;
+                    pn.store(seen_sub_list_count, Ordering::SeqCst);
+                }
+
+                if let Some(resp) = handle_generation_absent(&path) {
+                    send.send_response(resp);
+                } else if path == POD_LIST {
+                    let current_poll = pn.load(Ordering::SeqCst);
+                    if current_poll <= 2 {
+                        // Polls 1-2: orphan pod owned by side-effect-deleted DaemonSet
+                        // Pod has target labels (olm.owner) but NO deletionTimestamp
+                        // (GC hasn't processed orphan yet)
+                        send.send_response(tower_json_response(serde_json::json!({
+                            "apiVersion": "v1", "kind": "PodList",
+                            "metadata": {"resourceVersion": "1"},
+                            "items": [{
+                                "apiVersion": "v1", "kind": "Pod",
+                                "metadata": {
+                                    "name": "nvidia-dcgm-exporter-abc",
+                                    "namespace": "test-ns",
+                                    "uid": "gpu-pod-uid-1",
+                                    "labels": {
+                                        "olm.owner": "test-pkg.v1",
+                                        "app": "nvidia-dcgm-exporter"
+                                    },
+                                    "managedFields": [{
+                                        "manager": "test-pkg-controller",
+                                        "operation": "Apply"
+                                    }],
+                                    "ownerReferences": [{
+                                        "apiVersion": "apps/v1",
+                                        "kind": "DaemonSet",
+                                        "name": "nvidia-dcgm-exporter",
+                                        "uid": "gpu-ds-uid-1",
+                                        "controller": true
+                                    }]
+                                }
+                            }]
+                        })));
+                    } else {
+                        // Poll 3: pod is gone
+                        send.send_response(tower_empty_list());
+                    }
+                } else if path == DS_LIST {
+                    // DaemonSet was deleted as side effect — always empty
+                    send.send_response(tower_empty_list());
+                } else if let Some(resp) = handle_audit_scan_default(&path) {
+                    send.send_response(resp);
+                } else {
+                    panic!(
+                        "settle_loop_resolves_terminating_gpu_pods: unexpected request: {} (poll {})",
+                        path,
+                        pn.load(Ordering::SeqCst)
+                    );
+                }
+            }
+        });
+
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = super::observe_residual_state_until_settled(
+            &client,
+            &journal,
+            std::time::Duration::from_secs(120),
+            &cancel,
+        )
+        .await;
+        drop(client);
+        spawned.await.unwrap();
+
+        let settled = result.unwrap();
+        assert_eq!(settled.attempts, 3, "should settle on 3rd attempt");
+        assert!(
+            settled.last_transient_blockers.is_empty(),
+            "settled audit should have no transient blockers"
+        );
+        let audit = settled
+            .observation
+            .audit
+            .expect("settled should have audit");
+        assert!(
+            audit.scan_errors.is_empty(),
+            "settled audit should have no scan errors, got: {:?}",
+            audit.scan_errors
+        );
+    }
+
+    #[tokio::test]
+    async fn settle_loop_deadline_orphan_persists_incomplete() {
+        let err = AuditScanError {
+            resource_type: "Pod/nvidia-dcgm-exporter-abc".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet nvidia-dcgm-exporter not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "nvidia-dcgm-exporter".to_string(),
+                uid: Some("ds-uid-1".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: true,
+        };
+        assert!(
+            is_transient_scan_error(&err, &[]),
+            "orphan with strong namespace evidence is retry-eligible"
+        );
+
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let settled = super::settle_loop(
+            || async {
+                let mut audit = make_empty_audit();
+                audit.scan_errors.push(AuditScanError {
+                    resource_type: "Pod/nvidia-dcgm-exporter-abc".to_string(),
+                    namespace: "ns".to_string(),
+                    error: "DaemonSet nvidia-dcgm-exporter not found".to_string(),
+                    missing_owner_ref: Some(Box::new(ResourceId {
+                        group: "apps".to_string(),
+                        version: "v1".to_string(),
+                        kind: "DaemonSet".to_string(),
+                        namespace: Some("ns".to_string()),
+                        name: "nvidia-dcgm-exporter".to_string(),
+                        uid: Some("ds-uid-1".to_string()),
+                    })),
+                    dependent_uid: Some("pod-uid-1".to_string()),
+                    dependent_is_terminating: false,
+                    dependent_has_target_evidence: false,
+                    dependent_has_strong_namespace_evidence: true,
+                });
+                Ok(AuditObservation {
+                    generation: OperatorGenerationState::Absent,
+                    audit: Some(audit),
+                })
+            },
+            &[],
+            std::time::Duration::from_millis(50),
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            settled.attempts >= 2,
+            "should have retried at least once, got {} attempts",
+            settled.attempts
+        );
+        let audit = settled.observation.audit.expect("should have audit");
+        assert!(
+            !audit.scan_errors.is_empty(),
+            "persistent orphan should leave scan errors"
+        );
+        assert!(
+            !settled.last_transient_blockers.is_empty(),
+            "should report transient blockers at deadline"
+        );
+    }
+
     // ── has_positive_target_evidence tests ──
 
     #[test]
@@ -9204,5 +9780,173 @@ mod tests {
             ..empty_evidence()
         };
         assert!(!has_positive_target_evidence(&e));
+    }
+
+    #[tokio::test]
+    async fn generation_transport_recovery_reaches_absent() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+
+        let svc = tower::service_fn(move |req: http::Request<kube::client::Body>| {
+            let call = cc.fetch_add(1, Ordering::SeqCst);
+            let path = req.uri().path().to_string();
+            async move {
+                if path.contains("/subscriptions") && call < 2 {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "connection refused",
+                    ))
+                        as Box<dyn std::error::Error + Send + Sync>);
+                }
+                if path.contains("/subscriptions") {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "kind": "SubscriptionList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": []
+                    }))
+                    .unwrap();
+                    return Ok(http::Response::builder()
+                        .status(200)
+                        .body(kube::client::Body::from(body))
+                        .unwrap());
+                }
+                if path.contains("/clusterserviceversions/") {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "kind": "Status", "apiVersion": "v1", "metadata": {},
+                        "status": "Failure", "message": "not found", "code": 404
+                    }))
+                    .unwrap();
+                    return Ok(http::Response::builder()
+                        .status(404)
+                        .body(kube::client::Body::from(body))
+                        .unwrap());
+                }
+                if path.contains("/deployments/") {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "kind": "Status", "apiVersion": "v1", "metadata": {},
+                        "status": "Failure", "message": "not found", "code": 404
+                    }))
+                    .unwrap();
+                    return Ok(http::Response::builder()
+                        .status(404)
+                        .body(kube::client::Body::from(body))
+                        .unwrap());
+                }
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "apiVersion": "v1", "kind": "List",
+                    "metadata": {"resourceVersion": "1"}, "items": []
+                }))
+                .unwrap();
+                Ok(http::Response::builder()
+                    .status(200)
+                    .body(kube::client::Body::from(body))
+                    .unwrap())
+            }
+        });
+
+        let client = kube::Client::new(svc, "test-ns");
+
+        let csv_rid = make_rid(
+            "operators.coreos.com",
+            "ClusterServiceVersion",
+            Some("test-ns"),
+            "test-pkg.v1",
+            Some("csv-uid-1"),
+        );
+        let snapshot = crate::teardown::plan::OperatorIdentitySnapshot {
+            generation_identity: crate::teardown::plan::OperatorGenerationIdentity::OlmPackage {
+                package_name: "test-pkg".to_string(),
+                install_namespace: "test-ns".to_string(),
+            },
+            operator_id: crate::analyzers::olm::OperatorId {
+                csv_name: "test-pkg.v1".to_string(),
+                namespace: "test-ns".to_string(),
+            },
+            csv_name: "test-pkg.v1".to_string(),
+            csv: crate::teardown::plan::ObservedResourceIdentity {
+                resource: csv_rid,
+                uid: "csv-uid-1".to_string(),
+            },
+            subscriptions: vec![],
+            controller_deployments: vec![],
+            service_accounts: vec![],
+            owned_crds: vec![],
+            required_crds: vec![],
+        };
+
+        let baseline = Some(vec![]);
+        let result = super::check_operator_generation_fresh(&client, &snapshot, &baseline).await;
+        assert!(
+            matches!(result, OperatorGenerationState::Absent),
+            "transport recovery should reach Absent, got {:?}",
+            result
+        );
+        assert!(
+            call_count.load(Ordering::SeqCst) >= 3,
+            "should have retried: {} calls",
+            call_count.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn generation_transport_exhausted_remains_unknown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+
+        let svc = tower::service_fn(move |_req: http::Request<kube::client::Body>| {
+            cc.fetch_add(1, Ordering::SeqCst);
+            async move {
+                Err::<http::Response<kube::client::Body>, _>(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "connection refused",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            }
+        });
+
+        let client = kube::Client::new(svc, "test-ns");
+
+        let csv_rid = make_rid(
+            "operators.coreos.com",
+            "ClusterServiceVersion",
+            Some("test-ns"),
+            "test-pkg.v1",
+            Some("csv-uid-1"),
+        );
+        let snapshot = crate::teardown::plan::OperatorIdentitySnapshot {
+            generation_identity: crate::teardown::plan::OperatorGenerationIdentity::OlmPackage {
+                package_name: "test-pkg".to_string(),
+                install_namespace: "test-ns".to_string(),
+            },
+            operator_id: crate::analyzers::olm::OperatorId {
+                csv_name: "test-pkg.v1".to_string(),
+                namespace: "test-ns".to_string(),
+            },
+            csv_name: "test-pkg.v1".to_string(),
+            csv: crate::teardown::plan::ObservedResourceIdentity {
+                resource: csv_rid,
+                uid: "csv-uid-1".to_string(),
+            },
+            subscriptions: vec![],
+            controller_deployments: vec![],
+            service_accounts: vec![],
+            owned_crds: vec![],
+            required_crds: vec![],
+        };
+
+        let result = super::check_operator_generation_fresh(&client, &snapshot, &None).await;
+        assert!(
+            matches!(result, OperatorGenerationState::Unknown(_)),
+            "exhausted transport should be Unknown, got {:?}",
+            result
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            3,
+            "initial + 2 retries = 3 requests"
+        );
     }
 }

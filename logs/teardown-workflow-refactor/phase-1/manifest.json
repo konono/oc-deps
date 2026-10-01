@@ -1,0 +1,108 @@
+{
+  "type": "phase-1-architecture-inventory",
+  "issue": 49,
+  "base_commit": "ad93e096eb05502a33281f3501eab001b834f544",
+  "base_commit_short": "ad93e09",
+  "base_description": "Merge pull request #50 (Issue #46 full-teardown-residual-completion)",
+  "date": "2026-09-30",
+  "deliverables": {
+    "cli_contracts": {
+      "file": "cli-contracts.md",
+      "sha256": "dcf757a13fca97f0c36c9facae89183bbada410c679fc096bc6079639aa82538",
+      "description": "CLI parse/help contracts for plan/apply/resume/batch and --tui/--script/--non-interactive"
+    },
+    "plan_semantic_tuples": {
+      "file": "plan-semantic-tuples.json",
+      "sha256": "1a535ed920b1cef655c0b5802106cfb0a09cc5ea5855643d5073fb0e63d00d92",
+      "description": "Nonempty semantic plan tuples for all 15 operators from Cycle A v3 non-final plans (Issue #46)",
+      "operators": 15,
+      "total_resources": 343,
+      "explicit_deletes": 10,
+      "action_totals": {
+        "DELETE": 112,
+        "EXPECT": 77,
+        "KEEP": 136,
+        "REVIEW": 18
+      },
+      "source": "logs/full-teardown-completion/phase-d-evidence/cycle-a-v3/plans/ (non-final files only)",
+      "version_field": "null (ExecutionPlan v2 does not store version)"
+    },
+    "plan_semantic_tuples_readable": {
+      "file": "plan-semantic-tuples.md",
+      "sha256": "1cc5b55c56e55b397c7faa9b97a4d4c1b1ec61da73ab6ef609302ad5e3cc1ef8",
+      "description": "Human-readable plan tuple summary with counts, action breakdown, explicit_deletes section"
+    },
+    "schema_contracts": {
+      "file": "schema-contracts.md",
+      "sha256": "ade25372818b46477624ba92c467fe6166aa3c7ba77c193f606ede832cee410c",
+      "description": "Journal v12 schema, backup receipt, resume classification (generic Failed non-resumable, legacy migration only), batch behavior, output format contracts"
+    },
+    "callsite_inventory": {
+      "file": "callsite-inventory.md",
+      "sha256": "bdfcb12a24bb1ab172f3b31a21b77db70323ffdd17c3b1d4fa5d5a52931f429a",
+      "description": "Complete production call sites across main.rs, tui/, executor.rs, journal.rs. Counts verified by validate-callsite-counts.py."
+    },
+    "test_inventory": {
+      "file": "test-inventory.md",
+      "sha256": "605e220e5238dde5b8a1fd2ed18ba55a9e6605603004e2ee138d094f5ac55308",
+      "description": "Tests mapped to safety contracts. Base: 1,363 bin + 5 cli_ux + 1 corpus = 1,369. Branch adds 6 CLI tests = 1,375."
+    },
+    "workflow_api_proposal": {
+      "file": "workflow-api-proposal.md",
+      "sha256": "a42c75c3d189fbfa6f55fabff2c577d328a13c63531a5219080f486b4abf1c0c",
+      "description": "Proposed run_teardown_workflow API. ExplicitCleanupBlocked inside execute_plan (not after audit). Dry-run allows backup. Generic Failed non-resumable. Residual cleanup is a workflow stage, not a start mode."
+    }
+  },
+  "contract_tests_added": {
+    "file": "src/cli.rs",
+    "tests": [
+      "phase1_apply_accepts_tui_flag",
+      "phase1_apply_accepts_script_flag",
+      "phase1_apply_accepts_non_interactive_flag",
+      "phase1_apply_surviving_options_parse",
+      "phase1_resume_options_parse",
+      "phase1_batch_options_parse"
+    ],
+    "count": 6
+  },
+  "validators": {
+    "plan_golden": "scripts/validate-plan-golden.py",
+    "plan_generator": "scripts/generate-plan-golden.py",
+    "manifest_consistency": "scripts/validate-manifest.py",
+    "callsite_counts": "scripts/validate-callsite-counts.py"
+  },
+  "gates": {
+    "fmt": "pass",
+    "clippy": "pass (0 warnings)",
+    "test": "pass (1375 total: 1369 bin + 5 cli_ux + 1 corpus)",
+    "release_build": "pass",
+    "corpus_replay": "pass",
+    "credential_scan": "pass (no secrets in artifacts)",
+    "plan_golden_validator": "pass (343 resources, 10 explicit, full-identity 1:1 matching, self-check fixtures)",
+    "manifest_validator": "pass",
+    "callsite_validator": "pass (26+6+4+4+3+6+3 verified)"
+  },
+  "nonempty_counts": {
+    "operators": 15,
+    "plan_resources": 343,
+    "explicit_deletes": 10,
+    "execute_plan_sites": 4,
+    "prepare_backup_gate_sites": 3,
+    "execute_residual_cleanup_sites": 6,
+    "check_operator_generation_fresh_callers": 26,
+    "run_post_mutation_audit_callers": 6,
+    "mutation_gate_new_production": 4,
+    "journal_update_production_sites": 74,
+    "std_process_command_sites": 3,
+    "existing_tests_base": 1369,
+    "new_contract_tests": 6,
+    "total_tests_branch": 1375
+  },
+  "limitations": [
+    "No live E2E in Phase 1 — cluster is in deleted state from Issue #46",
+    "Plan tuples extracted from Phase D Cycle A v3 non-final plans, not live cluster",
+    "ExecutionPlan v2 does not store version field — null in tuples, documented limitation",
+    "Workflow API proposal is design-only — no production code changes for Phase 3 yet",
+    "grep -c #[test] finds 1,367 annotations; cargo test reports 1,375 due to ~8 macro-generated tests"
+  ]
+}
