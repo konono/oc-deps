@@ -1,5 +1,6 @@
 {
-  "head": "1d344af",
+  "tested_code_commit": "c0cf488991042638c7798ac0e1b9c875e68b2d76",
+  "evidence_commit": "containing git commit",
   "binary_sha256": "1cffdfb962fe31d3ef40ce05a719941e2d3825cd51ae8735d006d8ddf01410a0",
   "config_sha256": "ea2219376b24a7b1c09952ab3cc245d2f1f494736c8606712a94af4845a7d2e3",
   "kube_system_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
