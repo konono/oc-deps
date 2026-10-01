@@ -404,6 +404,7 @@ pub struct ExplicitCleanupError {
 pub enum ExplicitCleanupErrorKind {
     Timeout,
     ServerError,
+    Transport,
     Forbidden,
     IncompleteScan,
     /// A v12 journal written by code predating `ExplicitCleanupBlocked` stopped

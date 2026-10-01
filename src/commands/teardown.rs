@@ -1679,6 +1679,25 @@ mod basis_drift_tests {
     }
 
     #[test]
+    fn explicit_guard_transport_classifies_transient() {
+        use crate::kube::resource::ScanWarning;
+        use crate::teardown::executor::ExplicitGuardOutcome;
+        let w = ScanWarning::Transport {
+            gvr: "v1/pods".to_string(),
+            message: "ServiceError: client error (Connect)".to_string(),
+            retries: 2,
+        };
+        let outcome = ExplicitGuardOutcome::from_scan_warning(&w, "Deployment/test");
+        assert!(matches!(outcome, ExplicitGuardOutcome::TransientFailure(_)));
+        if let ExplicitGuardOutcome::TransientFailure(err) = outcome {
+            assert_eq!(
+                err.error_kind,
+                crate::teardown::journal::ExplicitCleanupErrorKind::Transport
+            );
+        }
+    }
+
+    #[test]
     fn explicit_guard_other_error_classifies_hard() {
         use crate::kube::resource::ScanWarning;
         use crate::teardown::executor::ExplicitGuardOutcome;

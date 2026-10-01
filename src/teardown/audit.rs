@@ -9205,4 +9205,172 @@ mod tests {
         };
         assert!(!has_positive_target_evidence(&e));
     }
+
+    #[tokio::test]
+    async fn generation_transport_recovery_reaches_absent() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+
+        let svc = tower::service_fn(move |req: http::Request<kube::client::Body>| {
+            let call = cc.fetch_add(1, Ordering::SeqCst);
+            let path = req.uri().path().to_string();
+            async move {
+                if path.contains("/subscriptions") && call < 2 {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "connection refused",
+                    ))
+                        as Box<dyn std::error::Error + Send + Sync>);
+                }
+                if path.contains("/subscriptions") {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "apiVersion": "operators.coreos.com/v1alpha1",
+                        "kind": "SubscriptionList",
+                        "metadata": {"resourceVersion": "1"},
+                        "items": []
+                    }))
+                    .unwrap();
+                    return Ok(http::Response::builder()
+                        .status(200)
+                        .body(kube::client::Body::from(body))
+                        .unwrap());
+                }
+                if path.contains("/clusterserviceversions/") {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "kind": "Status", "apiVersion": "v1", "metadata": {},
+                        "status": "Failure", "message": "not found", "code": 404
+                    }))
+                    .unwrap();
+                    return Ok(http::Response::builder()
+                        .status(404)
+                        .body(kube::client::Body::from(body))
+                        .unwrap());
+                }
+                if path.contains("/deployments/") {
+                    let body = serde_json::to_vec(&serde_json::json!({
+                        "kind": "Status", "apiVersion": "v1", "metadata": {},
+                        "status": "Failure", "message": "not found", "code": 404
+                    }))
+                    .unwrap();
+                    return Ok(http::Response::builder()
+                        .status(404)
+                        .body(kube::client::Body::from(body))
+                        .unwrap());
+                }
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "apiVersion": "v1", "kind": "List",
+                    "metadata": {"resourceVersion": "1"}, "items": []
+                }))
+                .unwrap();
+                Ok(http::Response::builder()
+                    .status(200)
+                    .body(kube::client::Body::from(body))
+                    .unwrap())
+            }
+        });
+
+        let client = kube::Client::new(svc, "test-ns");
+
+        let csv_rid = make_rid(
+            "operators.coreos.com",
+            "ClusterServiceVersion",
+            Some("test-ns"),
+            "test-pkg.v1",
+            Some("csv-uid-1"),
+        );
+        let snapshot = crate::teardown::plan::OperatorIdentitySnapshot {
+            generation_identity: crate::teardown::plan::OperatorGenerationIdentity::OlmPackage {
+                package_name: "test-pkg".to_string(),
+                install_namespace: "test-ns".to_string(),
+            },
+            operator_id: crate::analyzers::olm::OperatorId {
+                csv_name: "test-pkg.v1".to_string(),
+                namespace: "test-ns".to_string(),
+            },
+            csv_name: "test-pkg.v1".to_string(),
+            csv: crate::teardown::plan::ObservedResourceIdentity {
+                resource: csv_rid,
+                uid: "csv-uid-1".to_string(),
+            },
+            subscriptions: vec![],
+            controller_deployments: vec![],
+            service_accounts: vec![],
+            owned_crds: vec![],
+            required_crds: vec![],
+        };
+
+        let baseline = Some(vec![]);
+        let result = super::check_operator_generation_fresh(&client, &snapshot, &baseline).await;
+        assert!(
+            matches!(result, OperatorGenerationState::Absent),
+            "transport recovery should reach Absent, got {:?}",
+            result
+        );
+        assert!(
+            call_count.load(Ordering::SeqCst) >= 3,
+            "should have retried: {} calls",
+            call_count.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn generation_transport_exhausted_remains_unknown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+
+        let svc = tower::service_fn(move |_req: http::Request<kube::client::Body>| {
+            cc.fetch_add(1, Ordering::SeqCst);
+            async move {
+                Err::<http::Response<kube::client::Body>, _>(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "connection refused",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>)
+            }
+        });
+
+        let client = kube::Client::new(svc, "test-ns");
+
+        let csv_rid = make_rid(
+            "operators.coreos.com",
+            "ClusterServiceVersion",
+            Some("test-ns"),
+            "test-pkg.v1",
+            Some("csv-uid-1"),
+        );
+        let snapshot = crate::teardown::plan::OperatorIdentitySnapshot {
+            generation_identity: crate::teardown::plan::OperatorGenerationIdentity::OlmPackage {
+                package_name: "test-pkg".to_string(),
+                install_namespace: "test-ns".to_string(),
+            },
+            operator_id: crate::analyzers::olm::OperatorId {
+                csv_name: "test-pkg.v1".to_string(),
+                namespace: "test-ns".to_string(),
+            },
+            csv_name: "test-pkg.v1".to_string(),
+            csv: crate::teardown::plan::ObservedResourceIdentity {
+                resource: csv_rid,
+                uid: "csv-uid-1".to_string(),
+            },
+            subscriptions: vec![],
+            controller_deployments: vec![],
+            service_accounts: vec![],
+            owned_crds: vec![],
+            required_crds: vec![],
+        };
+
+        let result = super::check_operator_generation_fresh(&client, &snapshot, &None).await;
+        assert!(
+            matches!(result, OperatorGenerationState::Unknown(_)),
+            "exhausted transport should be Unknown, got {:?}",
+            result
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            3,
+            "initial + 2 retries = 3 requests"
+        );
+    }
 }

@@ -66,6 +66,13 @@ impl ExplicitGuardOutcome {
                     message: w.to_string(),
                 })
             }
+            ScanWarning::Transport { .. } => {
+                ExplicitGuardOutcome::TransientFailure(ExplicitCleanupError {
+                    target: target_label.to_string(),
+                    error_kind: ExplicitCleanupErrorKind::Transport,
+                    message: w.to_string(),
+                })
+            }
             _ => ExplicitGuardOutcome::HardFailure(format!(
                 "Explicit cleanup: failed to GET {}: {}",
                 target_label, w

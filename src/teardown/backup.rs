@@ -3430,6 +3430,17 @@ mod tests {
                 QueryRequirement::Optional,
                 true,
             ),
+            // Transport: blocks for both
+            (
+                QueryOutcome::Transport { retries: 2 },
+                QueryRequirement::Required,
+                true,
+            ),
+            (
+                QueryOutcome::Transport { retries: 2 },
+                QueryRequirement::Optional,
+                true,
+            ),
             // Unknown: blocks for both
             (
                 QueryOutcome::Unknown {
