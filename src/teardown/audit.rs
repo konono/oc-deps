@@ -620,6 +620,8 @@ pub struct AuditScanError {
     pub dependent_is_terminating: bool,
     #[serde(default)]
     pub dependent_has_target_evidence: bool,
+    #[serde(default)]
+    pub dependent_has_strong_namespace_evidence: bool,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -792,10 +794,10 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
         return true;
     }
 
-    // Path 2: Orphaned dependent with target evidence — retry eligible
-    // Owner is a supported workload type (absent from native scan, not in plan).
-    // The dependent Pod has a UID and positive target evidence. The settle loop
-    // will re-observe; if the Pod persists past deadline, result is AuditIncomplete.
+    // Path 2: Orphaned dependent in operator footprint — retry eligible
+    // Supported owner GVK + nonempty owner UID + owner namespace matches error namespace
+    // + nonempty dependent Pod UID + (positive target evidence OR strong namespace evidence).
+    // Authorizes bounded re-observation only; persistence to deadline = AuditIncomplete.
     let is_supported_owner = matches!(
         (
             missing.group.as_str(),
@@ -808,9 +810,16 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
             "DaemonSet" | "Deployment" | "StatefulSet" | "ReplicaSet"
         ) | ("batch", "v1", "Job")
     );
+    let owner_ns_matches = missing
+        .namespace
+        .as_deref()
+        .is_some_and(|ns| ns == error.namespace);
+    let has_evidence =
+        error.dependent_has_target_evidence || error.dependent_has_strong_namespace_evidence;
     is_supported_owner
+        && owner_ns_matches
         && error.dependent_uid.as_ref().is_some_and(|u| !u.is_empty())
-        && error.dependent_has_target_evidence
+        && has_evidence
 }
 
 /// Core settling loop: retry transient post-delete blockers, fail immediately on persistent errors.
@@ -1868,6 +1877,8 @@ pub async fn run_residual_audit(
                         if !has_evidence && is_broad_only_namespace(ctx, ns) {
                             continue;
                         }
+                        let strong_ns =
+                            evidence.namespace_affinity && !is_broad_only_namespace(ctx, ns);
                         audit.scan_errors.push(AuditScanError {
                             resource_type: format!("Pod/{}", pod_name),
                             namespace: ns.clone(),
@@ -1876,6 +1887,7 @@ pub async fn run_residual_audit(
                             dependent_uid: pod.metadata.uid.clone(),
                             dependent_is_terminating: pod.metadata.deletion_timestamp.is_some(),
                             dependent_has_target_evidence: has_evidence,
+                            dependent_has_strong_namespace_evidence: strong_ns,
                         });
                         continue;
                     }
@@ -8856,6 +8868,7 @@ mod tests {
             dependent_uid: Some("pod-uid-1".to_string()),
             dependent_is_terminating: true,
             dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
         };
         assert!(
             is_transient_scan_error(&err, &[]),
@@ -8880,6 +8893,7 @@ mod tests {
             dependent_uid: Some("pod-uid-1".to_string()),
             dependent_is_terminating: false,
             dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
         };
         assert!(
             is_transient_scan_error(&err, &[]),
@@ -8904,6 +8918,7 @@ mod tests {
             dependent_uid: None,
             dependent_is_terminating: true,
             dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
         };
         assert!(
             !is_transient_scan_error(&err, &[]),
@@ -8928,6 +8943,7 @@ mod tests {
             dependent_uid: Some("pod-uid-1".to_string()),
             dependent_is_terminating: true,
             dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: false,
         };
         assert!(
             !is_transient_scan_error(&err, &[]),
@@ -8981,6 +8997,7 @@ mod tests {
             dependent_uid: Some("pod-uid-1".to_string()),
             dependent_is_terminating: true,
             dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
         };
         assert!(
             !is_transient_scan_error(&err, &[]),
@@ -9005,10 +9022,111 @@ mod tests {
             dependent_uid: Some("pod-uid-1".to_string()),
             dependent_is_terminating: true,
             dependent_has_target_evidence: true,
+            dependent_has_strong_namespace_evidence: false,
         };
         assert!(
             !is_transient_scan_error(&err, &[]),
             "apps/v2/DaemonSet must not be treated as supported workload"
+        );
+    }
+
+    #[test]
+    fn strong_namespace_orphan_is_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/nvidia-dcgm-exporter-abc".to_string(),
+            namespace: "nvidia-gpu-operator".to_string(),
+            error: "DaemonSet nvidia-dcgm-exporter not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("nvidia-gpu-operator".to_string()),
+                name: "nvidia-dcgm-exporter".to_string(),
+                uid: Some("ds-uid-1".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: true,
+        };
+        assert!(
+            is_transient_scan_error(&err, &[]),
+            "orphan in strong footprint namespace is retry-eligible"
+        );
+    }
+
+    #[test]
+    fn broad_only_namespace_orphan_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/some-pod".to_string(),
+            namespace: "default".to_string(),
+            error: "DaemonSet some-ds not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("default".to_string()),
+                name: "some-ds".to_string(),
+                uid: Some("ds-uid-2".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-2".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "broad-only namespace orphan without evidence must not be transient"
+        );
+    }
+
+    #[test]
+    fn owner_namespace_mismatch_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/orphan".to_string(),
+            namespace: "ns-a".to_string(),
+            error: "DaemonSet ds-x not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns-b".to_string()),
+                name: "ds-x".to_string(),
+                uid: Some("ds-uid-3".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-3".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: true,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "owner namespace mismatch must not be transient even with namespace evidence"
+        );
+    }
+
+    #[test]
+    fn no_namespace_no_evidence_not_transient() {
+        let err = AuditScanError {
+            resource_type: "Pod/orphan".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet ds-y not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "ds-y".to_string(),
+                uid: Some("ds-uid-4".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-4".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: false,
+        };
+        assert!(
+            !is_transient_scan_error(&err, &[]),
+            "no evidence at all must not be transient"
         );
     }
 
@@ -9550,11 +9668,12 @@ mod tests {
             })),
             dependent_uid: Some("pod-uid-1".to_string()),
             dependent_is_terminating: false,
-            dependent_has_target_evidence: true,
+            dependent_has_target_evidence: false,
+            dependent_has_strong_namespace_evidence: true,
         };
         assert!(
             is_transient_scan_error(&err, &[]),
-            "orphan with evidence is retry-eligible"
+            "orphan with strong namespace evidence is retry-eligible"
         );
 
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -9575,7 +9694,8 @@ mod tests {
                     })),
                     dependent_uid: Some("pod-uid-1".to_string()),
                     dependent_is_terminating: false,
-                    dependent_has_target_evidence: true,
+                    dependent_has_target_evidence: false,
+                    dependent_has_strong_namespace_evidence: true,
                 });
                 Ok(AuditObservation {
                     generation: OperatorGenerationState::Absent,
