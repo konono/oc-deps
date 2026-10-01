@@ -792,9 +792,10 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
         return true;
     }
 
-    // Path 2: Terminating dependent with target evidence
-    // Owner is a supported workload type deleted as a side effect (not in plan),
-    // but the dependent Pod is actively terminating and has positive target evidence.
+    // Path 2: Orphaned dependent with target evidence — retry eligible
+    // Owner is a supported workload type (absent from native scan, not in plan).
+    // The dependent Pod has a UID and positive target evidence. The settle loop
+    // will re-observe; if the Pod persists past deadline, result is AuditIncomplete.
     let is_supported_owner = matches!(
         (
             missing.group.as_str(),
@@ -809,7 +810,6 @@ fn is_transient_scan_error(error: &AuditScanError, deleted_resources: &[Resource
     );
     is_supported_owner
         && error.dependent_uid.as_ref().is_some_and(|u| !u.is_empty())
-        && error.dependent_is_terminating
         && error.dependent_has_target_evidence
 }
 
@@ -8864,7 +8864,7 @@ mod tests {
     }
 
     #[test]
-    fn non_terminating_pod_not_transient() {
+    fn non_terminating_orphan_with_evidence_is_transient() {
         let err = AuditScanError {
             resource_type: "Pod/gpu-pod".to_string(),
             namespace: "ns".to_string(),
@@ -8882,8 +8882,8 @@ mod tests {
             dependent_has_target_evidence: true,
         };
         assert!(
-            !is_transient_scan_error(&err, &[]),
-            "non-terminating pod must not be transient"
+            is_transient_scan_error(&err, &[]),
+            "orphan pod with UID + evidence + supported GVK is retry-eligible"
         );
     }
 
@@ -9417,7 +9417,7 @@ mod tests {
     // ── Tower test: terminating GPU pod settle ──
 
     #[tokio::test(start_paused = true)]
-    async fn settle_loop_resolves_terminating_gpu_pods() {
+    async fn settle_loop_resolves_orphaned_gpu_pods() {
         use std::pin::pin;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -9457,8 +9457,9 @@ mod tests {
                 } else if path == POD_LIST {
                     let current_poll = pn.load(Ordering::SeqCst);
                     if current_poll <= 2 {
-                        // Polls 1-2: terminating pod owned by side-effect-deleted DaemonSet
-                        // Pod has target labels (olm.owner) and deletionTimestamp
+                        // Polls 1-2: orphan pod owned by side-effect-deleted DaemonSet
+                        // Pod has target labels (olm.owner) but NO deletionTimestamp
+                        // (GC hasn't processed orphan yet)
                         send.send_response(tower_json_response(serde_json::json!({
                             "apiVersion": "v1", "kind": "PodList",
                             "metadata": {"resourceVersion": "1"},
@@ -9468,7 +9469,6 @@ mod tests {
                                     "name": "nvidia-dcgm-exporter-abc",
                                     "namespace": "test-ns",
                                     "uid": "gpu-pod-uid-1",
-                                    "deletionTimestamp": "2024-06-01T00:00:00Z",
                                     "labels": {
                                         "olm.owner": "test-pkg.v1",
                                         "app": "nvidia-dcgm-exporter"
@@ -9531,6 +9531,77 @@ mod tests {
             audit.scan_errors.is_empty(),
             "settled audit should have no scan errors, got: {:?}",
             audit.scan_errors
+        );
+    }
+
+    #[tokio::test]
+    async fn settle_loop_deadline_orphan_persists_incomplete() {
+        let err = AuditScanError {
+            resource_type: "Pod/nvidia-dcgm-exporter-abc".to_string(),
+            namespace: "ns".to_string(),
+            error: "DaemonSet nvidia-dcgm-exporter not found".to_string(),
+            missing_owner_ref: Some(Box::new(ResourceId {
+                group: "apps".to_string(),
+                version: "v1".to_string(),
+                kind: "DaemonSet".to_string(),
+                namespace: Some("ns".to_string()),
+                name: "nvidia-dcgm-exporter".to_string(),
+                uid: Some("ds-uid-1".to_string()),
+            })),
+            dependent_uid: Some("pod-uid-1".to_string()),
+            dependent_is_terminating: false,
+            dependent_has_target_evidence: true,
+        };
+        assert!(
+            is_transient_scan_error(&err, &[]),
+            "orphan with evidence is retry-eligible"
+        );
+
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let settled = super::settle_loop(
+            || async {
+                let mut audit = make_empty_audit();
+                audit.scan_errors.push(AuditScanError {
+                    resource_type: "Pod/nvidia-dcgm-exporter-abc".to_string(),
+                    namespace: "ns".to_string(),
+                    error: "DaemonSet nvidia-dcgm-exporter not found".to_string(),
+                    missing_owner_ref: Some(Box::new(ResourceId {
+                        group: "apps".to_string(),
+                        version: "v1".to_string(),
+                        kind: "DaemonSet".to_string(),
+                        namespace: Some("ns".to_string()),
+                        name: "nvidia-dcgm-exporter".to_string(),
+                        uid: Some("ds-uid-1".to_string()),
+                    })),
+                    dependent_uid: Some("pod-uid-1".to_string()),
+                    dependent_is_terminating: false,
+                    dependent_has_target_evidence: true,
+                });
+                Ok(AuditObservation {
+                    generation: OperatorGenerationState::Absent,
+                    audit: Some(audit),
+                })
+            },
+            &[],
+            std::time::Duration::from_millis(50),
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            settled.attempts >= 2,
+            "should have retried at least once, got {} attempts",
+            settled.attempts
+        );
+        let audit = settled.observation.audit.expect("should have audit");
+        assert!(
+            !audit.scan_errors.is_empty(),
+            "persistent orphan should leave scan errors"
+        );
+        assert!(
+            !settled.last_transient_blockers.is_empty(),
+            "should report transient blockers at deadline"
         );
     }
 
