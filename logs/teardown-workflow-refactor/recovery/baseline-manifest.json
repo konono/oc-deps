@@ -1,0 +1,43 @@
+{
+  "commit": "0139dfc",
+  "cluster_uid": "73072fbb-5d55-4ad1-a239-256da1ebea4e",
+  "recovery_method": "kc.sh bootstrap-admin user (PVC preserved, no realm data loss)",
+  "ansible_exits": {
+    "full_deploy": 2,
+    "keycloak": 0,
+    "integration": 0,
+    "mlflow": 0,
+    "ogx": 0,
+    "observability": 0
+  },
+  "verify_exit": 2,
+  "verify_note": "qwen3-06b model not deployed (--skip-tags llm), all other checks pass",
+  "target_subscriptions": 15,
+  "dsci_ready": true,
+  "dsc_ready": true,
+  "node_ready": true,
+  "terminating": 0,
+  "pv": 8,
+  "pvc": 9,
+  "explicit_targets": {
+    "Gateway/openshift-ingress/maas-default-gateway": "7574453f-2973-48e8-9469-3666b623b23d",
+    "ConfigMap/openshift-ingress/maas-gateway-options": "3bfe3d48-9c1c-4a1b-a5ab-c118a70b670a",
+    "Deployment/redhat-ods-applications/maas-postgres": "b5a7cf57-540a-4563-91fc-13b0c1f3623e",
+    "StatefulSet/redhat-ods-applications/ogx-postgres": "76303614-ef3e-4a4d-ac00-2fb164d8e304",
+    "Deployment/rhoai-model-registries/model-catalog": "1c41d9d4-8227-4d61-89d6-61f9374719b0",
+    "StatefulSet/keycloak/postgres": "2e515f28-3652-46c2-935d-185c2f54876c",
+    "ConsolePlugin/-/kuadrant-console-plugin": "1fa2306a-5caf-44dd-8aa5-c302ee7ef2af",
+    "Deployment/openshift-rhcl/kuadrant-console-plugin": "77ad56d8-2a80-4d31-ba33-eedee475c130",
+    "Service/openshift-rhcl/kuadrant-console-plugin": "6fa74656-22af-4d07-9982-ce6a380a3b72",
+    "ConfigMap/openshift-rhcl/kuadrant-console-nginx-conf": "8f3a6f41-e865-4e78-9372-121c48f03211"
+  },
+  "nfd_sccs": {
+    "nfd-topology-updater": "10f836c4-925b-4d21-a65f-1e6e37657a29",
+    "nfd-worker": "6774ed6c-1e90-4659-b831-be114b16394d"
+  },
+  "authorino_crbs": {
+    "authorino-authorino": "697aa821-f604-485e-92d9-765f5f242430",
+    "authorino-authorino-k8s-auth": "fc5b7bcb-c9c9-4670-9f40-2ea1e22ca6a8"
+  },
+  "acceptance": "PASS"
+}
