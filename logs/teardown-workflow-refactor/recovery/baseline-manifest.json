@@ -10,8 +10,11 @@
     "ogx": 0,
     "observability": 0
   },
-  "verify_exit": 2,
-  "verify_note": "qwen3-06b model not deployed (--skip-tags llm), all other checks pass",
+  "verify_unscoped_exit": 2,
+  "verify_unscoped_note": "exit=2: qwen3-06b MaaSModelRef absent (--skip-tags llm), cascading to MaaSSubscription and Guardrails checks which also depend on LLM serving components not deployed",
+  "verify_scoped_exit": 0,
+  "verify_scoped_command": "uv run ansible-playbook playbooks/verify.yml -i inventory/aws-sno-disconnected --skip-tags llm -e '{\"models\": {}, \"install_llm_serving\": false, \"install_maas_resources\": false, \"install_guardrails\": false}'",
+  "verify_scoped_recap": "ok=38 failed=0 skipped=9",
   "target_subscriptions": 15,
   "dsci_ready": true,
   "dsc_ready": true,
